@@ -1,0 +1,88 @@
+name: navigate_app
+description: אפליקציית ניווט Flutter לניהול ניווטים ותחקור
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Icons
+  cupertino_icons: ^1.0.6
+  flutter_localizations:
+    sdk: flutter
+
+  # State Management
+  provider: ^6.1.1
+
+  # Maps
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.0
+
+  # Authentication (SMS/Phone Auth)
+  firebase_core: ^4.4.0  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
+  firebase_auth: ^6.1.4  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
+
+  # Database & Storage
+  cloud_firestore: ^6.1.2  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
+  firebase_storage: ^13.0.6  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.20
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+
+  # Networking & Connectivity
+  connectivity_plus: ^5.0.2
+  http: ^1.2.0
+
+  # SMS (Android) - זמנית מושבת, דורש מכשיר אמיתי (לא עובד על אמולטור)
+  # sms_advanced: ^1.0.1
+
+  # Location & GPS
+  geolocator: ^11.0.0
+  permission_handler: ^11.2.0
+  gps_plus:
+    path: ../gps_plus
+
+  # File handling
+  file_picker: ^6.1.1
+  csv: ^6.0.0
+  pdf: ^3.10.7
+  printing: ^5.12.0
+
+  # Utils
+  intl: ^0.19.0
+  uuid: ^4.3.3
+  equatable: ^2.0.5
+  logger: ^2.0.2
+  path: ^1.8.3
+  excel: ^4.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  build_runner: ^2.4.8
+  drift_dev: ^2.14.1
+
+flutter:
+  uses-material-design: true
+
+  # RTL Support
+  generate: true
+
+  # Assets
+  # assets:
+  #   - assets/images/
+  #   - assets/icons/
+
+  # Fonts (if needed for Hebrew)
+  # fonts:
+  #   - family: Rubik
+  #     fonts:
+  #       - asset: fonts/Rubik-Regular.ttf
+  #       - asset: fonts/Rubik-Bold.ttf
+  #         weight: 700

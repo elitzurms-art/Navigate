@@ -1,0 +1,626 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import '../../../domain/entities/area.dart';
+import '../../../domain/entities/checkpoint.dart';
+import '../../../domain/entities/coordinate.dart';
+import '../../../domain/entities/safety_point.dart';
+import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/cluster.dart';
+import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
+import '../../../data/repositories/boundary_repository.dart';
+import '../../../data/repositories/cluster_repository.dart';
+import '../../../services/auth_service.dart';
+import '../../widgets/map_with_selector.dart';
+
+/// מסך יצירת נקודת ציון
+class CreateCheckpointScreen extends StatefulWidget {
+  final Area area;
+
+  const CreateCheckpointScreen({super.key, required this.area});
+
+  @override
+  State<CreateCheckpointScreen> createState() => _CreateCheckpointScreenState();
+}
+
+class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _sequenceController = TextEditingController();
+  final _latController = TextEditingController();
+  final _lngController = TextEditingController();
+  final _utmController = TextEditingController();
+  final _labelController = TextEditingController();
+
+  final CheckpointRepository _checkpointRepo = CheckpointRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
+  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final ClusterRepository _clusterRepo = ClusterRepository();
+
+  String _selectedType = 'checkpoint';
+  String _selectedColor = 'blue';
+  LatLng? _selectedLocation;
+  final List<String> _labels = [];
+  final MapController _mapController = MapController();
+  bool _isSaving = false;
+  bool _showOtherLayers = true;
+
+  // שכבות אחרות
+  List<Checkpoint> _existingCheckpoints = [];
+  List<SafetyPoint> _safetyPoints = [];
+  List<Boundary> _boundaries = [];
+  List<Cluster> _clusters = [];
+
+  // מיקום ברירת מחדל - מרכז ישראל
+  static const LatLng _defaultCenter = LatLng(31.5, 34.75);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOtherLayers();
+  }
+
+  Future<void> _loadOtherLayers() async {
+    try {
+      final checkpoints = await _checkpointRepo.getByArea(widget.area.id);
+      final safetyPoints = await _safetyPointRepo.getByArea(widget.area.id);
+      final boundaries = await _boundaryRepo.getByArea(widget.area.id);
+      final clusters = await _clusterRepo.getByArea(widget.area.id);
+
+      setState(() {
+        _existingCheckpoints = checkpoints;
+        _safetyPoints = safetyPoints;
+        _boundaries = boundaries;
+        _clusters = clusters;
+      });
+    } catch (e) {
+      print('שגיאה בטעינת שכבות: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    _sequenceController.dispose();
+    _latController.dispose();
+    _lngController.dispose();
+    _utmController.dispose();
+    _labelController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('נקודת ציון חדשה - ${widget.area.name}'),
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: Icon(_showOtherLayers ? Icons.layers : Icons.layers_outlined),
+            onPressed: () {
+              setState(() => _showOtherLayers = !_showOtherLayers);
+            },
+            tooltip: _showOtherLayers ? 'הסתר שכבות אחרות' : 'הצג שכבות אחרות',
+          ),
+          if (_isSaving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _saveCheckpoint,
+            ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // שם הנקודה
+            TextFormField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'שם הנקודה',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.label),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'נא להזין שם';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // תיאור
+            TextFormField(
+              controller: _descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'תיאור',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.description),
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 16),
+
+            // מספר סידורי
+            TextFormField(
+              controller: _sequenceController,
+              decoration: const InputDecoration(
+                labelText: 'מספר סידורי',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.numbers),
+              ),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'נא להזין מספר';
+                }
+                if (int.tryParse(value) == null) {
+                  return 'יש להזין מספר תקין';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // סוג הנקודה
+            DropdownButtonFormField<String>(
+              value: _selectedType,
+              decoration: const InputDecoration(
+                labelText: 'סוג הנקודה',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.category),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'checkpoint', child: Text('נקודת ציון')),
+                DropdownMenuItem(value: 'mandatory_passage', child: Text('נקודת מעבר חובה')),
+                DropdownMenuItem(value: 'start', child: Text('נקודת התחלה')),
+                DropdownMenuItem(value: 'end', child: Text('נקודת סיום')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedType = value!;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // צבע הנקודה
+            DropdownButtonFormField<String>(
+              value: _selectedColor,
+              decoration: const InputDecoration(
+                labelText: 'צבע',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.palette),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'blue',
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.blue,
+                        radius: 10,
+                      ),
+                      SizedBox(width: 8),
+                      Text('כחול'),
+                    ],
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'green',
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.green,
+                        radius: 10,
+                      ),
+                      SizedBox(width: 8),
+                      Text('ירוק'),
+                    ],
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedColor = value!;
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+
+            // תוויות/תאי שטח
+            Text(
+              'תוויות ותאי שטח',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _labelController,
+                    decoration: const InputDecoration(
+                      labelText: 'הוסף תווית',
+                      border: OutlineInputBorder(),
+                      hintText: 'לדוגמה: תא-1, מגזר-A',
+                    ),
+                    onSubmitted: (_) => _addLabel(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _addLabel,
+                  icon: const Icon(Icons.add),
+                  label: const Text('הוסף'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_labels.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _labels.map((label) {
+                  return Chip(
+                    label: Text(label),
+                    deleteIcon: const Icon(Icons.close, size: 18),
+                    onDeleted: () {
+                      setState(() {
+                        _labels.remove(label);
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            const SizedBox(height: 24),
+
+            // כותרת קואורדינטות
+            Text(
+              'קואורדינטות',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+
+            // מפה לבחירת מיקום
+            Container(
+              height: 300,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: MapWithTypeSelector(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: _defaultCenter,
+                    initialZoom: 8,
+                    onTap: (tapPosition, point) {
+                      setState(() {
+                        _selectedLocation = point;
+                        _latController.text = point.latitude.toStringAsFixed(6);
+                        _lngController.text = point.longitude.toStringAsFixed(6);
+                      });
+                    },
+                  ),
+                  layers: [
+                    // שכבת גבולות גזרה (ג"ג)
+                    if (_showOtherLayers && _boundaries.isNotEmpty)
+                      PolygonLayer(
+                        polygons: _boundaries.map((boundary) {
+                          return Polygon(
+                            points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.black.withOpacity(0.1),
+                            borderColor: Colors.black,
+                            borderStrokeWidth: boundary.strokeWidth,
+                            isFilled: true,
+                          );
+                        }).toList(),
+                      ),
+                    // שכבת ביצי איזור (בא)
+                    if (_showOtherLayers && _clusters.isNotEmpty)
+                      PolygonLayer(
+                        polygons: _clusters.map((cluster) {
+                          return Polygon(
+                            points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: _parseColor(cluster.color).withOpacity(cluster.fillOpacity),
+                            borderColor: _parseColor(cluster.color),
+                            borderStrokeWidth: cluster.strokeWidth,
+                            isFilled: true,
+                          );
+                        }).toList(),
+                      ),
+                    // שכבת נקודות ציון קיימות
+                    if (_showOtherLayers && _existingCheckpoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: _existingCheckpoints.map((cp) {
+                          return Marker(
+                            point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                            width: 30,
+                            height: 30,
+                            child: Icon(
+                              Icons.place,
+                              color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                              size: 30,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    // שכבת נקודות תורפה בטיחותיות (נת"ב)
+                    if (_showOtherLayers && _safetyPoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: _safetyPoints
+                            .where((sp) => sp.type == 'point' && sp.coordinates != null)
+                            .map((sp) {
+                          return Marker(
+                            point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+                            width: 30,
+                            height: 30,
+                            child: Icon(
+                              Icons.warning,
+                              color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                              size: 30,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    // הנקודה החדשה שנבחרה
+                    if (_selectedLocation != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _selectedLocation!,
+                            width: 40,
+                            height: 40,
+                            child: Icon(
+                              Icons.place,
+                              color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                              size: 40,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'לחץ על המפה לבחירת מיקום',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+
+            // קואורדינטות ידניות
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _latController,
+                    decoration: const InputDecoration(
+                      labelText: 'קו רוחב (Lat)',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (value) {
+                      final lat = double.tryParse(value);
+                      final lng = double.tryParse(_lngController.text);
+                      if (lat != null && lng != null) {
+                        setState(() {
+                          _selectedLocation = LatLng(lat, lng);
+                          _mapController.move(_selectedLocation!, 12);
+                        });
+                      }
+                    },
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'נדרש';
+                      }
+                      if (double.tryParse(value) == null) {
+                        return 'מספר לא תקין';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    controller: _lngController,
+                    decoration: const InputDecoration(
+                      labelText: 'קו אורך (Lng)',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    onChanged: (value) {
+                      final lat = double.tryParse(_latController.text);
+                      final lng = double.tryParse(value);
+                      if (lat != null && lng != null) {
+                        setState(() {
+                          _selectedLocation = LatLng(lat, lng);
+                          _mapController.move(_selectedLocation!, 12);
+                        });
+                      }
+                    },
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'נדרש';
+                      }
+                      if (double.tryParse(value) == null) {
+                        return 'מספר לא תקין';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // UTM (אופציונלי)
+            TextFormField(
+              controller: _utmController,
+              decoration: const InputDecoration(
+                labelText: 'UTM (אופציונלי)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.grid_on),
+                hintText: 'לדוגמה: 36R 123456 7654321',
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // כפתור למיקום נוכחי
+            OutlinedButton.icon(
+              onPressed: _useCurrentLocation,
+              icon: const Icon(Icons.my_location),
+              label: const Text('השתמש במיקום הנוכחי'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _addLabel() {
+    if (_labelController.text.isNotEmpty) {
+      setState(() {
+        _labels.add(_labelController.text);
+        _labelController.clear();
+      });
+    }
+  }
+
+  Future<void> _useCurrentLocation() async {
+    // TODO: שימוש ב-GPS Service לקבלת מיקום נוכחי
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('קבלת מיקום נוכחי - בפיתוח'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
+  Future<void> _saveCheckpoint() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    if (_selectedLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('יש לבחור מיקום על המפה'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final authService = AuthService();
+      final currentUser = await authService.getCurrentUser();
+      if (currentUser == null) {
+        throw Exception('משתמש לא מחובר');
+      }
+
+      final checkpoint = Checkpoint(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        areaId: widget.area.id,
+        name: _nameController.text,
+        description: _descriptionController.text,
+        type: _selectedType,
+        color: _selectedColor,
+        sequenceNumber: int.parse(_sequenceController.text),
+        coordinates: Coordinate(
+          lat: _selectedLocation!.latitude,
+          lng: _selectedLocation!.longitude,
+          utm: _utmController.text.isEmpty ? '' : _utmController.text,
+        ),
+        labels: _labels,
+        createdBy: currentUser.uid,
+        createdAt: DateTime.now(),
+      );
+
+      final repository = CheckpointRepository();
+      await repository.create(checkpoint);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('נקודת ציון נוצרה בהצלחה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה ביצירה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  /// המרת מחרוזת צבע ל-Color
+  Color _parseColor(String colorStr) {
+    final colorMap = {
+      'black': Colors.black,
+      'blue': Colors.blue,
+      'green': Colors.green,
+      'red': Colors.red,
+      'yellow': Colors.yellow,
+      'orange': Colors.orange,
+      'purple': Colors.purple,
+    };
+    return colorMap[colorStr.toLowerCase()] ?? Colors.grey;
+  }
+
+  /// קבלת צבע לפי רמת חומרה
+  Color _getSeverityColor(String severity) {
+    switch (severity) {
+      case 'low':
+        return Colors.orange;
+      case 'medium':
+        return Colors.red;
+      case 'high':
+        return Colors.red.shade700;
+      case 'critical':
+        return Colors.red.shade900;
+      default:
+        return Colors.red;
+    }
+  }
+}

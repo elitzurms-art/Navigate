@@ -1,0 +1,38 @@
+# Flutter SDK (local copy)
+Cdev/
+C?dev/
+C*dev/
+
+# Claude Code
+.claude/
+
+# Utility scripts
+check_flutter.ps1
+download_flutter.ps1
+.pipeflutter_
+nul
+
+# Flutter/Dart build artifacts
+**/build/
+**/.dart_tool/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/*.g.dart
+**/*.freezed.dart
+
+# IDE
+**/.idea/
+**/.vscode/
+**/*.iml
+
+# OS
+**/Thumbs.db
+**/.DS_Store
+
+# Credentials / secrets
+**/.env
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
+**/*firebase-adminsdk*.json
