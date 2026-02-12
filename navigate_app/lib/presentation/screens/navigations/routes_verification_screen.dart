@@ -525,31 +525,36 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       // בניית הציר המלא: התחלה → נקודות → סיום
       List<LatLng> points = [];
 
+      if (_checkpoints.isEmpty) continue;
+
       // 1. נקודת התחלה (אם קיימת)
       if (route.startPointId != null) {
-        final startPoint = _checkpoints.firstWhere(
-          (cp) => cp.id == route.startPointId,
-          orElse: () => _checkpoints.first,
-        );
-        points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+        try {
+          final startPoint = _checkpoints.firstWhere(
+            (cp) => cp.id == route.startPointId,
+          );
+          points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+        } catch (_) {}
       }
 
       // 2. נקודות המנווט (לפי הרצף)
       for (final checkpointId in route.sequence) {
-        final checkpoint = _checkpoints.firstWhere(
-          (cp) => cp.id == checkpointId,
-          orElse: () => _checkpoints.first,
-        );
-        points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+        try {
+          final checkpoint = _checkpoints.firstWhere(
+            (cp) => cp.id == checkpointId,
+          );
+          points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+        } catch (_) {}
       }
 
       // 3. נקודת הסיום (אם קיימת ושונה מההתחלה)
       if (route.endPointId != null && route.endPointId != route.startPointId) {
-        final endPoint = _checkpoints.firstWhere(
-          (cp) => cp.id == route.endPointId,
-          orElse: () => _checkpoints.last,
-        );
-        points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+        try {
+          final endPoint = _checkpoints.firstWhere(
+            (cp) => cp.id == route.endPointId,
+          );
+          points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+        } catch (_) {}
       }
 
       if (points.isNotEmpty) {

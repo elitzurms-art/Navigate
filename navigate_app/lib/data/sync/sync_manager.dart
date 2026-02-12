@@ -293,10 +293,9 @@ class SyncManager {
   /// עיבוד פריט בודד מתור הסנכרון
   Future<void> _processSingleItem(SyncQueueData item) async {
     try {
-      // Block delete for areas and area layers (add-only collections)
+      // Block delete for areas (add-only collection) — layers are deletable by developers
       if (item.operation == 'delete') {
-        if (item.collectionName == AppConstants.areasCollection ||
-            _isAreaLayerPath(item.collectionName)) {
+        if (item.collectionName == AppConstants.areasCollection) {
           print('SyncManager: Blocked delete on add-only collection ${item.collectionName}');
           await _db.markAsSynced(item.id);
           return;
@@ -535,6 +534,7 @@ class SyncManager {
     final collectionsToReconcile = {
       AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
       AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
+      AppConstants.navigationsCollection: () async => (await _db.select(_db.navigations).get()).map((n) => n.id).toList(),
     };
 
     for (final entry in collectionsToReconcile.entries) {
@@ -620,7 +620,8 @@ class SyncManager {
 
           Query query = _firestore.collection(path);
           if (lastPullAt != null) {
-            query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(lastPullAt));
+            final adjustedPullAt = lastPullAt.subtract(const Duration(seconds: 5));
+            query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(adjustedPullAt));
           }
 
           final snapshot = await query.get().timeout(const Duration(seconds: 30));
@@ -658,8 +659,10 @@ class SyncManager {
     Query query = _firestore.collection(collection);
 
     // שאילתה incremental - רק שינויים חדשים
+    // מרווח בטיחות של 5 שניות למניעת "בליעת" מסמכים בגלל clock skew
     if (lastPullAt != null) {
-      query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(lastPullAt));
+      final adjustedPullAt = lastPullAt.subtract(const Duration(seconds: 5));
+      query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(adjustedPullAt));
     }
 
     final snapshot = await query.get().timeout(const Duration(seconds: 30));
@@ -676,6 +679,17 @@ class SyncManager {
     for (final doc in snapshot.docs) {
       final serverData = doc.data() as Map<String, dynamic>;
       serverData['id'] = doc.id;
+
+      // Soft-delete מהשרת מנצח תמיד — גם אם יש שינויים מקומיים ממתינים
+      if (serverData['deletedAt'] != null) {
+        await _deleteLocalRecord(collection, doc.id);
+        // ביטול פריטים ממתינים כדי שלא ישחזרו את הרשומה
+        final pending = await _db.getPendingSyncItemsByCollection(collection);
+        for (final item in pending.where((i) => i.recordId == doc.id)) {
+          await _db.markAsSynced(item.id);
+        }
+        continue;
+      }
 
       if (direction == SyncDirection.pullOnly) {
         // Pull-only: תמיד מקבל מהשרת
@@ -861,6 +875,19 @@ class SyncManager {
   }
 
   Future<void> _upsertCheckpoint(String id, Map<String, dynamic> data) async {
+    // Checkpoint.toMap() שולח coordinates כ-nested object: {lat, lng, utm}
+    // אבל Drift מצפה לשדות שטוחים — צריך לחלץ מהמבנה המקונן
+    final coords = data['coordinates'] as Map<String, dynamic>?;
+    final lat = (coords?['lat'] as num?)?.toDouble()
+        ?? (data['lat'] as num?)?.toDouble()
+        ?? 0.0;
+    final lng = (coords?['lng'] as num?)?.toDouble()
+        ?? (data['lng'] as num?)?.toDouble()
+        ?? 0.0;
+    final utm = coords?['utm'] as String?
+        ?? data['utm'] as String?
+        ?? '';
+
     await _db.into(_db.checkpoints).insertOnConflictUpdate(
       CheckpointsCompanion.insert(
         id: id,
@@ -869,9 +896,9 @@ class SyncManager {
         description: data['description'] as String? ?? '',
         type: data['type'] as String? ?? 'checkpoint',
         color: data['color'] as String? ?? 'blue',
-        lat: (data['lat'] as num?)?.toDouble() ?? 0.0,
-        lng: (data['lng'] as num?)?.toDouble() ?? 0.0,
-        utm: data['utm'] as String? ?? '',
+        lat: lat,
+        lng: lng,
+        utm: utm,
         sequenceNumber: (data['sequenceNumber'] as num?)?.toInt() ?? 0,
         createdBy: data['createdBy'] as String? ?? '',
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
@@ -880,6 +907,21 @@ class SyncManager {
   }
 
   Future<void> _upsertSafetyPoint(String id, Map<String, dynamic> data) async {
+    // SafetyPoint.toMap() שולח coordinates כ-nested object (point) או polygonCoordinates כ-array (polygon)
+    final coords = data['coordinates'] as Map<String, dynamic>?;
+    final lat = (coords?['lat'] as num?)?.toDouble()
+        ?? (data['lat'] as num?)?.toDouble();
+    final lng = (coords?['lng'] as num?)?.toDouble()
+        ?? (data['lng'] as num?)?.toDouble();
+    final utm = coords?['utm'] as String?
+        ?? data['utm'] as String?;
+
+    // polygonCoordinates מגיע כ-List מ-Firestore, Drift מצפה ל-JSON string
+    final polyCoords = data['polygonCoordinates'] as List?;
+    final coordinatesJson = polyCoords != null
+        ? jsonEncode(polyCoords)
+        : data['coordinatesJson'] as String?;
+
     await _db.into(_db.safetyPoints).insertOnConflictUpdate(
       SafetyPointsCompanion.insert(
         id: id,
@@ -892,22 +934,29 @@ class SyncManager {
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
         type: Value(data['type'] as String? ?? 'point'),
-        lat: Value((data['lat'] as num?)?.toDouble()),
-        lng: Value((data['lng'] as num?)?.toDouble()),
-        utm: Value(data['utm'] as String?),
-        coordinatesJson: Value(data['coordinatesJson'] as String?),
+        lat: Value(lat),
+        lng: Value(lng),
+        utm: Value(utm),
+        coordinatesJson: Value(coordinatesJson),
       ),
     );
   }
 
   Future<void> _upsertBoundary(String id, Map<String, dynamic> data) async {
+    // Boundary.toMap() שולח coordinates כ-List של objects
+    // Drift מצפה ל-JSON string בעמודת coordinatesJson
+    final coordsList = data['coordinates'] as List?;
+    final coordinatesJson = coordsList != null
+        ? jsonEncode(coordsList)
+        : data['coordinatesJson'] as String? ?? '[]';
+
     await _db.into(_db.boundaries).insertOnConflictUpdate(
       BoundariesCompanion.insert(
         id: id,
         areaId: data['areaId'] as String? ?? '',
         name: data['name'] as String? ?? '',
         description: data['description'] as String? ?? '',
-        coordinatesJson: data['coordinatesJson'] as String? ?? '[]',
+        coordinatesJson: coordinatesJson,
         color: data['color'] as String? ?? 'black',
         strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 2.0,
         createdBy: data['createdBy'] as String? ?? '',
@@ -918,13 +967,20 @@ class SyncManager {
   }
 
   Future<void> _upsertCluster(String id, Map<String, dynamic> data) async {
+    // Cluster.toMap() שולח coordinates כ-List של objects
+    // Drift מצפה ל-JSON string בעמודת coordinatesJson
+    final coordsList = data['coordinates'] as List?;
+    final coordinatesJson = coordsList != null
+        ? jsonEncode(coordsList)
+        : data['coordinatesJson'] as String? ?? '[]';
+
     await _db.into(_db.clusters).insertOnConflictUpdate(
       ClustersCompanion.insert(
         id: id,
         areaId: data['areaId'] as String? ?? '',
         name: data['name'] as String? ?? '',
         description: data['description'] as String? ?? '',
-        coordinatesJson: data['coordinatesJson'] as String? ?? '[]',
+        coordinatesJson: coordinatesJson,
         color: data['color'] as String? ?? 'green',
         strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 2.0,
         fillOpacity: (data['fillOpacity'] as num?)?.toDouble() ?? 0.3,

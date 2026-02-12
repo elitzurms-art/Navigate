@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:battery_plus/battery_plus.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/user.dart' as domain_user;
@@ -11,6 +11,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../services/navigation_data_loader.dart';
+import '../../../services/gps_service.dart';
 import 'dart:async';
 import '../../widgets/map_with_selector.dart';
 
@@ -36,6 +37,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   final NavigationRepository _navRepo = NavigationRepository();
   final UserRepository _userRepo = UserRepository();
   final MapController _mapController = MapController();
+  final GpsService _gpsService = GpsService();
+  final Battery _battery = Battery();
 
   late TabController _tabController;
   Boundary? _boundary;
@@ -53,7 +56,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   bool _hasGpsPermission = false;
   bool _hasLocationService = false;
   int _batteryLevel = 0;
+  double _gpsAccuracy = -1;
   bool _isCheckingSystem = false;
+
+  // הרשאות מכשיר (לטאב הרשאות)
+  Map<String, PermissionStatus> _permissionStatuses = {};
 
   // מצב בדיקת מערכות (התחיל/לא)
   late domain.Navigation _currentNavigation;
@@ -75,7 +82,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     super.initState();
     _currentNavigation = widget.navigation;
     _systemCheckStarted = widget.navigation.status == 'system_check';
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
     _loadData();
     if (widget.isCommander) {
       _initializeNavigatorStatuses();
@@ -90,16 +97,24 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     setState(() => _isCheckingSystem = true);
 
     try {
-      // בדיקת הרשאות GPS
-      final locationPermission = await Permission.location.status;
-      _hasGpsPermission = locationPermission.isGranted;
+      // בדיקת הרשאות GPS באמצעות GpsService
+      _hasLocationService = await _gpsService.isGpsAvailable();
+      _hasGpsPermission = await _gpsService.checkPermissions();
 
-      // בדיקת שירות מיקום
-      _hasLocationService = await Geolocator.isLocationServiceEnabled();
+      // בדיקת דיוק GPS
+      if (_hasGpsPermission && _hasLocationService) {
+        _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+      }
 
-      // בדיקת סוללה - TODO: להוסיף battery_plus לpubspec כשצריך
-      // בינתיים מדמים ערך סוללה
-      _batteryLevel = 80;
+      // בדיקת סוללה אמיתית
+      try {
+        _batteryLevel = await _battery.batteryLevel;
+      } catch (_) {
+        _batteryLevel = -1; // לא זמין (אמולטור)
+      }
+
+      // בדיקת הרשאות מכשיר
+      await _checkDevicePermissions();
 
       setState(() => _isCheckingSystem = false);
     } catch (e) {
@@ -107,9 +122,23 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     }
   }
 
+  Future<void> _checkDevicePermissions() async {
+    _permissionStatuses = {
+      'location': await Permission.location.status,
+      'locationAlways': await Permission.locationAlways.status,
+      'notification': await Permission.notification.status,
+    };
+  }
+
   Future<void> _requestPermissions() async {
-    await Permission.location.request();
+    await _gpsService.checkPermissions(); // זה גם מבקש הרשאות אם חסרות
     await _checkNavigatorSystem();
+  }
+
+  Future<void> _requestPermission(Permission permission) async {
+    await permission.request();
+    await _checkDevicePermissions();
+    if (mounted) setState(() {});
   }
 
   @override
@@ -117,6 +146,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _tabController.dispose();
     _progressSubscription?.cancel();
     _dataLoader?.dispose();
+    _gpsService.dispose();
     super.dispose();
   }
 
@@ -306,6 +336,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             Tab(icon: Icon(Icons.signal_cellular_alt), text: 'קליטה'),
             Tab(icon: Icon(Icons.settings), text: 'מערכת'),
             Tab(icon: Icon(Icons.cloud_download), text: 'נתונים'),
+            Tab(icon: Icon(Icons.security), text: 'הרשאות'),
           ],
         ),
       ),
@@ -319,6 +350,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 _buildConnectivityView(),
                 _buildSystemTab(),
                 _buildDataTab(),
+                _buildPermissionsTab(),
               ],
             ),
       bottomNavigationBar: Padding(
@@ -1445,11 +1477,21 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   /// תצוגה למנווט - בדיקת מערכות
   Widget _buildNavigatorView() {
-    final batteryThreshold = 20; // סף סוללה ברירת מחדל
-    final gpsAccuracyThreshold = 20.0; // מטרים
-
-    final isBatteryOk = _batteryLevel >= batteryThreshold;
+    final isBatteryOk = _batteryLevel < 0 ? true : _batteryLevel >= _batteryRedThreshold;
     final isGpsOk = _hasGpsPermission && _hasLocationService;
+    final isGpsAccuracyOk = _gpsAccuracy < 0 || _gpsAccuracy <= 50.0;
+
+    Color batteryColor() {
+      if (_batteryLevel < 0) return Colors.grey;
+      if (_batteryLevel < _batteryRedThreshold) return Colors.red;
+      if (_batteryLevel < _batteryOrangeThreshold) return Colors.orange;
+      return Colors.green;
+    }
+
+    String batteryText() {
+      if (_batteryLevel < 0) return 'לא זמין';
+      return '$_batteryLevel%';
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -1504,6 +1546,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     ),
                   ),
 
+                  // הרשאות מכשיר
+                  if (_permissionStatuses.isNotEmpty)
+                    _buildNavigatorPermissionsCard(),
+
                   const SizedBox(height: 24),
 
                   // בדיקת מיקום
@@ -1515,11 +1561,24 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         size: 40,
                       ),
                       title: const Text('מיקום GPS'),
-                      subtitle: Text(
-                        isGpsOk ? 'תקין - המיקום פועל' : 'לא תקין - בעיה במיקום',
-                        style: TextStyle(
-                          color: isGpsOk ? Colors.green[700] : Colors.red[700],
-                        ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isGpsOk ? 'תקין - המיקום פועל' : 'לא תקין - בעיה במיקום',
+                            style: TextStyle(
+                              color: isGpsOk ? Colors.green[700] : Colors.red[700],
+                            ),
+                          ),
+                          if (isGpsOk && _gpsAccuracy > 0)
+                            Text(
+                              'דיוק: ${_gpsAccuracy.toStringAsFixed(0)} מטר',
+                              style: TextStyle(
+                                color: isGpsAccuracyOk ? Colors.green[600] : Colors.orange[700],
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
                       ),
                       trailing: !isGpsOk
                           ? ElevatedButton(
@@ -1550,14 +1609,18 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   if (!_hasLocationService)
                     Card(
                       color: Colors.orange[50],
-                      child: const Padding(
-                        padding: EdgeInsets.all(16),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
                         child: Row(
                           children: [
-                            Icon(Icons.warning, color: Colors.orange),
-                            SizedBox(width: 12),
-                            Expanded(
+                            const Icon(Icons.warning, color: Colors.orange),
+                            const SizedBox(width: 12),
+                            const Expanded(
                               child: Text('יש להפעיל שירותי מיקום במכשיר'),
+                            ),
+                            TextButton(
+                              onPressed: () => _gpsService.openLocationSettings(),
+                              child: const Text('הגדרות'),
                             ),
                           ],
                         ),
@@ -1570,27 +1633,37 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   Card(
                     child: ListTile(
                       leading: Icon(
-                        isBatteryOk ? Icons.check_circle : Icons.error,
-                        color: isBatteryOk ? Colors.green : Colors.red,
+                        _batteryLevel < 0
+                            ? Icons.battery_unknown
+                            : isBatteryOk
+                                ? Icons.check_circle
+                                : Icons.error,
+                        color: batteryColor(),
                         size: 40,
                       ),
                       title: const Text('סוללה'),
                       subtitle: Text(
-                        isBatteryOk
-                            ? 'תקינה - $_batteryLevel% (מינימום: $batteryThreshold%)'
-                            : 'לא תקינה - $_batteryLevel% (מינימום: $batteryThreshold%)',
-                        style: TextStyle(
-                          color: isBatteryOk ? Colors.green[700] : Colors.red[700],
-                        ),
+                        _batteryLevel < 0
+                            ? 'לא ניתן לקרוא את מצב הסוללה'
+                            : isBatteryOk
+                                ? 'תקינה - ${batteryText()} (מינימום: $_batteryRedThreshold%)'
+                                : 'לא תקינה - ${batteryText()} (מינימום: $_batteryRedThreshold%)',
+                        style: TextStyle(color: batteryColor()),
                       ),
                       trailing: Icon(
-                        Icons.battery_full,
-                        color: isBatteryOk ? Colors.green : Colors.red,
+                        _batteryLevel < 0
+                            ? Icons.battery_unknown
+                            : _batteryLevel < _batteryRedThreshold
+                                ? Icons.battery_alert
+                                : _batteryLevel < _batteryOrangeThreshold
+                                    ? Icons.battery_4_bar
+                                    : Icons.battery_full,
+                        color: batteryColor(),
                       ),
                     ),
                   ),
 
-                  if (!isBatteryOk)
+                  if (!isBatteryOk && _batteryLevel >= 0)
                     Card(
                       color: Colors.red[50],
                       child: Padding(
@@ -1601,7 +1674,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'יש לטעון את הסוללה לפחות ל-$batteryThreshold%',
+                                'יש לטעון את הסוללה לפחות ל-$_batteryRedThreshold%',
                                 style: const TextStyle(color: Colors.red),
                               ),
                             ),
@@ -1631,6 +1704,169 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               ),
             ),
     );
+  }
+
+  /// כרטיס הרשאות מכשיר — מוצג בתצוגת מנווט
+  Widget _buildNavigatorPermissionsCard() {
+    final missingPermissions = _permissionStatuses.entries
+        .where((e) => !e.value.isGranted)
+        .toList();
+
+    if (missingPermissions.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      color: Colors.orange[50],
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.security, color: Colors.orange),
+                SizedBox(width: 8),
+                Text(
+                  'הרשאות חסרות',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...missingPermissions.map((entry) {
+              return ListTile(
+                dense: true,
+                leading: const Icon(Icons.warning, color: Colors.orange, size: 20),
+                title: Text(_permissionDisplayName(entry.key)),
+                subtitle: Text(_permissionStatusText(entry.value)),
+                trailing: entry.value.isPermanentlyDenied
+                    ? TextButton(
+                        onPressed: openAppSettings,
+                        child: const Text('הגדרות'),
+                      )
+                    : TextButton(
+                        onPressed: () => _requestPermission(_permissionFromKey(entry.key)),
+                        child: const Text('אשר'),
+                      ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// טאב הרשאות למפקד — סקירת הרשאות כלליות
+  Widget _buildPermissionsTab() {
+    return FutureBuilder<Map<String, PermissionStatus>>(
+      future: _getAllPermissions(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final permissions = snapshot.data!;
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'הרשאות מכשיר',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'הרשאות הנדרשות לפעולה תקינה של האפליקציה',
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              ...permissions.entries.map((entry) {
+                final isGranted = entry.value.isGranted;
+                final isPermanentlyDenied = entry.value.isPermanentlyDenied;
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    leading: Icon(
+                      isGranted ? Icons.check_circle : Icons.cancel,
+                      color: isGranted ? Colors.green : Colors.red,
+                    ),
+                    title: Text(_permissionDisplayName(entry.key)),
+                    subtitle: Text(_permissionStatusText(entry.value)),
+                    trailing: isGranted
+                        ? null
+                        : isPermanentlyDenied
+                            ? TextButton(
+                                onPressed: openAppSettings,
+                                child: const Text('הגדרות'),
+                              )
+                            : TextButton(
+                                onPressed: () async {
+                                  await _requestPermission(_permissionFromKey(entry.key));
+                                  setState(() {});
+                                },
+                                child: const Text('אשר'),
+                              ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() {}),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('רענן הרשאות'),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, PermissionStatus>> _getAllPermissions() async {
+    return {
+      'location': await Permission.location.status,
+      'locationAlways': await Permission.locationAlways.status,
+      'notification': await Permission.notification.status,
+    };
+  }
+
+  String _permissionDisplayName(String key) {
+    switch (key) {
+      case 'location':
+        return 'מיקום (GPS)';
+      case 'locationAlways':
+        return 'מיקום ברקע';
+      case 'notification':
+        return 'התראות';
+      default:
+        return key;
+    }
+  }
+
+  String _permissionStatusText(PermissionStatus status) {
+    if (status.isGranted) return 'מאושר';
+    if (status.isPermanentlyDenied) return 'נחסם - יש לאשר בהגדרות';
+    if (status.isDenied) return 'לא אושר';
+    if (status.isRestricted) return 'מוגבל';
+    return 'לא ידוע';
+  }
+
+  Permission _permissionFromKey(String key) {
+    switch (key) {
+      case 'location':
+        return Permission.location;
+      case 'locationAlways':
+        return Permission.locationAlways;
+      case 'notification':
+        return Permission.notification;
+      default:
+        return Permission.location;
+    }
   }
 }
 

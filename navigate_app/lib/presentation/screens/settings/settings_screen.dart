@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'offline_maps_screen.dart';
 
 /// מסך הגדרות
 class SettingsScreen extends StatefulWidget {
@@ -53,6 +54,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.offline_bolt,
                 title: 'מפות אופליין',
                 subtitle: 'ניהול מפות שמורות',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OfflineMapsScreen(),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -108,15 +117,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required IconData icon,
     required String title,
     required String subtitle,
+    VoidCallback? onTap,
   }) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
       subtitle: subtitle.isNotEmpty ? Text(subtitle) : null,
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-      onTap: () {
-        // TODO: פתיחת הגדרה
-      },
+      onTap: onTap,
     );
   }
 }

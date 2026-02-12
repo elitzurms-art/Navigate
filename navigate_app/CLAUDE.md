@@ -380,3 +380,58 @@ flutter run
 - תמיד לוודא קבצים משותפים אחרי עבודת agents מקבילית
 - להריץ build_runner **אחרי** שכל ה-agents סיימו
 - להריץ `flutter analyze` לתפיסת בעיות אינטגרציה
+
+---
+
+## באגים שתוקנו (פברואר 2026)
+
+### 1. סנכרון — מחיקת רשומות מקומיות בטעות (`sync_manager.dart`)
+- **בעיה**: `_reconcileDeletedRecords` מחקה יחידות/עצים שנוצרו מקומית אבל עדיין לא הועלו ל-Firestore
+- **תיקון**: בדיקת תור הסנכרון לפני מחיקה — דילוג על רשומות עם create/update ממתין
+
+### 2. סנכרון — השחתת קואורדינטות בזמן pull (`sync_manager.dart`)
+- **בעיה**: `_upsertCheckpoint` קרא `data['lat']` במקום `data['coordinates']['lat']`
+  - `Checkpoint.toMap()` שולח `{coordinates: {lat, lng, utm}}` (מקונן)
+  - ה-upsert ציפה לשדות שטוחים → קיבל NULL → ברירת מחדל 0.0
+  - **נקודות "נעלמו" מהפוליגון ועברו לקואורדינטה (0,0) — חוף אפריקה**
+- **תיקון**: כל 4 פונקציות upsert תוקנו:
+  - `_upsertCheckpoint`: חילוץ lat/lng מ-`data['coordinates']` (fallback לשטוח)
+  - `_upsertSafetyPoint`: חילוץ מ-`data['coordinates']` + תמיכה ב-`polygonCoordinates` כ-List → JSON
+  - `_upsertBoundary`: המרת `data['coordinates']` (List) ל-JSON string
+  - `_upsertCluster`: אותו דבר כמו boundary
+
+### 3. חלוקת נקודות — "לא נמצאו נקודות ציון" (`routes_automatic_setup_screen.dart`)
+- **בעיה**: המסך טען navCheckpoints מה-DB המקומי, אבל אלה נוצרים רק ב-`copyLayersForNavigation` שרץ **פעם אחת** ביצירת ניווט. אם ההעתקה נכשלה/לא הייתה — הרשימה ריקה
+- **תיקון**: fallback — אם navCheckpoints ריק, מנסה להעתיק שכבות מחדש. אם עדיין ריק, טוען ישירות מנקודות השטח
+
+### 4. חלוקת נקודות — validation לא מחשיב נקודות התחלה/סיום (`routes_distribution_service.dart`)
+- **בעיה**: הבדיקה `availableCheckpoints.length >= navigators * checkpointsPerNavigator` כללה נקודות התחלה/סיום, אבל בחלוקה בפועל הן מוחרגות
+- **תיקון**: חיסור נקודות התחלה/סיום מספירת הנקודות הזמינות
+
+### 5. חלוקת נקודות — דילוג שקט על מנווטים (`routes_distribution_service.dart`)
+- **בעיה**: כשאין מספיק נקודות למנווט, `continue` דילג בשקט — המנווט לא קיבל ציר בלי שגיאה
+- **תיקון**: זריקת Exception במקום דילוג שקט
+
+### 6. חלוקת נקודות — רצף לא אופטימלי (`routes_distribution_service.dart`)
+- **בעיה**: `_calculateOptimalSequence` קיבלה `startPointId` אבל לא השתמשה בו — התחילה מנקודה שרירותית
+- **תיקון**: אם יש נקודת התחלה, מוצא את הנקודה הקרובה אליה ומתחיל ממנה
+
+### 7. ניווט — חזרה למסך שגוי אחרי אישור צירים (`routes_setup_screen.dart`)
+- **בעיה**: אחרי "אישור וסיום" ב-`RoutesVerificationScreen`, המשתמש חזר ל-`RoutesSetupScreen` (בחירת שיטה) במקום ל-`NavigationPreparationScreen` (צ'קליסט)
+- **סיבה**: `RoutesSetupScreen` לא טיפל בתוצאת ה-pop מהמסכים הבנים
+- **תיקון**: `RoutesSetupScreen` עושה `await` ל-push ומעביר `true` הלאה ל-preparation
+
+---
+
+## כללים חשובים לסנכרון שכבות
+
+### מבנה נתונים: Entity.toMap() מול Drift
+| Entity | toMap() שולח | Drift מצפה |
+|---|---|---|
+| Checkpoint | `{coordinates: {lat, lng, utm}}` | שדות שטוחים: `lat`, `lng`, `utm` |
+| SafetyPoint (point) | `{coordinates: {lat, lng, utm}}` | `lat`, `lng`, `utm` |
+| SafetyPoint (polygon) | `{polygonCoordinates: [{...}]}` | `coordinatesJson` (string) |
+| Boundary | `{coordinates: [{lat,lng,utm},...]}` | `coordinatesJson` (string) |
+| Cluster | `{coordinates: [{lat,lng,utm},...]}` | `coordinatesJson` (string) |
+
+**חוק**: בכל upsert חדש — תמיד לבדוק את ה-toMap() של הישות ולחלץ נתונים מהמבנה המקונן. לעולם לא להניח שהשדות שטוחים.

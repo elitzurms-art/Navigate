@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  battery_plus
   cloud_firestore
   connectivity_plus
   firebase_auth
@@ -10,6 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_storage
   geolocator_windows
   gps_plus
+  objectbox_flutter_libs
   permission_handler_windows
   printing
   sqlite3_flutter_libs

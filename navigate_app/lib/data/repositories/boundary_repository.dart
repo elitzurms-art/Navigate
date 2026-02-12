@@ -69,7 +69,7 @@ class BoundaryRepository {
           );
       await _syncManager.queueOperation(
         collection: '${AppConstants.areasCollection}/${boundary.areaId}/${AppConstants.areaLayersGgSubcollection}',
-        operation: 'insert',
+        operation: 'create',
         documentId: boundary.id,
         data: boundary.toMap(),
         priority: SyncPriority.high,
@@ -109,9 +109,23 @@ class BoundaryRepository {
     }
   }
 
-  /// מחיקת גבול — disabled (add-only sync)
-  Future<void> delete(String id) async {
-    print('BoundaryRepository: delete() is disabled — areas/layers are add-only.');
+  /// מחיקת גבול (מקומי + סנכרון)
+  Future<void> delete(String id, {required String areaId}) async {
+    await (_db.delete(_db.boundaries)..where((t) => t.id.equals(id))).go();
+    await _syncManager.queueOperation(
+      collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersGgSubcollection}',
+      documentId: id,
+      operation: 'delete',
+      data: {'id': id},
+      priority: SyncPriority.high,
+    );
+  }
+
+  /// מחיקת מספר גבולות
+  Future<void> deleteMany(List<String> ids, {required String areaId}) async {
+    for (final id in ids) {
+      await delete(id, areaId: areaId);
+    }
   }
 
   /// המרה מ-Drift ל-Domain

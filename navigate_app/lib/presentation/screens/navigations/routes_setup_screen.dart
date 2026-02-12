@@ -48,13 +48,16 @@ class RoutesSetupScreen extends StatelessWidget {
                   'המערכת תוודא שכל המנווטים והנקודות תקינים.',
               icon: Icons.upload_file,
               color: Colors.blue,
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => RoutesManualUploadScreen(navigation: navigation),
                   ),
                 );
+                if (result == true && context.mounted) {
+                  Navigator.pop(context, true);
+                }
               },
             ),
 
@@ -68,13 +71,16 @@ class RoutesSetupScreen extends StatelessWidget {
                   'לפי ההגדרות והקריטריונים שתבחר.',
               icon: Icons.auto_fix_high,
               color: Colors.green,
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => RoutesAutomaticSetupScreen(navigation: navigation),
                   ),
                 );
+                if (result == true && context.mounted) {
+                  Navigator.pop(context, true);
+                }
               },
             ),
 

@@ -70,7 +70,7 @@ class ClusterRepository {
           );
       await _syncManager.queueOperation(
         collection: '${AppConstants.areasCollection}/${cluster.areaId}/${AppConstants.areaLayersBaSubcollection}',
-        operation: 'insert',
+        operation: 'create',
         documentId: cluster.id,
         data: cluster.toMap(),
         priority: SyncPriority.high,
@@ -111,9 +111,23 @@ class ClusterRepository {
     }
   }
 
-  /// מחיקת ביצה — disabled (add-only sync)
-  Future<void> delete(String id) async {
-    print('ClusterRepository: delete() is disabled — areas/layers are add-only.');
+  /// מחיקת ביצה (מקומי + סנכרון)
+  Future<void> delete(String id, {required String areaId}) async {
+    await (_db.delete(_db.clusters)..where((t) => t.id.equals(id))).go();
+    await _syncManager.queueOperation(
+      collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersBaSubcollection}',
+      documentId: id,
+      operation: 'delete',
+      data: {'id': id},
+      priority: SyncPriority.high,
+    );
+  }
+
+  /// מחיקת מספר ביצות
+  Future<void> deleteMany(List<String> ids, {required String areaId}) async {
+    for (final id in ids) {
+      await delete(id, areaId: areaId);
+    }
   }
 
   /// המרה מ-Drift ל-Domain

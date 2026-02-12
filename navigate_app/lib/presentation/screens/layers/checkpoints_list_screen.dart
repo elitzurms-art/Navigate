@@ -3,6 +3,7 @@ import '../../../domain/entities/area.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
+import '../../../services/auth_service.dart';
 import '../../../core/utils/test_data_generator.dart';
 import 'create_checkpoint_screen.dart';
 import 'edit_checkpoint_screen.dart';
@@ -22,10 +23,16 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
   List<Checkpoint> _checkpoints = [];
   bool _isLoading = true;
 
+  // Multi-select state (developer only)
+  bool _isSelectMode = false;
+  final Set<String> _selectedIds = {};
+  bool _isDeveloper = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkUserRole();
     _loadCheckpoints();
   }
 
@@ -42,6 +49,13 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
     }
   }
 
+  Future<void> _checkUserRole() async {
+    final user = await AuthService().getCurrentUser();
+    if (mounted) {
+      setState(() => _isDeveloper = user?.isDeveloper ?? false);
+    }
+  }
+
   Future<void> _loadCheckpoints() async {
     setState(() => _isLoading = true);
     try {
@@ -55,25 +69,88 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('נקודות ציון - ${widget.area.name}'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
+  void _exitSelectMode() {
+    setState(() {
+      _isSelectMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectedIds.addAll(_checkpoints.map((c) => c.id));
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('מחיקת נקודות ציון'),
+        content: Text('האם למחוק $count נקודות ציון?\n\nהמחיקה תסונכרן לכל המכשירים.'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.science),
-            onPressed: _create20TestCheckpoints,
-            tooltip: 'צור נקודות אקראיות בתוך שטח',
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadCheckpoints,
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
           ),
         ],
       ),
+    );
+    if (confirmed == true) {
+      await _checkpointRepository.deleteMany(
+        _selectedIds.toList(),
+        areaId: widget.area.id,
+      );
+      _exitSelectMode();
+      _loadCheckpoints();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('נמחקו $count נקודות ציון')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteAllCheckpoints() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('מחיקת כל הנקודות'),
+        content: Text('האם למחוק את כל ${_checkpoints.length} הנקודות מהמכשיר?\n\nהנקודות ב-Firestore לא יימחקו.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק הכל'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      final deleted = await _checkpointRepository.deleteByArea(widget.area.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('נמחקו $deleted נקודות מהמכשיר')),
+        );
+        _loadCheckpoints();
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _isSelectMode ? _buildSelectModeAppBar() : _buildNormalAppBar(),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _checkpoints.isEmpty
@@ -97,23 +174,38 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
                   itemBuilder: (context, index) {
                     final checkpoint = _checkpoints[index];
                     final color = checkpoint.color == 'blue' ? Colors.blue : Colors.green;
+                    final isSelected = _selectedIds.contains(checkpoint.id);
 
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      color: isSelected ? Colors.red.shade50 : null,
                       child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: color,
-                          child: Text(
-                            '${checkpoint.sequenceNumber}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
+                        leading: _isSelectMode
+                            ? Checkbox(
+                                value: isSelected,
+                                onChanged: (_) {
+                                  setState(() {
+                                    if (isSelected) {
+                                      _selectedIds.remove(checkpoint.id);
+                                    } else {
+                                      _selectedIds.add(checkpoint.id);
+                                    }
+                                  });
+                                },
+                              )
+                            : CircleAvatar(
+                                backgroundColor: color,
+                                child: Text(
+                                  '${checkpoint.sequenceNumber}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
                         title: Text(checkpoint.name),
                         subtitle: Text(checkpoint.description),
-                        trailing: PopupMenuButton(
+                        trailing: _isSelectMode ? null : PopupMenuButton(
                           itemBuilder: (context) => [
                             const PopupMenuItem(
                               value: 'edit',
@@ -144,24 +236,94 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
                             }
                           },
                         ),
+                        onTap: _isSelectMode
+                            ? () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedIds.remove(checkpoint.id);
+                                  } else {
+                                    _selectedIds.add(checkpoint.id);
+                                  }
+                                });
+                              }
+                            : null,
+                        onLongPress: _isDeveloper && !_isSelectMode
+                            ? () {
+                                setState(() {
+                                  _isSelectMode = true;
+                                  _selectedIds.add(checkpoint.id);
+                                });
+                              }
+                            : null,
                       ),
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CreateCheckpointScreen(area: widget.area),
+      floatingActionButton: _isSelectMode
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => CreateCheckpointScreen(area: widget.area),
+                  ),
+                );
+                if (result == true) {
+                  _loadCheckpoints();
+                }
+              },
+              child: const Icon(Icons.add),
             ),
-          );
-          if (result == true) {
-            _loadCheckpoints();
-          }
-        },
-        child: const Icon(Icons.add),
+    );
+  }
+
+  AppBar _buildNormalAppBar() {
+    return AppBar(
+      title: Text('נקודות ציון - ${widget.area.name}'),
+      backgroundColor: Theme.of(context).primaryColor,
+      foregroundColor: Colors.white,
+      actions: [
+        if (_checkpoints.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: _deleteAllCheckpoints,
+            tooltip: 'מחק את כל הנקודות',
+          ),
+        IconButton(
+          icon: const Icon(Icons.science),
+          onPressed: _create20TestCheckpoints,
+          tooltip: 'צור נקודות אקראיות בתוך שטח',
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: _loadCheckpoints,
+        ),
+      ],
+    );
+  }
+
+  AppBar _buildSelectModeAppBar() {
+    return AppBar(
+      title: Text('${_selectedIds.length} נבחרו'),
+      backgroundColor: Colors.red,
+      foregroundColor: Colors.white,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectMode,
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.select_all),
+          onPressed: _selectAll,
+          tooltip: 'בחר הכל',
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete),
+          onPressed: _selectedIds.isNotEmpty ? _deleteSelected : null,
+          tooltip: 'מחק נבחרים',
+        ),
+      ],
     );
   }
 
@@ -423,5 +585,4 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
       }
     }
   }
-
 }

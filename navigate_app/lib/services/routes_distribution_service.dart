@@ -94,9 +94,15 @@ class RoutesDistributionService {
       print('⚠️ אזהרה: לא מבוצע סינון לפי גבול! כל הנקודות זמינות.');
     }
 
-    if (availableCheckpoints.length < navigators.length * checkpointsPerNavigator) {
+    // חישוב נקודות שזמינות בפועל (בניכוי התחלה/סיום שאינן מחולקות)
+    int excludedCount = 0;
+    if (startPointId != null) excludedCount++;
+    if (endPointId != null && endPointId != startPointId) excludedCount++;
+    final effectiveAvailable = availableCheckpoints.length - excludedCount;
+
+    if (effectiveAvailable < navigators.length * checkpointsPerNavigator) {
       throw Exception(
-        'אין מספיק נקודות: ${availableCheckpoints.length} נקודות זמינות, '
+        'אין מספיק נקודות: $effectiveAvailable נקודות זמינות לחלוקה, '
         'נדרשות ${navigators.length * checkpointsPerNavigator} נקודות '
         '(${navigators.length} מנווטים × $checkpointsPerNavigator נקודות)'
       );
@@ -156,8 +162,11 @@ class RoutesDistributionService {
           .toList();
 
       if (availableCandidates.length < checkpointsPerNavigator) {
-        print('⚠️ לא מספיק נקודות זמינות');
-        continue;
+        print('⚠️ לא מספיק נקודות זמינות למנווט ${i + 1} (${availableCandidates.length} < $checkpointsPerNavigator)');
+        throw Exception(
+          'לא מספיק נקודות למנווט ${i + 1}/${navigators.length}: '
+          '${availableCandidates.length} נקודות זמינות, נדרשות $checkpointsPerNavigator'
+        );
       }
 
       // אסטרטגיה: נבחר נקודות באופן איטרטיבי עד שנמצא שילוב בטווח
@@ -240,6 +249,7 @@ class RoutesDistributionService {
           selectedCheckpoints,
           startPointId,
           endPointId,
+          availableCheckpoints,
         );
       } else {
         // סדר כלשהו (המנווט יבחר)
@@ -285,6 +295,7 @@ class RoutesDistributionService {
     List<Checkpoint> checkpoints,
     String? startPointId,
     String? endPointId,
+    List<Checkpoint> allCheckpoints,
   ) {
     if (checkpoints.isEmpty) return [];
 
@@ -297,8 +308,19 @@ class RoutesDistributionService {
     List<Checkpoint> remaining = List.from(checkpoints);
     List<String> sequence = [];
 
-    // נקודת ההתייחסות הראשונה
-    Checkpoint current = remaining.first;
+    // אם יש נקודת התחלה, נתחיל מהנקודה הקרובה אליה
+    Checkpoint current;
+    if (startPointId != null) {
+      final startCp = allCheckpoints.where((cp) => cp.id == startPointId).firstOrNull;
+      if (startCp != null) {
+        // מוצאים את הנקודה הקרובה ביותר לנקודת ההתחלה
+        current = _findNearestCheckpoint(startCp.coordinates, remaining) ?? remaining.first;
+      } else {
+        current = remaining.first;
+      }
+    } else {
+      current = remaining.first;
+    }
 
     while (remaining.isNotEmpty) {
       // מציאת הנקודה הקרובה ביותר

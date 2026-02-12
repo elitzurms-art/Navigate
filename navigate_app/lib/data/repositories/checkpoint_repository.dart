@@ -116,9 +116,28 @@ class CheckpointRepository {
     }
   }
 
-  /// מחיקת נקודת ציון — disabled (add-only sync)
-  Future<void> delete(String id) async {
-    print('CheckpointRepository: delete() is disabled — areas/layers are add-only.');
+  /// מחיקת נקודת ציון (מקומי + סנכרון)
+  Future<void> delete(String id, {required String areaId}) async {
+    await (_db.delete(_db.checkpoints)..where((t) => t.id.equals(id))).go();
+    await _syncManager.queueOperation(
+      collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
+      documentId: id,
+      operation: 'delete',
+      data: {'id': id},
+      priority: SyncPriority.high,
+    );
+  }
+
+  /// מחיקת מספר נקודות ציון
+  Future<void> deleteMany(List<String> ids, {required String areaId}) async {
+    for (final id in ids) {
+      await delete(id, areaId: areaId);
+    }
+  }
+
+  /// מחיקת כל נקודות הציון של שטח מסוים (מקומי בלבד — לא מוחק מ-Firestore)
+  Future<int> deleteByArea(String areaId) async {
+    return await (_db.delete(_db.checkpoints)..where((t) => t.areaId.equals(areaId))).go();
   }
 
   /// המרה מטבלה לישות דומיין

@@ -74,7 +74,7 @@ class SafetyPointRepository {
           );
       await _syncManager.queueOperation(
         collection: '${AppConstants.areasCollection}/${point.areaId}/${AppConstants.areaLayersNbSubcollection}',
-        operation: 'insert',
+        operation: 'create',
         documentId: point.id,
         data: point.toMap(),
         priority: SyncPriority.high,
@@ -118,9 +118,23 @@ class SafetyPointRepository {
     }
   }
 
-  /// מחיקת נקודת בטיחות — disabled (add-only sync)
-  Future<void> delete(String id) async {
-    print('SafetyPointRepository: delete() is disabled — areas/layers are add-only.');
+  /// מחיקת נקודת בטיחות (מקומי + סנכרון)
+  Future<void> delete(String id, {required String areaId}) async {
+    await (_db.delete(_db.safetyPoints)..where((t) => t.id.equals(id))).go();
+    await _syncManager.queueOperation(
+      collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNbSubcollection}',
+      documentId: id,
+      operation: 'delete',
+      data: {'id': id},
+      priority: SyncPriority.high,
+    );
+  }
+
+  /// מחיקת מספר נקודות בטיחות
+  Future<void> deleteMany(List<String> ids, {required String areaId}) async {
+    for (final id in ids) {
+      await delete(id, areaId: areaId);
+    }
   }
 
   /// המרה מ-Drift ל-Domain

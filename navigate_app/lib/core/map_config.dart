@@ -66,6 +66,18 @@ class MapConfig {
     }
   }
 
+  /// גודל אריח משוער ב-KB לפי סוג מפה
+  double estimatedTileSizeKB(MapType type) {
+    switch (type) {
+      case MapType.standard:
+        return 15.0;
+      case MapType.topographic:
+        return 25.0;
+      case MapType.satellite:
+        return 40.0;
+    }
+  }
+
   /// תווית בעברית
   String label(MapType type) {
     switch (type) {

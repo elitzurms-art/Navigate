@@ -4,6 +4,7 @@ import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../services/auth_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'create_boundary_screen.dart';
 import 'edit_boundary_screen.dart';
@@ -26,10 +27,16 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
   Map<String, int> _checkpointsPerBoundary = {}; // ספירה לכל גבול
   bool _isLoading = true;
 
+  // Multi-select state (developer only)
+  bool _isSelectMode = false;
+  final Set<String> _selectedIds = {};
+  bool _isDeveloper = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkUserRole();
     _loadBoundaries();
   }
 
@@ -43,6 +50,13 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _loadBoundaries();
+    }
+  }
+
+  Future<void> _checkUserRole() async {
+    final user = await AuthService().getCurrentUser();
+    if (mounted) {
+      setState(() => _isDeveloper = user?.isDeveloper ?? false);
     }
   }
 
@@ -79,6 +93,54 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה בטעינת גבולות: $e')),
+        );
+      }
+    }
+  }
+
+  void _exitSelectMode() {
+    setState(() {
+      _isSelectMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectedIds.addAll(_boundaries.map((b) => b.id));
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('מחיקת גבולות'),
+        content: Text('האם למחוק $count גבולות?\n\nהמחיקה תסונכרן לכל המכשירים.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _repository.deleteMany(
+        _selectedIds.toList(),
+        areaId: widget.area.id,
+      );
+      _exitSelectMode();
+      _loadBoundaries();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('נמחקו $count גבולות')),
         );
       }
     }
@@ -146,7 +208,7 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: _isSelectMode ? _buildSelectModeAppBar() : AppBar(
         title: Text('גבולות גדוד - ${widget.area.name}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
@@ -182,19 +244,34 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
                   itemCount: _boundaries.length,
                   itemBuilder: (context, index) {
                     final boundary = _boundaries[index];
+                    final isSelected = _selectedIds.contains(boundary.id);
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      color: isSelected ? Colors.red.shade50 : null,
                       child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.black.withOpacity(0.1),
-                          child: const Icon(Icons.border_all, color: Colors.black),
-                        ),
+                        leading: _isSelectMode
+                            ? Checkbox(
+                                value: isSelected,
+                                onChanged: (_) {
+                                  setState(() {
+                                    if (isSelected) {
+                                      _selectedIds.remove(boundary.id);
+                                    } else {
+                                      _selectedIds.add(boundary.id);
+                                    }
+                                  });
+                                },
+                              )
+                            : CircleAvatar(
+                                backgroundColor: Colors.black.withOpacity(0.1),
+                                child: const Icon(Icons.border_all, color: Colors.black),
+                              ),
                         title: Text(boundary.name),
                         subtitle: Text(
                           'פוליגון: ${boundary.coordinates.length} נקודות • '
                           'נ.צ. בשטח: ${_checkpointsPerBoundary[boundary.id] ?? 0}',
                         ),
-                        trailing: PopupMenuButton(
+                        trailing: _isSelectMode ? null : PopupMenuButton(
                           itemBuilder: (context) => [
                             const PopupMenuItem(
                               value: 'view',
@@ -228,25 +305,69 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
                             }
                           },
                         ),
-                        onTap: () => _viewBoundary(boundary),
+                        onTap: _isSelectMode
+                            ? () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedIds.remove(boundary.id);
+                                  } else {
+                                    _selectedIds.add(boundary.id);
+                                  }
+                                });
+                              }
+                            : () => _viewBoundary(boundary),
+                        onLongPress: _isDeveloper && !_isSelectMode
+                            ? () {
+                                setState(() {
+                                  _isSelectMode = true;
+                                  _selectedIds.add(boundary.id);
+                                });
+                              }
+                            : null,
                       ),
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CreateBoundaryScreen(area: widget.area),
+      floatingActionButton: _isSelectMode
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => CreateBoundaryScreen(area: widget.area),
+                  ),
+                );
+                if (result == true) {
+                  _loadBoundaries();
+                }
+              },
+              child: const Icon(Icons.add),
             ),
-          );
-          if (result == true) {
-            _loadBoundaries();
-          }
-        },
-        child: const Icon(Icons.add),
+    );
+  }
+
+  AppBar _buildSelectModeAppBar() {
+    return AppBar(
+      title: Text('${_selectedIds.length} נבחרו'),
+      backgroundColor: Colors.red,
+      foregroundColor: Colors.white,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectMode,
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.select_all),
+          onPressed: _selectAll,
+          tooltip: 'בחר הכל',
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete),
+          onPressed: _selectedIds.isNotEmpty ? _deleteSelected : null,
+          tooltip: 'מחק נבחרים',
+        ),
+      ],
     );
   }
 }

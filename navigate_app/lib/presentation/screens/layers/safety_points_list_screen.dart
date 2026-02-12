@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/entities/area.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../../data/repositories/safety_point_repository.dart';
+import '../../../services/auth_service.dart';
 import 'create_safety_point_screen.dart';
 import 'edit_safety_point_screen.dart';
 
@@ -20,10 +21,16 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
   List<SafetyPoint> _points = [];
   bool _isLoading = true;
 
+  // Multi-select state (developer only)
+  bool _isSelectMode = false;
+  final Set<String> _selectedIds = {};
+  bool _isDeveloper = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkUserRole();
     _loadPoints();
   }
 
@@ -40,6 +47,13 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
     }
   }
 
+  Future<void> _checkUserRole() async {
+    final user = await AuthService().getCurrentUser();
+    if (mounted) {
+      setState(() => _isDeveloper = user?.isDeveloper ?? false);
+    }
+  }
+
   Future<void> _loadPoints() async {
     setState(() => _isLoading = true);
     try {
@@ -53,6 +67,54 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה בטעינת נקודות: $e')),
+        );
+      }
+    }
+  }
+
+  void _exitSelectMode() {
+    setState(() {
+      _isSelectMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectedIds.addAll(_points.map((p) => p.id));
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('מחיקת נקודות בטיחות'),
+        content: Text('האם למחוק $count נקודות בטיחות?\n\nהמחיקה תסונכרן לכל המכשירים.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _repository.deleteMany(
+        _selectedIds.toList(),
+        areaId: widget.area.id,
+      );
+      _exitSelectMode();
+      _loadPoints();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('נמחקו $count נקודות בטיחות')),
         );
       }
     }
@@ -159,7 +221,7 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: _isSelectMode ? _buildSelectModeAppBar() : AppBar(
         title: Text('נת"ב - ${widget.area.name}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
@@ -195,22 +257,37 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
                   itemCount: _points.length,
                   itemBuilder: (context, index) {
                     final point = _points[index];
+                    final isSelected = _selectedIds.contains(point.id);
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      color: isSelected ? Colors.red.shade50 : null,
                       child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: _getSeverityColor(point.severity).withOpacity(0.2),
-                          child: Text(
-                            '${point.sequenceNumber}',
-                            style: TextStyle(
-                              color: _getSeverityColor(point.severity),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
+                        leading: _isSelectMode
+                            ? Checkbox(
+                                value: isSelected,
+                                onChanged: (_) {
+                                  setState(() {
+                                    if (isSelected) {
+                                      _selectedIds.remove(point.id);
+                                    } else {
+                                      _selectedIds.add(point.id);
+                                    }
+                                  });
+                                },
+                              )
+                            : CircleAvatar(
+                                backgroundColor: _getSeverityColor(point.severity).withOpacity(0.2),
+                                child: Text(
+                                  '${point.sequenceNumber}',
+                                  style: TextStyle(
+                                    color: _getSeverityColor(point.severity),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
                         title: Text(point.name),
                         subtitle: Text(_getSeverityLabel(point.severity)),
-                        trailing: PopupMenuButton(
+                        trailing: _isSelectMode ? null : PopupMenuButton(
                           itemBuilder: (context) => [
                             const PopupMenuItem(
                               value: 'view',
@@ -244,25 +321,69 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
                             }
                           },
                         ),
-                        onTap: () => _viewPoint(point),
+                        onTap: _isSelectMode
+                            ? () {
+                                setState(() {
+                                  if (isSelected) {
+                                    _selectedIds.remove(point.id);
+                                  } else {
+                                    _selectedIds.add(point.id);
+                                  }
+                                });
+                              }
+                            : () => _viewPoint(point),
+                        onLongPress: _isDeveloper && !_isSelectMode
+                            ? () {
+                                setState(() {
+                                  _isSelectMode = true;
+                                  _selectedIds.add(point.id);
+                                });
+                              }
+                            : null,
                       ),
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CreateSafetyPointScreen(area: widget.area),
+      floatingActionButton: _isSelectMode
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => CreateSafetyPointScreen(area: widget.area),
+                  ),
+                );
+                if (result == true) {
+                  _loadPoints();
+                }
+              },
+              child: const Icon(Icons.add),
             ),
-          );
-          if (result == true) {
-            _loadPoints();
-          }
-        },
-        child: const Icon(Icons.add),
+    );
+  }
+
+  AppBar _buildSelectModeAppBar() {
+    return AppBar(
+      title: Text('${_selectedIds.length} נבחרו'),
+      backgroundColor: Colors.red,
+      foregroundColor: Colors.white,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectMode,
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.select_all),
+          onPressed: _selectAll,
+          tooltip: 'בחר הכל',
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete),
+          onPressed: _selectedIds.isNotEmpty ? _deleteSelected : null,
+          tooltip: 'מחק נבחרים',
+        ),
+      ],
     );
   }
 }

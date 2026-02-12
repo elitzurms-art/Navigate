@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/session_service.dart';
+import 'services/tile_cache_service.dart';
 import 'core/map_config.dart';
 import 'data/repositories/navigation_tree_repository.dart';
 import 'data/repositories/user_repository.dart';
@@ -33,6 +34,9 @@ void main() async {
       rethrow;
     }
   }
+
+  // אתחול cache אריחי מפה (חייב לפני MapConfig)
+  await TileCacheService().initialize();
 
   // אתחול קונפיגורציית מפה
   await MapConfig().init();

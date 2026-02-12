@@ -5,8 +5,10 @@ import '../../../domain/entities/checkpoint.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../services/routes_distribution_service.dart';
+import '../../../services/navigation_layer_copy_service.dart';
 import 'routes_verification_screen.dart';
 
 /// שלב 2 - הגדרות חלוקה אוטומטית
@@ -24,6 +26,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final NavigationTreeRepository _treeRepo = NavigationTreeRepository();
+  final CheckpointRepository _checkpointRepo = CheckpointRepository();
+  final NavigationLayerCopyService _layerCopyService = NavigationLayerCopyService();
   final RoutesDistributionService _distributionService = RoutesDistributionService();
 
   List<Checkpoint> _checkpoints = [];
@@ -72,24 +76,47 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     setState(() => _isLoading = true);
     try {
       // טעינת נקודות ציון מהשכבות הניווטיות (כבר מסוננות לפי גבול גזרה)
-      final navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
+      var navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
         widget.navigation.id,
       );
 
-      // המרה ל-Checkpoint עם sourceId כ-ID (תאימות לאחור)
-      final checkpoints = navCheckpoints.map((nc) => Checkpoint(
-        id: nc.sourceId,
-        areaId: nc.areaId,
-        name: nc.name,
-        description: nc.description,
-        type: nc.type,
-        color: nc.color,
-        coordinates: nc.coordinates,
-        sequenceNumber: nc.sequenceNumber,
-        labels: nc.labels,
-        createdBy: nc.createdBy,
-        createdAt: nc.createdAt,
-      )).toList();
+      // אם אין נקודות ניווטיות — ננסה להעתיק שכבות מהשטח
+      if (navCheckpoints.isEmpty) {
+        print('DEBUG: No nav checkpoints found, attempting to copy layers from area');
+        await _layerCopyService.copyLayersForNavigation(
+          navigationId: widget.navigation.id,
+          boundaryId: widget.navigation.boundaryLayerId ?? '',
+          areaId: widget.navigation.areaId,
+          createdBy: '',
+        );
+        // ניסיון חוזר לטעינה
+        navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
+          widget.navigation.id,
+        );
+      }
+
+      // אם עדיין אין — טעינה ישירה מנקודות השטח
+      List<Checkpoint> checkpoints;
+      if (navCheckpoints.isEmpty) {
+        print('DEBUG: Still no nav checkpoints, loading area checkpoints directly');
+        checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
+        print('DEBUG: Loaded ${checkpoints.length} area checkpoints as fallback');
+      } else {
+        // המרה ל-Checkpoint עם sourceId כ-ID (תאימות לאחור)
+        checkpoints = navCheckpoints.map((nc) => Checkpoint(
+          id: nc.sourceId,
+          areaId: nc.areaId,
+          name: nc.name,
+          description: nc.description,
+          type: nc.type,
+          color: nc.color,
+          coordinates: nc.coordinates,
+          sequenceNumber: nc.sequenceNumber,
+          labels: nc.labels,
+          createdBy: nc.createdBy,
+          createdAt: nc.createdAt,
+        )).toList();
+      }
 
       // טעינת עץ מבנה
       final tree = await _treeRepo.getById(widget.navigation.treeId);

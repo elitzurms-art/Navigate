@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../../core/map_config.dart';
+import '../../services/tile_cache_service.dart';
 import 'map_type_selector.dart';
 
 /// עוטף FlutterMap עם TileLayer אוטומטי וכפתור בחירת סוג מפה
@@ -35,6 +36,7 @@ class MapWithTypeSelector extends StatelessWidget {
                   urlTemplate: config.urlTemplate(mapType),
                   maxZoom: config.maxZoom(mapType),
                   userAgentPackageName: MapConfig.userAgentPackageName,
+                  tileProvider: TileCacheService().getTileProvider(),
                 ),
                 ...layers,
               ],
