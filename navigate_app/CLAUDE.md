@@ -229,6 +229,18 @@ dart run build_runner build --delete-conflicting-outputs
 
 ---
 
+## מסך ניהול מסגרות (unit_admin_frameworks_screen)
+
+- מנהל מערכת יכול ליצור יחידות משנה מרמתו ועד רמת מחלקה
+- **היררכיה חובה**: כל יחידה נוצרת ברמה הבאה מתחת להורה (לא ניתן לדלג על רמות)
+- כפתור FAB מציג "יצירת X" עם שם הרמה הספציפית (למשל "יצירת גדוד")
+- כפתור "יצירת X" מופיע גם בתוך כרטיס כל יחידה — ליצירת רמה הבאה מתחתיה
+- **fallback לרמה**: אם ל-Unit אין `level`, המסך גוזר אותו מ-`unit.type` דרך `FrameworkLevel.fromUnitType()` ומעדכן את ה-DB
+- תתי-מסגרות (SubFrameworks) מוצגות רק ברמת פלוגה (4) ומטה
+- `FrameworkLevel`: division(1), brigade(2), battalion(3), company(4), platoon(5) — אין רמה מתחת ל-platoon
+
+---
+
 ## מסך הגדרות
 - כללי: שפה, theme
 - מפה: שירות מפות, מפות אופליין

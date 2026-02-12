@@ -554,6 +554,8 @@ class SyncManager {
           Query query = _firestore.collection(path);
           if (lastPullAt != null) {
             query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(lastPullAt));
+          } else {
+            query = query.where('deletedAt', isEqualTo: null);
           }
 
           final snapshot = await query.get().timeout(const Duration(seconds: 30));
@@ -590,9 +592,12 @@ class SyncManager {
 
     Query query = _firestore.collection(collection);
 
-    // שאילתה incremental - רק שינויים חדשים
     if (lastPullAt != null) {
+      // Incremental pull — כולל soft-deleted כדי לעבד מחיקות מקומית
       query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(lastPullAt));
+    } else {
+      // Full pull (התקנה חדשה) — דלג על מסמכים שנמחקו
+      query = query.where('deletedAt', isEqualTo: null);
     }
 
     final snapshot = await query.get().timeout(const Duration(seconds: 30));
