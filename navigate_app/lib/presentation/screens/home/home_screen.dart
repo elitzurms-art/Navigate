@@ -167,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ListTile(
                 leading: const Icon(Icons.military_tech, color: Colors.purple),
                 title: const Text('יחידות'),
+                subtitle: const Text('צפה גם ביחידות משנה', style: TextStyle(fontSize: 11)),
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.push(

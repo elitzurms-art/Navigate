@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'coordinate.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
 
@@ -12,6 +13,7 @@ class AssignedRoute extends Equatable {
   final String status; // 'optimal', 'too_short', 'too_long', 'needs_adjustment'
   final bool isVerified; // האם הציר עבר וידוא
   final bool isApproved; // האם הציר אושר במצב למידה
+  final List<Coordinate> plannedPath; // נקודות ציר שצייר המנווט
 
   const AssignedRoute({
     required this.checkpointIds,
@@ -22,6 +24,7 @@ class AssignedRoute extends Equatable {
     this.status = 'optimal',
     this.isVerified = false,
     this.isApproved = false,
+    this.plannedPath = const [],
   });
 
   AssignedRoute copyWith({
@@ -33,6 +36,7 @@ class AssignedRoute extends Equatable {
     String? status,
     bool? isVerified,
     bool? isApproved,
+    List<Coordinate>? plannedPath,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -43,6 +47,7 @@ class AssignedRoute extends Equatable {
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
       isApproved: isApproved ?? this.isApproved,
+      plannedPath: plannedPath ?? this.plannedPath,
     );
   }
 
@@ -56,6 +61,8 @@ class AssignedRoute extends Equatable {
       'status': status,
       'isVerified': isVerified,
       'isApproved': isApproved,
+      if (plannedPath.isNotEmpty)
+        'plannedPath': plannedPath.map((c) => c.toMap()).toList(),
     };
   }
 
@@ -69,11 +76,16 @@ class AssignedRoute extends Equatable {
       status: map['status'] as String? ?? 'optimal',
       isVerified: map['isVerified'] as bool? ?? false,
       isApproved: map['isApproved'] as bool? ?? false,
+      plannedPath: map['plannedPath'] != null
+          ? (map['plannedPath'] as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : const [],
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, isApproved];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, isApproved, plannedPath];
 }
 
 /// טווח אורך מסלול

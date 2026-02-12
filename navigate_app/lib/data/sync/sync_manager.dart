@@ -317,18 +317,21 @@ class SyncManager {
 
       final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
 
-      // בדיקת קונפליקט גרסאות (רק ל-bidirectional)
-      if (direction == SyncDirection.bidirectional) {
-        final conflictDetected = await _checkVersionConflict(
-          collection: item.collectionName,
-          documentId: item.recordId,
-          localVersion: item.version,
-          localData: data,
-        );
-        if (conflictDetected) {
-          // קונפליקט זוהה - הועבר לתור קונפליקטים, מסמנים כמטופל
-          await _db.markAsSynced(item.id);
-          return;
+      // מחיקות לא צריכות בדיקת קונפליקט — תמיד לבצע
+      if (item.operation != 'delete') {
+        // בדיקת קונפליקט גרסאות (רק ל-bidirectional, לא למחיקות)
+        if (direction == SyncDirection.bidirectional) {
+          final conflictDetected = await _checkVersionConflict(
+            collection: item.collectionName,
+            documentId: item.recordId,
+            localVersion: item.version,
+            localData: data,
+          );
+          if (conflictDetected) {
+            // קונפליקט זוהה - הועבר לתור קונפליקטים, מסמנים כמטופל
+            await _db.markAsSynced(item.id);
+            return;
+          }
         }
       }
 
@@ -518,7 +521,71 @@ class SyncManager {
       }
     }
 
+    // Reconciliation: זיהוי רשומות שנמחקו מ-Firestore (hard delete)
+    await _reconcileDeletedRecords();
+
     print('SyncManager: Pull sync complete.');
+  }
+
+  /// בדיקת רשומות מקומיות מול Firestore — מחיקת רשומות שכבר לא קיימות בשרת
+  ///
+  /// חשוב: מדלגת על רשומות שיש להן פעולת create/update ממתינה בתור הסנכרון,
+  /// כדי למנוע מחיקה של רשומות שנוצרו מקומית אבל עדיין לא הועלו ל-Firestore.
+  Future<void> _reconcileDeletedRecords() async {
+    final collectionsToReconcile = {
+      AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
+      AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
+    };
+
+    for (final entry in collectionsToReconcile.entries) {
+      final collection = entry.key;
+      final getLocalIds = entry.value;
+
+      try {
+        final localIds = await getLocalIds();
+        if (localIds.isEmpty) continue;
+
+        // שליפת כל הרשומות הממתינות בתור הסנכרון לקולקשן הזה
+        // כדי לא למחוק רשומות שעדיין לא הועלו ל-Firestore
+        final pendingItems = await _db.getPendingSyncItemsByCollection(collection);
+        final pendingCreateOrUpdateIds = pendingItems
+            .where((item) => item.operation == 'create' || item.operation == 'update')
+            .map((item) => item.recordId)
+            .toSet();
+
+        // בדיקה בקבוצות של 10 (מגבלת whereIn של Firestore)
+        for (var i = 0; i < localIds.length; i += 10) {
+          final batch = localIds.skip(i).take(10).toList();
+          final snapshot = await _firestore
+              .collection(collection)
+              .where(FieldPath.documentId, whereIn: batch)
+              .get()
+              .timeout(const Duration(seconds: 15));
+
+          final existingIds = snapshot.docs.map((d) => d.id).toSet();
+          // בדיקה גם ל-soft-delete
+          final activeIds = snapshot.docs
+              .where((d) => (d.data())['deletedAt'] == null)
+              .map((d) => d.id)
+              .toSet();
+
+          for (final localId in batch) {
+            // דילוג על רשומות עם create/update ממתין — עדיין לא הועלו לשרת
+            if (pendingCreateOrUpdateIds.contains(localId)) {
+              print('SyncManager: Reconcile — skipping $collection/$localId (pending sync)');
+              continue;
+            }
+
+            if (!existingIds.contains(localId) || !activeIds.contains(localId)) {
+              await _deleteLocalRecord(collection, localId);
+              print('SyncManager: Reconcile — removed orphan $collection/$localId');
+            }
+          }
+        }
+      } catch (e) {
+        print('SyncManager: Error reconciling $collection: $e');
+      }
+    }
   }
 
   /// משיכת שכבות (תת-קולקציות) מכל האזורים
@@ -889,15 +956,30 @@ class SyncManager {
   }
 
   Future<void> _upsertNavigationTree(String id, Map<String, dynamic> data) async {
+    // Firestore stores subFrameworks as array (from toMap()), but Drift stores as JSON string.
+    // Also support old 'frameworks' key for backward compat.
+    String frameworksJson;
+    if (data['frameworksJson'] is String) {
+      frameworksJson = data['frameworksJson'] as String;
+    } else if (data['subFrameworks'] != null) {
+      frameworksJson = jsonEncode(data['subFrameworks']);
+    } else if (data['frameworks'] != null) {
+      frameworksJson = jsonEncode(data['frameworks']);
+    } else {
+      frameworksJson = '[]';
+    }
+
     await _db.into(_db.navigationTrees).insertOnConflictUpdate(
       NavigationTreesCompanion.insert(
         id: id,
         name: data['name'] as String? ?? '',
-        frameworksJson: data['frameworksJson'] as String? ??
-            (data['frameworks'] != null ? jsonEncode(data['frameworks']) : '[]'),
+        frameworksJson: frameworksJson,
         createdBy: data['createdBy'] as String? ?? '',
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+        treeType: Value(data['treeType'] as String?),
+        sourceTreeId: Value(data['sourceTreeId'] as String?),
+        unitId: Value(data['unitId'] as String?),
       ),
     );
   }
@@ -930,6 +1012,22 @@ class SyncManager {
         gpsUpdateIntervalSeconds: (data['gpsUpdateIntervalSeconds'] as num?)?.toInt() ??
             AppConstants.defaultGpsUpdateInterval,
         permissionsJson: data['permissionsJson'] as String? ?? '{}',
+        frameworkId: Value(data['frameworkId'] as String? ?? data['selectedUnitId'] as String?),
+        selectedSubFrameworkIdsJson: Value(
+          data['selectedSubFrameworkIdsJson'] as String? ??
+          (data['selectedSubFrameworkIds'] != null ? jsonEncode(data['selectedSubFrameworkIds']) : null)),
+        selectedParticipantIdsJson: Value(
+          data['selectedParticipantIdsJson'] as String? ??
+          (data['selectedParticipantIds'] != null ? jsonEncode(data['selectedParticipantIds']) : null)),
+        allowOpenMap: Value(data['allowOpenMap'] as bool? ?? false),
+        showSelfLocation: Value(data['showSelfLocation'] as bool? ?? false),
+        showRouteOnMap: Value(data['showRouteOnMap'] as bool? ?? false),
+        routesDistributed: Value(data['routesDistributed'] as bool? ?? false),
+        reviewSettingsJson: Value(data['reviewSettingsJson'] as String? ?? '{"showScoresAfterApproval":true}'),
+        distributeNow: Value(data['distributeNow'] as bool? ?? false),
+        trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
+        systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
+        activeStartTime: Value(_parseDateTime(data['activeStartTime'])),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),

@@ -7,6 +7,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/area_repository.dart';
+import '../../../data/repositories/unit_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import 'create_navigation_screen.dart';
@@ -115,7 +116,15 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       List<NavigationTree> trees = [];
 
       if (session != null && session.unitId.isNotEmpty) {
-        final unitTrees = await treeRepo.getByUnitId(session.unitId);
+        // טעינת עצים של היחידה + כל היחידות שמתחתיה
+        final unitRepo = UnitRepository();
+        final descendantIds = await unitRepo.getDescendantIds(session.unitId);
+        final allUnitIds = [session.unitId, ...descendantIds];
+
+        final List<NavigationTree> unitTrees = [];
+        for (final uid in allUnitIds) {
+          unitTrees.addAll(await treeRepo.getByUnitId(uid));
+        }
         trees = unitTrees;
         final treeIds = unitTrees.map((t) => t.id).toSet();
         filteredNavigations = allNavigations

@@ -331,7 +331,14 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
     setState(() => _isLoading = true);
     try {
       await _treeRepository.update(updatedTree);
-      _adminTree = updatedTree;
+      // עדכון העץ המתאים — העץ של המנהל או עץ של יחידת משנה
+      if (_adminTree?.id == updatedTree.id) {
+        _adminTree = updatedTree;
+      }
+      final idx = _allTrees.indexWhere((t) => t.id == updatedTree.id);
+      if (idx >= 0) {
+        _allTrees[idx] = updatedTree;
+      }
 
       setState(() => _isLoading = false);
 
@@ -1073,10 +1080,29 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
         await unitRepo.update(updatedUnit);
       }
 
+      // יצירת תתי-מסגרות קבועות אוטומטיות לפי רמה
+      final initialSubFrameworks = <SubFramework>[
+        SubFramework(
+          id: '${unit.id}_cmd_mgmt',
+          name: 'מפקדים ומנהלת - ${nameController.text}',
+          userIds: const [],
+          isFixed: true,
+          unitId: unit.id,
+        ),
+        if (rootLevel >= FrameworkLevel.platoon)
+          SubFramework(
+            id: '${unit.id}_soldiers',
+            name: 'חיילים - ${nameController.text}',
+            userIds: const [],
+            isFixed: true,
+            unitId: unit.id,
+          ),
+      ];
+
       final tree = NavigationTree(
         id: treeId,
         name: nameController.text,
-        subFrameworks: const [],
+        subFrameworks: initialSubFrameworks,
         createdBy: _currentUser!.uid,
         createdAt: now,
         updatedAt: now,
@@ -1101,7 +1127,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
   }
 
   /// מחיקת תת-מסגרת מהעץ
-  Future<void> _deleteSubFramework(SubFramework subFramework) async {
+  Future<void> _deleteSubFramework(SubFramework subFramework, NavigationTree tree) async {
     if (subFramework.isFixed) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1131,13 +1157,13 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
       ),
     );
 
-    if (confirmed != true || _adminTree == null) return;
+    if (confirmed != true) return;
 
-    final updatedSubFrameworks = _adminTree!.subFrameworks
+    final updatedSubFrameworks = tree.subFrameworks
         .where((sf) => sf.id != subFramework.id)
         .toList();
 
-    final updatedTree = _adminTree!.copyWith(
+    final updatedTree = tree.copyWith(
       subFrameworks: updatedSubFrameworks,
       updatedAt: DateTime.now(),
     );
@@ -1193,9 +1219,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
   }
 
   /// ייבוא תתי-מסגרות מאקסל
-  Future<void> _importFromExcel(app_unit.Unit unit) async {
-    if (_adminTree == null) return;
-
+  Future<void> _importFromExcel(app_unit.Unit unit, NavigationTree tree) async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -1221,7 +1245,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
       }
 
       // מיזוג תתי-מסגרות מיובאות עם העץ הנוכחי
-      var updatedSubs = List<SubFramework>.from(_adminTree!.subFrameworks);
+      var updatedSubs = List<SubFramework>.from(tree.subFrameworks);
 
       for (final entry in imported.entries) {
         final importedSubs = entry.value;
@@ -1238,7 +1262,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
         }
       }
 
-      final updatedTree = _adminTree!.copyWith(
+      final updatedTree = tree.copyWith(
         subFrameworks: updatedSubs,
         updatedAt: DateTime.now(),
       );
@@ -1273,8 +1297,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
   }
 
   /// ניהול משתמשים בתת-מסגרת
-  Future<void> _manageSubFrameworkUsers(SubFramework subFramework) async {
-    if (_adminTree == null) return;
+  Future<void> _manageSubFrameworkUsers(SubFramework subFramework, NavigationTree tree) async {
 
     final users = List<String>.from(subFramework.userIds);
     final levels = Map<String, String>.from(subFramework.userLevels);
@@ -1410,16 +1433,16 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
         ),
       ),
     ).then((result) {
-      if (result != null && _adminTree != null) {
+      if (result != null) {
         final data = result as Map<String, dynamic>;
         final updatedUsers = data['users'] as List<String>;
         final updatedLevels = data['levels'] as Map<String, String>;
-        final updatedSubs = _adminTree!.subFrameworks.map((sf) {
+        final updatedSubs = tree.subFrameworks.map((sf) {
           return sf.id == subFramework.id
               ? sf.copyWith(userIds: updatedUsers, userLevels: updatedLevels)
               : sf;
         }).toList();
-        final updatedTree = _adminTree!.copyWith(
+        final updatedTree = tree.copyWith(
           subFrameworks: updatedSubs,
           updatedAt: DateTime.now(),
         );
@@ -1896,7 +1919,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
               ),
               const SizedBox(height: 8),
               ...treeSubFrameworks.map((sub) {
-                return _buildSubFrameworkItem(sub);
+                return _buildSubFrameworkItem(sub, _adminTree!);
               }),
             ],
           ],
@@ -2029,9 +2052,9 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                       child: Text('אין תתי-מסגרות',
                           style: TextStyle(color: Colors.grey[500])),
                     )
-                  else
+                  else if (unitTree != null)
                     ...unitSubFrameworks.map((sub) {
-                      return _buildSubFrameworkItem(sub);
+                      return _buildSubFrameworkItem(sub, unitTree!);
                     }),
                 ],
 
@@ -2089,7 +2112,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: () => _importFromExcel(unit),
+                          onPressed: unitTree != null ? () => _importFromExcel(unit, unitTree!) : null,
                           icon: const Icon(Icons.file_upload, size: 18),
                           label: const Text('ייבוא מאקסל'),
                           style: OutlinedButton.styleFrom(
@@ -2131,7 +2154,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
     );
   }
 
-  Widget _buildSubFrameworkItem(SubFramework subFramework) {
+  Widget _buildSubFrameworkItem(SubFramework subFramework, NavigationTree tree) {
     final manualCount =
         subFramework.userIds.where((id) => id.startsWith('manual_')).length;
     final registeredCount = subFramework.userIds.length - manualCount;
@@ -2141,7 +2164,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
       color: Colors.grey[50],
       child: ListTile(
         dense: true,
-        onTap: () => _manageSubFrameworkUsers(subFramework),
+        onTap: () => _manageSubFrameworkUsers(subFramework, tree),
         leading: CircleAvatar(
           backgroundColor: Colors.blue.withValues(alpha: 0.1),
           radius: 16,
@@ -2194,14 +2217,14 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
             IconButton(
               icon: Icon(Icons.people, size: 20, color: Colors.blue[700]),
               onPressed: () =>
-                  _manageSubFrameworkUsers(subFramework),
+                  _manageSubFrameworkUsers(subFramework, tree),
               tooltip: 'נהל משתמשים',
             ),
             if (!subFramework.isFixed)
               IconButton(
                 icon: const Icon(Icons.delete, size: 20, color: Colors.red),
                 onPressed: () =>
-                    _deleteSubFramework(subFramework),
+                    _deleteSubFramework(subFramework, tree),
                 tooltip: 'מחק',
               ),
           ],

@@ -1045,11 +1045,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
             ),
 
             if (_enableLearningWithPhones) ...[
-              CheckboxListTile(
+              SwitchListTile(
                 title: const Text('אפשר לראות את כל הנקודות של כל המנווטים'),
                 value: _showAllCheckpoints,
                 onChanged: (value) {
-                  setState(() => _showAllCheckpoints = value ?? false);
+                  setState(() => _showAllCheckpoints = value);
                 },
               ),
               SwitchListTile(

@@ -128,7 +128,7 @@ class UnitRepository {
     print('DEBUG: Cascade deleting unit: $id');
     try {
       // Find all child units recursively
-      final allDescendantIds = await _getDescendantIds(id);
+      final allDescendantIds = await getDescendantIds(id);
       final allIdsToDelete = [id, ...allDescendantIds];
 
       print('DEBUG: Will cascade delete ${allIdsToDelete.length} units: $allIdsToDelete');
@@ -190,7 +190,7 @@ class UnitRepository {
   }
 
   /// Recursively get all descendant unit IDs
-  Future<List<String>> _getDescendantIds(String parentId) async {
+  Future<List<String>> getDescendantIds(String parentId) async {
     final children = await (_db.select(_db.units)
           ..where((t) => t.parentUnitId.equals(parentId)))
         .get();
@@ -198,7 +198,7 @@ class UnitRepository {
     final result = <String>[];
     for (final child in children) {
       result.add(child.id);
-      result.addAll(await _getDescendantIds(child.id));
+      result.addAll(await getDescendantIds(child.id));
     }
     return result;
   }

@@ -221,7 +221,14 @@ class _HomeRouterState extends State<HomeRouter> {
       }
 
       if (totalHats == 0) {
-        _navigateTo(const HomeScreen());
+        // משתמש רגיל (navigator) ללא כובעים → מסך מנווט "לא משויך"
+        // admin/developer/unit_admin → מסך ניהול
+        final isAdmin = user.role == 'admin' ||
+            user.role == 'developer' ||
+            user.role == 'unit_admin';
+        _navigateTo(isAdmin
+            ? const HomeScreen()
+            : const NavigatorHomeScreen());
       } else if (totalHats == 1) {
         final hat = unitHats.first.hats.first;
         await _sessionService.saveSession(hat);
@@ -234,7 +241,7 @@ class _HomeRouterState extends State<HomeRouter> {
     } catch (e, stackTrace) {
       print('DEBUG HomeRouter: ERROR: $e');
       print('DEBUG HomeRouter: $stackTrace');
-      _navigateTo(const HomeScreen());
+      _navigateTo(const NavigatorHomeScreen());
     }
   }
 

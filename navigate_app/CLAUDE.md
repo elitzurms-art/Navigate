@@ -169,6 +169,18 @@ dart run build_runner build --delete-conflicting-outputs
 - מאחסן `subFrameworks` (List\<SubFramework\>) ישירות — **אין** רשימת frameworks
 - `SubFramework` כולל `unitId` לקישור ליחידה
 - `fromMap()` כולל backward compat: קורא key `frameworks` ישן ומשטח
+- **Firestore**: תתי-מסגרות נשמרות כ-array בשדה `subFrameworks` בתוך מסמך עץ ב-collection `navigator_trees`
+- **Drift**: תתי-מסגרות נשמרות כ-JSON string בעמודה `frameworksJson` בטבלת `NavigationTrees`
+
+### תתי-מסגרות קבועות (isFixed)
+- כל יחידה ברמת פלוגה (4) ומעלה מקבלת תת-מסגרת קבועה: **"מפקדים ומנהלת"**
+- יחידה ברמת מחלקה (5) מקבלת גם: **"חיילים"**
+- תתי-מסגרות קבועות (`isFixed: true`) **לא ניתנות למחיקה** — כפתור מחיקה מוסתר + בדיקה בקוד
+- כל יצירת יחידה/עץ חייבת לכלול תתי-מסגרות קבועות — גם `_addChildFramework()` וגם `_createFirstFramework()`
+
+### כלל הרשאות תתי-מסגרות
+- **"אם אתה רואה — אתה יכול לערוך"**: מנהל יחידת-על רואה ויכול לערוך תתי-מסגרות של יחידות משנה
+- פונקציות עריכה (`_deleteSubFramework`, `_manageSubFrameworkUsers`, `_importFromExcel`) מקבלות את העץ הרלוונטי כפרמטר — לא תלויות ב-`_adminTree` בלבד
 
 ### Navigation
 - `selectedUnitId` (שם ישן: `frameworkId`, עמודת DB נשארת `frameworkId` לתאימות)
@@ -250,6 +262,11 @@ dart run build_runner build --delete-conflicting-outputs
 - **Retry**: exponential backoff, מקסימום 10 ניסיונות
 - **Auth**: בודק `_isAuthenticated` לפני כל סנכרון
 - `_didInitialSync` מונע סנכרון ראשוני כפול
+
+### מלכודות סנכרון (upsert)
+- **`_upsertNavigationTree`**: Firestore שולח `subFrameworks` כ-array, Drift מאחסן כ-`frameworksJson` (string). חובה לעשות `jsonEncode` בזמן pull. גם לתמוך ב-`frameworks` (פורמט ישן) ו-`frameworksJson` (string ישיר)
+- **`_upsertNavigation`**: חובה לכלול **את כל** שדות הניווט — כולל `frameworkId`, `selectedSubFrameworkIdsJson`, `selectedParticipantIdsJson`, שדות bool (allowOpenMap, showSelfLocation, showRouteOnMap, routesDistributed, distributeNow), `reviewSettingsJson`, שדות זמן (trainingStartTime, systemCheckStartTime, activeStartTime). שדה שלא נכתב מקבל null/default ומוחק נתונים!
+- **Firestore Lists → Drift JSON**: שדות כמו `selectedSubFrameworkIds` מגיעים מ-Firestore כ-List אבל Drift מצפה ל-JSON string — צריך fallback עם `jsonEncode`
 
 ---
 
