@@ -97,12 +97,15 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
       await _navRepo.update(updatedNavigation);
 
       if (mounted) {
-        Navigator.pushReplacement(
+        final result = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => RoutesVerificationScreen(navigation: updatedNavigation),
           ),
         );
+        if (result == true && mounted) {
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       setState(() {

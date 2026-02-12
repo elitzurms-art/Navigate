@@ -36,7 +36,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
   Map<String, bool> _selectedNavigators = {};
-  Map<String, bool> _routeApprovals = {}; // סטטוס אישור לכל ציר
+  // _routeApprovals הוסר — סטטוס נגזר מ-approvalStatus ב-AssignedRoute
   bool _isLoading = false;
   bool _learningStarted = false;
 
@@ -55,7 +55,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
       _selectedNavigators[navigatorId] = true;
-      _routeApprovals[navigatorId] = widget.navigation.routes[navigatorId]?.isApproved ?? false;
     }
   }
 
@@ -102,22 +101,22 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
   }
 
-  /// טעינת הניווט העדכני מה-DB — מחזירה אישורים שנשמרו קודם
+  /// טעינת הניווט העדכני מה-DB
   Future<void> _reloadNavigationFromDb() async {
     try {
       final fresh = await _navRepo.getById(widget.navigation.id);
       if (fresh != null && mounted) {
         setState(() {
           _currentNavigation = fresh;
-          for (final navigatorId in fresh.routes.keys) {
-            _routeApprovals[navigatorId] = fresh.routes[navigatorId]?.isApproved ?? false;
-          }
         });
       }
     } catch (_) {}
   }
 
   Future<void> _approveRoute(String navigatorId) async {
+    final route = _currentNavigation.routes[navigatorId];
+    if (route == null || route.approvalStatus != 'pending_approval') return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -138,16 +137,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
 
     if (confirmed == true) {
-      setState(() {
-        _routeApprovals[navigatorId] = true;
-      });
-
-      // שמירת סטטוס האישור ב-database — שימוש ב-_currentNavigation כדי לא לאבד אישורים קודמים
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-      updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(isApproved: true);
+      updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'approved');
       final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
       await _navRepo.update(updatedNav);
-      _currentNavigation = updatedNav;
+      setState(() => _currentNavigation = updatedNav);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -161,16 +155,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _rejectRoute(String navigatorId) async {
-    setState(() {
-      _routeApprovals[navigatorId] = false;
-    });
-
-    // שמירת סטטוס הדחייה ב-database
     final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(isApproved: false);
+    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'not_submitted');
     final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
     await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
+    setState(() => _currentNavigation = updatedNav);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -190,19 +179,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       ),
     ).then((updated) async {
       if (updated == true) {
-        // הציר נערך - ביטול אישור
-        setState(() {
-          _routeApprovals[navigatorId] = false;
-        });
-
         // טעינה מחדש מה-DB כדי לקבל את הציר המעודכן
         await _reloadNavigationFromDb();
-        // עדכון ביטול האישור
+        // עריכה מחזירה approvalStatus ל-not_submitted
         final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-        updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(isApproved: false);
+        updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'not_submitted');
         final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
         await _navRepo.update(updatedNav);
-        _currentNavigation = updatedNav;
+        setState(() => _currentNavigation = updatedNav);
 
         _loadData();
       }
@@ -229,7 +213,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _finishLearning() async {
-    final allApproved = _routeApprovals.values.every((v) => v);
+    final allApproved = _currentNavigation.routes.values.every((r) => r.isApproved);
 
     if (!allApproved) {
       final confirmed = await showDialog<bool>(
@@ -303,37 +287,43 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.navigation.name),
-            Text(
-              'מצב למידה',
-              style: const TextStyle(fontSize: 14),
-            ),
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (bool didPop, dynamic result) {
+        // הלמידה תמשיך לרוץ ברקע — רק כפתור "סיום למידה" משנה סטטוס
+        // Back button לא עושה כלום מלבד לצאת מהמסך
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.navigation.name),
+              Text(
+                'מצב למידה',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+          actions: [
+            if (widget.isCommander)
+              IconButton(
+                icon: const Icon(Icons.delete_forever),
+                tooltip: 'מחיקת ניווט',
+                onPressed: _deleteNavigation,
+              ),
           ],
+          bottom: TabBar(
+            controller: _tabController,
+            labelColor: Colors.white,
+            tabs: const [
+              Tab(icon: Icon(Icons.table_chart), text: 'טבלה'),
+              Tab(icon: Icon(Icons.map), text: 'מפה'),
+            ],
+          ),
         ),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-        actions: [
-          if (widget.isCommander)
-            IconButton(
-              icon: const Icon(Icons.delete_forever),
-              tooltip: 'מחיקת ניווט',
-              onPressed: _deleteNavigation,
-            ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: Colors.white,
-          tabs: const [
-            Tab(icon: Icon(Icons.table_chart), text: 'טבלה'),
-            Tab(icon: Icon(Icons.map), text: 'מפה'),
-          ],
-        ),
-      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
@@ -390,6 +380,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               ),
             )
           : null,
+      ),
     );
   }
 
@@ -424,12 +415,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           const SizedBox(height: 16),
 
           // טבלת צירים
-          ...widget.navigation.routes.entries.map((entry) {
+          ..._currentNavigation.routes.entries.map((entry) {
             final navigatorId = entry.key;
             final route = entry.value;
-            final isApproved = _routeApprovals[navigatorId] ?? false;
 
-            return _buildRouteCard(navigatorId, route, isApproved);
+            return _buildRouteCard(navigatorId, route);
           }),
         ],
       ),
@@ -444,9 +434,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
+            _buildLegendItem('לא הוגש', Colors.grey),
             _buildLegendItem('ממתין לאישור', Colors.orange),
             _buildLegendItem('מאושר', Colors.green),
-            _buildLegendItem('דורש תיקון', Colors.red),
           ],
         ),
       ),
@@ -470,9 +460,28 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  Widget _buildRouteCard(String navigatorId, domain.AssignedRoute route, bool isApproved) {
-    final statusColor = isApproved ? Colors.green : Colors.orange;
-    final statusText = isApproved ? 'מאושר' : 'ממתין לאישור';
+  Widget _buildRouteCard(String navigatorId, domain.AssignedRoute route) {
+    final approvalStatus = route.approvalStatus;
+
+    final Color statusColor;
+    final IconData statusIcon;
+    final String statusText;
+    switch (approvalStatus) {
+      case 'approved':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        statusText = 'מאושר';
+        break;
+      case 'pending_approval':
+        statusColor = Colors.orange;
+        statusIcon = Icons.hourglass_top;
+        statusText = 'ממתין לאישור';
+        break;
+      default: // not_submitted
+        statusColor = Colors.grey;
+        statusIcon = Icons.radio_button_unchecked;
+        statusText = 'לא הוגש';
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -496,18 +505,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.2),
+                    color: statusColor.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: statusColor, width: 2),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        isApproved ? Icons.check_circle : Icons.pending,
-                        size: 16,
-                        color: statusColor,
-                      ),
+                      Icon(statusIcon, size: 16, color: statusColor),
                       const SizedBox(width: 6),
                       Text(
                         statusText,
@@ -548,18 +553,21 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               const SizedBox(height: 16),
               Row(
                 children: [
-                  if (!isApproved)
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _approveRoute(navigatorId),
-                        icon: const Icon(Icons.check_circle, size: 18),
-                        label: const Text('אשר ציר'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.green,
-                        ),
+                  // כפתור אישור — פעיל רק אם pending_approval
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: approvalStatus == 'pending_approval'
+                          ? () => _approveRoute(navigatorId)
+                          : null,
+                      icon: const Icon(Icons.check_circle, size: 18),
+                      label: const Text('אשר ציר'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.green,
                       ),
                     ),
-                  if (isApproved) ...[
+                  ),
+                  if (approvalStatus == 'approved') ...[
+                    const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _rejectRoute(navigatorId),
@@ -601,8 +609,24 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: widget.navigation.routes.keys.map((navigatorId) {
-                final isApproved = _routeApprovals[navigatorId] ?? false;
+              children: _currentNavigation.routes.entries.map((entry) {
+                final navigatorId = entry.key;
+                final approvalStatus = entry.value.approvalStatus;
+                final Color chipColor;
+                final IconData chipIcon;
+                switch (approvalStatus) {
+                  case 'approved':
+                    chipColor = Colors.green;
+                    chipIcon = Icons.check_circle;
+                    break;
+                  case 'pending_approval':
+                    chipColor = Colors.orange;
+                    chipIcon = Icons.hourglass_top;
+                    break;
+                  default:
+                    chipColor = Colors.grey;
+                    chipIcon = Icons.radio_button_unchecked;
+                }
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: FilterChip(
@@ -611,11 +635,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       children: [
                         Text(navigatorId),
                         const SizedBox(width: 6),
-                        Icon(
-                          isApproved ? Icons.check_circle : Icons.pending,
-                          size: 14,
-                          color: isApproved ? Colors.green : Colors.orange,
-                        ),
+                        Icon(chipIcon, size: 14, color: chipColor),
                       ],
                     ),
                     selected: _selectedNavigators[navigatorId] ?? false,
@@ -708,15 +728,24 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
 
-    for (final entry in widget.navigation.routes.entries) {
+    for (final entry in _currentNavigation.routes.entries) {
       final navigatorId = entry.key;
       final route = entry.value;
 
       if (_selectedNavigators[navigatorId] != true) continue;
 
-      // צבע לפי סטטוס אישור
-      final isApproved = _routeApprovals[navigatorId] ?? false;
-      final color = isApproved ? Colors.green : Colors.orange;
+      // צבע לפי סטטוס אישור — 3 מצבים
+      final Color color;
+      switch (route.approvalStatus) {
+        case 'approved':
+          color = Colors.green;
+          break;
+        case 'pending_approval':
+          color = Colors.orange;
+          break;
+        default:
+          color = Colors.grey;
+      }
 
       // בניית הציר המלא
       List<LatLng> points = [];
@@ -754,7 +783,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             polylines: [
               Polyline(
                 points: points,
-                strokeWidth: isApproved ? 4 : 3,
+                strokeWidth: route.approvalStatus == 'approved' ? 4 : 3,
                 color: color,
               ),
             ],

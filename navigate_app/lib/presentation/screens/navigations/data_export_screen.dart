@@ -21,7 +21,6 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
-import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../core/utils/geometry_utils.dart';
@@ -42,7 +41,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final ClusterRepository _clusterRepo = ClusterRepository();
-  final NavigationRepository _navRepo = NavigationRepository();
+
 
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
@@ -404,59 +403,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
     );
   }
 
-  String _getSelectedLayers() {
-    List<String> layers = [];
-    if (_showNZ) layers.add('נ.צ');
-    if (_showNB) layers.add('נ.ב');
-    if (_showGG) layers.add('ג.ג');
-    if (_showBA) layers.add('ב.א');
-    return layers.join(', ');
-  }
-
-  Future<void> _finishPreparation() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('סיום הכנות'),
-        content: const Text(
-          'האם לסיים את ההכנות ולשנות את הסטטוס ל"מוכן"?\n\n'
-          'לאחר מכן תוכל להפעיל מצב "למידה לניווט".'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.green),
-            child: const Text('סיים הכנות'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true) {
-      setState(() => _isLoading = true);
-
-      final updatedNavigation = widget.navigation.copyWith(
-        status: 'ready',
-        updatedAt: DateTime.now(),
-      );
-      await _navRepo.update(updatedNavigation);
-
-      if (mounted) {
-        Navigator.popUntil(context, (route) => route.isFirst);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('ההכנות הושלמו! הניווט מוכן להפעלה.'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -514,52 +460,19 @@ class _DataExportScreenState extends State<DataExportScreen> {
 
                   const SizedBox(height: 32),
 
-                  // כפתור סיום הכנות
+                  // כפתור חזרה לתפריט
                   SizedBox(
                     height: 56,
                     child: ElevatedButton.icon(
-                      onPressed: _finishPreparation,
-                      icon: const Icon(Icons.check_circle, size: 28),
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.arrow_back, size: 28),
                       label: const Text(
-                        'סיום הכנות ושמירה',
+                        'חזרה לתפריט',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
+                        backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // הסבר על השלב הבא
-                  Card(
-                    color: Colors.blue[50],
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(Icons.info_outline, color: Colors.blue[700]),
-                              const SizedBox(width: 8),
-                              Text(
-                                'השלב הבא:',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'לאחר סיום ההכנות, הניווט ישונה לסטטוס "מוכן" '
-                            'ותוכל להפעיל מצב "למידה לניווט" או לתזמן הפעלה אוטומטית.',
-                          ),
-                        ],
                       ),
                     ),
                   ),
@@ -624,200 +537,15 @@ class _DataExportScreenState extends State<DataExportScreen> {
   }
 
   Widget _buildMapExportCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.map, size: 32, color: Colors.orange),
-                ),
-                const SizedBox(width: 16),
-                const Expanded(
-                  child: Text(
-                    'מפה עם שכבות',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // שכבות עם בהירות נפרדת
-            const Text('שכבות ובהירות:', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-
-            // סינון נ.צ - רק מחולקות
-            if (widget.navigation.routes.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: SwitchListTile(
-                  title: const Text('רק נ.צ מחולקות'),
-                  subtitle: Text(
-                    _showDistributedOnly
-                        ? 'מציג ${_filteredCheckpoints.length} נ.צ (כולל התחלה/סיום)'
-                        : 'מציג את כל הנ.צ בג.ג (${_filteredCheckpoints.length})',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                  value: _showDistributedOnly,
-                  dense: true,
-                  onChanged: (v) => setState(() => _showDistributedOnly = v),
-                  activeColor: Colors.blue,
-                ),
-              ),
-
-            // נ.צ - נקודות ציון (כחול - צבע מקורי)
-            _buildLayerControl(
-              title: 'נ.צ (נקודות ציון)',
-              enabled: _showNZ,
-              opacity: _nzOpacity,
-              onEnabledChanged: (value) => setState(() => _showNZ = value),
-              onOpacityChanged: (value) => setState(() => _nzOpacity = value),
-              color: const Color(0xFF2196F3), // כחול מקורי
-            ),
-
-            const SizedBox(height: 12),
-
-            // נ.ב - נקודות בטיחות (ירוק - צבע מקורי)
-            _buildLayerControl(
-              title: 'נ.ב (נקודות בטיחות)',
-              enabled: _showNB,
-              opacity: _nbOpacity,
-              onEnabledChanged: (value) => setState(() => _showNB = value),
-              onOpacityChanged: (value) => setState(() => _nbOpacity = value),
-              color: const Color(0xFF4CAF50), // ירוק מקורי
-            ),
-
-            const SizedBox(height: 12),
-
-            // ג.ג - גבולות גזרה (שחור - צבע מקורי)
-            _buildLayerControl(
-              title: 'ג.ג (גבולות גזרה)',
-              enabled: _showGG,
-              opacity: _ggOpacity,
-              onEnabledChanged: (value) => setState(() => _showGG = value),
-              onOpacityChanged: (value) => setState(() => _ggOpacity = value),
-              color: const Color(0xFF000000), // שחור מקורי
-            ),
-
-            const SizedBox(height: 12),
-
-            // ב.א - ביצי אשכולות (אדום - צבע מקורי)
-            _buildLayerControl(
-              title: 'ב.א (ביצי אשכולות)',
-              enabled: _showBA,
-              opacity: _baOpacity,
-              onEnabledChanged: (value) => setState(() => _showBA = value),
-              onOpacityChanged: (value) => setState(() => _baOpacity = value),
-              color: const Color(0xFFF44336), // אדום מקורי
-            ),
-
-            const SizedBox(height: 16),
-
-            // כפתור ייצוא
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _exportMap,
-                icon: const Icon(Icons.download),
-                label: const Text('ייצא מפה'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _buildExportCard(
+      title: 'ייצא מפה',
+      description: 'ייצא מפה עם שכבות (נ.צ, ג.ג, נ.ב, ב.א) לקובץ PDF',
+      icon: Icons.map,
+      color: Colors.orange,
+      onTap: _exportMap,
     );
   }
 
-  Widget _buildLayerControl({
-    required String title,
-    required bool enabled,
-    required double opacity,
-    required ValueChanged<bool> onEnabledChanged,
-    required ValueChanged<double> onOpacityChanged,
-    required Color color,
-  }) {
-    return Card(
-      color: enabled ? color.withOpacity(0.05) : Colors.grey[100],
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // שורה עליונה: checkbox + כותרת
-            Row(
-              children: [
-                Checkbox(
-                  value: enabled,
-                  onChanged: (value) => onEnabledChanged(value ?? false),
-                  activeColor: color,
-                ),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: enabled ? Colors.black : Colors.grey,
-                    ),
-                  ),
-                ),
-                if (enabled)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${(opacity * 100).toInt()}%',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: color,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-
-            // slider בהירות (רק אם מופעל)
-            if (enabled) ...[
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Slider(
-                      value: opacity,
-                      min: 0.0,
-                      max: 1.0,
-                      divisions: 10,
-                      activeColor: color,
-                      onChanged: onOpacityChanged,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// Get color based on safety point severity

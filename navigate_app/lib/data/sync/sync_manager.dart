@@ -1057,17 +1057,25 @@ class SyncManager {
         navigationType: Value(data['navigationType'] as String?),
         executionOrder: Value(data['executionOrder'] as String?),
         boundaryLayerId: Value(data['boundaryLayerId'] as String?),
-        routeLengthJson: Value(data['routeLengthJson'] as String?),
-        safetyTimeJson: Value(data['safetyTimeJson'] as String?),
-        learningSettingsJson: data['learningSettingsJson'] as String? ?? '{}',
-        verificationSettingsJson: data['verificationSettingsJson'] as String? ?? '{}',
-        alertsJson: data['alertsJson'] as String? ?? '{}',
-        displaySettingsJson: data['displaySettingsJson'] as String? ?? '{}',
-        routesJson: data['routesJson'] as String? ?? '[]',
+        routeLengthJson: Value(data['routeLengthJson'] as String? ??
+            (data['routeLengthKm'] != null ? jsonEncode(data['routeLengthKm']) : null)),
+        safetyTimeJson: Value(data['safetyTimeJson'] as String? ??
+            (data['safetyTime'] != null ? jsonEncode(data['safetyTime']) : null)),
+        learningSettingsJson: data['learningSettingsJson'] as String? ??
+            (data['learningSettings'] != null ? jsonEncode(data['learningSettings']) : '{}'),
+        verificationSettingsJson: data['verificationSettingsJson'] as String? ??
+            (data['verificationSettings'] != null ? jsonEncode(data['verificationSettings']) : '{}'),
+        alertsJson: data['alertsJson'] as String? ??
+            (data['alerts'] != null ? jsonEncode(data['alerts']) : '{}'),
+        displaySettingsJson: data['displaySettingsJson'] as String? ??
+            (data['displaySettings'] != null ? jsonEncode(data['displaySettings']) : '{}'),
+        routesJson: data['routesJson'] as String? ??
+            (data['routes'] != null ? jsonEncode(data['routes']) : '[]'),
         routesStage: Value(data['routesStage'] as String?),
         gpsUpdateIntervalSeconds: (data['gpsUpdateIntervalSeconds'] as num?)?.toInt() ??
             AppConstants.defaultGpsUpdateInterval,
-        permissionsJson: data['permissionsJson'] as String? ?? '{}',
+        permissionsJson: data['permissionsJson'] as String? ??
+            (data['permissions'] != null ? jsonEncode(data['permissions']) : '{}'),
         frameworkId: Value(data['frameworkId'] as String? ?? data['selectedUnitId'] as String?),
         selectedSubFrameworkIdsJson: Value(
           data['selectedSubFrameworkIdsJson'] as String? ??
@@ -1079,7 +1087,8 @@ class SyncManager {
         showSelfLocation: Value(data['showSelfLocation'] as bool? ?? false),
         showRouteOnMap: Value(data['showRouteOnMap'] as bool? ?? false),
         routesDistributed: Value(data['routesDistributed'] as bool? ?? false),
-        reviewSettingsJson: Value(data['reviewSettingsJson'] as String? ?? '{"showScoresAfterApproval":true}'),
+        reviewSettingsJson: Value(data['reviewSettingsJson'] as String? ??
+            (data['reviewSettings'] != null ? jsonEncode(data['reviewSettings']) : '{"showScoresAfterApproval":true}')),
         distributeNow: Value(data['distributeNow'] as bool? ?? false),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),

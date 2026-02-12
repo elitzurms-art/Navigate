@@ -312,7 +312,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     }
 
     // תצוגה למפקד
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (bool didPop) {
+        // בדיקת המערכות תמשיך לרוץ ברקע — רק כפתור "סיום בדיקת מערכות" משנה סטטוס
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -401,6 +406,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1493,7 +1499,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       return '$_batteryLevel%';
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (bool didPop) {
+        // בדיקת המערכות תמשיך לרוץ ברקע — רק כפתור "סיום בדיקת מערכות" משנה סטטוס
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1703,6 +1714,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 ],
               ),
             ),
+      ),
     );
   }
 

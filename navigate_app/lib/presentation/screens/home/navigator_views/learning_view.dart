@@ -351,11 +351,11 @@ class _LearningViewState extends State<LearningView>
     );
   }
 
-  Future<void> _approveRoute() async {
+  Future<void> _submitRouteForApproval() async {
     final route = _currentNavigation.routes[widget.currentUser.uid];
     if (route == null) return;
 
-    final updatedRoute = route.copyWith(isApproved: true);
+    final updatedRoute = route.copyWith(approvalStatus: 'pending_approval');
     final updatedRoutes = Map<String, domain.AssignedRoute>.from(
       _currentNavigation.routes,
     );
@@ -372,13 +372,13 @@ class _LearningViewState extends State<LearningView>
       widget.onNavigationUpdated(updatedNav);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('הציר אושר בהצלחה')),
+          const SnackBar(content: Text('הציר נשלח לאישור המפקד')),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה באישור: $e')),
+          SnackBar(content: Text('שגיאה בשליחה: $e')),
         );
       }
     }
@@ -391,30 +391,47 @@ class _LearningViewState extends State<LearningView>
       return const Center(child: Text('לא הוקצה ציר'));
     }
 
+    final approvalStatus = route.approvalStatus;
+
+    // צבע, אייקון וטקסט לפי סטטוס
+    final Color statusColor;
+    final IconData statusIcon;
+    final String statusTitle;
+    final String statusSubtitle;
+    switch (approvalStatus) {
+      case 'approved':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        statusTitle = 'הציר מאושר';
+        statusSubtitle = 'שינויים נוספים ידרשו שליחה מחדש';
+        break;
+      case 'pending_approval':
+        statusColor = Colors.orange;
+        statusIcon = Icons.hourglass_top;
+        statusTitle = 'ממתין לאישור';
+        statusSubtitle = 'הציר נשלח למפקד — ממתין לאישור';
+        break;
+      default: // not_submitted
+        statusColor = Colors.red;
+        statusIcon = Icons.warning;
+        statusTitle = 'הציר טרם נשלח';
+        statusSubtitle = 'סקור את הציר ושלח לאישור המפקד';
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // סטטוס אישור
-          if (route.isApproved)
-            Card(
-              color: Colors.green[50],
-              child: const ListTile(
-                leading: Icon(Icons.check_circle, color: Colors.green),
-                title: Text('הציר אושר'),
-                subtitle: Text('שינויים נוספים ידרשו אישור מחדש'),
-              ),
-            )
-          else
-            Card(
-              color: Colors.orange[50],
-              child: const ListTile(
-                leading: Icon(Icons.warning, color: Colors.orange),
-                title: Text('הציר טרם אושר'),
-                subtitle: Text('סקור את הציר ואשר לפני בדיקת מערכות'),
-              ),
+          Card(
+            color: statusColor.withValues(alpha: 0.1),
+            child: ListTile(
+              leading: Icon(statusIcon, color: statusColor),
+              title: Text(statusTitle),
+              subtitle: Text(statusSubtitle),
             ),
+          ),
           const SizedBox(height: 16),
 
           // כפתור עריכת ציר על המפה
@@ -462,20 +479,41 @@ class _LearningViewState extends State<LearningView>
           ),
           const SizedBox(height: 16),
 
-          // כפתור אישור ציר
-          if (!route.isApproved)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _approveRoute,
-                icon: const Icon(Icons.check),
-                label: const Text('אשר ציר'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                ),
+          // כפתור 3-מצבים
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: approvalStatus == 'not_submitted'
+                  ? _submitRouteForApproval
+                  : null,
+              icon: Icon(
+                approvalStatus == 'approved'
+                    ? Icons.check_circle
+                    : approvalStatus == 'pending_approval'
+                        ? Icons.hourglass_top
+                        : Icons.send,
+              ),
+              label: Text(
+                approvalStatus == 'approved'
+                    ? 'ציר מאושר'
+                    : approvalStatus == 'pending_approval'
+                        ? 'ממתין לאישור'
+                        : 'שלח ציר לאישור',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: approvalStatus == 'approved'
+                    ? Colors.green
+                    : approvalStatus == 'pending_approval'
+                        ? Colors.orange
+                        : Colors.red,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: approvalStatus == 'approved'
+                    ? Colors.green.withValues(alpha: 0.7)
+                    : Colors.orange.withValues(alpha: 0.7),
+                disabledForegroundColor: Colors.white.withValues(alpha: 0.9),
               ),
             ),
+          ),
         ],
       ),
     );

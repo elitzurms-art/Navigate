@@ -17,6 +17,7 @@ import '../../../services/auth_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'routes_verification_screen.dart';
+import 'navigation_preparation_screen.dart';
 
 /// מסך יצירת/עריכת ניווט
 class CreateNavigationScreen extends StatefulWidget {
@@ -1793,8 +1794,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
         );
 
-        // חזרה למסך הכנת ניווט
-        Navigator.pop(context, true);
+        // אם זה ניווט חדש - נווט למסך הכנת ניווט
+        if (widget.navigation == null) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => NavigationPreparationScreen(navigation: navigation),
+            ),
+          );
+        } else {
+          // אם זו עריכה - חזור למסך הקודם
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       if (mounted) {

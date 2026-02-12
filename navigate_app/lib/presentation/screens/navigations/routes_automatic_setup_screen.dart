@@ -215,12 +215,15 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       await _navRepo.update(updatedNavigation);
 
       if (mounted) {
-        Navigator.pushReplacement(
+        final result = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => RoutesVerificationScreen(navigation: updatedNavigation),
           ),
         );
+        if (result == true && mounted) {
+          Navigator.pop(context, true);
+        }
       }
     } catch (e) {
       setState(() => _isLoading = false);

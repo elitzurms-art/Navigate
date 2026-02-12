@@ -40,7 +40,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     super.initState();
     // טעינת נתיב קיים אם יש
     final route = widget.navigation.routes[widget.navigatorUid];
-    _wasApproved = route?.isApproved ?? false;
+    _wasApproved = route?.approvalStatus != 'not_submitted';
     if (route != null && route.plannedPath.isNotEmpty) {
       _waypoints = route.plannedPath
           .map((c) => LatLng(c.lat, c.lng))
@@ -114,9 +114,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       final route = widget.navigation.routes[widget.navigatorUid]!;
       final updatedRoute = route.copyWith(
         plannedPath: plannedPath,
-        isApproved: _wasApproved && !_approvalWarningShown
-            ? route.isApproved
-            : false,
+        approvalStatus: _wasApproved && !_approvalWarningShown
+            ? route.approvalStatus
+            : 'not_submitted',
       );
 
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(

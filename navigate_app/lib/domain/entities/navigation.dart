@@ -12,8 +12,11 @@ class AssignedRoute extends Equatable {
   final String? endPointId; // נקודת הסיום של הציר
   final String status; // 'optimal', 'too_short', 'too_long', 'needs_adjustment'
   final bool isVerified; // האם הציר עבר וידוא
-  final bool isApproved; // האם הציר אושר במצב למידה
+  final String approvalStatus; // 'not_submitted', 'pending_approval', 'approved'
   final List<Coordinate> plannedPath; // נקודות ציר שצייר המנווט
+
+  /// תאימות אחורה — isApproved נגזר מ-approvalStatus
+  bool get isApproved => approvalStatus == 'approved';
 
   const AssignedRoute({
     required this.checkpointIds,
@@ -23,7 +26,7 @@ class AssignedRoute extends Equatable {
     this.endPointId,
     this.status = 'optimal',
     this.isVerified = false,
-    this.isApproved = false,
+    this.approvalStatus = 'not_submitted',
     this.plannedPath = const [],
   });
 
@@ -35,7 +38,7 @@ class AssignedRoute extends Equatable {
     String? endPointId,
     String? status,
     bool? isVerified,
-    bool? isApproved,
+    String? approvalStatus,
     List<Coordinate>? plannedPath,
   }) {
     return AssignedRoute(
@@ -46,7 +49,7 @@ class AssignedRoute extends Equatable {
       endPointId: endPointId ?? this.endPointId,
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
-      isApproved: isApproved ?? this.isApproved,
+      approvalStatus: approvalStatus ?? this.approvalStatus,
       plannedPath: plannedPath ?? this.plannedPath,
     );
   }
@@ -60,13 +63,19 @@ class AssignedRoute extends Equatable {
       if (endPointId != null) 'endPointId': endPointId,
       'status': status,
       'isVerified': isVerified,
-      'isApproved': isApproved,
+      'approvalStatus': approvalStatus,
+      'isApproved': isApproved, // תאימות אחורה
       if (plannedPath.isNotEmpty)
         'plannedPath': plannedPath.map((c) => c.toMap()).toList(),
     };
   }
 
   factory AssignedRoute.fromMap(Map<String, dynamic> map) {
+    // תאימות אחורה: אם אין approvalStatus, גוזרים מ-isApproved
+    final legacyApproved = map['isApproved'] as bool? ?? false;
+    final approvalStatus = map['approvalStatus'] as String? ??
+        (legacyApproved ? 'approved' : 'not_submitted');
+
     return AssignedRoute(
       checkpointIds: List<String>.from(map['checkpointIds'] as List),
       routeLengthKm: (map['routeLengthKm'] as num).toDouble(),
@@ -75,7 +84,7 @@ class AssignedRoute extends Equatable {
       endPointId: map['endPointId'] as String?,
       status: map['status'] as String? ?? 'optimal',
       isVerified: map['isVerified'] as bool? ?? false,
-      isApproved: map['isApproved'] as bool? ?? false,
+      approvalStatus: approvalStatus,
       plannedPath: map['plannedPath'] != null
           ? (map['plannedPath'] as List)
               .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
@@ -85,7 +94,7 @@ class AssignedRoute extends Equatable {
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, isApproved, plannedPath];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, approvalStatus, plannedPath];
 }
 
 /// טווח אורך מסלול
