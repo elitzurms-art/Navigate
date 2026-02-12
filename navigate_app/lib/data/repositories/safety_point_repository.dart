@@ -77,6 +77,7 @@ class SafetyPointRepository {
         operation: 'insert',
         documentId: point.id,
         data: point.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;
@@ -110,6 +111,7 @@ class SafetyPointRepository {
         operation: 'update',
         documentId: point.id,
         data: point.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;

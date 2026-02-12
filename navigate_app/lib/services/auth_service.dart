@@ -139,11 +139,64 @@ class AuthService {
 
   // ─── כניסה ───
 
-  /// כניסה לפי מספר אישי — חיפוש ב-DB מקומי
+  /// כניסה לפי מספר אישי — חיפוש מקומי, אם לא נמצא → Firestore fallback
   /// מחזיר User אם נמצא (עדיין לא שומר session — צריך אימות קודם)
   Future<app_user.User?> loginByPersonalNumber(String personalNumber) async {
     final userRepo = UserRepository();
-    return await userRepo.getUserByPersonalNumber(personalNumber);
+
+    // 1. חיפוש מקומי
+    final localUser = await userRepo.getUserByPersonalNumber(personalNumber);
+    if (localUser != null) return localUser;
+
+    // 2. Firestore fallback — חיפוש לפי doc ID
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(personalNumber)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      if (doc.exists && doc.data() != null) {
+        final data = _sanitizeFirestoreData(doc.data()!);
+        data['uid'] = doc.id;
+        final user = app_user.User.fromMap(data);
+        await userRepo.saveUserLocally(user, queueSync: false);
+        return user;
+      }
+
+      // 3. fallback — חיפוש לפי שדה personalNumber (רשומות ישנות)
+      final query = await _firestore
+          .collection('users')
+          .where('personalNumber', isEqualTo: personalNumber)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      if (query.docs.isNotEmpty) {
+        final data = _sanitizeFirestoreData(query.docs.first.data());
+        data['uid'] = query.docs.first.id;
+        final user = app_user.User.fromMap(data);
+        await userRepo.saveUserLocally(user, queueSync: false);
+        return user;
+      }
+    } catch (e) {
+      // timeout או שגיאת רשת — המשתמש ינסה שוב כשיש רשת
+      print('DEBUG: Firestore user lookup failed: $e');
+    }
+
+    return null;
+  }
+
+  /// המרת אובייקטי Firestore Timestamp ל-ISO strings
+  Map<String, dynamic> _sanitizeFirestoreData(Map<String, dynamic> data) {
+    return data.map((key, value) {
+      if (value is Timestamp) {
+        return MapEntry(key, value.toDate().toIso8601String());
+      } else if (value is Map<String, dynamic>) {
+        return MapEntry(key, _sanitizeFirestoreData(value));
+      }
+      return MapEntry(key, value);
+    });
   }
 
   /// השלמת כניסה — שמירת session ב-SharedPreferences + אימות Firebase
@@ -228,18 +281,8 @@ class AuthService {
     // שמירת session
     await completeLogin(personalNumber);
 
-    // שמירה ב-Firestore עם timeout — לא חוסם את ההרשמה
-    try {
-      await _firestore
-          .collection('users')
-          .doc(personalNumber)
-          .set(user.toMap())
-          .timeout(const Duration(seconds: 5));
-    } catch (e) {
-      // timeout או שגיאת רשת — המשתמש כבר נשמר מקומית,
-      // SyncManager יסנכרן ל-Firestore כשיהיה חיבור
-      print('DEBUG: Firestore save deferred (offline): $e');
-    }
+    // הכתיבה ל-Firestore מתבצעת אוטומטית דרך תור הסנכרון
+    // (saveUserLocally מוסיף לתור עם priority: high)
 
     return user;
   }

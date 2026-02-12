@@ -74,6 +74,7 @@ class CheckpointRepository {
         documentId: checkpoint.id,
         operation: 'create',
         data: checkpoint.toMap(),
+        priority: SyncPriority.high,
       );
 
       return checkpoint;
@@ -106,6 +107,7 @@ class CheckpointRepository {
         documentId: checkpoint.id,
         operation: 'update',
         data: checkpoint.toMap(),
+        priority: SyncPriority.high,
       );
 
       return checkpoint;

@@ -60,6 +60,7 @@ class AreaRepository {
         documentId: area.id,
         operation: 'create',
         data: area.toMap(),
+        priority: SyncPriority.high,
       );
 
       return area;
@@ -86,6 +87,7 @@ class AreaRepository {
         documentId: area.id,
         operation: 'update',
         data: area.toMap(),
+        priority: SyncPriority.high,
       );
 
       return area;
@@ -359,6 +361,7 @@ class AreaRepository {
         documentId: layerId,
         operation: operation,
         data: data,
+        priority: SyncPriority.high,
       );
       print('DEBUG: Layer $layerId ($layerType) queued for area $areaId');
     } catch (e) {

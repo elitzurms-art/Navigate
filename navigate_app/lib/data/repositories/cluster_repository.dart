@@ -73,6 +73,7 @@ class ClusterRepository {
         operation: 'insert',
         documentId: cluster.id,
         data: cluster.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;
@@ -103,6 +104,7 @@ class ClusterRepository {
         operation: 'update',
         documentId: cluster.id,
         data: cluster.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;

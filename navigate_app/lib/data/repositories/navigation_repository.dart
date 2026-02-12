@@ -116,6 +116,7 @@ class NavigationRepository {
         documentId: navigation.id,
         operation: 'create',
         data: navigation.toMap(),
+        priority: SyncPriority.high,
       );
 
       print('DEBUG: Navigation queued for sync');
@@ -182,6 +183,7 @@ class NavigationRepository {
         documentId: navigation.id,
         operation: 'update',
         data: navigation.toMap(),
+        priority: SyncPriority.high,
       );
 
       return navigation;

@@ -51,6 +51,7 @@ class UnitRepository {
         documentId: unit.id,
         operation: 'create',
         data: unit.toMap(),
+        priority: SyncPriority.high,
       );
 
       print('DEBUG: Unit queued for sync');
@@ -89,6 +90,7 @@ class UnitRepository {
         documentId: unit.id,
         operation: 'update',
         data: unit.toMap(),
+        priority: SyncPriority.high,
       );
 
       return unit;

@@ -65,6 +65,7 @@ class NavigationTreeRepository {
         documentId: tree.id,
         operation: 'create',
         data: tree.toMap(),
+        priority: SyncPriority.high,
       );
 
       print('DEBUG: Navigation tree queued for sync');
@@ -102,6 +103,7 @@ class NavigationTreeRepository {
         documentId: tree.id,
         operation: 'update',
         data: tree.toMap(),
+        priority: SyncPriority.high,
       );
 
       return tree;

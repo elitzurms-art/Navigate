@@ -4,11 +4,13 @@ import '../../domain/entities/user.dart' as domain;
 import '../datasources/remote/firebase_service.dart';
 import '../datasources/local/app_database.dart';
 import '../../core/constants/app_constants.dart';
+import '../sync/sync_manager.dart';
 
 /// Repository למשתמשים
 class UserRepository {
   final FirebaseService? _firebaseService;
   final AppDatabase? _localDatabase;
+  final SyncManager _syncManager = SyncManager();
 
   UserRepository([this._firebaseService, this._localDatabase]);
 
@@ -84,8 +86,11 @@ class UserRepository {
     return getAll();
   }
 
-  /// שמירת משתמש (יצירה או עדכון) - מקומי
-  Future<void> saveUserLocally(domain.User user) async {
+  /// שמירת משתמש (יצירה או עדכון) - מקומי + תור סנכרון
+  ///
+  /// [queueSync] - true (ברירת מחדל) מוסיף לתור סנכרון.
+  /// השתמש ב-false כשמושכים מ-Firestore (למניעת לולאה אינסופית).
+  Future<void> saveUserLocally(domain.User user, {bool queueSync = true}) async {
     final db = _localDatabase ?? AppDatabase();
     try {
       await db.into(db.users).insertOnConflictUpdate(
@@ -107,6 +112,16 @@ class UserRepository {
           updatedAt: user.updatedAt,
         ),
       );
+
+      if (queueSync) {
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: user.uid,
+          operation: 'create',
+          data: user.toMap(),
+          priority: SyncPriority.high,
+        );
+      }
     } catch (e) {
       print('DEBUG: Error saving user locally: $e');
     }

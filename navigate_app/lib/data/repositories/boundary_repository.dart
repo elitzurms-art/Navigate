@@ -72,6 +72,7 @@ class BoundaryRepository {
         operation: 'insert',
         documentId: boundary.id,
         data: boundary.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;
@@ -101,6 +102,7 @@ class BoundaryRepository {
         operation: 'update',
         documentId: boundary.id,
         data: boundary.toMap(),
+        priority: SyncPriority.high,
       );
     } catch (e) {
       rethrow;

@@ -1588,7 +1588,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                 onPressed: () => _addChildFramework(),
                 icon: const Icon(Icons.add),
                 label: Text(
-                  'הוסף ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}',
+                  'יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}',
                 ),
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
@@ -2047,7 +2047,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                     ),
                     icon: const Icon(Icons.create_new_folder, size: 18),
                     label: Text(
-                      'הוסף ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(unit.level!)!)}',
+                      'יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(unit.level!)!)}',
                     ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.indigo,

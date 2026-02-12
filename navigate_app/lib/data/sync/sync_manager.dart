@@ -76,6 +76,7 @@ class SyncManager {
   /// מיפוי קולקשנים לכיווני סנכרון
   static final Map<String, SyncDirection> _syncDirections = {
     // Pull-only: Server -> Client
+    AppConstants.usersCollection: SyncDirection.bidirectional,
     AppConstants.areasCollection: SyncDirection.bidirectional,
     // Area layers (layers_nz, layers_nb, layers_gg, layers_ba) are subcollections
     // under /areas/{areaId}/ — pulled via _pullAreaLayers(), not as top-level collections.
@@ -498,6 +499,7 @@ class SyncManager {
 
     // Bidirectional collections
     final bidirectionalCollections = [
+      AppConstants.usersCollection,
       AppConstants.unitsCollection,
       AppConstants.navigatorTreesCollection,
       AppConstants.navigationsCollection,
@@ -668,6 +670,9 @@ class SyncManager {
   ) async {
     try {
       switch (collection) {
+        case AppConstants.usersCollection:
+          await _upsertUser(documentId, serverData);
+          break;
         case AppConstants.areasCollection:
           await _upsertArea(documentId, serverData);
           break;
@@ -853,6 +858,28 @@ class SyncManager {
         gpsUpdateIntervalSeconds: (data['gpsUpdateIntervalSeconds'] as num?)?.toInt() ??
             AppConstants.defaultGpsUpdateInterval,
         permissionsJson: data['permissionsJson'] as String? ?? '{}',
+        createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
+        updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> _upsertUser(String id, Map<String, dynamic> data) async {
+    await _db.into(_db.users).insertOnConflictUpdate(
+      UsersCompanion.insert(
+        uid: id,
+        firstName: Value(data['firstName'] as String? ?? ''),
+        lastName: Value(data['lastName'] as String? ?? ''),
+        personalNumber: Value(data['personalNumber'] as String? ?? id),
+        fullName: data['fullName'] as String? ?? '',
+        username: '',
+        phoneNumber: data['phoneNumber'] as String? ?? '',
+        phoneVerified: data['phoneVerified'] as bool? ?? false,
+        email: Value(data['email'] as String? ?? ''),
+        emailVerified: Value(data['emailVerified'] as bool? ?? false),
+        role: data['role'] as String? ?? 'navigator',
+        frameworkId: const Value(null),
+        unitId: Value(data['unitId'] as String?),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),
