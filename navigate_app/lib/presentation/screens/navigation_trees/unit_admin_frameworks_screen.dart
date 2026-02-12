@@ -135,6 +135,25 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
         }
       }
 
+      // Fallback: אם ליחידה אין level, מנסים לגזור מ-type
+      if (_adminUnit != null && _adminLevel == null) {
+        _adminLevel = FrameworkLevel.fromUnitType(_adminUnit!.type);
+        if (_adminLevel != null) {
+          // עדכון היחידה עם הרמה שנגזרה
+          final unitRepo = UnitRepository();
+          final updatedUnit = _adminUnit!.copyWith(
+            level: _adminLevel,
+            updatedAt: DateTime.now(),
+          );
+          await unitRepo.update(updatedUnit);
+          _adminUnit = updatedUnit;
+          // עדכון ברשימת היחידות המקומית
+          final idx = _allUnits.indexWhere((u) => u.id == updatedUnit.id);
+          if (idx >= 0) _allUnits[idx] = updatedUnit;
+          print('DEBUG FRAMEWORKS: Derived level $_adminLevel from type "${_adminUnit!.type}" for unit "${_adminUnit!.name}"');
+        }
+      }
+
       // If we have a unit but no tree, try to find one
       if (_adminUnit != null && _adminTree == null) {
         final treesForUnit = await _treeRepository.getByUnitId(_adminUnit!.id);
@@ -150,7 +169,10 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
       // DEBUG
       print('DEBUG FRAMEWORKS: user=${_currentUser!.uid}, '
           'matches=${_allMatches.length}, '
-          'selected=${_adminUnit?.name}');
+          'selected=${_adminUnit?.name}, '
+          'level=$_adminLevel, '
+          'type=${_adminUnit?.type}, '
+          'hasTree=${_adminTree != null}');
 
       setState(() {
         _isLoading = false;
@@ -433,26 +455,24 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
     app_user.User? selectedAdmin = _currentUser;
     String selectedAdminName = _currentUser?.fullName ?? '';
 
-    // חישוב הרמה — רמה אחת מתחת להורה
+    // חישוב הרמה הבאה מתחת להורה — תמיד רמה אחת למטה (שמירה על היררכיה)
     final effectiveParentId = parentId ?? _adminUnit!.id;
-    int? targetLevel;
+    int? parentLevel;
 
     if (parentId != null && parentId != _adminUnit!.id) {
-      // יוצרים תחת יחידה-בת — רמה אחת מתחתיה
       final parentMatches = _allUnits
           .where((u) => u.id == parentId)
           .toList();
       final parentUnit = parentMatches.isNotEmpty ? parentMatches.first : null;
-      if (parentUnit?.level != null) {
-        targetLevel = FrameworkLevel.getNextLevelBelow(parentUnit!.level!);
-      }
-    } else if (_adminLevel != null) {
-      // יוצרים תחת יחידת המנהל — רמה אחת מתחתיו
-      targetLevel = FrameworkLevel.getNextLevelBelow(_adminLevel!);
+      parentLevel = parentUnit?.level;
+    } else {
+      parentLevel = _adminLevel;
     }
 
-    if (targetLevel == null) return; // אין רמה זמינה
+    if (parentLevel == null) return;
 
+    final targetLevel = FrameworkLevel.getNextLevelBelow(parentLevel);
+    if (targetLevel == null) return; // אין רמה זמינה
     final levelName = FrameworkLevel.getName(targetLevel);
 
     final confirmed = await showDialog<bool>(
@@ -466,7 +486,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // רמה היררכית (לקריאה בלבד)
+                  // רמה (קבועה — תמיד הרמה הבאה מתחת להורה)
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 8),
@@ -1587,9 +1607,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
             ? FloatingActionButton.extended(
                 onPressed: () => _addChildFramework(),
                 icon: const Icon(Icons.add),
-                label: Text(
-                  'יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}',
-                ),
+                label: Text('יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}'),
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
               )
@@ -1702,9 +1720,9 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                     _adminLevel != null &&
                             FrameworkLevel.getNextLevelBelow(_adminLevel!) !=
                                 null
-                        ? 'ניתן ליצור יחידה ברמת '
-                            '${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)} '
-                            'ומטה (רמה אחת בכל פעם).'
+                        ? 'ניתן ליצור יחידות בכל רמה מ${FrameworkLevel.getName(FrameworkLevel.getLevelsBelow(_adminLevel!).first)} '
+                            'עד ${FrameworkLevel.getName(FrameworkLevel.getLevelsBelow(_adminLevel!).last)}. '
+                            'כל יחידה נוצרת ברמה שמתחת להורה שלה.'
                         : 'ניתן ליצור יחידות משנה תחת היחידה שלך.',
                     style: TextStyle(fontSize: 12, color: Colors.blue[900]),
                   ),
@@ -1755,7 +1773,7 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'לחץ על הכפתור הירוק למטה להוספת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}',
+                    'לחץ על הכפתור הירוק למטה ליצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(_adminLevel!)!)}',
                     style: TextStyle(
                       fontSize: 13,
                       color: Colors.grey[500],
@@ -2036,19 +2054,16 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
                   }),
                 ],
 
-                // כפתור הוספת יחידת משנה (אם יש רמה אחת מתחת)
+                // כפתור הוספת יחידת משנה (אם יש רמה הבאה מתחת)
                 if (unit.level != null &&
-                    FrameworkLevel.getNextLevelBelow(unit.level!) !=
-                        null) ...[
+                    FrameworkLevel.getNextLevelBelow(unit.level!) != null) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: () => _addChildFramework(
                       parentId: unit.id,
                     ),
                     icon: const Icon(Icons.create_new_folder, size: 18),
-                    label: Text(
-                      'יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(unit.level!)!)}',
-                    ),
+                    label: Text('יצירת ${FrameworkLevel.getName(FrameworkLevel.getNextLevelBelow(unit.level!)!)}'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.indigo,
                     ),

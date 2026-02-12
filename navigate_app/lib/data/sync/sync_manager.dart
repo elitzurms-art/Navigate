@@ -462,10 +462,15 @@ class SyncManager {
             .timeout(const Duration(seconds: 10));
         break;
       case 'delete':
+        // Soft delete — mark with deletedAt instead of removing the doc,
+        // so other devices discover the deletion via incremental pull.
         await _firestore
             .collection(collection)
             .doc(documentId)
-            .delete()
+            .set({
+              'deletedAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true))
             .timeout(const Duration(seconds: 10));
         break;
       default:
@@ -559,7 +564,12 @@ class SyncManager {
               final serverData = doc.data() as Map<String, dynamic>;
               serverData['id'] = doc.id;
               serverData['areaId'] = area.id;
-              await upsertFn(doc.id, serverData);
+              // Soft-delete: if marked as deleted, remove locally
+              if (serverData['deletedAt'] != null) {
+                await _deleteLayerLocally(subcollectionName, doc.id);
+              } else {
+                await upsertFn(doc.id, serverData);
+              }
             }
           }
 
@@ -669,6 +679,12 @@ class SyncManager {
     Map<String, dynamic> serverData,
   ) async {
     try {
+      // Soft-delete: if the server record is marked as deleted, remove locally
+      if (serverData['deletedAt'] != null) {
+        await _deleteLocalRecord(collection, documentId);
+        return;
+      }
+
       switch (collection) {
         case AppConstants.usersCollection:
           await _upsertUser(documentId, serverData);
@@ -702,6 +718,62 @@ class SyncManager {
       }
     } catch (e) {
       print('SyncManager: Error upserting local record $collection/$documentId: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Local delete helpers (soft-delete from server -> local DB)
+  // ---------------------------------------------------------------------------
+
+  /// מחיקת רשומה מקומית כשהשרת סימן אותה כמחוקה (soft-delete)
+  Future<void> _deleteLocalRecord(String collection, String documentId) async {
+    try {
+      switch (collection) {
+        case AppConstants.usersCollection:
+          await (_db.delete(_db.users)..where((t) => t.uid.equals(documentId))).go();
+          break;
+        case AppConstants.areasCollection:
+          await (_db.delete(_db.areas)..where((t) => t.id.equals(documentId))).go();
+          break;
+        case AppConstants.unitsCollection:
+          await (_db.delete(_db.units)..where((t) => t.id.equals(documentId))).go();
+          break;
+        case AppConstants.navigatorTreesCollection:
+          await (_db.delete(_db.navigationTrees)..where((t) => t.id.equals(documentId))).go();
+          break;
+        case AppConstants.navigationsCollection:
+          await (_db.delete(_db.navigations)..where((t) => t.id.equals(documentId))).go();
+          break;
+        default:
+          print('SyncManager: No local delete handler for collection $collection');
+          return;
+      }
+      print('SyncManager: Soft-delete — removed local $collection/$documentId');
+    } catch (e) {
+      print('SyncManager: Error deleting local record $collection/$documentId: $e');
+    }
+  }
+
+  /// מחיקת שכבה מקומית לפי סוג תת-קולקציה
+  Future<void> _deleteLayerLocally(String subcollection, String id) async {
+    try {
+      switch (subcollection) {
+        case AppConstants.areaLayersNzSubcollection:
+          await (_db.delete(_db.checkpoints)..where((t) => t.id.equals(id))).go();
+          break;
+        case AppConstants.areaLayersNbSubcollection:
+          await (_db.delete(_db.safetyPoints)..where((t) => t.id.equals(id))).go();
+          break;
+        case AppConstants.areaLayersGgSubcollection:
+          await (_db.delete(_db.boundaries)..where((t) => t.id.equals(id))).go();
+          break;
+        case AppConstants.areaLayersBaSubcollection:
+          await (_db.delete(_db.clusters)..where((t) => t.id.equals(id))).go();
+          break;
+      }
+      print('SyncManager: Soft-delete — removed local layer $subcollection/$id');
+    } catch (e) {
+      print('SyncManager: Error deleting local layer $subcollection/$id: $e');
     }
   }
 

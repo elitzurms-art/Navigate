@@ -123,6 +123,8 @@ class FrameworkLevel {
   /// ממיר סוג יחידה לרמה היררכית
   static int? fromUnitType(String unitType) {
     switch (unitType) {
+      case 'division':
+        return division;
       case 'brigade':
         return brigade;
       case 'battalion':
