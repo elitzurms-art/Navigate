@@ -5,11 +5,14 @@ import '../../services/tile_cache_service.dart';
 import 'map_type_selector.dart';
 
 /// עוטף FlutterMap עם TileLayer אוטומטי וכפתור בחירת סוג מפה
-class MapWithTypeSelector extends StatelessWidget {
+class MapWithTypeSelector extends StatefulWidget {
   final MapOptions options;
   final List<Widget> layers;
   final MapController? mapController;
   final bool showTypeSelector;
+
+  /// סוג מפה התחלתי — אם מסופק, יחליף את הגדרת MapConfig הגלובלית בבנייה הראשונה
+  final MapType? initialMapType;
 
   const MapWithTypeSelector({
     required this.options,
@@ -17,7 +20,25 @@ class MapWithTypeSelector extends StatelessWidget {
     this.layers = const [],
     this.mapController,
     this.showTypeSelector = true,
+    this.initialMapType,
   });
+
+  @override
+  State<MapWithTypeSelector> createState() => _MapWithTypeSelectorState();
+}
+
+class _MapWithTypeSelectorState extends State<MapWithTypeSelector> {
+  bool _didApplyInitialMapType = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // החלפת סוג מפה גלובלי אם סופק initialMapType
+    if (widget.initialMapType != null && !_didApplyInitialMapType) {
+      _didApplyInitialMapType = true;
+      MapConfig().setType(widget.initialMapType!);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,8 +50,8 @@ class MapWithTypeSelector extends StatelessWidget {
           valueListenable: config.typeNotifier,
           builder: (context, mapType, _) {
             return FlutterMap(
-              mapController: mapController,
-              options: options,
+              mapController: widget.mapController,
+              options: widget.options,
               children: [
                 TileLayer(
                   urlTemplate: config.urlTemplate(mapType),
@@ -38,12 +59,12 @@ class MapWithTypeSelector extends StatelessWidget {
                   userAgentPackageName: MapConfig.userAgentPackageName,
                   tileProvider: TileCacheService().getTileProvider(),
                 ),
-                ...layers,
+                ...widget.layers,
               ],
             );
           },
         ),
-        if (showTypeSelector)
+        if (widget.showTypeSelector)
           const Positioned(
             top: 8,
             right: 8,

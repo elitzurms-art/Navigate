@@ -13,6 +13,7 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך יצירת נת"ב חדש
 class CreateSafetyPointScreen extends StatefulWidget {
@@ -40,6 +41,8 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   LatLng? _selectedLocation;
   bool _isLoading = false;
   bool _showOtherLayers = true;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   // שכבות אחרות
   List<Checkpoint> _checkpoints = [];
@@ -127,19 +130,9 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
     }
   }
 
+  /// צבע נקודת בטיחות — תמיד אדום (ללא צבע לפי חומרה)
   Color _getSeverityColor(String severity) {
-    switch (severity) {
-      case 'low':
-        return Colors.orange;
-      case 'medium':
-        return Colors.red;
-      case 'high':
-        return Colors.red.shade700;
-      case 'critical':
-        return Colors.red.shade900;
-      default:
-        return Colors.red;
-    }
+    return Colors.red;
   }
 
   String _getSeverityLabel(String severity) {
@@ -308,94 +301,129 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
               height: 300,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: MapWithTypeSelector(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: _defaultCenter,
-                    initialZoom: 8,
-                    onTap: (tapPosition, point) {
-                      setState(() {
-                        _selectedLocation = point;
-                      });
-                    },
-                  ),
-                  layers: [
-                    // שכבת גבולות גזרה (ג"ג)
-                    if (_showOtherLayers && _boundaries.isNotEmpty)
-                      PolygonLayer(
-                        polygons: _boundaries.map((boundary) {
-                          return Polygon(
-                            points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                            color: Colors.black.withOpacity(0.1),
-                            borderColor: Colors.black,
-                            borderStrokeWidth: boundary.strokeWidth,
-                            isFilled: true,
-                          );
-                        }).toList(),
+                child: Stack(
+                  children: [
+                    MapWithTypeSelector(
+                      showTypeSelector: false,
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _defaultCenter,
+                        initialZoom: 8,
+                        onTap: (tapPosition, point) {
+                          if (_measureMode) {
+                            setState(() => _measurePoints.add(point));
+                            return;
+                          }
+                          setState(() {
+                            _selectedLocation = point;
+                          });
+                        },
                       ),
-                    // שכבת ביצי איזור (בא)
-                    if (_showOtherLayers && _clusters.isNotEmpty)
-                      PolygonLayer(
-                        polygons: _clusters.map((cluster) {
-                          return Polygon(
-                            points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                            color: _parseColor(cluster.color).withOpacity(cluster.fillOpacity),
-                            borderColor: _parseColor(cluster.color),
-                            borderStrokeWidth: cluster.strokeWidth,
-                            isFilled: true,
-                          );
-                        }).toList(),
-                      ),
-                    // שכבת נקודות ציון
-                    if (_showOtherLayers && _checkpoints.isNotEmpty)
-                      MarkerLayer(
-                        markers: _checkpoints.map((cp) {
-                          return Marker(
-                            point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                            width: 30,
-                            height: 30,
-                            child: Icon(
-                              Icons.place,
-                              color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
-                              size: 30,
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    // שכבת נת"ב קיימות
-                    if (_showOtherLayers && _existingSafetyPoints.isNotEmpty)
-                      MarkerLayer(
-                        markers: _existingSafetyPoints
-                            .where((sp) => sp.type == 'point' && sp.coordinates != null)
-                            .map((sp) {
-                          return Marker(
-                            point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
-                            width: 30,
-                            height: 30,
-                            child: Icon(
-                              Icons.warning,
-                              color: _getSeverityColor(sp.severity).withOpacity(0.6),
-                              size: 30,
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    // הנקודה החדשה שנבחרה
-                    if (_selectedLocation != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: _selectedLocation!,
-                            width: 50,
-                            height: 50,
-                            child: Icon(
-                              Icons.warning,
-                              color: _getSeverityColor(_selectedSeverity),
-                              size: 40,
-                            ),
+                      layers: [
+                        // שכבת גבולות גזרה (ג"ג)
+                        if (_showOtherLayers && _boundaries.isNotEmpty)
+                          PolygonLayer(
+                            polygons: _boundaries.map((boundary) {
+                              return Polygon(
+                                points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: Colors.black.withOpacity(0.1),
+                                borderColor: Colors.black,
+                                borderStrokeWidth: boundary.strokeWidth,
+                                isFilled: true,
+                              );
+                            }).toList(),
                           ),
-                        ],
-                      ),
+                        // שכבת ביצי איזור (בא) — ירוק
+                        if (_showOtherLayers && _clusters.isNotEmpty)
+                          PolygonLayer(
+                            polygons: _clusters.map((cluster) {
+                              return Polygon(
+                                points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: Colors.green.withOpacity(cluster.fillOpacity),
+                                borderColor: Colors.green,
+                                borderStrokeWidth: cluster.strokeWidth,
+                                isFilled: true,
+                              );
+                            }).toList(),
+                          ),
+                        // שכבת נקודות ציון (עיגול כחול/ירוק עם מספר)
+                        if (_showOtherLayers && _checkpoints.isNotEmpty)
+                          MarkerLayer(
+                            markers: _checkpoints.map((cp) {
+                              final markerColor = cp.color == 'blue' ? Colors.blue : Colors.green;
+                              return Marker(
+                                point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                                width: 28,
+                                height: 28,
+                                child: Opacity(
+                                  opacity: 0.6,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: markerColor,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 1.5),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '${cp.sequenceNumber}',
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        // שכבת נת"ב קיימות
+                        if (_showOtherLayers && _existingSafetyPoints.isNotEmpty)
+                          MarkerLayer(
+                            markers: _existingSafetyPoints
+                                .where((sp) => sp.type == 'point' && sp.coordinates != null)
+                                .map((sp) {
+                              return Marker(
+                                point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+                                width: 30,
+                                height: 30,
+                                child: Icon(
+                                  Icons.warning,
+                                  color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                                  size: 30,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        // הנקודה החדשה שנבחרה
+                        if (_selectedLocation != null)
+                          MarkerLayer(
+                            markers: [
+                              Marker(
+                                point: _selectedLocation!,
+                                width: 50,
+                                height: 50,
+                                child: Icon(
+                                  Icons.warning,
+                                  color: _getSeverityColor(_selectedSeverity),
+                                  size: 40,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ...MapControls.buildMeasureLayers(_measurePoints),
+                      ],
+                    ),
+                    MapControls(
+                      mapController: _mapController,
+                      measureMode: _measureMode,
+                      onMeasureModeChanged: (v) => setState(() {
+                        _measureMode = v;
+                        if (!v) _measurePoints.clear();
+                      }),
+                      measurePoints: _measurePoints,
+                      onMeasureClear: () => setState(() => _measurePoints.clear()),
+                      onMeasureUndo: () => setState(() {
+                        if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                      }),
+                    ),
                   ],
                 ),
               ),

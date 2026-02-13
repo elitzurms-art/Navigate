@@ -6,6 +6,7 @@ import '../../../domain/entities/cluster.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך עריכת ביצת איזור
 class EditClusterScreen extends StatefulWidget {
@@ -31,6 +32,8 @@ class _EditClusterScreenState extends State<EditClusterScreen> {
 
   late List<LatLng> _polygonPoints;
   bool _isLoading = false;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -237,12 +240,19 @@ class _EditClusterScreenState extends State<EditClusterScreen> {
 
             // מפה
             Expanded(
-              child: MapWithTypeSelector(
+              child: Stack(
+                children: [
+                  MapWithTypeSelector(
+                showTypeSelector: false,
                 mapController: _mapController,
                 options: MapOptions(
                   initialCenter: const LatLng(31.5, 34.75),
                   initialZoom: 8,
                   onTap: (tapPosition, point) {
+                    if (_measureMode) {
+                      setState(() => _measurePoints.add(point));
+                      return;
+                    }
                     _addPoint(point);
                   },
                 ),
@@ -296,6 +306,22 @@ class _EditClusterScreenState extends State<EditClusterScreen> {
                         );
                       }).toList(),
                     ),
+                  ...MapControls.buildMeasureLayers(_measurePoints),
+                ],
+              ),
+                  MapControls(
+                    mapController: _mapController,
+                    measureMode: _measureMode,
+                    onMeasureModeChanged: (v) => setState(() {
+                      _measureMode = v;
+                      if (!v) _measurePoints.clear();
+                    }),
+                    measurePoints: _measurePoints,
+                    onMeasureClear: () => setState(() => _measurePoints.clear()),
+                    onMeasureUndo: () => setState(() {
+                      if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                    }),
+                  ),
                 ],
               ),
             ),

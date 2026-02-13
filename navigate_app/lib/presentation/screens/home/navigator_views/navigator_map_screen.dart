@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../services/gps_service.dart';
 import '../../../widgets/map_with_selector.dart';
+import '../../../widgets/map_controls.dart';
 
 /// מסך מפה מלא — נפתח מ-drawer בזמן ניווט פעיל
 class NavigatorMapScreen extends StatefulWidget {
@@ -29,6 +30,9 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   LatLng? _currentPosition;
   StreamSubscription? _positionSubscription;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   // ברירת מחדל — מרכז ישראל
   static const _defaultCenter = LatLng(31.5, 34.8);
@@ -136,15 +140,40 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
             ),
         ],
       ),
-      body: MapWithTypeSelector(
-        mapController: _mapController,
-        options: MapOptions(
-          initialCenter: _initialCenter(),
-          initialZoom: _defaultZoom,
-        ),
-        layers: [
-          PolylineLayer(polylines: _buildPolylines()),
-          MarkerLayer(markers: _buildMarkers()),
+      body: Stack(
+        children: [
+          MapWithTypeSelector(
+            mapController: _mapController,
+            showTypeSelector: false,
+            options: MapOptions(
+              initialCenter: _initialCenter(),
+              initialZoom: _defaultZoom,
+              onTap: (tapPosition, point) {
+                if (_measureMode) {
+                  setState(() => _measurePoints.add(point));
+                  return;
+                }
+              },
+            ),
+            layers: [
+              PolylineLayer(polylines: _buildPolylines()),
+              MarkerLayer(markers: _buildMarkers()),
+              ...MapControls.buildMeasureLayers(_measurePoints),
+            ],
+          ),
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
+          ),
         ],
       ),
     );

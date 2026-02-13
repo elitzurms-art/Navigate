@@ -9,6 +9,7 @@ import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך למידה למנווט - רק הציר שלו
 class NavigatorTrainingScreen extends StatefulWidget {
@@ -39,6 +40,9 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
   bool _isLoading = false;
   bool _routeApproved = false; // האם הציר אושר
   bool _routeSubmitted = false; // האם הוגש לאישור
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -339,69 +343,104 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
   }
 
   Widget _buildMapView(domain.AssignedRoute route) {
-    return MapWithTypeSelector(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: widget.navigation.displaySettings.openingLat != null
-            ? LatLng(
-                widget.navigation.displaySettings.openingLat!,
-                widget.navigation.displaySettings.openingLng!,
-              )
-            : const LatLng(32.0853, 34.7818),
-        initialZoom: 13.0,
-      ),
-      layers: [
-        // פוליגון ג"ג
-        if (_boundary != null && _boundary!.coordinates.isNotEmpty)
-          PolygonLayer(
-            polygons: [
-              Polygon(
-                points: _boundary!.coordinates
-                    .map((coord) => LatLng(coord.lat, coord.lng))
-                    .toList(),
-                color: Colors.blue.withOpacity(0.2),
-                borderColor: Colors.blue,
-                borderStrokeWidth: 2,
-              ),
-            ],
+    return Stack(
+      children: [
+        MapWithTypeSelector(
+          showTypeSelector: false,
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: widget.navigation.displaySettings.openingLat != null
+                ? LatLng(
+                    widget.navigation.displaySettings.openingLat!,
+                    widget.navigation.displaySettings.openingLng!,
+                  )
+                : const LatLng(32.0853, 34.7818),
+            initialZoom: 13.0,
+            onTap: (tapPosition, point) {
+              if (_measureMode) {
+                setState(() => _measurePoints.add(point));
+                return;
+              }
+            },
           ),
-
-        // הציר שלי
-        PolylineLayer(
-          polylines: [
-            Polyline(
-              points: _buildMyRoute(route),
-              strokeWidth: 4,
-              color: _routeApproved ? Colors.green : Colors.blue,
-            ),
-          ],
-        ),
-
-        // הנקודות שלי בלבד
-        MarkerLayer(
-          markers: route.sequence.map((checkpointId) {
-            final checkpoint = _checkpoints.firstWhere(
-              (cp) => cp.id == checkpointId,
-              orElse: () => _checkpoints.first,
-            );
-            return Marker(
-              point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
-              width: 40,
-              height: 40,
-              child: Column(
-                children: [
-                  Icon(Icons.place, color: Colors.blue, size: 32),
-                  Text(
-                    '${checkpoint.sequenceNumber}',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
+          layers: [
+            // פוליגון ג"ג
+            if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+              PolygonLayer(
+                polygons: [
+                  Polygon(
+                    points: _boundary!.coordinates
+                        .map((coord) => LatLng(coord.lat, coord.lng))
+                        .toList(),
+                    color: Colors.black.withOpacity(0.1),
+                    borderColor: Colors.black,
+                    borderStrokeWidth: _boundary!.strokeWidth,
+                    isFilled: true,
                   ),
                 ],
               ),
-            );
-          }).toList(),
+
+            // הציר שלי
+            PolylineLayer(
+              polylines: [
+                Polyline(
+                  points: _buildMyRoute(route),
+                  strokeWidth: 3.0,
+                  color: Colors.blue,
+                ),
+              ],
+            ),
+
+            // הנקודות שלי בלבד
+            MarkerLayer(
+              markers: route.sequence.asMap().entries.map((entry) {
+                final index = entry.key + 1;
+                final checkpointId = entry.value;
+                final checkpoint = _checkpoints.firstWhere(
+                  (cp) => cp.id == checkpointId,
+                  orElse: () => _checkpoints.first,
+                );
+                return Marker(
+                  point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                  width: 36,
+                  height: 36,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '$index',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+
+            // שכבות מדידה
+            ...MapControls.buildMeasureLayers(_measurePoints),
+          ],
+        ),
+        MapControls(
+          mapController: _mapController,
+          measureMode: _measureMode,
+          onMeasureModeChanged: (v) => setState(() {
+            _measureMode = v;
+            if (!v) _measurePoints.clear();
+          }),
+          measurePoints: _measurePoints,
+          onMeasureClear: () => setState(() => _measurePoints.clear()),
+          onMeasureUndo: () => setState(() {
+            if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+          }),
         ),
       ],
     );

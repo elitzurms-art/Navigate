@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint.dart';
@@ -9,6 +10,7 @@ import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../widgets/map_with_selector.dart';
+import '../../../widgets/map_controls.dart';
 import 'route_editor_screen.dart';
 
 /// תצוגת למידה למנווט — לשוניות דינמיות לפי LearningSettings
@@ -34,6 +36,10 @@ class _LearningViewState extends State<LearningView>
   late List<_LearningTab> _tabs;
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavigationRepository _navigationRepo = NavigationRepository();
+  final MapController _mapController = MapController();
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   /// ניווט נוכחי — mutable, מתעדכן אחרי כל שמירה
   late domain.Navigation _currentNavigation;
@@ -266,8 +272,6 @@ class _LearningViewState extends State<LearningView>
     final markers = <Marker>[];
     for (var i = 0; i < _routeCheckpoints.length; i++) {
       final cp = _routeCheckpoints[i];
-      final isFirst = i == 0;
-      final isLast = i == _routeCheckpoints.length - 1;
 
       markers.add(Marker(
         point: cp.coordinates.toLatLng(),
@@ -277,11 +281,7 @@ class _LearningViewState extends State<LearningView>
           message: cp.name,
           child: Container(
             decoration: BoxDecoration(
-              color: isFirst
-                  ? Colors.green
-                  : isLast
-                      ? Colors.red
-                      : Colors.blue,
+              color: Colors.blue,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),
@@ -304,27 +304,53 @@ class _LearningViewState extends State<LearningView>
       borderRadius: BorderRadius.circular(12),
       child: SizedBox(
         height: 250,
-        child: MapWithTypeSelector(
-          options: MapOptions(
-            initialCenter: bounds.center,
-            initialZoom: 14.0,
-            initialCameraFit: points.length > 1
-                ? CameraFit.bounds(
-                    bounds: bounds,
-                    padding: const EdgeInsets.all(40),
-                  )
-                : null,
-          ),
-          layers: [
-            if (points.length > 1)
-              PolylineLayer(polylines: [
-                Polyline(
-                  points: points,
-                  color: Colors.blue,
-                  strokeWidth: 3.0,
-                ),
-              ]),
-            MarkerLayer(markers: markers),
+        child: Stack(
+          children: [
+            MapWithTypeSelector(
+              mapController: _mapController,
+              showTypeSelector: false,
+              options: MapOptions(
+                initialCenter: bounds.center,
+                initialZoom: 14.0,
+                initialCameraFit: points.length > 1
+                    ? CameraFit.bounds(
+                        bounds: bounds,
+                        padding: const EdgeInsets.all(40),
+                      )
+                    : null,
+                onTap: (tapPosition, point) {
+                  if (_measureMode) {
+                    setState(() => _measurePoints.add(point));
+                    return;
+                  }
+                },
+              ),
+              layers: [
+                if (points.length > 1)
+                  PolylineLayer(polylines: [
+                    Polyline(
+                      points: points,
+                      color: Colors.blue,
+                      strokeWidth: 3.0,
+                    ),
+                  ]),
+                MarkerLayer(markers: markers),
+                ...MapControls.buildMeasureLayers(_measurePoints),
+              ],
+            ),
+            MapControls(
+              mapController: _mapController,
+              measureMode: _measureMode,
+              onMeasureModeChanged: (v) => setState(() {
+                _measureMode = v;
+                if (!v) _measurePoints.clear();
+              }),
+              measurePoints: _measurePoints,
+              onMeasureClear: () => setState(() => _measurePoints.clear()),
+              onMeasureUndo: () => setState(() {
+                if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+              }),
+            ),
           ],
         ),
       ),

@@ -6,6 +6,7 @@ import '../../../domain/entities/safety_point.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך עריכת נקודת בטיחות
 class EditSafetyPointScreen extends StatefulWidget {
@@ -33,6 +34,8 @@ class _EditSafetyPointScreenState extends State<EditSafetyPointScreen> {
   late String _selectedSeverity;
   late LatLng _selectedLocation;
   bool _isLoading = false;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -276,31 +279,54 @@ class _EditSafetyPointScreenState extends State<EditSafetyPointScreen> {
               height: 300,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: MapWithTypeSelector(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: _selectedLocation,
-                    initialZoom: 14,
-                    onTap: (tapPosition, point) {
-                      setState(() {
-                        _selectedLocation = point;
-                      });
-                    },
-                  ),
-                  layers: [
-                    MarkerLayer(
-                      markers: [
-                        Marker(
-                          point: _selectedLocation,
-                          width: 50,
-                          height: 50,
-                          child: Icon(
-                            Icons.warning,
-                            color: _getSeverityColor(_selectedSeverity),
-                            size: 40,
-                          ),
+                child: Stack(
+                  children: [
+                    MapWithTypeSelector(
+                      showTypeSelector: false,
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _selectedLocation,
+                        initialZoom: 14,
+                        onTap: (tapPosition, point) {
+                          if (_measureMode) {
+                            setState(() => _measurePoints.add(point));
+                            return;
+                          }
+                          setState(() {
+                            _selectedLocation = point;
+                          });
+                        },
+                      ),
+                      layers: [
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _selectedLocation,
+                              width: 50,
+                              height: 50,
+                              child: Icon(
+                                Icons.warning,
+                                color: _getSeverityColor(_selectedSeverity),
+                                size: 40,
+                              ),
+                            ),
+                          ],
                         ),
+                        ...MapControls.buildMeasureLayers(_measurePoints),
                       ],
+                    ),
+                    MapControls(
+                      mapController: _mapController,
+                      measureMode: _measureMode,
+                      onMeasureModeChanged: (v) => setState(() {
+                        _measureMode = v;
+                        if (!v) _measurePoints.clear();
+                      }),
+                      measurePoints: _measurePoints,
+                      onMeasureClear: () => setState(() => _measurePoints.clear()),
+                      onMeasureUndo: () => setState(() {
+                        if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                      }),
                     ),
                   ],
                 ),

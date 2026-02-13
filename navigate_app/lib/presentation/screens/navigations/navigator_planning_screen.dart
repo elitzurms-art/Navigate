@@ -9,6 +9,7 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך תכנון למנווט (סטטוס learning)
 class NavigatorPlanningScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final AuthService _authService = AuthService();
+  final MapController _mapController = MapController();
   late TabController _tabController;
 
   List<Checkpoint> _myCheckpoints = [];
@@ -35,6 +37,9 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
   List<nav.NavBoundary> _boundaries = [];
   bool _isLoading = true;
   String? _navigatorId;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -345,7 +350,18 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
     return Stack(
       children: [
         MapWithTypeSelector(
-          options: MapOptions(initialCenter: center, initialZoom: 14.0),
+          showTypeSelector: false,
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: center,
+            initialZoom: 14.0,
+            onTap: (tapPosition, point) {
+              if (_measureMode) {
+                setState(() => _measurePoints.add(point));
+                return;
+              }
+            },
+          ),
           layers: [
             // גבול גזרה (GG)
             if (_boundaries.isNotEmpty)
@@ -390,7 +406,22 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                 );
               }).toList(),
             ),
+            // שכבות מדידה
+            ...MapControls.buildMeasureLayers(_measurePoints),
           ],
+        ),
+        MapControls(
+          mapController: _mapController,
+          measureMode: _measureMode,
+          onMeasureModeChanged: (v) => setState(() {
+            _measureMode = v;
+            if (!v) _measurePoints.clear();
+          }),
+          measurePoints: _measurePoints,
+          onMeasureClear: () => setState(() => _measurePoints.clear()),
+          onMeasureUndo: () => setState(() {
+            if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+          }),
         ),
         Positioned(
           bottom: 16, left: 16, right: 16,

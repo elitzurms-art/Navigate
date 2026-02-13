@@ -9,6 +9,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// שלב 3 - וידוא צירים
 class RoutesVerificationScreen extends StatefulWidget {
@@ -30,6 +31,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   Boundary? _boundary;
   Map<String, bool> _selectedNavigators = {};
   bool _isLoading = false;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -440,70 +444,99 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
 
         // מפה
         Expanded(
-          child: MapWithTypeSelector(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: widget.navigation.displaySettings.openingLat != null &&
-                      widget.navigation.displaySettings.openingLng != null
-                  ? LatLng(
-                      widget.navigation.displaySettings.openingLat!,
-                      widget.navigation.displaySettings.openingLng!,
-                    )
-                  : const LatLng(32.0853, 34.7818),
-              initialZoom: 13.0,
-            ),
-            layers: [
-              // גבול גזרה (אם קיים)
-              if (_boundary != null && _boundary!.coordinates.isNotEmpty)
-                PolygonLayer(
-                  polygons: [
-                    Polygon(
-                      points: _boundary!.coordinates
-                          .map((coord) => LatLng(coord.lat, coord.lng))
-                          .toList(),
-                      color: Colors.blue.withOpacity(0.2),
-                      borderColor: Colors.blue,
-                      borderStrokeWidth: 2,
-                      isFilled: true,
-                    ),
-                  ],
+          child: Stack(
+            children: [
+              MapWithTypeSelector(
+                showTypeSelector: false,
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: widget.navigation.displaySettings.openingLat != null &&
+                          widget.navigation.displaySettings.openingLng != null
+                      ? LatLng(
+                          widget.navigation.displaySettings.openingLat!,
+                          widget.navigation.displaySettings.openingLng!,
+                        )
+                      : const LatLng(32.0853, 34.7818),
+                  initialZoom: 13.0,
+                  onTap: (tapPosition, point) {
+                    if (_measureMode) {
+                      setState(() => _measurePoints.add(point));
+                      return;
+                    }
+                  },
                 ),
-
-              // ציור הצירים
-              ..._buildRoutePolylines(),
-
-              // נקודות ציון - רק אלה בתוך הגבול
-              MarkerLayer(
-                markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                        ? GeometryUtils.filterPointsInPolygon(
-                            points: _checkpoints,
-                            getCoordinate: (cp) => cp.coordinates,
-                            polygon: _boundary!.coordinates,
-                          )
-                        : _checkpoints)
-                    .map((cp) {
-                  return Marker(
-                    point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                    width: 40,
-                    height: 40,
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.place,
-                          color: Colors.blue,
-                          size: 32,
-                        ),
-                        Text(
-                          '${cp.sequenceNumber}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
+                layers: [
+                  // גבול גזרה (אם קיים)
+                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                    PolygonLayer(
+                      polygons: [
+                        Polygon(
+                          points: _boundary!.coordinates
+                              .map((coord) => LatLng(coord.lat, coord.lng))
+                              .toList(),
+                          color: Colors.black.withOpacity(0.1),
+                          borderColor: Colors.black,
+                          borderStrokeWidth: _boundary!.strokeWidth,
+                          isFilled: true,
                         ),
                       ],
                     ),
-                  );
-                }).toList(),
+
+                  // ציור הצירים
+                  ..._buildRoutePolylines(),
+
+                  // נקודות ציון - רק אלה בתוך הגבול
+                  MarkerLayer(
+                    markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
+                            ? GeometryUtils.filterPointsInPolygon(
+                                points: _checkpoints,
+                                getCoordinate: (cp) => cp.coordinates,
+                                polygon: _boundary!.coordinates,
+                              )
+                            : _checkpoints)
+                        .map((cp) {
+                      final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
+                      return Marker(
+                        point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                        width: 36,
+                        height: 36,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: markerColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${cp.sequenceNumber}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+
+                  // שכבות מדידה
+                  ...MapControls.buildMeasureLayers(_measurePoints),
+                ],
+              ),
+              MapControls(
+                mapController: _mapController,
+                measureMode: _measureMode,
+                onMeasureModeChanged: (v) => setState(() {
+                  _measureMode = v;
+                  if (!v) _measurePoints.clear();
+                }),
+                measurePoints: _measurePoints,
+                onMeasureClear: () => setState(() => _measurePoints.clear()),
+                onMeasureUndo: () => setState(() {
+                  if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                }),
               ),
             ],
           ),

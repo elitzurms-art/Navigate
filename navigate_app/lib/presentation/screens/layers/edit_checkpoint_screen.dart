@@ -6,6 +6,7 @@ import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך עריכת נקודת ציון
 class EditCheckpointScreen extends StatefulWidget {
@@ -38,6 +39,8 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
   late List<String> _labels;
   final MapController _mapController = MapController();
   bool _isSaving = false;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -288,33 +291,56 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: MapWithTypeSelector(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: _selectedLocation,
-                    initialZoom: 14,
-                    onTap: (tapPosition, point) {
-                      setState(() {
-                        _selectedLocation = point;
-                        _latController.text = point.latitude.toStringAsFixed(6);
-                        _lngController.text = point.longitude.toStringAsFixed(6);
-                      });
-                    },
-                  ),
-                  layers: [
-                    MarkerLayer(
-                      markers: [
-                        Marker(
-                          point: _selectedLocation,
-                          width: 40,
-                          height: 40,
-                          child: Icon(
-                            Icons.place,
-                            color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
-                            size: 40,
-                          ),
+                child: Stack(
+                  children: [
+                    MapWithTypeSelector(
+                      showTypeSelector: false,
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _selectedLocation,
+                        initialZoom: 14,
+                        onTap: (tapPosition, point) {
+                          if (_measureMode) {
+                            setState(() => _measurePoints.add(point));
+                            return;
+                          }
+                          setState(() {
+                            _selectedLocation = point;
+                            _latController.text = point.latitude.toStringAsFixed(6);
+                            _lngController.text = point.longitude.toStringAsFixed(6);
+                          });
+                        },
+                      ),
+                      layers: [
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _selectedLocation,
+                              width: 40,
+                              height: 40,
+                              child: Icon(
+                                Icons.place,
+                                color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                                size: 40,
+                              ),
+                            ),
+                          ],
                         ),
+                        ...MapControls.buildMeasureLayers(_measurePoints),
                       ],
+                    ),
+                    MapControls(
+                      mapController: _mapController,
+                      measureMode: _measureMode,
+                      onMeasureModeChanged: (v) => setState(() {
+                        _measureMode = v;
+                        if (!v) _measurePoints.clear();
+                      }),
+                      measurePoints: _measurePoints,
+                      onMeasureClear: () => setState(() => _measurePoints.clear()),
+                      onMeasureUndo: () => setState(() {
+                        if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                      }),
                     ),
                   ],
                 ),

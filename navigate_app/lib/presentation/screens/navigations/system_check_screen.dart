@@ -14,6 +14,7 @@ import '../../../services/navigation_data_loader.dart';
 import '../../../services/gps_service.dart';
 import 'dart:async';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך בדיקת מערכות
 class SystemCheckScreen extends StatefulWidget {
@@ -65,6 +66,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   // מצב בדיקת מערכות (התחיל/לא)
   late domain.Navigation _currentNavigation;
   bool _systemCheckStarted = false;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   // הורדת נתונים
   NavigationDataLoader? _dataLoader;
@@ -967,81 +971,109 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
         // מפה
         Expanded(
-          child: MapWithTypeSelector(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: widget.navigation.displaySettings.openingLat != null
-                  ? LatLng(
-                      widget.navigation.displaySettings.openingLat!,
-                      widget.navigation.displaySettings.openingLng!,
-                    )
-                  : const LatLng(32.0853, 34.7818),
-              initialZoom: 13.0,
-            ),
-            layers: [
-              // פוליגון ג"ג
-              if (_boundary != null && _boundary!.coordinates.isNotEmpty)
-                PolygonLayer(
-                  polygons: [
-                    Polygon(
-                      points: _boundary!.coordinates
-                          .map((coord) => LatLng(coord.lat, coord.lng))
-                          .toList(),
-                      color: Colors.blue.withOpacity(0.2),
-                      borderColor: Colors.blue,
-                      borderStrokeWidth: 2,
-                    ),
-                  ],
+          child: Stack(
+            children: [
+              MapWithTypeSelector(
+                showTypeSelector: false,
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: widget.navigation.displaySettings.openingLat != null
+                      ? LatLng(
+                          widget.navigation.displaySettings.openingLat!,
+                          widget.navigation.displaySettings.openingLng!,
+                        )
+                      : const LatLng(32.0853, 34.7818),
+                  initialZoom: 13.0,
+                  onTap: (tapPosition, point) {
+                    if (_measureMode) {
+                      setState(() => _measurePoints.add(point));
+                      return;
+                    }
+                  },
                 ),
-
-              // סמנים של מנווטים
-              MarkerLayer(
-                markers: _navigatorStatuses.entries.map((entry) {
-                  final navigatorId = entry.key;
-                  final status = entry.value;
-
-                  if (!status.isConnected || status.latitude == null) {
-                    return Marker(
-                      point: const LatLng(0, 0),
-                      width: 0,
-                      height: 0,
-                      child: Container(),
-                    );
-                  }
-
-                  final color = _getConnectivityColor(status);
-
-                  return Marker(
-                    point: LatLng(status.latitude!, status.longitude!),
-                    width: 60,
-                    height: 60,
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.person_pin_circle,
-                          color: color,
-                          size: 40,
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: color, width: 2),
-                          ),
-                          child: Text(
-                            navigatorId,
-                            style: TextStyle(
-                              fontSize: 8,
-                              fontWeight: FontWeight.bold,
-                              color: color,
-                            ),
-                          ),
+                layers: [
+                  // פוליגון ג"ג
+                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                    PolygonLayer(
+                      polygons: [
+                        Polygon(
+                          points: _boundary!.coordinates
+                              .map((coord) => LatLng(coord.lat, coord.lng))
+                              .toList(),
+                          color: Colors.black.withOpacity(0.1),
+                          borderColor: Colors.black,
+                          borderStrokeWidth: _boundary!.strokeWidth,
+                          isFilled: true,
                         ),
                       ],
                     ),
-                  );
-                }).toList(),
+
+                  // סמנים של מנווטים
+                  MarkerLayer(
+                    markers: _navigatorStatuses.entries.map((entry) {
+                      final navigatorId = entry.key;
+                      final status = entry.value;
+
+                      if (!status.isConnected || status.latitude == null) {
+                        return Marker(
+                          point: const LatLng(0, 0),
+                          width: 0,
+                          height: 0,
+                          child: Container(),
+                        );
+                      }
+
+                      final color = _getConnectivityColor(status);
+
+                      return Marker(
+                        point: LatLng(status.latitude!, status.longitude!),
+                        width: 60,
+                        height: 60,
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.person_pin_circle,
+                              color: color,
+                              size: 40,
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: color, width: 2),
+                              ),
+                              child: Text(
+                                navigatorId,
+                                style: TextStyle(
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+
+                  // שכבות מדידה
+                  ...MapControls.buildMeasureLayers(_measurePoints),
+                ],
+              ),
+              MapControls(
+                mapController: _mapController,
+                measureMode: _measureMode,
+                onMeasureModeChanged: (v) => setState(() {
+                  _measureMode = v;
+                  if (!v) _measurePoints.clear();
+                }),
+                measurePoints: _measurePoints,
+                onMeasureClear: () => setState(() => _measurePoints.clear()),
+                onMeasureUndo: () => setState(() {
+                  if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                }),
               ),
             ],
           ),

@@ -6,6 +6,7 @@ import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך עריכת גבול גדוד
 class EditBoundaryScreen extends StatefulWidget {
@@ -31,6 +32,8 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
 
   late List<LatLng> _polygonPoints;
   bool _isLoading = false;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -237,65 +240,88 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
 
             // מפה
             Expanded(
-              child: MapWithTypeSelector(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: const LatLng(31.5, 34.75),
-                  initialZoom: 8,
-                  onTap: (tapPosition, point) {
-                    _addPoint(point);
-                  },
-                ),
-                layers: [
-                  if (_polygonPoints.length >= 2)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: _polygonPoints,
-                          color: Colors.black,
-                          strokeWidth: 3,
-                        ),
-                      ],
+              child: Stack(
+                children: [
+                  MapWithTypeSelector(
+                    showTypeSelector: false,
+                    mapController: _mapController,
+                    options: MapOptions(
+                      initialCenter: const LatLng(31.5, 34.75),
+                      initialZoom: 8,
+                      onTap: (tapPosition, point) {
+                        if (_measureMode) {
+                          setState(() => _measurePoints.add(point));
+                          return;
+                        }
+                        _addPoint(point);
+                      },
                     ),
-                  if (_polygonPoints.length >= 3)
-                    PolygonLayer(
-                      polygons: [
-                        Polygon(
-                          points: _polygonPoints,
-                          color: Colors.black.withOpacity(0.1),
-                          borderColor: Colors.black,
-                          borderStrokeWidth: 3,
-                          isFilled: true,
-                        ),
-                      ],
-                    ),
-                  if (_polygonPoints.isNotEmpty)
-                    MarkerLayer(
-                      markers: _polygonPoints.asMap().entries.map((entry) {
-                        return Marker(
-                          point: entry.value,
-                          width: 30,
-                          height: 30,
-                          child: Container(
-                            decoration: BoxDecoration(
+                    layers: [
+                      if (_polygonPoints.length >= 2)
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: _polygonPoints,
                               color: Colors.black,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                              strokeWidth: 3,
                             ),
-                            child: Center(
-                              child: Text(
-                                '${entry.key + 1}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
+                          ],
+                        ),
+                      if (_polygonPoints.length >= 3)
+                        PolygonLayer(
+                          polygons: [
+                            Polygon(
+                              points: _polygonPoints,
+                              color: Colors.black.withOpacity(0.1),
+                              borderColor: Colors.black,
+                              borderStrokeWidth: 3,
+                              isFilled: true,
+                            ),
+                          ],
+                        ),
+                      if (_polygonPoints.isNotEmpty)
+                        MarkerLayer(
+                          markers: _polygonPoints.asMap().entries.map((entry) {
+                            return Marker(
+                              point: entry.value,
+                              width: 30,
+                              height: 30,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${entry.key + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                            );
+                          }).toList(),
+                        ),
+                      ...MapControls.buildMeasureLayers(_measurePoints),
+                    ],
+                  ),
+                  MapControls(
+                    mapController: _mapController,
+                    measureMode: _measureMode,
+                    onMeasureModeChanged: (v) => setState(() {
+                      _measureMode = v;
+                      if (!v) _measurePoints.clear();
+                    }),
+                    measurePoints: _measurePoints,
+                    onMeasureClear: () => setState(() => _measurePoints.clear()),
+                    onMeasureUndo: () => setState(() {
+                      if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                    }),
+                  ),
                 ],
               ),
             ),

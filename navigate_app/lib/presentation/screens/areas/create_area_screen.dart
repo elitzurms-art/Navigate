@@ -5,6 +5,7 @@ import '../../../domain/entities/area.dart' as domain;
 import '../../../data/repositories/area_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך יצירת אזור חדש
 class CreateAreaScreen extends StatefulWidget {
@@ -25,6 +26,8 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
   List<LatLng> _boundaryPoints = [];
   bool _isDrawing = false;
   bool _isSaving = false;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -164,16 +167,25 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
           // מפה
           Expanded(
             flex: 3,
-            child: MapWithTypeSelector(
+            child: Stack(
+              children: [
+                MapWithTypeSelector(
+              showTypeSelector: false,
               mapController: _mapController,
               options: MapOptions(
                 initialCenter: const LatLng(32.0853, 34.7818),
                 initialZoom: 13.0,
-                onTap: _isDrawing ? (tapPosition, point) {
-                  setState(() {
-                    _boundaryPoints.add(point);
-                  });
-                } : null,
+                onTap: (tapPosition, point) {
+                  if (_measureMode) {
+                    setState(() => _measurePoints.add(point));
+                    return;
+                  }
+                  if (_isDrawing) {
+                    setState(() {
+                      _boundaryPoints.add(point);
+                    });
+                  }
+                },
               ),
               layers: [
                 if (_boundaryPoints.isNotEmpty)
@@ -215,6 +227,22 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
                       );
                     }).toList(),
                   ),
+                ...MapControls.buildMeasureLayers(_measurePoints),
+              ],
+            ),
+                MapControls(
+                  mapController: _mapController,
+                  measureMode: _measureMode,
+                  onMeasureModeChanged: (v) => setState(() {
+                    _measureMode = v;
+                    if (!v) _measurePoints.clear();
+                  }),
+                  measurePoints: _measurePoints,
+                  onMeasureClear: () => setState(() => _measurePoints.clear()),
+                  onMeasureUndo: () => setState(() {
+                    if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                  }),
+                ),
               ],
             ),
           ),

@@ -11,6 +11,7 @@ import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך מפה עם בקרת שכבות
 class MapWithLayersScreen extends StatefulWidget {
@@ -48,6 +49,9 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
   List<Cluster> _clusters = [];
   bool _isLoading = true;
   bool _showLayerControls = false;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
@@ -118,49 +122,50 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
           // המפה
           MapWithTypeSelector(
             mapController: _mapController,
+            showTypeSelector: false,
             options: MapOptions(
               initialCenter: _defaultCenter,
               initialZoom: 8,
+              onTap: (tapPosition, point) {
+                if (_measureMode) {
+                  setState(() => _measurePoints.add(point));
+                  return;
+                }
+              },
             ),
             layers: [
 
-              // שכבת נ"ז - נקודות ציון
+              // שכבת נ"ז - נקודות ציון (עיגול כחול/ירוק עם מספר)
               if (_showNZ && _checkpoints.isNotEmpty)
                 MarkerLayer(
                   markers: _checkpoints.map((checkpoint) {
+                    final isNavigatorCheckpoint = checkpoint.color == 'blue';
+                    final markerColor = isNavigatorCheckpoint ? Colors.blue : Colors.green;
                     return Marker(
                       point: LatLng(
                         checkpoint.coordinates.lat,
                         checkpoint.coordinates.lng,
                       ),
-                      width: 40,
-                      height: 50,
+                      width: 32,
+                      height: 32,
                       child: Opacity(
                         opacity: _nzOpacity,
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.place,
-                              color: checkpoint.color == 'blue'
-                                  ? Colors.blue
-                                  : Colors.green,
-                              size: 32,
-                            ),
-                            Container(
-                              padding: const EdgeInsets.all(2),
-                              decoration: BoxDecoration(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: markerColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${checkpoint.sequenceNumber}',
+                              style: const TextStyle(
                                 color: Colors.white,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                '${checkpoint.sequenceNumber}',
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     );
@@ -220,24 +225,24 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
                       points: point.polygonCoordinates!
                           .map((c) => LatLng(c.lat, c.lng))
                           .toList(),
-                      color: _getSeverityColor(point.severity).withOpacity(_nbOpacity * 0.3),
-                      borderColor: _getSeverityColor(point.severity).withOpacity(_nbOpacity),
+                      color: Colors.red.withOpacity(0.2 * _nbOpacity),
+                      borderColor: Colors.red.withOpacity(_nbOpacity),
                       borderStrokeWidth: 3,
                       isFilled: true,
                     );
                   }).toList(),
                 ),
 
-              // שכבת ג"ג - גבול גזרה
+              // שכבת ג"ג - גבול גזרה (שחור)
               if (_showGG && _boundaries.isNotEmpty)
                 PolygonLayer(
                   polygons: _boundaries.map((boundary) {
                     return Polygon(
                       points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                      color: Colors.transparent,
+                      color: Colors.black.withOpacity(0.1 * _ggOpacity),
                       borderColor: Colors.black.withOpacity(_ggOpacity),
                       borderStrokeWidth: boundary.strokeWidth,
-                      isFilled: false,
+                      isFilled: true,
                     );
                   }).toList(),
                 ),
@@ -255,7 +260,23 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
                     );
                   }).toList(),
                 ),
+              ...MapControls.buildMeasureLayers(_measurePoints),
             ],
+          ),
+
+          // בקרי מפה
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
           ),
 
           // אינדיקטור טעינה
@@ -508,19 +529,8 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
     );
   }
 
-  /// קבלת צבע לפי חומרת נקודת הבטיחות
+  /// קבלת צבע לנקודת בטיחות — תמיד אדום (ללא צבע לפי חומרה)
   Color _getSeverityColor(String severity) {
-    switch (severity) {
-      case 'low':
-        return Colors.orange;
-      case 'medium':
-        return Colors.red;
-      case 'high':
-        return Colors.red.shade700;
-      case 'critical':
-        return Colors.red.shade900;
-      default:
-        return Colors.red;
-    }
+    return Colors.red;
   }
 }

@@ -10,6 +10,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
@@ -39,6 +40,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   // _routeApprovals הוסר — סטטוס נגזר מ-approvalStatus ב-AssignedRoute
   bool _isLoading = false;
   bool _learningStarted = false;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
@@ -653,70 +657,98 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
         // מפה
         Expanded(
-          child: MapWithTypeSelector(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: widget.navigation.displaySettings.openingLat != null &&
-                      widget.navigation.displaySettings.openingLng != null
-                  ? LatLng(
-                      widget.navigation.displaySettings.openingLat!,
-                      widget.navigation.displaySettings.openingLng!,
-                    )
-                  : const LatLng(32.0853, 34.7818),
-              initialZoom: 13.0,
-            ),
-            layers: [
-              // גבול גזרה
-              if (_boundary != null && _boundary!.coordinates.isNotEmpty)
-                PolygonLayer(
-                  polygons: [
-                    Polygon(
-                      points: _boundary!.coordinates
-                          .map((coord) => LatLng(coord.lat, coord.lng))
-                          .toList(),
-                      color: Colors.blue.withOpacity(0.2),
-                      borderColor: Colors.blue,
-                      borderStrokeWidth: 2,
-                      isFilled: true,
-                    ),
-                  ],
+          child: Stack(
+            children: [
+              MapWithTypeSelector(
+                showTypeSelector: false,
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: widget.navigation.displaySettings.openingLat != null &&
+                          widget.navigation.displaySettings.openingLng != null
+                      ? LatLng(
+                          widget.navigation.displaySettings.openingLat!,
+                          widget.navigation.displaySettings.openingLng!,
+                        )
+                      : const LatLng(32.0853, 34.7818),
+                  initialZoom: 13.0,
+                  onTap: (tapPosition, point) {
+                    if (_measureMode) {
+                      setState(() => _measurePoints.add(point));
+                      return;
+                    }
+                  },
                 ),
-
-              // צירי המנווטים
-              ..._buildRoutePolylines(),
-
-              // נקודות ציון
-              MarkerLayer(
-                markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                        ? GeometryUtils.filterPointsInPolygon(
-                            points: _checkpoints,
-                            getCoordinate: (cp) => cp.coordinates,
-                            polygon: _boundary!.coordinates,
-                          )
-                        : _checkpoints)
-                    .map((cp) {
-                  return Marker(
-                    point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                    width: 40,
-                    height: 40,
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.place,
-                          color: Colors.blue,
-                          size: 32,
-                        ),
-                        Text(
-                          '${cp.sequenceNumber}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
+                layers: [
+                  // גבול גזרה (שחור)
+                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                    PolygonLayer(
+                      polygons: [
+                        Polygon(
+                          points: _boundary!.coordinates
+                              .map((coord) => LatLng(coord.lat, coord.lng))
+                              .toList(),
+                          color: Colors.black.withOpacity(0.1),
+                          borderColor: Colors.black,
+                          borderStrokeWidth: _boundary!.strokeWidth,
+                          isFilled: true,
                         ),
                       ],
                     ),
-                  );
-                }).toList(),
+
+                  // צירי המנווטים
+                  ..._buildRoutePolylines(),
+
+                  // נקודות ציון (עיגול כחול עם מספר)
+                  MarkerLayer(
+                    markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
+                            ? GeometryUtils.filterPointsInPolygon(
+                                points: _checkpoints,
+                                getCoordinate: (cp) => cp.coordinates,
+                                polygon: _boundary!.coordinates,
+                              )
+                            : _checkpoints)
+                        .map((cp) {
+                      return Marker(
+                        point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                        width: 32,
+                        height: 32,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${cp.sequenceNumber}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+
+                  // שכבות מדידה
+                  ...MapControls.buildMeasureLayers(_measurePoints),
+                ],
+              ),
+              MapControls(
+                mapController: _mapController,
+                measureMode: _measureMode,
+                onMeasureModeChanged: (v) => setState(() {
+                  _measureMode = v;
+                  if (!v) _measurePoints.clear();
+                }),
+                measurePoints: _measurePoints,
+                onMeasureClear: () => setState(() => _measurePoints.clear()),
+                onMeasureUndo: () => setState(() {
+                  if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                }),
               ),
             ],
           ),
@@ -725,8 +757,16 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
+  static const List<Color> _routeColors = [
+    Colors.blue,
+    Colors.orange,
+    Colors.purple,
+    Colors.teal,
+  ];
+
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
+    int colorIndex = 0;
 
     for (final entry in _currentNavigation.routes.entries) {
       final navigatorId = entry.key;
@@ -734,18 +774,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       if (_selectedNavigators[navigatorId] != true) continue;
 
-      // צבע לפי סטטוס אישור — 3 מצבים
-      final Color color;
-      switch (route.approvalStatus) {
-        case 'approved':
-          color = Colors.green;
-          break;
-        case 'pending_approval':
-          color = Colors.orange;
-          break;
-        default:
-          color = Colors.grey;
-      }
+      // צבע מחזורי מרשימת הצבעים הסטנדרטית
+      final Color color = _routeColors[colorIndex % _routeColors.length];
+      colorIndex++;
 
       // בניית הציר המלא
       List<LatLng> points = [];
@@ -783,7 +814,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             polylines: [
               Polyline(
                 points: points,
-                strokeWidth: route.approvalStatus == 'approved' ? 4 : 3,
+                strokeWidth: 3.0,
                 color: color,
               ),
             ],

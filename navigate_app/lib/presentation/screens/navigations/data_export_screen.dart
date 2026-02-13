@@ -25,6 +25,7 @@ import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// שלב 5 - ייצוא נתונים
 class DataExportScreen extends StatefulWidget {
@@ -548,20 +549,9 @@ class _DataExportScreenState extends State<DataExportScreen> {
 
 }
 
-/// Get color based on safety point severity
+/// Get color based on safety point severity — always red
 Color _getSeverityColor(String severity) {
-  switch (severity) {
-    case 'low':
-      return Colors.orange;
-    case 'medium':
-      return Colors.red;
-    case 'high':
-      return Colors.red.shade700;
-    case 'critical':
-      return Colors.red.shade900;
-    default:
-      return Colors.red;
-  }
+  return Colors.red;
 }
 
 /// Full-screen interactive map preview for PDF export.
@@ -622,6 +612,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
 
   bool _isExporting = false;
   bool _showLayerPanel = true;
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   @override
   void initState() {
@@ -781,48 +774,48 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
 
     return MapWithTypeSelector(
       mapController: _mapController,
-      options: const MapOptions(
-        initialCenter: LatLng(31.5, 34.75),
+      showTypeSelector: false,
+      options: MapOptions(
+        initialCenter: const LatLng(31.5, 34.75),
         initialZoom: 12,
+        onTap: (tapPosition, point) {
+          if (_measureMode) {
+            setState(() => _measurePoints.add(point));
+            return;
+          }
+        },
       ),
       layers: [
         // NZ layer - checkpoints
         if (_showNZ && checkpointsToShow.isNotEmpty)
           MarkerLayer(
             markers: checkpointsToShow.map((checkpoint) {
+              final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
               return Marker(
                 point: LatLng(
                   checkpoint.coordinates.lat,
                   checkpoint.coordinates.lng,
                 ),
-                width: 40,
-                height: 50,
+                width: 36,
+                height: 36,
                 child: Opacity(
                   opacity: _nzOpacity,
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.place,
-                        color: checkpoint.color == 'blue'
-                            ? Colors.blue
-                            : Colors.green,
-                        size: 32,
-                      ),
-                      Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: markerColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${checkpoint.sequenceNumber}',
+                        style: const TextStyle(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '${checkpoint.sequenceNumber}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               );
@@ -896,10 +889,10 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             polygons: widget.boundaries.map((boundary) {
               return Polygon(
                 points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.transparent,
+                color: Colors.black.withOpacity(0.1 * _ggOpacity),
                 borderColor: Colors.black.withOpacity(_ggOpacity),
                 borderStrokeWidth: boundary.strokeWidth,
-                isFilled: false,
+                isFilled: true,
               );
             }).toList(),
           ),
@@ -917,6 +910,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
               );
             }).toList(),
           ),
+        ...MapControls.buildMeasureLayers(_measurePoints),
       ],
     );
   }
@@ -1260,6 +1254,21 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
           RepaintBoundary(
             key: _mapRepaintBoundaryKey,
             child: _buildMap(),
+          ),
+
+          // בקרי מפה
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
           ),
 
           // Layer panel (collapsible)

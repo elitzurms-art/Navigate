@@ -16,6 +16,7 @@ import '../../../domain/entities/unit.dart' as domain_unit;
 import '../../../services/auth_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../core/map_config.dart';
 import 'routes_verification_screen.dart';
 import 'navigation_preparation_screen.dart';
 
@@ -106,6 +107,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _allowOpenMap = false;
   bool _showSelfLocation = false;
   bool _showRouteOnMap = false;
+
+  // הגדרות תצוגה
+  String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
 
   // התראות
   bool _alertsEnabled = false;
@@ -378,6 +382,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _allowOpenMap = nav.allowOpenMap;
     _showSelfLocation = nav.showSelfLocation;
     _showRouteOnMap = nav.showRouteOnMap;
+
+    // הגדרות תצוגה
+    _defaultMapType = nav.displaySettings.defaultMap ?? 'topographic';
 
     // התראות
     _alertsEnabled = nav.alerts.enabled;
@@ -1566,6 +1573,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   }
 
   Widget _buildDisplaySettings() {
+    final mapConfig = MapConfig();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1574,16 +1582,28 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           children: [
             const Text('מפת ברירת מחדל', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            const Text('(בפיתוח)', style: TextStyle(color: Colors.grey)),
+            DropdownButtonFormField<String>(
+              value: _defaultMapType,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              items: MapType.values.map((type) {
+                return DropdownMenuItem<String>(
+                  value: type.name,
+                  child: Text(mapConfig.label(type)),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _defaultMapType = value);
+                }
+              },
+            ),
 
             const SizedBox(height: 16),
             const Text('מיקום פתיחת מפה: מחושב אוטומטית ממרכז הג"ג',
               style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
-
-            const SizedBox(height: 16),
-            const Text('בחירת שכבות', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text('(בפיתוח)', style: TextStyle(color: Colors.grey)),
           ],
         ),
       ),
@@ -1668,6 +1688,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       }
 
       final displaySettings = DisplaySettings(
+        defaultMap: _defaultMapType,
         openingLat: openingLat,
         openingLng: openingLng,
       );

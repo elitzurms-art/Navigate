@@ -3,6 +3,84 @@ import '../../domain/entities/coordinate.dart';
 
 /// פונקציות עזר לגאומטריה
 class GeometryUtils {
+  /// רדיוס כדור הארץ בקילומטרים
+  static const double _earthRadiusKm = 6371.0;
+
+  /// חישוב מרחק בין שתי קואורדינטות במטרים (נוסחת Haversine)
+  static double distanceBetweenMeters(Coordinate from, Coordinate to) {
+    final dLat = _toRadians(to.lat - from.lat);
+    final dLng = _toRadians(to.lng - from.lng);
+
+    final a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(from.lat)) *
+            cos(_toRadians(to.lat)) *
+            sin(dLng / 2) *
+            sin(dLng / 2);
+    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return _earthRadiusKm * c * 1000; // המרה למטרים
+  }
+
+  /// חישוב כיוון (bearing) בין שתי קואורדינטות (0-360 מעלות, 0=צפון)
+  static double bearingBetween(Coordinate from, Coordinate to) {
+    final fromLatRad = _toRadians(from.lat);
+    final toLatRad = _toRadians(to.lat);
+    final dLngRad = _toRadians(to.lng - from.lng);
+
+    final y = sin(dLngRad) * cos(toLatRad);
+    final x = cos(fromLatRad) * sin(toLatRad) -
+        sin(fromLatRad) * cos(toLatRad) * cos(dLngRad);
+
+    final bearing = atan2(y, x);
+    // המרה מרדיאנים למעלות ונרמול ל-0-360
+    return (_toDegrees(bearing) + 360) % 360;
+  }
+
+  /// מרחק מינימלי (במטרים) מנקודה לקטע קו (segment).
+  /// הקרנה אורתוגונלית עם clamp ל-[0,1], fallback לקצוות.
+  static double distanceFromPointToSegmentMeters(
+    Coordinate point,
+    Coordinate segA,
+    Coordinate segB,
+  ) {
+    // אם הקטע הוא נקודה אחת
+    final dx = segB.lng - segA.lng;
+    final dy = segB.lat - segA.lat;
+    if (dx == 0 && dy == 0) {
+      return distanceBetweenMeters(point, segA);
+    }
+
+    // פרמטר t על הקטע [0,1]
+    final t = ((point.lng - segA.lng) * dx + (point.lat - segA.lat) * dy) /
+        (dx * dx + dy * dy);
+    final clamped = t.clamp(0.0, 1.0);
+
+    final closest = Coordinate(
+      lat: segA.lat + clamped * dy,
+      lng: segA.lng + clamped * dx,
+      utm: '',
+    );
+
+    return distanceBetweenMeters(point, closest);
+  }
+
+  /// חישוב אורך מסלול בקילומטרים (סכום מרחקים בין נקודות עוקבות)
+  static double calculatePathLengthKm(List<Coordinate> path) {
+    if (path.length < 2) return 0.0;
+
+    double totalMeters = 0.0;
+    for (int i = 0; i < path.length - 1; i++) {
+      totalMeters += distanceBetweenMeters(path[i], path[i + 1]);
+    }
+    return totalMeters / 1000.0;
+  }
+
+  /// המרה ממעלות לרדיאנים
+  static double _toRadians(double degrees) => degrees * pi / 180;
+
+  /// המרה מרדיאנים למעלות
+  static double _toDegrees(double radians) => radians * 180 / pi;
+
   /// בדיקה אם נקודה נמצאת בתוך פוליגון (Ray casting algorithm)
   static bool isPointInPolygon(Coordinate point, List<Coordinate> polygon) {
     if (polygon.length < 3) return false;

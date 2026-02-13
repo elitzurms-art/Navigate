@@ -10,6 +10,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/auth_service.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך אישור ניווט וחישוב ציונים
 class ApprovalScreen extends StatefulWidget {
@@ -47,6 +48,11 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   List<Checkpoint> _myCheckpoints = [];
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = []; // TODO: לטעון מסלול בפועל מ-GPS tracking
+
+  // מדידה
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
+  final MapController _navMapController = MapController();
 
   @override
   void initState() {
@@ -800,10 +806,19 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
                 // מפה
                 Expanded(
-                  child: MapWithTypeSelector(
+                  child: Stack(
+                    children: [
+                      MapWithTypeSelector(
+                    showTypeSelector: false,
+                    mapController: _navMapController,
                     options: MapOptions(
                       initialCenter: center,
                       initialZoom: 14.0,
+                      onTap: (tapPosition, point) {
+                        if (_measureMode) {
+                          setState(() => _measurePoints.add(point));
+                        }
+                      },
                     ),
                     layers: [
                       // מסלול מתוכנן (כחול)
@@ -857,6 +872,22 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                             ),
                           );
                         }).toList(),
+                      ),
+                      ...MapControls.buildMeasureLayers(_measurePoints),
+                    ],
+                  ),
+                      MapControls(
+                        mapController: _navMapController,
+                        measureMode: _measureMode,
+                        onMeasureModeChanged: (v) => setState(() {
+                          _measureMode = v;
+                          if (!v) _measurePoints.clear();
+                        }),
+                        measurePoints: _measurePoints,
+                        onMeasureClear: () => setState(() => _measurePoints.clear()),
+                        onMeasureUndo: () => setState(() {
+                          if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                        }),
                       ),
                     ],
                   ),

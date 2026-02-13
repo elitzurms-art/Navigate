@@ -14,6 +14,7 @@ import '../../../data/repositories/cluster_repository.dart';
 import '../navigations/create_navigation_screen.dart';
 import '../navigations/approval_screen.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 import '../navigations/investigation_screen.dart';
 
 
@@ -53,6 +54,10 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
 
   // ניווט שנבחר לטעינת שכבות
   domain.Navigation? _selectedNavigation;
+
+  // מדידה
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
@@ -180,18 +185,7 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
   }
 
   Color _getSeverityColor(String severity) {
-    switch (severity) {
-      case 'low':
-        return Colors.orange;
-      case 'medium':
-        return Colors.red;
-      case 'high':
-        return Colors.red.shade700;
-      case 'critical':
-        return Colors.red.shade900;
-      default:
-        return Colors.red;
-    }
+    return Colors.red;
   }
 
   @override
@@ -292,11 +286,19 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
   }
 
   Widget _buildMap() {
-    return MapWithTypeSelector(
+    return Stack(
+      children: [
+        MapWithTypeSelector(
+      showTypeSelector: false,
       mapController: _mapController,
       options: MapOptions(
         initialCenter: _defaultCenter,
         initialZoom: 8,
+        onTap: (tapPosition, point) {
+          if (_measureMode) {
+            setState(() => _measurePoints.add(point));
+          }
+        },
       ),
       layers: [
 
@@ -304,32 +306,30 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
         if (_showNZ && _checkpoints.isNotEmpty)
           MarkerLayer(
             markers: _checkpoints.map((checkpoint) {
+              final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
               return Marker(
                 point: LatLng(
                   checkpoint.coordinates.lat,
                   checkpoint.coordinates.lng,
                 ),
-                width: 40,
-                height: 50,
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.place,
-                      color: checkpoint.color == 'blue' ? Colors.blue : Colors.green,
-                      size: 32,
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
+                width: 36,
+                height: 36,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: markerColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '${checkpoint.sequenceNumber}',
+                      style: const TextStyle(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        '${checkpoint.sequenceNumber}',
-                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
+                  ),
                 ),
               );
             }).toList(),
@@ -393,10 +393,10 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
             polygons: _boundaries.map((boundary) {
               return Polygon(
                 points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.transparent,
+                color: Colors.black.withOpacity(0.1),
                 borderColor: Colors.black,
                 borderStrokeWidth: boundary.strokeWidth,
-                isFilled: false,
+                isFilled: true,
               );
             }).toList(),
           ),
@@ -414,6 +414,22 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
               );
             }).toList(),
           ),
+        ...MapControls.buildMeasureLayers(_measurePoints),
+      ],
+    ),
+        MapControls(
+          mapController: _mapController,
+          measureMode: _measureMode,
+          onMeasureModeChanged: (v) => setState(() {
+            _measureMode = v;
+            if (!v) _measurePoints.clear();
+          }),
+          measurePoints: _measurePoints,
+          onMeasureClear: () => setState(() => _measurePoints.clear()),
+          onMeasureUndo: () => setState(() {
+            if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+          }),
+        ),
       ],
     );
   }

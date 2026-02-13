@@ -13,6 +13,7 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/map_controls.dart';
 
 /// מסך יצירת ביצת איזור
 class CreateClusterScreen extends StatefulWidget {
@@ -38,6 +39,8 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
   List<LatLng> _polygonPoints = [];
   bool _isLoading = false;
   bool _showOtherLayers = true;
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   // שכבות אחרות
   List<Checkpoint> _checkpoints = [];
@@ -262,126 +265,149 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
 
             // מפה
             Expanded(
-              child: MapWithTypeSelector(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: _defaultCenter,
-                  initialZoom: 8,
-                  onTap: (tapPosition, point) {
-                    _addPoint(point);
-                  },
-                ),
-                layers: [
-                  // שכבת גבולות גזרה (ג"ג)
-                  if (_showOtherLayers && _boundaries.isNotEmpty)
-                    PolygonLayer(
-                      polygons: _boundaries.map((boundary) {
-                        return Polygon(
-                          points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.black.withOpacity(0.05),
-                          borderColor: Colors.black.withOpacity(0.3),
-                          borderStrokeWidth: boundary.strokeWidth,
-                          isFilled: true,
-                        );
-                      }).toList(),
+              child: Stack(
+                children: [
+                  MapWithTypeSelector(
+                    showTypeSelector: false,
+                    mapController: _mapController,
+                    options: MapOptions(
+                      initialCenter: _defaultCenter,
+                      initialZoom: 8,
+                      onTap: (tapPosition, point) {
+                        if (_measureMode) {
+                          setState(() => _measurePoints.add(point));
+                          return;
+                        }
+                        _addPoint(point);
+                      },
                     ),
-                  // שכבת ביצי איזור קיימות
-                  if (_showOtherLayers && _existingClusters.isNotEmpty)
-                    PolygonLayer(
-                      polygons: _existingClusters.map((cluster) {
-                        return Polygon(
-                          points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: _parseColor(cluster.color).withOpacity(cluster.fillOpacity * 0.4),
-                          borderColor: _parseColor(cluster.color).withOpacity(0.6),
-                          borderStrokeWidth: cluster.strokeWidth,
-                          isFilled: true,
-                        );
-                      }).toList(),
-                    ),
-                  // שכבת נקודות ציון
-                  if (_showOtherLayers && _checkpoints.isNotEmpty)
-                    MarkerLayer(
-                      markers: _checkpoints.map((cp) {
-                        return Marker(
-                          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                          width: 24,
-                          height: 24,
-                          child: Icon(
-                            Icons.place,
-                            color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
-                            size: 24,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  // שכבת נת"ב
-                  if (_showOtherLayers && _safetyPoints.isNotEmpty)
-                    MarkerLayer(
-                      markers: _safetyPoints
-                          .where((sp) => sp.type == 'point' && sp.coordinates != null)
-                          .map((sp) {
-                        return Marker(
-                          point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
-                          width: 24,
-                          height: 24,
-                          child: Icon(
-                            Icons.warning,
-                            color: _getSeverityColor(sp.severity).withOpacity(0.6),
-                            size: 24,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  // הפוליגון החדש שנוצר
-                  if (_polygonPoints.length >= 2)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: _polygonPoints,
-                          color: Colors.green,
-                          strokeWidth: 2,
+                    layers: [
+                      // שכבת גבולות גזרה (ג"ג)
+                      if (_showOtherLayers && _boundaries.isNotEmpty)
+                        PolygonLayer(
+                          polygons: _boundaries.map((boundary) {
+                            return Polygon(
+                              points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                              color: Colors.black.withOpacity(0.05),
+                              borderColor: Colors.black.withOpacity(0.3),
+                              borderStrokeWidth: boundary.strokeWidth,
+                              isFilled: true,
+                            );
+                          }).toList(),
                         ),
-                      ],
-                    ),
-                  if (_polygonPoints.length >= 3)
-                    PolygonLayer(
-                      polygons: [
-                        Polygon(
-                          points: _polygonPoints,
-                          color: Colors.green.withOpacity(0.2),
-                          borderColor: Colors.green,
-                          borderStrokeWidth: 2,
-                          isFilled: true,
+                      // שכבת ביצי איזור קיימות
+                      if (_showOtherLayers && _existingClusters.isNotEmpty)
+                        PolygonLayer(
+                          polygons: _existingClusters.map((cluster) {
+                            return Polygon(
+                              points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                              color: _parseColor(cluster.color).withOpacity(cluster.fillOpacity * 0.4),
+                              borderColor: _parseColor(cluster.color).withOpacity(0.6),
+                              borderStrokeWidth: cluster.strokeWidth,
+                              isFilled: true,
+                            );
+                          }).toList(),
                         ),
-                      ],
-                    ),
-                  if (_polygonPoints.isNotEmpty)
-                    MarkerLayer(
-                      markers: _polygonPoints.asMap().entries.map((entry) {
-                        return Marker(
-                          point: entry.value,
-                          width: 30,
-                          height: 30,
-                          child: Container(
-                            decoration: BoxDecoration(
+                      // שכבת נקודות ציון
+                      if (_showOtherLayers && _checkpoints.isNotEmpty)
+                        MarkerLayer(
+                          markers: _checkpoints.map((cp) {
+                            return Marker(
+                              point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                              width: 24,
+                              height: 24,
+                              child: Icon(
+                                Icons.place,
+                                color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                size: 24,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      // שכבת נת"ב
+                      if (_showOtherLayers && _safetyPoints.isNotEmpty)
+                        MarkerLayer(
+                          markers: _safetyPoints
+                              .where((sp) => sp.type == 'point' && sp.coordinates != null)
+                              .map((sp) {
+                            return Marker(
+                              point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+                              width: 24,
+                              height: 24,
+                              child: Icon(
+                                Icons.warning,
+                                color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                                size: 24,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      // הפוליגון החדש שנוצר
+                      if (_polygonPoints.length >= 2)
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: _polygonPoints,
                               color: Colors.green,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                              strokeWidth: 2,
                             ),
-                            child: Center(
-                              child: Text(
-                                '${entry.key + 1}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
+                          ],
+                        ),
+                      if (_polygonPoints.length >= 3)
+                        PolygonLayer(
+                          polygons: [
+                            Polygon(
+                              points: _polygonPoints,
+                              color: Colors.green.withOpacity(0.2),
+                              borderColor: Colors.green,
+                              borderStrokeWidth: 2,
+                              isFilled: true,
+                            ),
+                          ],
+                        ),
+                      if (_polygonPoints.isNotEmpty)
+                        MarkerLayer(
+                          markers: _polygonPoints.asMap().entries.map((entry) {
+                            return Marker(
+                              point: entry.value,
+                              width: 30,
+                              height: 30,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${entry.key + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                            );
+                          }).toList(),
+                        ),
+                      ...MapControls.buildMeasureLayers(_measurePoints),
+                    ],
+                  ),
+                  MapControls(
+                    mapController: _mapController,
+                    measureMode: _measureMode,
+                    onMeasureModeChanged: (v) => setState(() {
+                      _measureMode = v;
+                      if (!v) _measurePoints.clear();
+                    }),
+                    measurePoints: _measurePoints,
+                    onMeasureClear: () => setState(() => _measurePoints.clear()),
+                    onMeasureUndo: () => setState(() {
+                      if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+                    }),
+                  ),
                 ],
               ),
             ),
