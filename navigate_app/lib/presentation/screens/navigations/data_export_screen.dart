@@ -786,11 +786,40 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
         },
       ),
       layers: [
-        // NZ layer - checkpoints
+        // NZ layer - checkpoints with role-based colors
         if (_showNZ && checkpointsToShow.isNotEmpty)
           MarkerLayer(
             markers: checkpointsToShow.map((checkpoint) {
-              final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
+              // זיהוי סוג הנקודה: התחלה / סיום / ביניים / מנווט
+              final startPointIds = <String>{};
+              final endPointIds = <String>{};
+              for (final route in widget.navigation.routes.values) {
+                if (route.startPointId != null) startPointIds.add(route.startPointId!);
+                if (route.endPointId != null) endPointIds.add(route.endPointId!);
+              }
+              final waypointIds = <String>{};
+              if (widget.navigation.waypointSettings.enabled) {
+                for (final wp in widget.navigation.waypointSettings.waypoints) {
+                  waypointIds.add(wp.checkpointId);
+                }
+              }
+
+              final Color markerColor;
+              final String markerLabel;
+              if (startPointIds.contains(checkpoint.id)) {
+                markerColor = Colors.green;
+                markerLabel = 'H';
+              } else if (endPointIds.contains(checkpoint.id)) {
+                markerColor = Colors.red;
+                markerLabel = 'S';
+              } else if (waypointIds.contains(checkpoint.id)) {
+                markerColor = Colors.amber;
+                markerLabel = 'B';
+              } else {
+                markerColor = Colors.blue;
+                markerLabel = '${checkpoint.sequenceNumber}';
+              }
+
               return Marker(
                 point: LatLng(
                   checkpoint.coordinates.lat,
@@ -808,7 +837,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                     ),
                     child: Center(
                       child: Text(
-                        '${checkpoint.sequenceNumber}',
+                        markerLabel,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,

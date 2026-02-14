@@ -7,6 +7,8 @@ import '../../../domain/entities/nav_layer.dart' as nav;
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
+import '../../../domain/entities/safety_point.dart';
 import '../../../services/auth_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
@@ -28,6 +30,7 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final AuthService _authService = AuthService();
   final MapController _mapController = MapController();
   late TabController _tabController;
@@ -35,11 +38,22 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
   List<Checkpoint> _myCheckpoints = [];
   List<String> _routeSequence = [];
   List<nav.NavBoundary> _boundaries = [];
+  List<SafetyPoint> _safetyPoints = [];
   bool _isLoading = true;
   String? _navigatorId;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  // שכבות
+  bool _showGG = true;
+  double _ggOpacity = 1.0;
+  bool _showNZ = true;
+  double _nzOpacity = 1.0;
+  bool _showNB = false;
+  double _nbOpacity = 1.0;
+  bool _showRoutes = true;
+  double _routesOpacity = 1.0;
 
   @override
   void initState() {
@@ -132,10 +146,13 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
         }
       }
 
+      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
+
       setState(() {
         _myCheckpoints = checkpoints;
         _routeSequence = List.from(route.sequence);
         _boundaries = boundaries;
+        _safetyPoints = safetyPoints;
         _isLoading = false;
       });
     } catch (e) {
@@ -364,7 +381,7 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
           ),
           layers: [
             // גבול גזרה (GG)
-            if (_boundaries.isNotEmpty)
+            if (_showGG && _boundaries.isNotEmpty)
               PolygonLayer(
                 polygons: _boundaries
                     .where((b) => b.coordinates.isNotEmpty)
@@ -372,40 +389,74 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                           points: b.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withOpacity(0.1),
-                          borderColor: Colors.black,
+                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
                           borderStrokeWidth: b.strokeWidth,
                           isFilled: true,
                         ))
                     .toList(),
               ),
             // קו הציר
-            if (routePoints.length > 1)
+            if (_showRoutes && routePoints.length > 1)
               PolylineLayer(
-                polylines: [Polyline(points: routePoints, color: Colors.blue, strokeWidth: 3.0)],
+                polylines: [Polyline(points: routePoints, color: Colors.blue.withValues(alpha: _routesOpacity), strokeWidth: 3.0)],
               ),
             // נקודות ציון
-            MarkerLayer(
-              markers: _myCheckpoints.asMap().entries.map((entry) {
-                final index = entry.key + 1;
-                final checkpoint = entry.value;
-                return Marker(
-                  point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
-                  width: 40,
-                  height: 40,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blue,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
+            if (_showNZ)
+              MarkerLayer(
+                markers: _myCheckpoints.asMap().entries.map((entry) {
+                  final index = entry.key + 1;
+                  final checkpoint = entry.value;
+                  return Marker(
+                    point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                    width: 40,
+                    height: 40,
+                    child: Opacity(
+                      opacity: _nzOpacity,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: Center(
+                          child: Text('$index', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
                     ),
-                    child: Center(
-                      child: Text('$index', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
+                  );
+                }).toList(),
+              ),
+            // נת"ב - נקודות
+            if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+              MarkerLayer(
+                markers: _safetyPoints
+                    .where((p) => p.type == 'point' && p.coordinates != null)
+                    .map((point) => Marker(
+                          point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                          width: 30,
+                          height: 30,
+                          child: Opacity(
+                            opacity: _nbOpacity,
+                            child: const Icon(Icons.warning, color: Colors.red, size: 30),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            // נת"ב - פוליגונים
+            if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+              PolygonLayer(
+                polygons: _safetyPoints
+                    .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                    .map((point) => Polygon(
+                          points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                          color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                          borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                          borderStrokeWidth: 2,
+                          isFilled: true,
+                        ))
+                    .toList(),
+              ),
             // שכבות מדידה
             ...MapControls.buildMeasureLayers(_measurePoints),
           ],
@@ -422,6 +473,36 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
           onMeasureUndo: () => setState(() {
             if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
           }),
+          layers: [
+            MapLayerConfig(
+              id: 'gg', label: 'גבול גזרה', color: Colors.black,
+              visible: _showGG,
+              onVisibilityChanged: (v) => setState(() => _showGG = v),
+              opacity: _ggOpacity,
+              onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+            ),
+            MapLayerConfig(
+              id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+              visible: _showNZ,
+              onVisibilityChanged: (v) => setState(() => _showNZ = v),
+              opacity: _nzOpacity,
+              onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+            ),
+            MapLayerConfig(
+              id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+              visible: _showNB,
+              onVisibilityChanged: (v) => setState(() => _showNB = v),
+              opacity: _nbOpacity,
+              onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+            ),
+            MapLayerConfig(
+              id: 'routes', label: 'צירים', color: Colors.orange,
+              visible: _showRoutes,
+              onVisibilityChanged: (v) => setState(() => _showRoutes = v),
+              opacity: _routesOpacity,
+              onOpacityChanged: (v) => setState(() => _routesOpacity = v),
+            ),
+          ],
         ),
         Positioned(
           bottom: 16, left: 16, right: 16,

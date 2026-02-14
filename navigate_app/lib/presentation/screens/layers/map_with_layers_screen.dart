@@ -258,7 +258,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
             layers: [
               MapLayerConfig(
                 id: 'nz',
-                label: 'נ"ז - נקודות ציון',
+                label: 'נקודות ציון',
                 color: Colors.blue,
                 visible: _showNZ,
                 opacity: _nzOpacity,
@@ -267,7 +267,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
               ),
               MapLayerConfig(
                 id: 'nb',
-                label: 'נת"ב - נקודות בטיחות',
+                label: 'נקודות בטיחות',
                 color: Colors.red,
                 visible: _showNB,
                 opacity: _nbOpacity,
@@ -276,7 +276,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
               ),
               MapLayerConfig(
                 id: 'gg',
-                label: 'ג"ג - גבול גזרה',
+                label: 'גבול גזרה',
                 color: Colors.black,
                 visible: _showGG,
                 opacity: _ggOpacity,
@@ -285,7 +285,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
               ),
               MapLayerConfig(
                 id: 'ba',
-                label: 'ב"א - ביצי איזור',
+                label: 'ביצי אזור',
                 color: Colors.green,
                 visible: _showBA,
                 opacity: _baOpacity,

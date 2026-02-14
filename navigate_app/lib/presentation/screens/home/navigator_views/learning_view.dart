@@ -17,8 +17,13 @@ import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/area_repository.dart';
 import '../../../../data/repositories/boundary_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
+import '../../../../data/repositories/cluster_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
+import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/unit_repository.dart';
+import '../../../../domain/entities/safety_point.dart';
+import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import 'route_editor_screen.dart';
@@ -46,10 +51,29 @@ class _LearningViewState extends State<LearningView>
   late List<_LearningTab> _tabs;
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavigationRepository _navigationRepo = NavigationRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
+  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final ClusterRepository _clusterRepo = ClusterRepository();
   final MapController _mapController = MapController();
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  List<SafetyPoint> _safetyPoints = [];
+  List<Boundary> _boundaries = [];
+  List<Cluster> _clusters = [];
+
+  bool _showGG = true;
+  bool _showNZ = true;
+  bool _showNB = false;
+  bool _showBA = false;
+  bool _showRoutes = true;
+
+  double _ggOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
+  double _baOpacity = 1.0;
+  double _routesOpacity = 1.0;
 
   /// ניווט נוכחי — mutable, מתעדכן אחרי כל שמירה
   late domain.Navigation _currentNavigation;
@@ -77,6 +101,7 @@ class _LearningViewState extends State<LearningView>
     _tabController = TabController(length: _tabs.length, vsync: this);
     _loadCheckpoints();
     _loadDisplayNames();
+    _loadMapLayers();
   }
 
   @override
@@ -199,6 +224,22 @@ class _LearningViewState extends State<LearningView>
       if (nav.selectedUnitId != null) {
         final unit = await UnitRepository().getById(nav.selectedUnitId!);
         if (unit != null && mounted) setState(() => _unitName = unit.name);
+      }
+    } catch (_) {}
+  }
+
+  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב
+  Future<void> _loadMapLayers() async {
+    try {
+      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
+      final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
+      final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
+      if (mounted) {
+        setState(() {
+          _safetyPoints = safetyPoints;
+          _boundaries = boundaries;
+          _clusters = clusters;
+        });
       }
     } catch (_) {}
   }
@@ -405,6 +446,7 @@ class _LearningViewState extends State<LearningView>
             MapWithTypeSelector(
               mapController: _mapController,
               showTypeSelector: false,
+              // Fullscreen button is added at the end of the Stack
               options: MapOptions(
                 initialCenter: bounds.center,
                 initialZoom: 14.0,
@@ -422,25 +464,77 @@ class _LearningViewState extends State<LearningView>
                 },
               ),
               layers: [
+                // ג"ג
+                if (_showGG && _boundaries.isNotEmpty)
+                  PolygonLayer(
+                    polygons: _boundaries.map((b) => Polygon(
+                      points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                      color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                      borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                      borderStrokeWidth: b.strokeWidth,
+                      isFilled: true,
+                    )).toList(),
+                  ),
+                // נת"ב - נקודות
+                if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                  MarkerLayer(
+                    markers: _safetyPoints
+                        .where((p) => p.type == 'point' && p.coordinates != null)
+                        .map((point) => Marker(
+                              point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                              width: 30, height: 30,
+                              child: Opacity(opacity: _nbOpacity, child: const Icon(Icons.warning, color: Colors.red, size: 30)),
+                            ))
+                        .toList(),
+                  ),
+                // נת"ב - פוליגונים
+                if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                  PolygonLayer(
+                    polygons: _safetyPoints
+                        .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                        .map((point) => Polygon(
+                              points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                              color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                              borderColor: Colors.red.withValues(alpha: _nbOpacity), borderStrokeWidth: 2, isFilled: true,
+                            ))
+                        .toList(),
+                  ),
+                // א"ב
+                if (_showBA && _clusters.isNotEmpty)
+                  PolygonLayer(
+                    polygons: _clusters.map((cluster) => Polygon(
+                      points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                      color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
+                      borderColor: Colors.green.withValues(alpha: _baOpacity),
+                      borderStrokeWidth: cluster.strokeWidth,
+                      isFilled: true,
+                    )).toList(),
+                  ),
                 // ציר רפרנס (כחול בהיר)
-                if (refPoints.length > 1)
+                if (_showRoutes && refPoints.length > 1)
                   PolylineLayer(polylines: [
                     Polyline(
                       points: refPoints,
-                      color: Colors.blue.withValues(alpha: 0.3),
+                      color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
                       strokeWidth: 2.0,
                     ),
                   ]),
                 // ציר שצייר המנווט (כתום)
-                if (hasPlannedPath)
+                if (_showRoutes && hasPlannedPath)
                   PolylineLayer(polylines: [
                     Polyline(
                       points: plannedPathPoints,
-                      color: Colors.blue,
+                      color: Colors.blue.withValues(alpha: _routesOpacity),
                       strokeWidth: 3.0,
                     ),
                   ]),
-                MarkerLayer(markers: markers),
+                if (_showNZ)
+                  MarkerLayer(markers: markers.map((m) => Marker(
+                    point: m.point,
+                    width: m.width,
+                    height: m.height,
+                    child: Opacity(opacity: _nzOpacity, child: m.child),
+                  )).toList()),
                 ...MapControls.buildMeasureLayers(_measurePoints),
               ],
             ),
@@ -456,8 +550,62 @@ class _LearningViewState extends State<LearningView>
               onMeasureUndo: () => setState(() {
                 if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
               }),
+              layers: [
+                MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+                MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+                MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+                MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
+                MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
+              ],
+            ),
+            // כפתור מסך מלא
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Material(
+                color: Colors.white.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _openFullscreenMap(
+                    refPoints: refPoints,
+                    plannedPathPoints: plannedPathPoints,
+                    hasPlannedPath: hasPlannedPath,
+                    markers: markers,
+                    bounds: bounds,
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(Icons.fullscreen, size: 22),
+                  ),
+                ),
+              ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _openFullscreenMap({
+    required List<LatLng> refPoints,
+    required List<LatLng> plannedPathPoints,
+    required bool hasPlannedPath,
+    required List<Marker> markers,
+    required LatLngBounds bounds,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullscreenRouteMap(
+          refPoints: refPoints,
+          plannedPathPoints: plannedPathPoints,
+          hasPlannedPath: hasPlannedPath,
+          markers: markers,
+          bounds: bounds,
+          boundaries: _boundaries,
+          safetyPoints: _safetyPoints,
+          clusters: _clusters,
         ),
       ),
     );
@@ -1691,4 +1839,168 @@ class _CheckpointDisplayItem {
     required this.sequenceNumber,
     required this.role,
   });
+}
+
+/// מסך מפה במסך מלא — הציר שלי
+class _FullscreenRouteMap extends StatefulWidget {
+  final List<LatLng> refPoints;
+  final List<LatLng> plannedPathPoints;
+  final bool hasPlannedPath;
+  final List<Marker> markers;
+  final LatLngBounds bounds;
+  final List<Boundary> boundaries;
+  final List<SafetyPoint> safetyPoints;
+  final List<Cluster> clusters;
+
+  const _FullscreenRouteMap({
+    required this.refPoints,
+    required this.plannedPathPoints,
+    required this.hasPlannedPath,
+    required this.markers,
+    required this.bounds,
+    required this.boundaries,
+    required this.safetyPoints,
+    required this.clusters,
+  });
+
+  @override
+  State<_FullscreenRouteMap> createState() => _FullscreenRouteMapState();
+}
+
+class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
+  final MapController _mapController = MapController();
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
+
+  bool _showGG = true;
+  bool _showNZ = true;
+  bool _showNB = false;
+  bool _showBA = false;
+  bool _showRoutes = true;
+
+  double _ggOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
+  double _baOpacity = 1.0;
+  double _routesOpacity = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('הציר שלי'),
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          MapWithTypeSelector(
+            mapController: _mapController,
+            showTypeSelector: false,
+            options: MapOptions(
+              initialCenter: widget.bounds.center,
+              initialZoom: 14.0,
+              initialCameraFit: CameraFit.bounds(
+                bounds: widget.bounds,
+                padding: const EdgeInsets.all(40),
+              ),
+              onTap: (tapPosition, point) {
+                if (_measureMode) {
+                  setState(() => _measurePoints.add(point));
+                }
+              },
+            ),
+            layers: [
+              if (_showGG && widget.boundaries.isNotEmpty)
+                PolygonLayer(
+                  polygons: widget.boundaries.map((b) => Polygon(
+                    points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                    color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                    borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                    borderStrokeWidth: b.strokeWidth,
+                    isFilled: true,
+                  )).toList(),
+                ),
+              if (_showNB && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                MarkerLayer(
+                  markers: widget.safetyPoints
+                      .where((p) => p.type == 'point' && p.coordinates != null)
+                      .map((point) => Marker(
+                            point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                            width: 30, height: 30,
+                            child: Opacity(opacity: _nbOpacity, child: const Icon(Icons.warning, color: Colors.red, size: 30)),
+                          ))
+                      .toList(),
+                ),
+              if (_showNB && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                PolygonLayer(
+                  polygons: widget.safetyPoints
+                      .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                      .map((point) => Polygon(
+                            points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                            borderColor: Colors.red.withValues(alpha: _nbOpacity), borderStrokeWidth: 2, isFilled: true,
+                          ))
+                      .toList(),
+                ),
+              if (_showBA && widget.clusters.isNotEmpty)
+                PolygonLayer(
+                  polygons: widget.clusters.map((cluster) => Polygon(
+                    points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                    color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
+                    borderColor: Colors.green.withValues(alpha: _baOpacity),
+                    borderStrokeWidth: cluster.strokeWidth,
+                    isFilled: true,
+                  )).toList(),
+                ),
+              if (_showRoutes && widget.refPoints.length > 1)
+                PolylineLayer(polylines: [
+                  Polyline(
+                    points: widget.refPoints,
+                    color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
+                    strokeWidth: 2.0,
+                  ),
+                ]),
+              if (_showRoutes && widget.hasPlannedPath)
+                PolylineLayer(polylines: [
+                  Polyline(
+                    points: widget.plannedPathPoints,
+                    color: Colors.blue.withValues(alpha: _routesOpacity),
+                    strokeWidth: 3.0,
+                  ),
+                ]),
+              if (_showNZ)
+                MarkerLayer(markers: widget.markers.map((m) => Marker(
+                  point: m.point,
+                  width: m.width,
+                  height: m.height,
+                  child: Opacity(opacity: _nzOpacity, child: m.child),
+                )).toList()),
+              ...MapControls.buildMeasureLayers(_measurePoints),
+            ],
+          ),
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
+            layers: [
+              MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+              MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+              MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+              MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
+              MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }

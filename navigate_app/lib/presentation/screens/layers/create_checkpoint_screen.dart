@@ -47,6 +47,14 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   final MapController _mapController = MapController();
   bool _isSaving = false;
   bool _showOtherLayers = true;
+  bool _showGG = true;
+  bool _showBA = true;
+  bool _showNZ = true;
+  bool _showNB = true;
+  double _ggOpacity = 1.0;
+  double _baOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
@@ -336,49 +344,52 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                       ),
                       layers: [
                         // שכבת גבולות גזרה (ג"ג)
-                        if (_showOtherLayers && _boundaries.isNotEmpty)
+                        if (_showOtherLayers && _showGG && _boundaries.isNotEmpty)
                           PolygonLayer(
                             polygons: _boundaries.map((boundary) {
                               return Polygon(
                                 points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                color: Colors.black.withOpacity(0.1),
-                                borderColor: Colors.black,
+                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
                                 borderStrokeWidth: boundary.strokeWidth,
                                 isFilled: true,
                               );
                             }).toList(),
                           ),
                         // שכבת ביצי איזור (בא) — ירוק
-                        if (_showOtherLayers && _clusters.isNotEmpty)
+                        if (_showOtherLayers && _showBA && _clusters.isNotEmpty)
                           PolygonLayer(
                             polygons: _clusters.map((cluster) {
                               return Polygon(
                                 points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                color: Colors.green.withOpacity(cluster.fillOpacity),
-                                borderColor: Colors.green,
+                                color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
+                                borderColor: Colors.green.withValues(alpha: _baOpacity),
                                 borderStrokeWidth: cluster.strokeWidth,
                                 isFilled: true,
                               );
                             }).toList(),
                           ),
                         // שכבת נקודות ציון קיימות
-                        if (_showOtherLayers && _existingCheckpoints.isNotEmpty)
+                        if (_showOtherLayers && _showNZ && _existingCheckpoints.isNotEmpty)
                           MarkerLayer(
                             markers: _existingCheckpoints.map((cp) {
                               return Marker(
                                 point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
                                 width: 30,
                                 height: 30,
-                                child: Icon(
-                                  Icons.place,
-                                  color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
-                                  size: 30,
+                                child: Opacity(
+                                  opacity: _nzOpacity,
+                                  child: Icon(
+                                    Icons.place,
+                                    color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                    size: 30,
+                                  ),
                                 ),
                               );
                             }).toList(),
                           ),
                         // שכבת נקודות תורפה בטיחותיות (נת"ב)
-                        if (_showOtherLayers && _safetyPoints.isNotEmpty)
+                        if (_showOtherLayers && _showNB && _safetyPoints.isNotEmpty)
                           MarkerLayer(
                             markers: _safetyPoints
                                 .where((sp) => sp.type == 'point' && sp.coordinates != null)
@@ -387,10 +398,13 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                 point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
                                 width: 30,
                                 height: 30,
-                                child: Icon(
-                                  Icons.warning,
-                                  color: _getSeverityColor(sp.severity).withOpacity(0.6),
-                                  size: 30,
+                                child: Opacity(
+                                  opacity: _nbOpacity,
+                                  child: Icon(
+                                    Icons.warning,
+                                    color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                                    size: 30,
+                                  ),
                                 ),
                               );
                             }).toList(),
@@ -426,6 +440,12 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                       onMeasureUndo: () => setState(() {
                         if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                       }),
+                      layers: [
+                        MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (v) => setState(() => _showGG = v), onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+                        MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (v) => setState(() => _showBA = v), onOpacityChanged: (v) => setState(() => _baOpacity = v)),
+                        MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (v) => setState(() => _showNZ = v), onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+                        MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (v) => setState(() => _showNB = v), onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+                      ],
                     ),
                   ],
                 ),

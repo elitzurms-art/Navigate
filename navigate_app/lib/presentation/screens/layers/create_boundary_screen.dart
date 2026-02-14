@@ -39,6 +39,14 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
   List<LatLng> _polygonPoints = [];
   bool _isLoading = false;
   bool _showOtherLayers = true;
+  bool _showGG = true;
+  bool _showBA = true;
+  bool _showNZ = true;
+  bool _showNB = true;
+  double _ggOpacity = 1.0;
+  double _baOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
@@ -283,49 +291,52 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                     ),
                     layers: [
                       // שכבת גבולות קיימות
-                      if (_showOtherLayers && _existingBoundaries.isNotEmpty)
+                      if (_showOtherLayers && _showGG && _existingBoundaries.isNotEmpty)
                         PolygonLayer(
                           polygons: _existingBoundaries.map((boundary) {
                             return Polygon(
                               points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                              color: Colors.black.withOpacity(0.05),
-                              borderColor: Colors.black.withOpacity(0.3),
+                              color: Colors.black.withValues(alpha: 0.05 * _ggOpacity),
+                              borderColor: Colors.black.withValues(alpha: 0.3 * _ggOpacity),
                               borderStrokeWidth: boundary.strokeWidth,
                               isFilled: true,
                             );
                           }).toList(),
                         ),
                       // שכבת ביצי איזור (בא)
-                      if (_showOtherLayers && _clusters.isNotEmpty)
+                      if (_showOtherLayers && _showBA && _clusters.isNotEmpty)
                         PolygonLayer(
                           polygons: _clusters.map((cluster) {
                             return Polygon(
                               points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                              color: _parseColor(cluster.color).withOpacity(cluster.fillOpacity * 0.6),
-                              borderColor: _parseColor(cluster.color).withOpacity(0.6),
+                              color: _parseColor(cluster.color).withValues(alpha: cluster.fillOpacity * 0.6 * _baOpacity),
+                              borderColor: _parseColor(cluster.color).withValues(alpha: 0.6 * _baOpacity),
                               borderStrokeWidth: cluster.strokeWidth,
                               isFilled: true,
                             );
                           }).toList(),
                         ),
                       // שכבת נקודות ציון
-                      if (_showOtherLayers && _checkpoints.isNotEmpty)
+                      if (_showOtherLayers && _showNZ && _checkpoints.isNotEmpty)
                         MarkerLayer(
                           markers: _checkpoints.map((cp) {
                             return Marker(
                               point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
                               width: 24,
                               height: 24,
-                              child: Icon(
-                                Icons.place,
-                                color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
-                                size: 24,
+                              child: Opacity(
+                                opacity: _nzOpacity,
+                                child: Icon(
+                                  Icons.place,
+                                  color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                  size: 24,
+                                ),
                               ),
                             );
                           }).toList(),
                         ),
                       // שכבת נת"ב
-                      if (_showOtherLayers && _safetyPoints.isNotEmpty)
+                      if (_showOtherLayers && _showNB && _safetyPoints.isNotEmpty)
                         MarkerLayer(
                           markers: _safetyPoints
                               .where((sp) => sp.type == 'point' && sp.coordinates != null)
@@ -334,10 +345,13 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                               point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
                               width: 24,
                               height: 24,
-                              child: Icon(
-                                Icons.warning,
-                                color: _getSeverityColor(sp.severity).withOpacity(0.6),
-                                size: 24,
+                              child: Opacity(
+                                opacity: _nbOpacity,
+                                child: Icon(
+                                  Icons.warning,
+                                  color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                                  size: 24,
+                                ),
                               ),
                             );
                           }).toList(),
@@ -407,6 +421,12 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                     onMeasureUndo: () => setState(() {
                       if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                     }),
+                    layers: [
+                      MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (v) => setState(() => _showGG = v), onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+                      MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (v) => setState(() => _showBA = v), onOpacityChanged: (v) => setState(() => _baOpacity = v)),
+                      MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (v) => setState(() => _showNZ = v), onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+                      MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (v) => setState(() => _showNB = v), onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+                    ],
                   ),
                 ],
               ),

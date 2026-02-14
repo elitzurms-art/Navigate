@@ -54,6 +54,15 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   final List<LatLng> _measurePoints = [];
   final MapController _navMapController = MapController();
 
+  // שכבות מפה
+  bool _showPlannedRoute = true;
+  bool _showActualRoute = true;
+  bool _showNZ = true;
+
+  double _plannedRouteOpacity = 1.0;
+  double _actualRouteOpacity = 1.0;
+  double _nzOpacity = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -822,30 +831,31 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                     ),
                     layers: [
                       // מסלול מתוכנן (כחול)
-                      if (_plannedRoute.length > 1)
+                      if (_showPlannedRoute && _plannedRoute.length > 1)
                         PolylineLayer(
                           polylines: [
                             Polyline(
                               points: _plannedRoute,
-                              color: Colors.blue,
+                              color: Colors.blue.withValues(alpha: _plannedRouteOpacity),
                               strokeWidth: 3.0,
                             ),
                           ],
                         ),
 
                       // מסלול בפועל (ירוק)
-                      if (_actualRoute.length > 1)
+                      if (_showActualRoute && _actualRoute.length > 1)
                         PolylineLayer(
                           polylines: [
                             Polyline(
                               points: _actualRoute,
-                              color: Colors.green,
+                              color: Colors.green.withValues(alpha: _actualRouteOpacity),
                               strokeWidth: 3.0,
                             ),
                           ],
                         ),
 
                       // נקודות
+                      if (_showNZ)
                       MarkerLayer(
                         markers: _myCheckpoints.asMap().entries.map((entry) {
                           final index = entry.key + 1;
@@ -854,18 +864,21 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                             point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
                             width: 40,
                             height: 40,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.blue,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 2),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '$index',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
+                            child: Opacity(
+                              opacity: _nzOpacity,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '$index',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -888,6 +901,11 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                         onMeasureUndo: () => setState(() {
                           if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                         }),
+                        layers: [
+                          MapLayerConfig(id: 'planned', label: 'מסלול מתוכנן', color: Colors.blue, visible: _showPlannedRoute, onVisibilityChanged: (v) => setState(() => _showPlannedRoute = v), opacity: _plannedRouteOpacity, onOpacityChanged: (v) => setState(() => _plannedRouteOpacity = v)),
+                          MapLayerConfig(id: 'actual', label: 'מסלול בפועל', color: Colors.green, visible: _showActualRoute, onVisibilityChanged: (v) => setState(() => _showActualRoute = v), opacity: _actualRouteOpacity, onOpacityChanged: (v) => setState(() => _actualRouteOpacity = v)),
+                          MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+                        ],
                       ),
                     ],
                   ),

@@ -54,6 +54,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   double _nzOpacity = 1.0;
   double _ggOpacity = 0.5;
+  double _tracksOpacity = 1.0;
+  double _punchesOpacity = 1.0;
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
@@ -376,7 +378,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 layers: [
                   MapLayerConfig(
                     id: 'nz',
-                    label: 'נ.צ - נקודות ציון',
+                    label: 'נקודות ציון',
                     color: Colors.blue,
                     visible: _showNZ,
                     opacity: _nzOpacity,
@@ -385,7 +387,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   ),
                   MapLayerConfig(
                     id: 'gg',
-                    label: 'ג.ג - גבול גזרה',
+                    label: 'גבול גזרה',
                     color: Colors.blue,
                     visible: _showGG,
                     opacity: _ggOpacity,
@@ -397,14 +399,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     label: 'מסלולים',
                     color: Colors.orange,
                     visible: _showTracks,
+                    opacity: _tracksOpacity,
                     onVisibilityChanged: (v) => setState(() => _showTracks = v),
+                    onOpacityChanged: (v) => setState(() => _tracksOpacity = v),
                   ),
                   MapLayerConfig(
                     id: 'punches',
                     label: 'דקירות',
                     color: Colors.green,
                     visible: _showPunches,
+                    opacity: _punchesOpacity,
                     onVisibilityChanged: (v) => setState(() => _showPunches = v),
+                    onOpacityChanged: (v) => setState(() => _punchesOpacity = v),
                   ),
                 ],
                 measureMode: _measureMode,
@@ -488,7 +494,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             Polyline(
               points: points,
               strokeWidth: 3,
-              color: data.isActive ? Colors.green : Colors.grey,
+              color: (data.isActive ? Colors.green : Colors.grey).withValues(alpha: _tracksOpacity),
             ),
           ],
         ),
@@ -521,10 +527,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           point: LatLng(punch.punchLocation.lat, punch.punchLocation.lng),
           width: 30,
           height: 30,
-          child: Icon(
-            Icons.flag,
-            color: color,
-            size: 30,
+          child: Opacity(
+            opacity: _punchesOpacity,
+            child: Icon(
+              Icons.flag,
+              color: color,
+              size: 30,
+            ),
           ),
         );
       }).toList();

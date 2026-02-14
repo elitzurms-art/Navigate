@@ -7,7 +7,9 @@ import '../../../domain/entities/boundary.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -30,11 +32,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
+  List<SafetyPoint> _safetyPoints = [];
   Map<String, bool> _selectedNavigators = {};
   // _routeApprovals הוסר — סטטוס נגזר מ-approvalStatus ב-AssignedRoute
   bool _isLoading = false;
@@ -42,6 +46,16 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  // שכבות
+  bool _showGG = true;
+  double _ggOpacity = 1.0;
+  bool _showNZ = true;
+  double _nzOpacity = 1.0;
+  bool _showNB = false;
+  double _nbOpacity = 1.0;
+  bool _showRoutes = true;
+  double _routesOpacity = 1.0;
 
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
@@ -71,6 +85,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     setState(() => _isLoading = true);
     try {
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
+      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
 
       Boundary? boundary;
       if (widget.navigation.boundaryLayerId != null) {
@@ -79,6 +94,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       setState(() {
         _checkpoints = checkpoints;
+        _safetyPoints = safetyPoints;
         _boundary = boundary;
         _isLoading = false;
       });
@@ -533,6 +549,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           routeCheckpoints: routeCheckpoints,
           startCheckpoint: startCheckpoint,
           endCheckpoint: endCheckpoint,
+          boundary: _boundary,
+          safetyPoints: _safetyPoints,
         ),
       ),
     );
@@ -765,15 +783,15 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 ),
                 layers: [
                   // גבול גזרה (שחור)
-                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                  if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
                     PolygonLayer(
                       polygons: [
                         Polygon(
                           points: _boundary!.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withValues(alpha: 0.1),
-                          borderColor: Colors.black,
+                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
                           borderStrokeWidth: _boundary!.strokeWidth,
                           isFilled: true,
                         ),
@@ -781,12 +799,50 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     ),
 
                   // צירי המנווטים
-                  ..._buildRoutePolylines(),
+                  if (_showRoutes)
+                    ..._buildRoutePolylines(),
 
                   // נקודות ציון רלוונטיות לניווט בלבד (התחלה/סיום/נקודות מנווטים)
-                  MarkerLayer(
-                    markers: _buildNavigationMarkers(),
-                  ),
+                  if (_showNZ)
+                    MarkerLayer(
+                      markers: _buildNavigationMarkers().map((m) => Marker(
+                        point: m.point,
+                        width: m.width,
+                        height: m.height,
+                        child: Opacity(opacity: _nzOpacity, child: m.child),
+                      )).toList(),
+                    ),
+
+                  // נת"ב - נקודות
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                    MarkerLayer(
+                      markers: _safetyPoints
+                          .where((p) => p.type == 'point' && p.coordinates != null)
+                          .map((point) => Marker(
+                                point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                                width: 30,
+                                height: 30,
+                                child: Opacity(
+                                  opacity: _nbOpacity,
+                                  child: const Icon(Icons.warning, color: Colors.red, size: 30),
+                                ),
+                              ))
+                          .toList(),
+                    ),
+                  // נת"ב - פוליגונים
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                    PolygonLayer(
+                      polygons: _safetyPoints
+                          .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                          .map((point) => Polygon(
+                                points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                                borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                                borderStrokeWidth: 2,
+                                isFilled: true,
+                              ))
+                          .toList(),
+                    ),
 
                   // שכבות מדידה
                   ...MapControls.buildMeasureLayers(_measurePoints),
@@ -804,6 +860,36 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                layers: [
+                  MapLayerConfig(
+                    id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                    visible: _showGG,
+                    onVisibilityChanged: (v) => setState(() => _showGG = v),
+                    opacity: _ggOpacity,
+                    onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                    visible: _showNZ,
+                    onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                    opacity: _nzOpacity,
+                    onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                    visible: _showNB,
+                    onVisibilityChanged: (v) => setState(() => _showNB = v),
+                    opacity: _nbOpacity,
+                    onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'routes', label: 'צירים', color: Colors.orange,
+                    visible: _showRoutes,
+                    onVisibilityChanged: (v) => setState(() => _showRoutes = v),
+                    opacity: _routesOpacity,
+                    onOpacityChanged: (v) => setState(() => _routesOpacity = v),
+                  ),
+                ],
               ),
             ],
           ),
@@ -965,7 +1051,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               Polyline(
                 points: points,
                 strokeWidth: 3.0,
-                color: Colors.blue,
+                color: Colors.blue.withValues(alpha: _routesOpacity),
               ),
             ],
           ),
@@ -987,6 +1073,8 @@ class _RouteViewScreen extends StatefulWidget {
   final List<Checkpoint> routeCheckpoints;
   final Checkpoint? startCheckpoint;
   final Checkpoint? endCheckpoint;
+  final Boundary? boundary;
+  final List<SafetyPoint> safetyPoints;
 
   const _RouteViewScreen({
     required this.navigatorId,
@@ -997,6 +1085,8 @@ class _RouteViewScreen extends StatefulWidget {
     required this.routeCheckpoints,
     this.startCheckpoint,
     this.endCheckpoint,
+    this.boundary,
+    this.safetyPoints = const [],
   });
 
   @override
@@ -1007,6 +1097,16 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
   final MapController _mapController = MapController();
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  // שכבות
+  bool _showGG = true;
+  double _ggOpacity = 1.0;
+  bool _showNZ = true;
+  double _nzOpacity = 1.0;
+  bool _showNB = false;
+  double _nbOpacity = 1.0;
+  bool _showRoutes = true;
+  double _routesOpacity = 1.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,26 +1214,77 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
               },
             ),
             layers: [
+              // גבול גזרה (שחור)
+              if (_showGG && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: widget.boundary!.coordinates
+                          .map((coord) => LatLng(coord.lat, coord.lng))
+                          .toList(),
+                      color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                      borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                      borderStrokeWidth: widget.boundary!.strokeWidth,
+                      isFilled: true,
+                    ),
+                  ],
+                ),
               // ציר רפרנס (כחול בהיר)
-              if (widget.referencePoints.length > 1)
+              if (_showRoutes && widget.referencePoints.length > 1)
                 PolylineLayer(polylines: [
                   Polyline(
                     points: widget.referencePoints,
-                    color: Colors.blue.withValues(alpha: 0.3),
+                    color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
                     strokeWidth: 2.0,
                   ),
                 ]),
-              // ציר שצייר המנווט (כתום)
-              if (widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
+              // ציר שצייר המנווט (כחול)
+              if (_showRoutes && widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
                 PolylineLayer(polylines: [
                   Polyline(
                     points: widget.plannedPathPoints,
-                    color: Colors.orange,
+                    color: Colors.blue.withValues(alpha: _routesOpacity),
                     strokeWidth: 3.0,
                   ),
                 ]),
+              // נת"ב - נקודות
+              if (_showNB && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                MarkerLayer(
+                  markers: widget.safetyPoints
+                      .where((p) => p.type == 'point' && p.coordinates != null)
+                      .map((point) => Marker(
+                            point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                            width: 30,
+                            height: 30,
+                            child: Opacity(
+                              opacity: _nbOpacity,
+                              child: const Icon(Icons.warning, color: Colors.red, size: 30),
+                            ),
+                          ))
+                      .toList(),
+                ),
+              // נת"ב - פוליגונים
+              if (_showNB && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                PolygonLayer(
+                  polygons: widget.safetyPoints
+                      .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                      .map((point) => Polygon(
+                            points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                            borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                            borderStrokeWidth: 2,
+                            isFilled: true,
+                          ))
+                      .toList(),
+                ),
               // נקודות ציון
-              MarkerLayer(markers: markers),
+              if (_showNZ)
+                MarkerLayer(markers: markers.map((m) => Marker(
+                  point: m.point,
+                  width: m.width,
+                  height: m.height,
+                  child: Opacity(opacity: _nzOpacity, child: m.child),
+                )).toList()),
               ...MapControls.buildMeasureLayers(_measurePoints),
             ],
           ),
@@ -1149,6 +1300,36 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
             onMeasureUndo: () => setState(() {
               if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
             }),
+            layers: [
+              MapLayerConfig(
+                id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                visible: _showGG,
+                onVisibilityChanged: (v) => setState(() => _showGG = v),
+                opacity: _ggOpacity,
+                onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                visible: _showNZ,
+                onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                opacity: _nzOpacity,
+                onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                visible: _showNB,
+                onVisibilityChanged: (v) => setState(() => _showNB = v),
+                opacity: _nbOpacity,
+                onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'routes', label: 'צירים', color: Colors.orange,
+                visible: _showRoutes,
+                onVisibilityChanged: (v) => setState(() => _showRoutes = v),
+                opacity: _routesOpacity,
+                onOpacityChanged: (v) => setState(() => _routesOpacity = v),
+              ),
+            ],
           ),
         ],
       ),

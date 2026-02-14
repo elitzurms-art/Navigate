@@ -17,6 +17,8 @@ import '../../../services/auth_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../data/repositories/safety_point_repository.dart';
+import '../../../domain/entities/safety_point.dart';
 
 /// מסך תחקור ניווט (למידה מניווטים קודמים)
 class InvestigationScreen extends StatefulWidget {
@@ -40,16 +42,30 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
 
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
+  List<SafetyPoint> _safetyPoints = [];
   bool _isLoading = false;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  bool _showGG = true;
+  bool _showNZ = true;
+  bool _showNB = false;
+  bool _showRoutes = true;
+  bool _showPunches = true;
+
+  double _ggOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
+  double _routesOpacity = 1.0;
+  double _punchesOpacity = 1.0;
 
   late domain.Navigation _currentNavigation;
 
@@ -144,9 +160,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
       }
 
+      List<SafetyPoint> safetyPoints = [];
+      try {
+        safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
+      } catch (_) {}
+
       setState(() {
         _checkpoints = checkpoints;
         _boundary = boundary;
+        _safetyPoints = safetyPoints;
         _isLoading = false;
       });
 
@@ -445,15 +467,15 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
           layers: [
 
             // פוליגון ג"ג
-            if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+            if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
               PolygonLayer(
                 polygons: [
                   Polygon(
                     points: _boundary!.coordinates
                         .map((coord) => LatLng(coord.lat, coord.lng))
                         .toList(),
-                    color: Colors.black.withOpacity(0.1),
-                    borderColor: Colors.black,
+                    color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                    borderColor: Colors.black.withValues(alpha: _ggOpacity),
                     borderStrokeWidth: _boundary!.strokeWidth,
                     isFilled: true,
                   ),
@@ -461,7 +483,7 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
               ),
 
             // מסלול המנווט
-            if (data.trackPoints.isNotEmpty)
+            if (_showRoutes && data.trackPoints.isNotEmpty)
               PolylineLayer(
                 polylines: [
                   Polyline(
@@ -469,13 +491,13 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
                         .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
                         .toList(),
                     strokeWidth: 3,
-                    color: Colors.green,
+                    color: Colors.green.withValues(alpha: _routesOpacity),
                   ),
                 ],
               ),
 
             // דקירות
-            if (data.punches.isNotEmpty)
+            if (_showPunches && data.punches.isNotEmpty)
               MarkerLayer(
                 markers: data.punches.map((punch) {
                   Color color;
@@ -491,39 +513,68 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
                     point: LatLng(punch.punchLocation.lat, punch.punchLocation.lng),
                     width: 30,
                     height: 30,
-                    child: Icon(Icons.flag, color: color, size: 30),
+                    child: Opacity(opacity: _punchesOpacity, child: Icon(Icons.flag, color: color, size: 30)),
                   );
                 }).toList(),
               ),
 
             // נקודות ציון
-            MarkerLayer(
-              markers: _checkpoints.map((cp) {
-                final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
-                return Marker(
-                  point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                  width: 36,
-                  height: 36,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: markerColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${cp.sequenceNumber}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+            if (_showNZ)
+              MarkerLayer(
+                markers: _checkpoints.map((cp) {
+                  final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
+                  return Marker(
+                    point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                    width: 36,
+                    height: 36,
+                    child: Opacity(
+                      opacity: _nzOpacity,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: markerColor,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${cp.sequenceNumber}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }).toList(),
-            ),
+                  );
+                }).toList(),
+              ),
+
+            // נת"ב - נקודות
+            if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+              MarkerLayer(
+                markers: _safetyPoints
+                    .where((p) => p.type == 'point' && p.coordinates != null)
+                    .map((point) => Marker(
+                          point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                          width: 30, height: 30,
+                          child: Opacity(opacity: _nbOpacity, child: const Icon(Icons.warning, color: Colors.red, size: 30)),
+                        ))
+                    .toList(),
+              ),
+            // נת"ב - פוליגונים
+            if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+              PolygonLayer(
+                polygons: _safetyPoints
+                    .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                    .map((point) => Polygon(
+                          points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                          color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                          borderColor: Colors.red.withValues(alpha: _nbOpacity), borderStrokeWidth: 2, isFilled: true,
+                        ))
+                    .toList(),
+              ),
 
             // שכבות מדידה
             ...MapControls.buildMeasureLayers(_measurePoints),
@@ -541,6 +592,13 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
           onMeasureUndo: () => setState(() {
             if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
           }),
+          layers: [
+            MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+            MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+            MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+            MapLayerConfig(id: 'routes', label: 'מסלולים', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
+            MapLayerConfig(id: 'punches', label: 'דקירות', color: Colors.green, visible: _showPunches, onVisibilityChanged: (v) => setState(() => _showPunches = v), opacity: _punchesOpacity, onOpacityChanged: (v) => setState(() => _punchesOpacity = v)),
+          ],
         ),
       ],
     );
@@ -924,58 +982,103 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
                         ),
                         layers: [
 
+                          // ג"ג
+                          if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                            PolygonLayer(
+                              polygons: [
+                                Polygon(
+                                  points: _boundary!.coordinates
+                                      .map((coord) => LatLng(coord.lat, coord.lng))
+                                      .toList(),
+                                  color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                                  borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                  borderStrokeWidth: _boundary!.strokeWidth,
+                                  isFilled: true,
+                                ),
+                              ],
+                            ),
+
                           // מסלול מתוכנן (כחול מקווקו)
-                          if (_plannedRoute.length > 1)
+                          if (_showRoutes && _plannedRoute.length > 1)
                             PolylineLayer(
                               polylines: [
                                 Polyline(
                                   points: _plannedRoute,
-                                  color: Colors.blue,
+                                  color: Colors.blue.withValues(alpha: _routesOpacity),
                                   strokeWidth: 3.0,
                                 ),
                               ],
                             ),
 
                           // מסלול בפועל (ירוק)
-                          if (_actualRoute.length > 1)
+                          if (_showRoutes && _actualRoute.length > 1)
                             PolylineLayer(
                               polylines: [
                                 Polyline(
                                   points: _actualRoute,
-                                  color: Colors.green,
+                                  color: Colors.green.withValues(alpha: _routesOpacity),
                                   strokeWidth: 3.0,
                                 ),
                               ],
                             ),
 
                           // נקודות
-                          MarkerLayer(
-                            markers: _myCheckpoints.asMap().entries.map((entry) {
-                              final index = entry.key + 1;
-                              final checkpoint = entry.value;
-                              return Marker(
-                                point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
-                                width: 40,
-                                height: 40,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white, width: 2),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      '$index',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
+                          if (_showNZ)
+                            MarkerLayer(
+                              markers: _myCheckpoints.asMap().entries.map((entry) {
+                                final index = entry.key + 1;
+                                final checkpoint = entry.value;
+                                return Marker(
+                                  point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                                  width: 40,
+                                  height: 40,
+                                  child: Opacity(
+                                    opacity: _nzOpacity,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white, width: 2),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          '$index',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
+                                );
+                              }).toList(),
+                            ),
+
+                          // נת"ב - נקודות
+                          if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                            MarkerLayer(
+                              markers: _safetyPoints
+                                  .where((p) => p.type == 'point' && p.coordinates != null)
+                                  .map((point) => Marker(
+                                        point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                                        width: 30, height: 30,
+                                        child: Opacity(opacity: _nbOpacity, child: const Icon(Icons.warning, color: Colors.red, size: 30)),
+                                      ))
+                                  .toList(),
+                            ),
+                          // נת"ב - פוליגונים
+                          if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                            PolygonLayer(
+                              polygons: _safetyPoints
+                                  .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                                  .map((point) => Polygon(
+                                        points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                        color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                                        borderColor: Colors.red.withValues(alpha: _nbOpacity), borderStrokeWidth: 2, isFilled: true,
+                                      ))
+                                  .toList(),
+                            ),
 
                           // שכבות מדידה
                           ...MapControls.buildMeasureLayers(_measurePoints),
@@ -993,6 +1096,13 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
                         onMeasureUndo: () => setState(() {
                           if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                         }),
+                        layers: [
+                          MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+                          MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
+                          MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
+                          MapLayerConfig(id: 'routes', label: 'מסלולים', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
+                          MapLayerConfig(id: 'punches', label: 'דקירות', color: Colors.green, visible: _showPunches, onVisibilityChanged: (v) => setState(() => _showPunches = v), opacity: _punchesOpacity, onOpacityChanged: (v) => setState(() => _punchesOpacity = v)),
+                        ],
                       ),
                     ],
                   ),

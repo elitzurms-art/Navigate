@@ -44,6 +44,12 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
   bool _showBA = false;
   bool _showMap = true;
 
+  // שקיפות שכבות
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
+  double _ggOpacity = 1.0;
+  double _baOpacity = 1.0;
+
   // נתוני שכבות
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
@@ -303,19 +309,22 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
                 ),
                 width: 36,
                 height: 36,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: markerColor,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
-                  ),
-                  child: Center(
-                    child: Text(
-                      '${checkpoint.sequenceNumber}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                child: Opacity(
+                  opacity: _nzOpacity,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: markerColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${checkpoint.sequenceNumber}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -334,25 +343,28 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
                 point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
                 width: 40,
                 height: 50,
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.warning,
-                      color: _getSeverityColor(point.severity),
-                      size: 32,
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
+                child: Opacity(
+                  opacity: _nbOpacity,
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.warning,
+                        color: _getSeverityColor(point.severity),
+                        size: 32,
                       ),
-                      child: Text(
-                        '${point.sequenceNumber}',
-                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                      Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${point.sequenceNumber}',
+                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             }).toList(),
@@ -368,8 +380,8 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
                 points: point.polygonCoordinates!
                     .map((c) => LatLng(c.lat, c.lng))
                     .toList(),
-                color: _getSeverityColor(point.severity).withOpacity(0.3),
-                borderColor: _getSeverityColor(point.severity),
+                color: _getSeverityColor(point.severity).withValues(alpha: 0.3 * _nbOpacity),
+                borderColor: _getSeverityColor(point.severity).withValues(alpha: _nbOpacity),
                 borderStrokeWidth: 3,
                 isFilled: true,
               );
@@ -382,8 +394,8 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
             polygons: _boundaries.map((boundary) {
               return Polygon(
                 points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.black.withOpacity(0.1),
-                borderColor: Colors.black,
+                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                borderColor: Colors.black.withValues(alpha: _ggOpacity),
                 borderStrokeWidth: boundary.strokeWidth,
                 isFilled: true,
               );
@@ -396,8 +408,8 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
             polygons: _clusters.map((cluster) {
               return Polygon(
                 points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.green.withOpacity(cluster.fillOpacity),
-                borderColor: Colors.green,
+                color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
+                borderColor: Colors.green.withValues(alpha: _baOpacity),
                 borderStrokeWidth: cluster.strokeWidth,
                 isFilled: true,
               );
@@ -411,31 +423,39 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
           layers: [
             MapLayerConfig(
               id: 'nz',
-              label: 'נ"ז - נקודות ציון',
+              label: 'נקודות ציון',
               color: Colors.blue,
               visible: _showNZ,
               onVisibilityChanged: (v) => setState(() => _showNZ = v),
+              opacity: _nzOpacity,
+              onOpacityChanged: (v) => setState(() => _nzOpacity = v),
             ),
             MapLayerConfig(
               id: 'nb',
-              label: 'נת"ב - נקודות תורפה',
+              label: 'נקודות בטיחות',
               color: Colors.red,
               visible: _showNB,
               onVisibilityChanged: (v) => setState(() => _showNB = v),
+              opacity: _nbOpacity,
+              onOpacityChanged: (v) => setState(() => _nbOpacity = v),
             ),
             MapLayerConfig(
               id: 'gg',
-              label: 'ג"ג - גבול גזרה',
+              label: 'גבול גזרה',
               color: Colors.black,
               visible: _showGG,
               onVisibilityChanged: (v) => setState(() => _showGG = v),
+              opacity: _ggOpacity,
+              onOpacityChanged: (v) => setState(() => _ggOpacity = v),
             ),
             MapLayerConfig(
               id: 'ba',
-              label: 'ב"א - ביצי אזור',
+              label: 'ביצי אזור',
               color: Colors.green,
               visible: _showBA,
               onVisibilityChanged: (v) => setState(() => _showBA = v),
+              opacity: _baOpacity,
+              onOpacityChanged: (v) => setState(() => _baOpacity = v),
             ),
           ],
           measureMode: _measureMode,

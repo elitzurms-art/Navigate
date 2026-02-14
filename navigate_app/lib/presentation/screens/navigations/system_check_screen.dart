@@ -70,6 +70,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
+  // שכבות מפה
+  bool _showGG = true;
+  bool _showNavigators = true;
+
+  double _ggOpacity = 1.0;
+  double _navigatorsOpacity = 1.0;
+
   // הורדת נתונים
   NavigationDataLoader? _dataLoader;
   StreamSubscription<LoadProgress>? _progressSubscription;
@@ -1012,15 +1019,15 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 ),
                 layers: [
                   // פוליגון ג"ג
-                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                  if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
                     PolygonLayer(
                       polygons: [
                         Polygon(
                           points: _boundary!.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withOpacity(0.1),
-                          borderColor: Colors.black,
+                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
                           borderStrokeWidth: _boundary!.strokeWidth,
                           isFilled: true,
                         ),
@@ -1028,6 +1035,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     ),
 
                   // סמנים של מנווטים
+                  if (_showNavigators)
                   MarkerLayer(
                     markers: _navigatorStatuses.entries.map((entry) {
                       final navigatorId = entry.key;
@@ -1048,30 +1056,33 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         point: LatLng(status.latitude!, status.longitude!),
                         width: 60,
                         height: 60,
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.person_pin_circle,
-                              color: color,
-                              size: 40,
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: color, width: 2),
+                        child: Opacity(
+                          opacity: _navigatorsOpacity,
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.person_pin_circle,
+                                color: color,
+                                size: 40,
                               ),
-                              child: Text(
-                                navigatorId,
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                  color: color,
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: color, width: 2),
+                                ),
+                                child: Text(
+                                  navigatorId,
+                                  style: TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                    color: color,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       );
                     }).toList(),
@@ -1093,6 +1104,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                layers: [
+                  MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
+                  MapLayerConfig(id: 'navigators', label: 'מנווטים', color: Colors.blue, visible: _showNavigators, onVisibilityChanged: (v) => setState(() => _showNavigators = v), opacity: _navigatorsOpacity, onOpacityChanged: (v) => setState(() => _navigatorsOpacity = v)),
+                ],
               ),
             ],
           ),

@@ -6,6 +6,8 @@ import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
+import '../../../domain/entities/safety_point.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
@@ -24,13 +26,24 @@ class RoutesVerificationScreen extends StatefulWidget {
 class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> with SingleTickerProviderStateMixin {
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
   List<Checkpoint> _checkpoints = [];
+  List<SafetyPoint> _safetyPoints = [];
   Boundary? _boundary;
   Map<String, bool> _selectedNavigators = {};
   bool _isLoading = false;
+
+  bool _showGG = true;
+  double _ggOpacity = 1.0;
+  bool _showNZ = true;
+  double _nzOpacity = 1.0;
+  bool _showNB = false;
+  double _nbOpacity = 1.0;
+  bool _showRoutes = true;
+  double _routesOpacity = 1.0;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -93,8 +106,11 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         );
       }
 
+      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
+
       setState(() {
         _checkpoints = checkpoints;
+        _safetyPoints = safetyPoints;
         _boundary = boundary;
         _isLoading = false;
       });
@@ -467,15 +483,15 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 ),
                 layers: [
                   // גבול גזרה (אם קיים)
-                  if (_boundary != null && _boundary!.coordinates.isNotEmpty)
+                  if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
                     PolygonLayer(
                       polygons: [
                         Polygon(
                           points: _boundary!.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withOpacity(0.1),
-                          borderColor: Colors.black,
+                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
                           borderStrokeWidth: _boundary!.strokeWidth,
                           isFilled: true,
                         ),
@@ -483,43 +499,77 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     ),
 
                   // ציור הצירים
-                  ..._buildRoutePolylines(),
+                  if (_showRoutes) ..._buildRoutePolylines(),
 
                   // נקודות ציון - רק אלה בתוך הגבול
-                  MarkerLayer(
-                    markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                            ? GeometryUtils.filterPointsInPolygon(
-                                points: _checkpoints,
-                                getCoordinate: (cp) => cp.coordinates,
-                                polygon: _boundary!.coordinates,
-                              )
-                            : _checkpoints)
-                        .map((cp) {
-                      final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
-                      return Marker(
-                        point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                        width: 36,
-                        height: 36,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: markerColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${cp.sequenceNumber}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
+                  if (_showNZ)
+                    MarkerLayer(
+                      markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
+                              ? GeometryUtils.filterPointsInPolygon(
+                                  points: _checkpoints,
+                                  getCoordinate: (cp) => cp.coordinates,
+                                  polygon: _boundary!.coordinates,
+                                )
+                              : _checkpoints)
+                          .map((cp) {
+                        final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
+                        return Marker(
+                          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                          width: 36,
+                          height: 36,
+                          child: Opacity(
+                            opacity: _nzOpacity,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: markerColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '${cp.sequenceNumber}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                        );
+                      }).toList(),
+                    ),
+
+                  // נת"ב - נקודות
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                    MarkerLayer(
+                      markers: _safetyPoints
+                          .where((p) => p.type == 'point' && p.coordinates != null)
+                          .map((point) => Marker(
+                                point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                                width: 30,
+                                height: 30,
+                                child: Opacity(
+                                  opacity: _nbOpacity,
+                                  child: const Icon(Icons.warning, color: Colors.red, size: 30),
+                                ),
+                              ))
+                          .toList(),
+                    ),
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                    PolygonLayer(
+                      polygons: _safetyPoints
+                          .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                          .map((point) => Polygon(
+                                points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
+                                borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                                borderStrokeWidth: 2,
+                                isFilled: true,
+                              ))
+                          .toList(),
+                    ),
 
                   // שכבות מדידה
                   ...MapControls.buildMeasureLayers(_measurePoints),
@@ -537,6 +587,36 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                layers: [
+                  MapLayerConfig(
+                    id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                    visible: _showGG,
+                    onVisibilityChanged: (v) => setState(() => _showGG = v),
+                    opacity: _ggOpacity,
+                    onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                    visible: _showNZ,
+                    onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                    opacity: _nzOpacity,
+                    onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                    visible: _showNB,
+                    onVisibilityChanged: (v) => setState(() => _showNB = v),
+                    opacity: _nbOpacity,
+                    onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'routes', label: 'צירים', color: Colors.orange,
+                    visible: _showRoutes,
+                    onVisibilityChanged: (v) => setState(() => _showRoutes = v),
+                    opacity: _routesOpacity,
+                    onOpacityChanged: (v) => setState(() => _routesOpacity = v),
+                  ),
+                ],
               ),
             ],
           ),
@@ -598,7 +678,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               Polyline(
                 points: points,
                 strokeWidth: 3,
-                color: color,
+                color: color.withValues(alpha: _routesOpacity),
               ),
             ],
           ),
