@@ -49,7 +49,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     super.initState();
     // טעינת נתיב קיים אם יש
     final route = widget.navigation.routes[widget.navigatorUid];
-    _wasApproved = route?.approvalStatus != 'not_submitted';
+    _wasApproved = route?.approvalStatus == 'approved' || route?.approvalStatus == 'pending_approval';
     if (route != null && route.plannedPath.isNotEmpty) {
       _waypoints = route.plannedPath
           .map((c) => LatLng(c.lat, c.lng))
@@ -211,12 +211,17 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         return Coordinate(lat: ll.latitude, lng: ll.longitude, utm: '');
       }).toList();
 
+      // חישוב אורך ציר מעודכן מהנתיב שצויר
+      final pathLengthKm = GeometryUtils.calculatePathLengthKm(plannedPath);
+
       final route = widget.navigation.routes[widget.navigatorUid]!;
       final updatedRoute = route.copyWith(
         plannedPath: plannedPath,
+        routeLengthKm: pathLengthKm,
         approvalStatus: _wasApproved && !_approvalWarningShown
             ? route.approvalStatus
             : 'not_submitted',
+        clearRejectionNotes: true,
       );
 
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(
