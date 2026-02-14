@@ -174,8 +174,8 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen> {
       distanceFromCheckpoint: Geolocator.distanceBetween(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
-        checkpoint.coordinates.lat,
-        checkpoint.coordinates.lng,
+        checkpoint.coordinates!.lat,
+        checkpoint.coordinates!.lng,
       ),
     );
 

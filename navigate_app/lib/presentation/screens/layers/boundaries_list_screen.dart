@@ -70,9 +70,10 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
       Map<String, int> checkpointsCount = {};
       for (final boundary in boundaries) {
         if (boundary.coordinates.isNotEmpty) {
+          final pointCheckpoints = checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
           final pointsInBoundary = GeometryUtils.filterPointsInPolygon(
-            points: checkpoints,
-            getCoordinate: (cp) => cp.coordinates,
+            points: pointCheckpoints,
+            getCoordinate: (cp) => cp.coordinates!,
             polygon: boundary.coordinates,
           );
           checkpointsCount[boundary.id] = pointsInBoundary.length;
@@ -231,7 +232,7 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'לחץ על + להוספת גבול גדוד',
+                        'לחץ על + להוספת גבול גזרה',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium

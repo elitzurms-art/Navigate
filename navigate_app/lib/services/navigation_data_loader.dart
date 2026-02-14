@@ -254,7 +254,7 @@ class NavigationDataLoader {
             error: 'שגיאה בטעינת נקודות ציון: $e');
       }
 
-      // === שלב 5: טעינת נקודות בטיחות (NB) ===
+      // === טעינת נקודות בטיחות (NB) ===
       _updateStep('safety_points', LoadStepStatus.loading);
       List<NavSafetyPoint> safetyPoints = [];
       try {
@@ -399,7 +399,7 @@ class NavigationDataLoader {
             error: 'שגיאה בטעינת צירים: $e');
       }
 
-      // === שלב 5: טעינת כל נקודות הציון (NZ) ===
+      // === טעינת כל נקודות הציון (NZ) ===
       _updateStep('checkpoints', LoadStepStatus.loading);
       List<NavCheckpoint> checkpoints = [];
       try {

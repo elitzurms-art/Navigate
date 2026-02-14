@@ -120,9 +120,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         if (boundary != null && boundary.coordinates.isNotEmpty) {
           final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
           _mapController.move(LatLng(center.lat, center.lng), 13.0);
-        } else if (checkpoints.isNotEmpty) {
-          final latitudes = checkpoints.map((c) => c.coordinates.lat).toList();
-          final longitudes = checkpoints.map((c) => c.coordinates.lng).toList();
+        } else if (checkpoints.where((c) => !c.isPolygon && c.coordinates != null).isNotEmpty) {
+          final pointCps = checkpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
+          final latitudes = pointCps.map((c) => c.coordinates!.lat).toList();
+          final longitudes = pointCps.map((c) => c.coordinates!.lng).toList();
           final minLat = latitudes.reduce((a, b) => a < b ? a : b);
           final maxLat = latitudes.reduce((a, b) => a > b ? a : b);
           final minLng = longitudes.reduce((a, b) => a < b ? a : b);
@@ -501,20 +502,20 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                   // ציור הצירים
                   if (_showRoutes) ..._buildRoutePolylines(),
 
-                  // נקודות ציון - רק אלה בתוך הגבול
+                  // נקודות ציון - רק אלה בתוך הגבול (ורק point checkpoints)
                   if (_showNZ)
                     MarkerLayer(
                       markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
                               ? GeometryUtils.filterPointsInPolygon(
-                                  points: _checkpoints,
-                                  getCoordinate: (cp) => cp.coordinates,
+                                  points: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList(),
+                                  getCoordinate: (cp) => cp.coordinates!,
                                   polygon: _boundary!.coordinates,
                                 )
-                              : _checkpoints)
+                              : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
                           .map((cp) {
                         final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
                         return Marker(
-                          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                           width: 36,
                           height: 36,
                           child: Opacity(
@@ -646,7 +647,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           final startPoint = _checkpoints.firstWhere(
             (cp) => cp.id == route.startPointId,
           );
-          points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+          if (!startPoint.isPolygon && startPoint.coordinates != null) {
+            points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
+          }
         } catch (_) {}
       }
 
@@ -656,7 +659,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           final checkpoint = _checkpoints.firstWhere(
             (cp) => cp.id == checkpointId,
           );
-          points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+          if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
+            points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
+          }
         } catch (_) {}
       }
 
@@ -666,7 +671,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           final endPoint = _checkpoints.firstWhere(
             (cp) => cp.id == route.endPointId,
           );
-          points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+          if (!endPoint.isPolygon && endPoint.coordinates != null) {
+            points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
+          }
         } catch (_) {}
       }
 

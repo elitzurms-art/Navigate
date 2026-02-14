@@ -60,7 +60,7 @@ class Areas extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// טבלת נקודות ציון (NZ)
+/// טבלת נקודות ציון (NZ) - תומכת בנקודה ופוליגון
 class Checkpoints extends Table {
   TextColumn get id => text()();
   TextColumn get areaId => text()();
@@ -68,9 +68,11 @@ class Checkpoints extends Table {
   TextColumn get description => text()();
   TextColumn get type => text()();
   TextColumn get color => text()();
+  TextColumn get geometryType => text().withDefault(const Constant('point'))(); // 'point' או 'polygon'
   RealColumn get lat => real()();
   RealColumn get lng => real()();
   TextColumn get utm => text()();
+  TextColumn get coordinatesJson => text().nullable()(); // לפוליגון בלבד - JSON של רשימת נקודות
   IntColumn get sequenceNumber => integer()();
   TextColumn get createdBy => text()();
   DateTimeColumn get createdAt => dateTime()();
@@ -214,7 +216,7 @@ class NavigationTracks extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// טבלת נקודות ציון לניווט ספציפי (NZ per-navigation)
+/// טבלת נקודות ציון לניווט ספציפי (NZ per-navigation) - תומכת בנקודה ופוליגון
 class NavCheckpoints extends Table {
   TextColumn get id => text()();
   TextColumn get navigationId => text()();
@@ -224,9 +226,11 @@ class NavCheckpoints extends Table {
   TextColumn get description => text()();
   TextColumn get type => text()();
   TextColumn get color => text()();
+  TextColumn get geometryType => text().withDefault(const Constant('point'))(); // 'point' או 'polygon'
   RealColumn get lat => real()();
   RealColumn get lng => real()();
   TextColumn get utm => text()();
+  TextColumn get coordinatesJson => text().nullable()(); // לפוליגון בלבד
   IntColumn get sequenceNumber => integer()();
   TextColumn get labelsJson => text().withDefault(const Constant('[]'))();
   TextColumn get createdBy => text()();
@@ -374,7 +378,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration {
@@ -493,6 +497,13 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(units, units.level);
           await m.addColumn(units, units.isNavigators);
           await m.addColumn(units, units.isGeneral);
+        }
+        if (from <= 17 && to >= 18) {
+          // תמיכה בפוליגון עבור נקודות ציון (NZ)
+          await m.addColumn(checkpoints, checkpoints.geometryType);
+          await m.addColumn(checkpoints, checkpoints.coordinatesJson);
+          await m.addColumn(navCheckpoints, navCheckpoints.geometryType);
+          await m.addColumn(navCheckpoints, navCheckpoints.coordinatesJson);
         }
       },
     );

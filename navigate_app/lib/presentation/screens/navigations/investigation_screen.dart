@@ -113,10 +113,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         if (cp != null) checkpoints.add(cp);
       }
 
-      // יצירת מסלול מתוכנן
+      // יצירת מסלול מתוכנן — רק נקודות (לא פוליגונים)
       final planned = route.sequence
           .map((id) => checkpoints.firstWhere((c) => c.id == id, orElse: () => checkpoints.first))
-          .map((c) => LatLng(c.coordinates.lat, c.coordinates.lng))
+          .where((c) => !c.isPolygon && c.coordinates != null)
+          .map((c) => LatLng(c.coordinates!.lat, c.coordinates!.lng))
           .toList();
 
       // TODO: טעינת מסלול בפועל ו ציון מהמסד נתונים
@@ -521,10 +522,10 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
             // נקודות ציון
             if (_showNZ)
               MarkerLayer(
-                markers: _checkpoints.map((cp) {
+                markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
                   final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
                   return Marker(
-                    point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                    point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                     width: 36,
                     height: 36,
                     child: Opacity(
@@ -867,11 +868,14 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
       );
     }
 
-    // חישוב מרכז המפה
-    final center = LatLng(
-      _myCheckpoints.map((c) => c.coordinates.lat).reduce((a, b) => a + b) / _myCheckpoints.length,
-      _myCheckpoints.map((c) => c.coordinates.lng).reduce((a, b) => a + b) / _myCheckpoints.length,
-    );
+    // חישוב מרכז המפה — רק מנקודות עם קואורדינטות
+    final pointCheckpoints = _myCheckpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
+    final center = pointCheckpoints.isNotEmpty
+        ? LatLng(
+            pointCheckpoints.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) / pointCheckpoints.length,
+            pointCheckpoints.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) / pointCheckpoints.length,
+          )
+        : const LatLng(32.0853, 34.7818);
 
     // צבע לפי ציון
     Color scoreColor = Colors.grey;
@@ -1025,11 +1029,11 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
                           // נקודות
                           if (_showNZ)
                             MarkerLayer(
-                              markers: _myCheckpoints.asMap().entries.map((entry) {
+                              markers: _myCheckpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList().asMap().entries.map((entry) {
                                 final index = entry.key + 1;
                                 final checkpoint = entry.value;
                                 return Marker(
-                                  point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                                  point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
                                   width: 40,
                                   height: 40,
                                   child: Opacity(

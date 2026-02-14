@@ -877,6 +877,7 @@ class SyncManager {
   Future<void> _upsertCheckpoint(String id, Map<String, dynamic> data) async {
     // Checkpoint.toMap() שולח coordinates כ-nested object: {lat, lng, utm}
     // אבל Drift מצפה לשדות שטוחים — צריך לחלץ מהמבנה המקונן
+    final geometryType = data['geometryType'] as String? ?? 'point';
     final coords = data['coordinates'] as Map<String, dynamic>?;
     final lat = (coords?['lat'] as num?)?.toDouble()
         ?? (data['lat'] as num?)?.toDouble()
@@ -888,6 +889,12 @@ class SyncManager {
         ?? data['utm'] as String?
         ?? '';
 
+    // polygonCoordinates מגיע כ-List מ-Firestore, Drift מצפה ל-JSON string
+    final polyCoords = data['polygonCoordinates'] as List?;
+    final coordinatesJson = polyCoords != null
+        ? jsonEncode(polyCoords)
+        : data['coordinatesJson'] as String?;
+
     await _db.into(_db.checkpoints).insertOnConflictUpdate(
       CheckpointsCompanion.insert(
         id: id,
@@ -896,9 +903,11 @@ class SyncManager {
         description: data['description'] as String? ?? '',
         type: data['type'] as String? ?? 'checkpoint',
         color: data['color'] as String? ?? 'blue',
+        geometryType: Value(geometryType),
         lat: lat,
         lng: lng,
         utm: utm,
+        coordinatesJson: Value(coordinatesJson),
         sequenceNumber: (data['sequenceNumber'] as num?)?.toInt() ?? 0,
         createdBy: data['createdBy'] as String? ?? '',
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),

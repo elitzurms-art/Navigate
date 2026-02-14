@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
 
 /// ישות נקודת ציון (שכבת NZ)
+/// תומכת בשני סוגי גאומטריה: נקודה (point) ופוליגון (polygon)
 class Checkpoint extends Equatable {
   final String id;
   final String areaId;
@@ -9,7 +10,9 @@ class Checkpoint extends Equatable {
   final String description;
   final String type; // 'checkpoint', 'mandatory_passage', 'start', 'end'
   final String color; // 'blue', 'green'
-  final Coordinate coordinates;
+  final String geometryType; // 'point' או 'polygon'
+  final Coordinate? coordinates; // לנקודה בלבד
+  final List<Coordinate>? polygonCoordinates; // לפוליגון בלבד
   final int sequenceNumber;
   final List<String> labels; // תוויות/תאי שטח לשיוך לניווטים
 
@@ -28,7 +31,9 @@ class Checkpoint extends Equatable {
     required this.description,
     required this.type,
     required this.color,
-    required this.coordinates,
+    this.geometryType = 'point',
+    this.coordinates,
+    this.polygonCoordinates,
     required this.sequenceNumber,
     this.labels = const [],
     this.unitId,
@@ -47,6 +52,9 @@ class Checkpoint extends Equatable {
   /// האם זו נקודת מעבר חובה
   bool get isMandatory => type == 'mandatory_passage';
 
+  /// האם זו נקודת פוליגון
+  bool get isPolygon => geometryType == 'polygon';
+
   /// העתקה עם שינויים
   Checkpoint copyWith({
     String? id,
@@ -55,7 +63,9 @@ class Checkpoint extends Equatable {
     String? description,
     String? type,
     String? color,
+    String? geometryType,
     Coordinate? coordinates,
+    List<Coordinate>? polygonCoordinates,
     int? sequenceNumber,
     List<String>? labels,
     String? createdBy,
@@ -68,7 +78,9 @@ class Checkpoint extends Equatable {
       description: description ?? this.description,
       type: type ?? this.type,
       color: color ?? this.color,
+      geometryType: geometryType ?? this.geometryType,
       coordinates: coordinates ?? this.coordinates,
+      polygonCoordinates: polygonCoordinates ?? this.polygonCoordinates,
       sequenceNumber: sequenceNumber ?? this.sequenceNumber,
       labels: labels ?? this.labels,
       createdBy: createdBy ?? this.createdBy,
@@ -85,7 +97,10 @@ class Checkpoint extends Equatable {
       'description': description,
       'type': type,
       'color': color,
-      'coordinates': coordinates.toMap(),
+      'geometryType': geometryType,
+      if (coordinates != null) 'coordinates': coordinates!.toMap(),
+      if (polygonCoordinates != null)
+        'polygonCoordinates': polygonCoordinates!.map((c) => c.toMap()).toList(),
       'sequenceNumber': sequenceNumber,
       'labels': labels,
       'createdBy': createdBy,
@@ -95,14 +110,23 @@ class Checkpoint extends Equatable {
 
   /// יצירה מ-Map (Firestore)
   factory Checkpoint.fromMap(Map<String, dynamic> map) {
+    final geoType = map['geometryType'] as String? ?? 'point';
     return Checkpoint(
       id: map['id'] as String,
       areaId: map['areaId'] as String,
       name: map['name'] as String,
-      description: map['description'] as String,
+      description: map['description'] as String? ?? '',
       type: map['type'] as String,
       color: map['color'] as String,
-      coordinates: Coordinate.fromMap(map['coordinates'] as Map<String, dynamic>),
+      geometryType: geoType,
+      coordinates: map['coordinates'] != null
+          ? Coordinate.fromMap(map['coordinates'] as Map<String, dynamic>)
+          : null,
+      polygonCoordinates: map['polygonCoordinates'] != null
+          ? (map['polygonCoordinates'] as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : null,
       sequenceNumber: map['sequenceNumber'] as int,
       labels: map['labels'] != null ? List<String>.from(map['labels'] as List) : [],
       createdBy: map['createdBy'] as String,
@@ -118,7 +142,9 @@ class Checkpoint extends Equatable {
     description,
     type,
     color,
+    geometryType,
     coordinates,
+    polygonCoordinates,
     sequenceNumber,
     labels,
     createdBy,

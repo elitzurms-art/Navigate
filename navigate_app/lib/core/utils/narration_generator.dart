@@ -42,8 +42,8 @@ class NarrationGenerator {
 
           // חישוב כיוון
           final bearingDeg = GeometryUtils.bearingBetween(
-            prevCp.coordinates,
-            cp.coordinates,
+            prevCp.coordinates!,
+            cp.coordinates!,
           );
           bearingStr = '${bearingDeg.toStringAsFixed(0)}° ${_bearingToHebrew(bearingDeg)}';
         }
@@ -96,12 +96,12 @@ class NarrationGenerator {
   ) {
     // אם אין planned path — קו ישר
     if (route.plannedPath.isEmpty) {
-      return GeometryUtils.distanceBetweenMeters(from.coordinates, to.coordinates);
+      return GeometryUtils.distanceBetweenMeters(from.coordinates!, to.coordinates!);
     }
 
     // חישוב לפי planned path — מרחק כולל הנתיב בין שתי הנקודות
     // פשטנו: קו ישר (planned path הוא רציף ולא per-segment)
-    return GeometryUtils.distanceBetweenMeters(from.coordinates, to.coordinates);
+    return GeometryUtils.distanceBetweenMeters(from.coordinates!, to.coordinates!);
   }
 
   /// המרת כיוון במעלות לכיוון מילולי בעברית

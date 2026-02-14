@@ -905,21 +905,27 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (route.startPointId != null) {
       try {
         final startPoint = _checkpoints.firstWhere((cp) => cp.id == route.startPointId);
-        points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+        if (!startPoint.isPolygon && startPoint.coordinates != null) {
+          points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
+        }
       } catch (_) {}
     }
 
     for (final checkpointId in route.sequence) {
       try {
         final checkpoint = _checkpoints.firstWhere((cp) => cp.id == checkpointId);
-        points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+        if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
+          points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
+        }
       } catch (_) {}
     }
 
     if (route.endPointId != null && route.endPointId != route.startPointId) {
       try {
         final endPoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
-        points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+        if (!endPoint.isPolygon && endPoint.coordinates != null) {
+          points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
+        }
       } catch (_) {}
     }
 
@@ -944,8 +950,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     for (final spId in startPointIds) {
       try {
         final cp = _checkpoints.firstWhere((c) => c.id == spId);
+        if (cp.isPolygon || cp.coordinates == null) continue;
         markers.add(Marker(
-          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
           width: 32,
           height: 32,
           child: Tooltip(
@@ -970,8 +977,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       if (startPointIds.contains(cpId) || endPointIds.contains(cpId)) continue;
       try {
         final cp = _checkpoints.firstWhere((c) => c.id == cpId);
+        if (cp.isPolygon || cp.coordinates == null) continue;
         markers.add(Marker(
-          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
           width: 32,
           height: 32,
           child: Tooltip(
@@ -1003,8 +1011,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       if (startPointIds.contains(epId)) continue; // אותה נקודה גם התחלה וגם סיום
       try {
         final cp = _checkpoints.firstWhere((c) => c.id == epId);
+        if (cp.isPolygon || cp.coordinates == null) continue;
         markers.add(Marker(
-          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
           width: 32,
           height: 32,
           child: Tooltip(
@@ -1116,9 +1125,9 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
     // בניית markers: התחלה (ירוק H), נקודות ציון (כחול ממוספר), סיום (אדום S)
     final markers = <Marker>[];
 
-    if (widget.startCheckpoint != null) {
+    if (widget.startCheckpoint != null && !widget.startCheckpoint!.isPolygon && widget.startCheckpoint!.coordinates != null) {
       markers.add(Marker(
-        point: widget.startCheckpoint!.coordinates.toLatLng(),
+        point: widget.startCheckpoint!.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(
@@ -1139,8 +1148,9 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
 
     for (var i = 0; i < widget.routeCheckpoints.length; i++) {
       final cp = widget.routeCheckpoints[i];
+      if (cp.isPolygon || cp.coordinates == null) continue;
       markers.add(Marker(
-        point: cp.coordinates.toLatLng(),
+        point: cp.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(
@@ -1166,9 +1176,9 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
       ));
     }
 
-    if (widget.endCheckpoint != null) {
+    if (widget.endCheckpoint != null && !widget.endCheckpoint!.isPolygon && widget.endCheckpoint!.coordinates != null) {
       markers.add(Marker(
-        point: widget.endCheckpoint!.coordinates.toLatLng(),
+        point: widget.endCheckpoint!.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(

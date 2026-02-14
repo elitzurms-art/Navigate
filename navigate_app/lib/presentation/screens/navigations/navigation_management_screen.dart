@@ -337,9 +337,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               // נקודות ציון
               if (_showNZ)
                 MarkerLayer(
-                  markers: _checkpoints.map((cp) {
+                  markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
                     return Marker(
-                      point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                      point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                       width: 40,
                       height: 40,
                       child: Column(

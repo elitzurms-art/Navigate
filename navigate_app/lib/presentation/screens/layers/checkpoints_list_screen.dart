@@ -356,10 +356,12 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> with Widg
               _buildDetailRow('תיאור', checkpoint.description),
               _buildDetailRow('סוג', _getTypeText(checkpoint.type)),
               _buildDetailRow('צבע', checkpoint.color == 'blue' ? 'כחול' : 'ירוק'),
-              _buildDetailRow('קו רוחב', checkpoint.coordinates.lat.toStringAsFixed(6)),
-              _buildDetailRow('קו אורך', checkpoint.coordinates.lng.toStringAsFixed(6)),
-              if (checkpoint.coordinates.utm.isNotEmpty)
-                _buildDetailRow('UTM', checkpoint.coordinates.utm),
+              if (checkpoint.coordinates != null) ...[
+                _buildDetailRow('קו רוחב', checkpoint.coordinates!.lat.toStringAsFixed(6)),
+                _buildDetailRow('קו אורך', checkpoint.coordinates!.lng.toStringAsFixed(6)),
+                if (checkpoint.coordinates!.utm.isNotEmpty)
+                  _buildDetailRow('UTM', checkpoint.coordinates!.utm),
+              ],
               if (checkpoint.labels.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 const Text(

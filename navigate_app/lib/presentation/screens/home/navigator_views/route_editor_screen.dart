@@ -114,8 +114,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     }
 
     // אם ציר חדש (ריק) ויש נקודת התחלה — מוסיף אותה אוטומטית
-    if (_waypoints.isEmpty && _startCheckpoint != null) {
-      _waypoints.add(_startCheckpoint!.coordinates.toLatLng());
+    if (_waypoints.isEmpty && _startCheckpoint != null && _startCheckpoint!.coordinates != null) {
+      _waypoints.add(_startCheckpoint!.coordinates!.toLatLng());
     }
 
     if (mounted) setState(() {});
@@ -182,7 +182,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     if (_startCheckpoint != null && _waypoints.isNotEmpty) {
       final dist = GeometryUtils.distanceBetweenMeters(
         Coordinate(lat: _waypoints.first.latitude, lng: _waypoints.first.longitude, utm: ''),
-        _startCheckpoint!.coordinates,
+        _startCheckpoint!.coordinates!,
       );
       if (dist > threshold) {
         return 'הציר חייב להתחיל בנקודת ההתחלה. יש להזיז את תחילת הציר לנקודה המסומנת בירוק.';
@@ -193,7 +193,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     if (_endCheckpoint != null && _waypoints.isNotEmpty) {
       final dist = GeometryUtils.distanceBetweenMeters(
         Coordinate(lat: _waypoints.last.latitude, lng: _waypoints.last.longitude, utm: ''),
-        _endCheckpoint!.coordinates,
+        _endCheckpoint!.coordinates!,
       );
       if (dist > threshold) {
         return 'הציר חייב להסתיים בנקודת הסיום. יש להזיז את סוף הציר לנקודה המסומנת באדום.';
@@ -207,8 +207,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         for (int i = 0; i < _waypoints.length - 1; i++) {
           final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
           final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
+          if (cp.isPolygon || cp.coordinates == null) continue;
           final dist = GeometryUtils.distanceFromPointToSegmentMeters(
-            cp.coordinates,
+            cp.coordinates!,
             segA,
             segB,
           );
@@ -342,7 +343,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Widget build(BuildContext context) {
     // חישוב bounds מנקודות הציון
     final cpPoints = widget.checkpoints
-        .map((cp) => cp.coordinates.toLatLng())
+        .where((cp) => !cp.isPolygon && cp.coordinates != null)
+        .map((cp) => cp.coordinates!.toLatLng())
         .toList();
     final allPoints = [...cpPoints, ..._waypoints];
     final hasBounds = allPoints.length > 1;
@@ -353,9 +355,10 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     final cpMarkers = <Marker>[];
     for (var i = 0; i < widget.checkpoints.length; i++) {
       final cp = widget.checkpoints[i];
+      if (cp.isPolygon || cp.coordinates == null) continue;
 
       cpMarkers.add(Marker(
-        point: cp.coordinates.toLatLng(),
+        point: cp.coordinates!.toLatLng(),
         width: 36,
         height: 36,
         child: Tooltip(
@@ -389,9 +392,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
 
     // markers לנקודות התחלה/סיום
     final startEndMarkers = <Marker>[];
-    if (_startCheckpoint != null) {
+    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
       startEndMarkers.add(Marker(
-        point: _startCheckpoint!.coordinates.toLatLng(),
+        point: _startCheckpoint!.coordinates!.toLatLng(),
         width: 40,
         height: 40,
         child: Tooltip(
@@ -422,9 +425,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         ),
       ));
     }
-    if (_endCheckpoint != null) {
+    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
       startEndMarkers.add(Marker(
-        point: _endCheckpoint!.coordinates.toLatLng(),
+        point: _endCheckpoint!.coordinates!.toLatLng(),
         width: 40,
         height: 40,
         child: Tooltip(

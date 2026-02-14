@@ -72,9 +72,10 @@ class RoutesDistributionService {
       print('סינון נקודות לפי גבול "${boundary.name}"...');
       final beforeFilter = availableCheckpoints.length;
 
+      final pointCheckpoints = checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
       availableCheckpoints = GeometryUtils.filterPointsInPolygon(
-        points: checkpoints,
-        getCoordinate: (checkpoint) => checkpoint.coordinates,
+        points: pointCheckpoints,
+        getCoordinate: (checkpoint) => checkpoint.coordinates!,
         polygon: boundary.coordinates,
       );
 
@@ -82,13 +83,13 @@ class RoutesDistributionService {
 
       // הצגת דוגמאות של נקודות שסוננו
       if (availableCheckpoints.isNotEmpty) {
-        print('דוגמה לנקודה שנבחרה: ${availableCheckpoints.first.name} (${availableCheckpoints.first.coordinates.lat}, ${availableCheckpoints.first.coordinates.lng})');
+        print('דוגמה לנקודה שנבחרה: ${availableCheckpoints.first.name} (${availableCheckpoints.first.coordinates?.lat}, ${availableCheckpoints.first.coordinates?.lng})');
       }
 
       // בדיקה אם יש נקודות שנשארו בחוץ
       final filtered = checkpoints.where((cp) => !availableCheckpoints.contains(cp)).toList();
       if (filtered.isNotEmpty) {
-        print('דוגמה לנקודה שסוננה: ${filtered.first.name} (${filtered.first.coordinates.lat}, ${filtered.first.coordinates.lng})');
+        print('דוגמה לנקודה שסוננה: ${filtered.first.name} (${filtered.first.coordinates?.lat}, ${filtered.first.coordinates?.lng})');
       }
     } else {
       print('⚠️ אזהרה: לא מבוצע סינון לפי גבול! כל הנקודות זמינות.');
@@ -118,7 +119,7 @@ class RoutesDistributionService {
       referencePoint = GeometryUtils.getPolygonCenter(boundary.coordinates);
     } else {
       referencePoint = GeometryUtils.getPolygonCenter(
-        availableCheckpoints.map((cp) => cp.coordinates).toList(),
+        availableCheckpoints.where((cp) => cp.coordinates != null).map((cp) => cp.coordinates!).toList(),
       );
     }
 
@@ -150,7 +151,7 @@ class RoutesDistributionService {
 
       // שלב 1: התחלה מנקודת ההתחלה אם הוגדרה
       if (startCheckpoint != null) {
-        currentPosition = startCheckpoint.coordinates;
+        currentPosition = startCheckpoint.coordinates!;
       }
 
       // שלב 2: בחירת בדיוק checkpointsPerNavigator נקודות
@@ -209,7 +210,7 @@ class RoutesDistributionService {
 
           if (nextCheckpoint != null) {
             selectedCheckpoints.add(nextCheckpoint);
-            currentPos = nextCheckpoint.coordinates;
+            currentPos = nextCheckpoint.coordinates!;
           }
         }
 
@@ -314,7 +315,7 @@ class RoutesDistributionService {
       final startCp = allCheckpoints.where((cp) => cp.id == startPointId).firstOrNull;
       if (startCp != null) {
         // מוצאים את הנקודה הקרובה ביותר לנקודת ההתחלה
-        current = _findNearestCheckpoint(startCp.coordinates, remaining) ?? remaining.first;
+        current = _findNearestCheckpoint(startCp.coordinates!, remaining) ?? remaining.first;
       } else {
         current = remaining.first;
       }
@@ -329,8 +330,8 @@ class RoutesDistributionService {
 
       for (final cp in remaining) {
         final distance = _calculateDistance(
-          current.coordinates,
-          cp.coordinates,
+          current.coordinates!,
+          cp.coordinates!,
         );
         if (distance < minDistance) {
           minDistance = distance;
@@ -382,8 +383,8 @@ class RoutesDistributionService {
     if (startPoint != null && sequence.isNotEmpty) {
       final firstCheckpoint = checkpoints.firstWhere((cp) => cp.id == sequence.first);
       totalDistance += _calculateDistance(
-        startPoint.coordinates,
-        firstCheckpoint.coordinates,
+        startPoint.coordinates!,
+        firstCheckpoint.coordinates!,
       );
     }
 
@@ -391,15 +392,15 @@ class RoutesDistributionService {
     for (int i = 0; i < sequence.length - 1; i++) {
       final from = checkpoints.firstWhere((cp) => cp.id == sequence[i]);
       final to = checkpoints.firstWhere((cp) => cp.id == sequence[i + 1]);
-      totalDistance += _calculateDistance(from.coordinates, to.coordinates);
+      totalDistance += _calculateDistance(from.coordinates!, to.coordinates!);
     }
 
     // מרחק מהנקודה האחרונה לנקודת הסיום
     if (endPoint != null && sequence.isNotEmpty) {
       final lastCheckpoint = checkpoints.firstWhere((cp) => cp.id == sequence.last);
       totalDistance += _calculateDistance(
-        lastCheckpoint.coordinates,
-        endPoint.coordinates,
+        lastCheckpoint.coordinates!,
+        endPoint.coordinates!,
       );
     }
 
@@ -430,7 +431,8 @@ class RoutesDistributionService {
     double minDistance = double.infinity;
 
     for (final candidate in candidates) {
-      final distance = _calculateDistance(point, candidate.coordinates);
+      if (candidate.coordinates == null) continue;
+      final distance = _calculateDistance(point, candidate.coordinates!);
       if (distance < minDistance) {
         minDistance = distance;
         nearest = candidate;
@@ -452,7 +454,8 @@ class RoutesDistributionService {
     double minDiff = double.infinity;
 
     for (final candidate in candidates) {
-      final distance = _calculateDistance(point, candidate.coordinates);
+      if (candidate.coordinates == null) continue;
+      final distance = _calculateDistance(point, candidate.coordinates!);
       final diff = (distance - targetDistance).abs();
 
       if (diff < minDiff) {

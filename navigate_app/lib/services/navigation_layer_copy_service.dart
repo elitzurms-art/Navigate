@@ -115,11 +115,11 @@ class NavigationLayerCopyService {
       print('DEBUG: Copied GG boundary: ${boundary.name}');
 
       // 3. העתקת נקודות ציון (NZ) בתוך הגבול
+      // סינון: נקודות point לפי מיקום, נקודות polygon לפי חפיפת פוליגונים
       final allCheckpoints = await _checkpointRepo.getByArea(areaId);
-      final filteredCheckpoints = GeometryUtils.filterPointsInPolygon(
-        points: allCheckpoints,
-        getCoordinate: (cp) => cp.coordinates,
-        polygon: boundaryPolygon,
+      final filteredCheckpoints = _filterCheckpointsInBoundary(
+        checkpoints: allCheckpoints,
+        boundaryPolygon: boundaryPolygon,
       );
 
       final navCheckpoints = filteredCheckpoints
@@ -197,6 +197,29 @@ class NavigationLayerCopyService {
     }
   }
 
+  /// סינון נקודות ציון שבתוך הגבול
+  /// לנקודת 'point' - בדיקה רגילה של נקודה בתוך פוליגון
+  /// לנקודת 'polygon' - בדיקה של חפיפת פוליגונים
+  List<Checkpoint> _filterCheckpointsInBoundary({
+    required List<Checkpoint> checkpoints,
+    required List<Coordinate> boundaryPolygon,
+  }) {
+    return checkpoints.where((cp) {
+      if (cp.geometryType == 'polygon' && cp.polygonCoordinates != null) {
+        return GeometryUtils.doPolygonsIntersect(
+          cp.polygonCoordinates!,
+          boundaryPolygon,
+        );
+      } else if (cp.coordinates != null) {
+        return GeometryUtils.isPointInPolygon(
+          cp.coordinates!,
+          boundaryPolygon,
+        );
+      }
+      return false;
+    }).toList();
+  }
+
   /// סינון נקודות בטיחות שבתוך הגבול
   /// לנקודת 'point' - בדיקה רגילה של נקודה בתוך פוליגון
   /// לנקודת 'polygon' - בדיקה של חפיפת פוליגונים
@@ -248,7 +271,7 @@ class NavigationLayerCopyService {
     );
   }
 
-  /// העתקת נקודת ציון לניווט
+  /// העתקת נקודת ציון לניווט (נקודה או פוליגון)
   NavCheckpoint _copyCheckpoint({
     required Checkpoint checkpoint,
     required String navigationId,
@@ -264,7 +287,11 @@ class NavigationLayerCopyService {
       description: checkpoint.description,
       type: checkpoint.type,
       color: checkpoint.color,
+      geometryType: checkpoint.geometryType,
       coordinates: checkpoint.coordinates,
+      polygonCoordinates: checkpoint.polygonCoordinates != null
+          ? List.from(checkpoint.polygonCoordinates!)
+          : null,
       sequenceNumber: checkpoint.sequenceNumber,
       labels: List.from(checkpoint.labels),
       createdBy: createdBy,

@@ -49,15 +49,15 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
     _nameController.text = widget.checkpoint.name;
     _descriptionController.text = widget.checkpoint.description;
     _sequenceController.text = widget.checkpoint.sequenceNumber.toString();
-    _latController.text = widget.checkpoint.coordinates.lat.toStringAsFixed(6);
-    _lngController.text = widget.checkpoint.coordinates.lng.toStringAsFixed(6);
-    _utmController.text = widget.checkpoint.coordinates.utm;
+    _latController.text = widget.checkpoint.coordinates?.lat.toStringAsFixed(6) ?? '';
+    _lngController.text = widget.checkpoint.coordinates?.lng.toStringAsFixed(6) ?? '';
+    _utmController.text = widget.checkpoint.coordinates?.utm ?? '';
 
     _selectedType = widget.checkpoint.type;
     _selectedColor = widget.checkpoint.color;
     _selectedLocation = LatLng(
-      widget.checkpoint.coordinates.lat,
-      widget.checkpoint.coordinates.lng,
+      widget.checkpoint.coordinates?.lat ?? 32.0853,
+      widget.checkpoint.coordinates?.lng ?? 34.7818,
     );
     _labels = List<String>.from(widget.checkpoint.labels);
 

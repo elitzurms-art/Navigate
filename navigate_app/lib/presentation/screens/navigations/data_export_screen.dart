@@ -27,7 +27,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
-/// שלב 5 - ייצוא נתונים
+/// ייצוא נתונים
 class DataExportScreen extends StatefulWidget {
   final domain.Navigation navigation;
 
@@ -78,11 +78,11 @@ class _DataExportScreenState extends State<DataExportScreen> {
   }
 
   List<Checkpoint> get _filteredCheckpoints {
-    var cps = _checkpoints;
+    var cps = _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
     if (_boundary != null && _boundary!.coordinates.isNotEmpty) {
       cps = GeometryUtils.filterPointsInPolygon(
         points: cps,
-        getCoordinate: (cp) => cp.coordinates,
+        getCoordinate: (cp) => cp.coordinates!,
         polygon: _boundary!.coordinates,
       );
     }
@@ -179,9 +179,11 @@ class _DataExportScreenState extends State<DataExportScreen> {
           row.add('${checkpoint.name} (${checkpoint.sequenceNumber})');
 
           // UTM
-          final utm = checkpoint.coordinates.utm.isNotEmpty
-              ? checkpoint.coordinates.utm
-              : UTMConverter.convertToUTM(checkpoint.coordinates.lat, checkpoint.coordinates.lng);
+          final utm = (checkpoint.coordinates != null && checkpoint.coordinates!.utm.isNotEmpty)
+              ? checkpoint.coordinates!.utm
+              : checkpoint.coordinates != null
+                  ? UTMConverter.convertToUTM(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng)
+                  : '';
           row.add(utm);
         }
 
@@ -259,9 +261,11 @@ class _DataExportScreenState extends State<DataExportScreen> {
       // נתונים - רק UTM (לא lat/lng)
       for (final cp in checkpointsToExport) {
         // חישוב UTM אם ריק
-        final utm = cp.coordinates.utm.isNotEmpty
-            ? cp.coordinates.utm
-            : UTMConverter.convertToUTM(cp.coordinates.lat, cp.coordinates.lng);
+        final utm = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
+            ? cp.coordinates!.utm
+            : cp.coordinates != null
+                ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
+                : '';
 
         rows.add([
           cp.sequenceNumber,
@@ -420,7 +424,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'שלב 5 - ייצוא נתונים',
+                    'ייצוא נתונים',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
@@ -663,11 +667,11 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
   }
 
   List<Checkpoint> get _filteredCheckpoints {
-    var cps = widget.checkpoints;
+    var cps = widget.checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
     if (widget.boundary != null && widget.boundary!.coordinates.isNotEmpty) {
       cps = GeometryUtils.filterPointsInPolygon(
         points: cps,
-        getCoordinate: (cp) => cp.coordinates,
+        getCoordinate: (cp) => cp.coordinates!,
         polygon: widget.boundary!.coordinates,
       );
     }
@@ -683,7 +687,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
 
     if (_showNZ) {
       for (final cp in _filteredCheckpoints) {
-        allPoints.add(LatLng(cp.coordinates.lat, cp.coordinates.lng));
+        if (cp.coordinates != null) {
+          allPoints.add(LatLng(cp.coordinates!.lat, cp.coordinates!.lng));
+        }
       }
     }
 
@@ -716,10 +722,12 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
       }
     }
 
-    // Fallback: use all checkpoints
+    // Fallback: use all checkpoints with coordinates
     if (allPoints.isEmpty) {
       for (final cp in widget.checkpoints) {
-        allPoints.add(LatLng(cp.coordinates.lat, cp.coordinates.lng));
+        if (!cp.isPolygon && cp.coordinates != null) {
+          allPoints.add(LatLng(cp.coordinates!.lat, cp.coordinates!.lng));
+        }
       }
     }
 
@@ -822,8 +830,8 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
 
               return Marker(
                 point: LatLng(
-                  checkpoint.coordinates.lat,
-                  checkpoint.coordinates.lng,
+                  checkpoint.coordinates!.lat,
+                  checkpoint.coordinates!.lng,
                 ),
                 width: 36,
                 height: 36,
@@ -1072,9 +1080,11 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                         ],
                       ),
                       ...filteredCps.take(40).map((cp) {
-                        final utm = cp.coordinates.utm.isNotEmpty
-                            ? cp.coordinates.utm
-                            : UTMConverter.convertToUTM(cp.coordinates.lat, cp.coordinates.lng);
+                        final utm = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
+                            ? cp.coordinates!.utm
+                            : cp.coordinates != null
+                                ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
+                                : '';
                         return pw.TableRow(
                           children: [
                             pw.Padding(

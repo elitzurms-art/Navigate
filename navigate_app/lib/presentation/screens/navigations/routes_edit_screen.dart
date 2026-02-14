@@ -176,7 +176,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
                   return CheckboxListTile(
                     title: Text('${checkpoint.name} (${checkpoint.sequenceNumber})'),
-                    subtitle: Text('${checkpoint.coordinates.lat.toStringAsFixed(4)}, ${checkpoint.coordinates.lng.toStringAsFixed(4)}'),
+                    subtitle: Text(checkpoint.coordinates != null ? '${checkpoint.coordinates!.lat.toStringAsFixed(4)}, ${checkpoint.coordinates!.lng.toStringAsFixed(4)}' : 'פוליגון'),
                     value: isSelected,
                     onChanged: (selected) {
                       setDialogState(() {

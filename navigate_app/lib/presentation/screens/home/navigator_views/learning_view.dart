@@ -337,19 +337,20 @@ class _LearningViewState extends State<LearningView>
 
     final route = _currentNavigation.routes[widget.currentUser.uid];
 
-    // נקודות ציון של המנווט
-    final cpPoints = _routeCheckpoints
-        .map((cp) => cp.coordinates.toLatLng())
+    // נקודות ציון של המנווט — רק נקודות (לא פוליגונים)
+    final pointCheckpoints = _routeCheckpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
+    final cpPoints = pointCheckpoints
+        .map((cp) => cp.coordinates!.toLatLng())
         .toList();
 
     // בניית ציר רפרנס מלא: התחלה → נקודות ציון → סיום
     final fullRefPoints = <LatLng>[];
-    if (_startCheckpoint != null) {
-      fullRefPoints.add(_startCheckpoint!.coordinates.toLatLng());
+    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
+      fullRefPoints.add(_startCheckpoint!.coordinates!.toLatLng());
     }
     fullRefPoints.addAll(cpPoints);
-    if (_endCheckpoint != null) {
-      fullRefPoints.add(_endCheckpoint!.coordinates.toLatLng());
+    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
+      fullRefPoints.add(_endCheckpoint!.coordinates!.toLatLng());
     }
     final refPoints = fullRefPoints.isNotEmpty ? fullRefPoints : cpPoints;
 
@@ -366,9 +367,9 @@ class _LearningViewState extends State<LearningView>
 
     final markers = <Marker>[];
     // marker לנקודת התחלה
-    if (_startCheckpoint != null) {
+    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
       markers.add(Marker(
-        point: _startCheckpoint!.coordinates.toLatLng(),
+        point: _startCheckpoint!.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(
@@ -388,9 +389,10 @@ class _LearningViewState extends State<LearningView>
     }
     for (var i = 0; i < _routeCheckpoints.length; i++) {
       final cp = _routeCheckpoints[i];
+      if (cp.isPolygon || cp.coordinates == null) continue;
 
       markers.add(Marker(
-        point: cp.coordinates.toLatLng(),
+        point: cp.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(
@@ -416,9 +418,9 @@ class _LearningViewState extends State<LearningView>
       ));
     }
     // marker לנקודת סיום
-    if (_endCheckpoint != null) {
+    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
       markers.add(Marker(
-        point: _endCheckpoint!.coordinates.toLatLng(),
+        point: _endCheckpoint!.coordinates!.toLatLng(),
         width: 32,
         height: 32,
         child: Tooltip(
@@ -679,9 +681,11 @@ class _LearningViewState extends State<LearningView>
           }
 
           // חישוב UTM — אם יש ערך ב-coordinates.utm משתמשים בו, אחרת מחשבים
-          final utmStr = cp.coordinates.utm.isNotEmpty
-              ? cp.coordinates.utm
-              : UTMConverter.convertToUTM(cp.coordinates.lat, cp.coordinates.lng);
+          final utmStr = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
+              ? cp.coordinates!.utm
+              : cp.coordinates != null
+                  ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
+                  : '';
 
           return ListTile(
             leading: CircleAvatar(

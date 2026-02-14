@@ -38,7 +38,9 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   final ClusterRepository _clusterRepo = ClusterRepository();
 
   String _selectedSeverity = 'medium';
+  String _geometryType = 'point'; // 'point' או 'polygon'
   LatLng? _selectedLocation;
+  final List<LatLng> _polygonVertices = [];
   bool _isLoading = false;
   bool _showOtherLayers = true;
   bool _showGG = true;
@@ -59,6 +61,8 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   List<Cluster> _clusters = [];
 
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
+
+  bool get _isPolygonMode => _geometryType == 'polygon';
 
   @override
   void initState() {
@@ -94,11 +98,22 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedLocation == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('נא לבחור מיקום על המפה')),
-      );
-      return;
+
+    // ולידציה לפי סוג גאומטריה
+    if (_isPolygonMode) {
+      if (_polygonVertices.length < 3) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('פוליגון חייב להכיל לפחות 3 קודקודים')),
+        );
+        return;
+      }
+    } else {
+      if (_selectedLocation == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('נא לבחור מיקום על המפה')),
+        );
+        return;
+      }
     }
 
     setState(() => _isLoading = true);
@@ -109,11 +124,19 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
         areaId: widget.area.id,
         name: _nameController.text,
         description: _descriptionController.text,
-        coordinates: Coordinate(
-          lat: _selectedLocation!.latitude,
-          lng: _selectedLocation!.longitude,
-          utm: '', // TODO: calculate UTM
-        ),
+        type: _geometryType,
+        coordinates: !_isPolygonMode
+            ? Coordinate(
+                lat: _selectedLocation!.latitude,
+                lng: _selectedLocation!.longitude,
+                utm: '',
+              )
+            : null,
+        polygonCoordinates: _isPolygonMode
+            ? _polygonVertices
+                .map((v) => Coordinate(lat: v.latitude, lng: v.longitude, utm: ''))
+                .toList()
+            : null,
         sequenceNumber: int.parse(_sequenceController.text),
         severity: _selectedSeverity,
         createdAt: DateTime.now(),
@@ -292,17 +315,43 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                 ),
               ),
             ),
+
             const SizedBox(height: 16),
 
-            // מפה
+            // בחירת סוג גאומטריה
             const Text(
-              'מיקום על המפה',
+              'גאומטריה',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'לחץ על המפה לבחירת מיקום',
-              style: TextStyle(color: Colors.grey),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'point',
+                  label: Text('נקודה'),
+                  icon: Icon(Icons.place),
+                ),
+                ButtonSegment(
+                  value: 'polygon',
+                  label: Text('פוליגון'),
+                  icon: Icon(Icons.pentagon_outlined),
+                ),
+              ],
+              selected: {_geometryType},
+              onSelectionChanged: (selected) {
+                setState(() {
+                  _geometryType = selected.first;
+                  _selectedLocation = null;
+                  _polygonVertices.clear();
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // מפה
+            Text(
+              _isPolygonMode ? 'סימון פוליגון על המפה' : 'מיקום על המפה',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             SizedBox(
@@ -322,9 +371,13 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                             setState(() => _measurePoints.add(point));
                             return;
                           }
-                          setState(() {
-                            _selectedLocation = point;
-                          });
+                          if (_isPolygonMode) {
+                            setState(() => _polygonVertices.add(point));
+                          } else {
+                            setState(() {
+                              _selectedLocation = point;
+                            });
+                          }
                         },
                       ),
                       layers: [
@@ -357,10 +410,12 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                         // שכבת נקודות ציון (עיגול כחול/ירוק עם מספר)
                         if (_showOtherLayers && _showNZ && _checkpoints.isNotEmpty)
                           MarkerLayer(
-                            markers: _checkpoints.map((cp) {
+                            markers: _checkpoints
+                                .where((cp) => !cp.isPolygon && cp.coordinates != null)
+                                .map((cp) {
                               final markerColor = cp.color == 'blue' ? Colors.blue : Colors.green;
                               return Marker(
-                                point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                                point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                                 width: 28,
                                 height: 28,
                                 child: Opacity(
@@ -379,6 +434,22 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                                     ),
                                   ),
                                 ),
+                              );
+                            }).toList(),
+                          ),
+                        // שכבת נקודות ציון פוליגוניות
+                        if (_showOtherLayers && _showNZ)
+                          PolygonLayer(
+                            polygons: _checkpoints
+                                .where((cp) => cp.isPolygon && cp.polygonCoordinates != null)
+                                .map((cp) {
+                              final color = cp.color == 'blue' ? Colors.blue : Colors.green;
+                              return Polygon(
+                                points: cp.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: color.withOpacity(0.15 * _nzOpacity),
+                                borderColor: color.withOpacity(0.6 * _nzOpacity),
+                                borderStrokeWidth: 2,
+                                isFilled: true,
                               );
                             }).toList(),
                           ),
@@ -403,8 +474,8 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                               );
                             }).toList(),
                           ),
-                        // הנקודה החדשה שנבחרה
-                        if (_selectedLocation != null)
+                        // הנקודה החדשה שנבחרה (מצב נקודה)
+                        if (!_isPolygonMode && _selectedLocation != null)
                           MarkerLayer(
                             markers: [
                               Marker(
@@ -419,6 +490,58 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                               ),
                             ],
                           ),
+                        // פוליגון חדש — קודקודים + צורה (מצב פוליגון)
+                        if (_isPolygonMode && _polygonVertices.isNotEmpty) ...[
+                          PolygonLayer(
+                            polygons: _polygonVertices.length >= 3
+                                ? [
+                                    Polygon(
+                                      points: _polygonVertices,
+                                      color: Colors.red.withOpacity(0.2),
+                                      borderColor: Colors.red,
+                                      borderStrokeWidth: 2.5,
+                                      isFilled: true,
+                                    ),
+                                  ]
+                                : [],
+                          ),
+                          if (_polygonVertices.length >= 2 && _polygonVertices.length < 3)
+                            PolylineLayer(
+                              polylines: [
+                                Polyline(
+                                  points: _polygonVertices,
+                                  color: Colors.red,
+                                  strokeWidth: 2.5,
+                                ),
+                              ],
+                            ),
+                          MarkerLayer(
+                            markers: _polygonVertices.asMap().entries.map((entry) {
+                              return Marker(
+                                point: entry.value,
+                                width: 24,
+                                height: 24,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 2),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${entry.key + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
                         ...MapControls.buildMeasureLayers(_measurePoints),
                       ],
                     ),
@@ -445,11 +568,57 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                 ),
               ),
             ),
-            if (_selectedLocation != null) ...[
+            // הנחיות ופקדי פוליגון / תצוגת קואורדינטות
+            if (_isPolygonMode) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _polygonVertices.length < 3
+                        ? 'לחץ על המפה להוספת קודקודים (${_polygonVertices.length}/3 מינימום)'
+                        : 'פוליגון עם ${_polygonVertices.length} קודקודים',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _polygonVertices.length < 3 ? Colors.orange[700] : Colors.green[700],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _polygonVertices.isNotEmpty
+                        ? () => setState(() => _polygonVertices.removeLast())
+                        : null,
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('בטל אחרון'),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: _polygonVertices.isNotEmpty
+                        ? () => setState(() => _polygonVertices.clear())
+                        : null,
+                    icon: const Icon(Icons.clear_all, size: 18),
+                    label: const Text('נקה הכל'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                  ),
+                ],
+              ),
+            ] else if (_selectedLocation != null) ...[
               const SizedBox(height: 8),
               Text(
                 'קואורדינטות: ${_selectedLocation!.latitude.toStringAsFixed(6)}, ${_selectedLocation!.longitude.toStringAsFixed(6)}',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              const Text(
+                'לחץ על המפה לבחירת מיקום',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+                textAlign: TextAlign.center,
               ),
             ],
           ],

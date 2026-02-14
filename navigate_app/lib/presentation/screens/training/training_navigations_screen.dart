@@ -133,9 +133,10 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
       });
 
       // התמקדות באזור הנקודות
-      if (_checkpoints.isNotEmpty) {
-        final latitudes = _checkpoints.map((c) => c.coordinates.lat).toList();
-        final longitudes = _checkpoints.map((c) => c.coordinates.lng).toList();
+      final pointCheckpoints = _checkpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
+      if (pointCheckpoints.isNotEmpty) {
+        final latitudes = pointCheckpoints.map((c) => c.coordinates!.lat).toList();
+        final longitudes = pointCheckpoints.map((c) => c.coordinates!.lng).toList();
         final minLat = latitudes.reduce((a, b) => a < b ? a : b);
         final maxLat = latitudes.reduce((a, b) => a > b ? a : b);
         final minLng = longitudes.reduce((a, b) => a < b ? a : b);
@@ -495,12 +496,12 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
             // שכבת NZ - נקודות ציון (לקריאה בלבד)
             if (_showNZ && _checkpoints.isNotEmpty)
           MarkerLayer(
-            markers: _checkpoints.map((checkpoint) {
+            markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((checkpoint) {
               final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
               return Marker(
                 point: LatLng(
-                  checkpoint.coordinates.lat,
-                  checkpoint.coordinates.lng,
+                  checkpoint.coordinates!.lat,
+                  checkpoint.coordinates!.lng,
                 ),
                 width: 36,
                 height: 36,

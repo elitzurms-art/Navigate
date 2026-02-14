@@ -8,7 +8,7 @@ import '../../../data/repositories/boundary_repository.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
-/// מסך עריכת גבול גדוד
+/// מסך עריכת גבול גזרה
 class EditBoundaryScreen extends StatefulWidget {
   final Area area;
   final Boundary boundary;
@@ -120,7 +120,7 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('גבול גדוד עודכן בהצלחה')),
+          const SnackBar(content: Text('גבול גזרה עודכן בהצלחה')),
         );
       }
     } catch (e) {

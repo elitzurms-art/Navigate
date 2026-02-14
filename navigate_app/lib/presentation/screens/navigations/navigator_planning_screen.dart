@@ -295,11 +295,11 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                         ),
                       ],
                     ),
-                    ..._myCheckpoints.asMap().entries.map((entry) {
+                    ..._myCheckpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList().asMap().entries.map((entry) {
                       final index = entry.key + 1;
                       final checkpoint = entry.value;
-                      final utmX = _getUtmX(checkpoint.coordinates.utm);
-                      final utmY = _getUtmY(checkpoint.coordinates.utm);
+                      final utmX = _getUtmX(checkpoint.coordinates!.utm);
+                      final utmY = _getUtmY(checkpoint.coordinates!.utm);
 
                       return TableRow(
                         children: [
@@ -341,11 +341,12 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
     }
 
     // חישוב מרכז המפה - מנקודות או מגבול
+    final pointCheckpoints = _myCheckpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
     LatLng center;
-    if (_myCheckpoints.isNotEmpty) {
+    if (pointCheckpoints.isNotEmpty) {
       center = LatLng(
-        _myCheckpoints.map((c) => c.coordinates.lat).reduce((a, b) => a + b) / _myCheckpoints.length,
-        _myCheckpoints.map((c) => c.coordinates.lng).reduce((a, b) => a + b) / _myCheckpoints.length,
+        pointCheckpoints.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) / pointCheckpoints.length,
+        pointCheckpoints.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) / pointCheckpoints.length,
       );
     } else if (_boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty) {
       final boundaryCoords = _boundaries.first.coordinates;
@@ -357,10 +358,18 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
       center = const LatLng(32.0853, 34.7818); // ברירת מחדל - תל אביב
     }
 
-    final List<LatLng> routePoints = _myCheckpoints.isNotEmpty
+    final List<LatLng> routePoints = pointCheckpoints.isNotEmpty
         ? _routeSequence
-            .map((id) => _myCheckpoints.firstWhere((c) => c.id == id, orElse: () => _myCheckpoints.first))
-            .map((c) => LatLng(c.coordinates.lat, c.coordinates.lng))
+            .map((id) {
+              try {
+                final c = _myCheckpoints.firstWhere((c) => c.id == id);
+                if (c.isPolygon || c.coordinates == null) return null;
+                return LatLng(c.coordinates!.lat, c.coordinates!.lng);
+              } catch (_) {
+                return null;
+              }
+            })
+            .whereType<LatLng>()
             .toList()
         : [];
 
@@ -404,11 +413,11 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
             // נקודות ציון
             if (_showNZ)
               MarkerLayer(
-                markers: _myCheckpoints.asMap().entries.map((entry) {
+                markers: _myCheckpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList().asMap().entries.map((entry) {
                   final index = entry.key + 1;
                   final checkpoint = entry.value;
                   return Marker(
-                    point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                    point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
                     width: 40,
                     height: 40,
                     child: Opacity(

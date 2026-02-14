@@ -48,7 +48,7 @@ class NavLayerRepository {
     }
   }
 
-  /// הוספת נקודת ציון ניווטית
+  /// הוספת נקודת ציון ניווטית (נקודה או פוליגון)
   Future<void> addCheckpoint(domain.NavCheckpoint checkpoint) async {
     try {
       await _db.into(_db.navCheckpoints).insert(
@@ -61,9 +61,15 @@ class NavLayerRepository {
               description: checkpoint.description,
               type: checkpoint.type,
               color: checkpoint.color,
-              lat: checkpoint.coordinates.lat,
-              lng: checkpoint.coordinates.lng,
-              utm: checkpoint.coordinates.utm,
+              geometryType: Value(checkpoint.geometryType),
+              lat: checkpoint.coordinates?.lat ?? 0.0,
+              lng: checkpoint.coordinates?.lng ?? 0.0,
+              utm: checkpoint.coordinates?.utm ?? '',
+              coordinatesJson: Value(
+                checkpoint.polygonCoordinates != null
+                    ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                    : null,
+              ),
               sequenceNumber: checkpoint.sequenceNumber,
               labelsJson: Value(jsonEncode(checkpoint.labels)),
               createdBy: checkpoint.createdBy,
@@ -95,9 +101,15 @@ class NavLayerRepository {
           description: Value(checkpoint.description),
           type: Value(checkpoint.type),
           color: Value(checkpoint.color),
-          lat: Value(checkpoint.coordinates.lat),
-          lng: Value(checkpoint.coordinates.lng),
-          utm: Value(checkpoint.coordinates.utm),
+          geometryType: Value(checkpoint.geometryType),
+          lat: Value(checkpoint.coordinates?.lat ?? 0.0),
+          lng: Value(checkpoint.coordinates?.lng ?? 0.0),
+          utm: Value(checkpoint.coordinates?.utm ?? ''),
+          coordinatesJson: Value(
+            checkpoint.polygonCoordinates != null
+                ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                : null,
+          ),
           sequenceNumber: Value(checkpoint.sequenceNumber),
           labelsJson: Value(jsonEncode(checkpoint.labels)),
           updatedAt: Value(checkpoint.updatedAt),
@@ -151,9 +163,15 @@ class NavLayerRepository {
               description: checkpoint.description,
               type: checkpoint.type,
               color: checkpoint.color,
-              lat: checkpoint.coordinates.lat,
-              lng: checkpoint.coordinates.lng,
-              utm: checkpoint.coordinates.utm,
+              geometryType: Value(checkpoint.geometryType),
+              lat: checkpoint.coordinates?.lat ?? 0.0,
+              lng: checkpoint.coordinates?.lng ?? 0.0,
+              utm: checkpoint.coordinates?.utm ?? '',
+              coordinatesJson: Value(
+                checkpoint.polygonCoordinates != null
+                    ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                    : null,
+              ),
               sequenceNumber: checkpoint.sequenceNumber,
               labelsJson: Value(jsonEncode(checkpoint.labels)),
               createdBy: checkpoint.createdBy,
@@ -499,11 +517,19 @@ class NavLayerRepository {
       description: row.description,
       type: row.type,
       color: row.color,
-      coordinates: Coordinate(
-        lat: row.lat,
-        lng: row.lng,
-        utm: row.utm,
-      ),
+      geometryType: row.geometryType,
+      coordinates: row.geometryType == 'point'
+          ? Coordinate(
+              lat: row.lat,
+              lng: row.lng,
+              utm: row.utm,
+            )
+          : null,
+      polygonCoordinates: row.geometryType == 'polygon' && row.coordinatesJson != null
+          ? (jsonDecode(row.coordinatesJson!) as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : null,
       sequenceNumber: row.sequenceNumber,
       labels: row.labelsJson.isNotEmpty
           ? List<String>.from(jsonDecode(row.labelsJson) as List)

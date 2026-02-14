@@ -321,7 +321,7 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
                         MarkerLayer(
                           markers: _checkpoints.map((cp) {
                             return Marker(
-                              point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                              point: LatLng(cp.coordinates?.lat ?? 0, cp.coordinates?.lng ?? 0),
                               width: 24,
                               height: 24,
                               child: Opacity(

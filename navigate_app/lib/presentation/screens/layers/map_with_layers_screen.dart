@@ -80,9 +80,10 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
       });
 
       // התמקד באזור הנקודות
-      if (_checkpoints.isNotEmpty) {
-        final latitudes = _checkpoints.map((c) => c.coordinates.lat).toList();
-        final longitudes = _checkpoints.map((c) => c.coordinates.lng).toList();
+      final pointCheckpoints = _checkpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
+      if (pointCheckpoints.isNotEmpty) {
+        final latitudes = pointCheckpoints.map((c) => c.coordinates!.lat).toList();
+        final longitudes = pointCheckpoints.map((c) => c.coordinates!.lng).toList();
 
         final minLat = latitudes.reduce((a, b) => a < b ? a : b);
         final maxLat = latitudes.reduce((a, b) => a > b ? a : b);
@@ -129,10 +130,13 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
                   markers: _checkpoints.map((checkpoint) {
                     final isNavigatorCheckpoint = checkpoint.color == 'blue';
                     final markerColor = isNavigatorCheckpoint ? Colors.blue : Colors.green;
+                    if (checkpoint.isPolygon || checkpoint.coordinates == null) {
+                      return const Marker(point: LatLng(0, 0), child: SizedBox.shrink());
+                    }
                     return Marker(
                       point: LatLng(
-                        checkpoint.coordinates.lat,
-                        checkpoint.coordinates.lng,
+                        checkpoint.coordinates!.lat,
+                        checkpoint.coordinates!.lng,
                       ),
                       width: 32,
                       height: 32,

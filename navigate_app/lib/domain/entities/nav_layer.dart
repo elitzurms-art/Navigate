@@ -3,6 +3,7 @@ import 'coordinate.dart';
 
 /// נקודת ציון לניווט ספציפי (עותק מקומי לניווט)
 /// כל שכבות הניווט מאוחסנות עם sourceId שמצביע על המקור הגלובלי
+/// תומכת בשני סוגי גאומטריה: נקודה (point) ופוליגון (polygon)
 class NavCheckpoint extends Equatable {
   final String id;
   final String navigationId;
@@ -12,7 +13,9 @@ class NavCheckpoint extends Equatable {
   final String description;
   final String type; // 'checkpoint', 'mandatory_passage', 'start', 'end'
   final String color; // 'blue', 'green'
-  final Coordinate coordinates;
+  final String geometryType; // 'point' או 'polygon'
+  final Coordinate? coordinates; // לנקודה בלבד
+  final List<Coordinate>? polygonCoordinates; // לפוליגון בלבד
   final int sequenceNumber;
   final List<String> labels;
   final String createdBy;
@@ -28,13 +31,18 @@ class NavCheckpoint extends Equatable {
     required this.description,
     required this.type,
     required this.color,
-    required this.coordinates,
+    this.geometryType = 'point',
+    this.coordinates,
+    this.polygonCoordinates,
     required this.sequenceNumber,
     this.labels = const [],
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
   });
+
+  /// האם זו נקודת פוליגון
+  bool get isPolygon => geometryType == 'polygon';
 
   NavCheckpoint copyWith({
     String? id,
@@ -45,7 +53,9 @@ class NavCheckpoint extends Equatable {
     String? description,
     String? type,
     String? color,
+    String? geometryType,
     Coordinate? coordinates,
+    List<Coordinate>? polygonCoordinates,
     int? sequenceNumber,
     List<String>? labels,
     String? createdBy,
@@ -61,7 +71,9 @@ class NavCheckpoint extends Equatable {
       description: description ?? this.description,
       type: type ?? this.type,
       color: color ?? this.color,
+      geometryType: geometryType ?? this.geometryType,
       coordinates: coordinates ?? this.coordinates,
+      polygonCoordinates: polygonCoordinates ?? this.polygonCoordinates,
       sequenceNumber: sequenceNumber ?? this.sequenceNumber,
       labels: labels ?? this.labels,
       createdBy: createdBy ?? this.createdBy,
@@ -80,7 +92,10 @@ class NavCheckpoint extends Equatable {
       'description': description,
       'type': type,
       'color': color,
-      'coordinates': coordinates.toMap(),
+      'geometryType': geometryType,
+      if (coordinates != null) 'coordinates': coordinates!.toMap(),
+      if (polygonCoordinates != null)
+        'polygonCoordinates': polygonCoordinates!.map((c) => c.toMap()).toList(),
       'sequenceNumber': sequenceNumber,
       'labels': labels,
       'createdBy': createdBy,
@@ -90,16 +105,25 @@ class NavCheckpoint extends Equatable {
   }
 
   factory NavCheckpoint.fromMap(Map<String, dynamic> map) {
+    final geoType = map['geometryType'] as String? ?? 'point';
     return NavCheckpoint(
       id: map['id'] as String,
       navigationId: map['navigationId'] as String,
       sourceId: map['sourceId'] as String,
       areaId: map['areaId'] as String,
       name: map['name'] as String,
-      description: map['description'] as String,
+      description: map['description'] as String? ?? '',
       type: map['type'] as String,
       color: map['color'] as String,
-      coordinates: Coordinate.fromMap(map['coordinates'] as Map<String, dynamic>),
+      geometryType: geoType,
+      coordinates: map['coordinates'] != null
+          ? Coordinate.fromMap(map['coordinates'] as Map<String, dynamic>)
+          : null,
+      polygonCoordinates: map['polygonCoordinates'] != null
+          ? (map['polygonCoordinates'] as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : null,
       sequenceNumber: map['sequenceNumber'] as int,
       labels: map['labels'] != null ? List<String>.from(map['labels'] as List) : [],
       createdBy: map['createdBy'] as String,
@@ -111,8 +135,8 @@ class NavCheckpoint extends Equatable {
   @override
   List<Object?> get props => [
         id, navigationId, sourceId, areaId, name, description,
-        type, color, coordinates, sequenceNumber, labels,
-        createdBy, createdAt, updatedAt,
+        type, color, geometryType, coordinates, polygonCoordinates,
+        sequenceNumber, labels, createdBy, createdAt, updatedAt,
       ];
 }
 

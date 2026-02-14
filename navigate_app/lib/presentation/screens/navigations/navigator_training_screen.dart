@@ -417,8 +417,9 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
                     (cp) => cp.id == checkpointId,
                     orElse: () => _checkpoints.first,
                   );
+                  if (checkpoint.isPolygon || checkpoint.coordinates == null) return null;
                   return Marker(
-                    point: LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng),
+                    point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
                     width: 36,
                     height: 36,
                     child: Opacity(
@@ -442,7 +443,7 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
                       ),
                     ),
                   );
-                }).toList(),
+                }).whereType<Marker>().toList(),
               ),
 
             // נת"ב - נקודות
@@ -535,7 +536,9 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
         (cp) => cp.id == route.startPointId,
         orElse: () => _checkpoints.first,
       );
-      points.add(LatLng(start.coordinates.lat, start.coordinates.lng));
+      if (!start.isPolygon && start.coordinates != null) {
+        points.add(LatLng(start.coordinates!.lat, start.coordinates!.lng));
+      }
     }
 
     // נקודות
@@ -544,7 +547,9 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
         (cp) => cp.id == id,
         orElse: () => _checkpoints.first,
       );
-      points.add(LatLng(cp.coordinates.lat, cp.coordinates.lng));
+      if (!cp.isPolygon && cp.coordinates != null) {
+        points.add(LatLng(cp.coordinates!.lat, cp.coordinates!.lng));
+      }
     }
 
     // סיום
@@ -553,7 +558,9 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
         (cp) => cp.id == route.endPointId,
         orElse: () => _checkpoints.last,
       );
-      points.add(LatLng(end.coordinates.lat, end.coordinates.lng));
+      if (!end.isPolygon && end.coordinates != null) {
+        points.add(LatLng(end.coordinates!.lat, end.coordinates!.lng));
+      }
     }
 
     return points;

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart';
 import '../../core/constants/app_constants.dart';
@@ -47,10 +48,10 @@ class CheckpointRepository {
     }
   }
 
-  /// יצירת נקודת ציון חדשה
+  /// יצירת נקודת ציון חדשה (נקודה או פוליגון)
   Future<domain.Checkpoint> create(domain.Checkpoint checkpoint) async {
     try {
-      // שמירה מקומית
+      // שמירה מקומית — point שומר lat/lng, polygon שומר 0.0 ב-lat/lng + coordinatesJson
       await _db.into(_db.checkpoints).insert(
             CheckpointsCompanion.insert(
               id: checkpoint.id,
@@ -59,9 +60,15 @@ class CheckpointRepository {
               description: checkpoint.description,
               type: checkpoint.type,
               color: checkpoint.color,
-              lat: checkpoint.coordinates.lat,
-              lng: checkpoint.coordinates.lng,
-              utm: '',
+              geometryType: Value(checkpoint.geometryType),
+              lat: checkpoint.coordinates?.lat ?? 0.0,
+              lng: checkpoint.coordinates?.lng ?? 0.0,
+              utm: checkpoint.coordinates?.utm ?? '',
+              coordinatesJson: Value(
+                checkpoint.polygonCoordinates != null
+                    ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                    : null,
+              ),
               sequenceNumber: checkpoint.sequenceNumber,
               createdBy: checkpoint.createdBy,
               createdAt: checkpoint.createdAt,
@@ -95,8 +102,14 @@ class CheckpointRepository {
           description: Value(checkpoint.description),
           type: Value(checkpoint.type),
           color: Value(checkpoint.color),
-          lat: Value(checkpoint.coordinates.lat),
-          lng: Value(checkpoint.coordinates.lng),
+          geometryType: Value(checkpoint.geometryType),
+          lat: Value(checkpoint.coordinates?.lat ?? 0.0),
+          lng: Value(checkpoint.coordinates?.lng ?? 0.0),
+          coordinatesJson: Value(
+            checkpoint.polygonCoordinates != null
+                ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                : null,
+          ),
           sequenceNumber: Value(checkpoint.sequenceNumber),
         ),
       );
@@ -149,11 +162,19 @@ class CheckpointRepository {
       description: dbCheckpoint.description,
       type: dbCheckpoint.type,
       color: dbCheckpoint.color,
-      coordinates: Coordinate(
-        lat: dbCheckpoint.lat,
-        lng: dbCheckpoint.lng,
-        utm: dbCheckpoint.utm,
-      ),
+      geometryType: dbCheckpoint.geometryType,
+      coordinates: dbCheckpoint.geometryType == 'point'
+          ? Coordinate(
+              lat: dbCheckpoint.lat,
+              lng: dbCheckpoint.lng,
+              utm: dbCheckpoint.utm,
+            )
+          : null,
+      polygonCoordinates: dbCheckpoint.geometryType == 'polygon' && dbCheckpoint.coordinatesJson != null
+          ? (jsonDecode(dbCheckpoint.coordinatesJson!) as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : null,
       sequenceNumber: dbCheckpoint.sequenceNumber,
       createdBy: dbCheckpoint.createdBy,
       createdAt: dbCheckpoint.createdAt,

@@ -15,7 +15,7 @@ import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
-/// מסך יצירת גבול גדוד
+/// מסך יצירת גבול גזרה
 class CreateBoundaryScreen extends StatefulWidget {
   final Area area;
 
@@ -144,7 +144,7 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('גבול גדוד נוצר בהצלחה')),
+          const SnackBar(content: Text('גבול גזרה נוצר בהצלחה')),
         );
       }
     } catch (e) {
@@ -161,7 +161,7 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('גבול גדוד חדש - ${widget.area.name}'),
+        title: Text('גבול גזרה חדש - ${widget.area.name}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
@@ -319,9 +319,11 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                       // שכבת נקודות ציון
                       if (_showOtherLayers && _showNZ && _checkpoints.isNotEmpty)
                         MarkerLayer(
-                          markers: _checkpoints.map((cp) {
+                          markers: _checkpoints
+                              .where((cp) => !cp.isPolygon && cp.coordinates != null)
+                              .map((cp) {
                             return Marker(
-                              point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                              point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                               width: 24,
                               height: 24,
                               child: Opacity(
@@ -332,6 +334,22 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                                   size: 24,
                                 ),
                               ),
+                            );
+                          }).toList(),
+                        ),
+                      // שכבת נקודות ציון פוליגוניות
+                      if (_showOtherLayers && _showNZ)
+                        PolygonLayer(
+                          polygons: _checkpoints
+                              .where((cp) => cp.isPolygon && cp.polygonCoordinates != null)
+                              .map((cp) {
+                            final color = cp.color == 'blue' ? Colors.blue : Colors.green;
+                            return Polygon(
+                              points: cp.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                              color: color.withOpacity(0.15 * _nzOpacity),
+                              borderColor: color.withOpacity(0.6 * _nzOpacity),
+                              borderStrokeWidth: 2,
+                              isFilled: true,
                             );
                           }).toList(),
                         ),

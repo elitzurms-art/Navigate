@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
 
-/// גבול גדוד (ג"ג) - Boundary
+/// גבול גזרה (ג"ג) - Boundary
 /// פוליגון שחור המגדיר את גבולות האזור
 class Boundary extends Equatable {
   final String id;
