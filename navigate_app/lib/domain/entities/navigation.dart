@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
+import 'narration_entry.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
 
@@ -12,8 +13,10 @@ class AssignedRoute extends Equatable {
   final String? endPointId; // נקודת הסיום של הציר
   final String status; // 'optimal', 'too_short', 'too_long', 'needs_adjustment'
   final bool isVerified; // האם הציר עבר וידוא
-  final String approvalStatus; // 'not_submitted', 'pending_approval', 'approved'
+  final String approvalStatus; // 'not_submitted', 'pending_approval', 'approved', 'rejected'
+  final String? rejectionNotes; // הערות פסילה מהמפקד
   final List<Coordinate> plannedPath; // נקודות ציר שצייר המנווט
+  final List<NarrationEntry> narrationEntries; // שורות סיפור דרך
 
   /// תאימות אחורה — isApproved נגזר מ-approvalStatus
   bool get isApproved => approvalStatus == 'approved';
@@ -27,7 +30,9 @@ class AssignedRoute extends Equatable {
     this.status = 'optimal',
     this.isVerified = false,
     this.approvalStatus = 'not_submitted',
+    this.rejectionNotes,
     this.plannedPath = const [],
+    this.narrationEntries = const [],
   });
 
   AssignedRoute copyWith({
@@ -39,7 +44,10 @@ class AssignedRoute extends Equatable {
     String? status,
     bool? isVerified,
     String? approvalStatus,
+    String? rejectionNotes,
+    bool clearRejectionNotes = false,
     List<Coordinate>? plannedPath,
+    List<NarrationEntry>? narrationEntries,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -50,7 +58,9 @@ class AssignedRoute extends Equatable {
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
       approvalStatus: approvalStatus ?? this.approvalStatus,
+      rejectionNotes: clearRejectionNotes ? null : (rejectionNotes ?? this.rejectionNotes),
       plannedPath: plannedPath ?? this.plannedPath,
+      narrationEntries: narrationEntries ?? this.narrationEntries,
     );
   }
 
@@ -65,8 +75,11 @@ class AssignedRoute extends Equatable {
       'isVerified': isVerified,
       'approvalStatus': approvalStatus,
       'isApproved': isApproved, // תאימות אחורה
+      if (rejectionNotes != null) 'rejectionNotes': rejectionNotes,
       if (plannedPath.isNotEmpty)
         'plannedPath': plannedPath.map((c) => c.toMap()).toList(),
+      if (narrationEntries.isNotEmpty)
+        'narrationEntries': narrationEntries.map((e) => e.toMap()).toList(),
     };
   }
 
@@ -85,16 +98,22 @@ class AssignedRoute extends Equatable {
       status: map['status'] as String? ?? 'optimal',
       isVerified: map['isVerified'] as bool? ?? false,
       approvalStatus: approvalStatus,
+      rejectionNotes: map['rejectionNotes'] as String?,
       plannedPath: map['plannedPath'] != null
           ? (map['plannedPath'] as List)
               .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : const [],
+      narrationEntries: map['narrationEntries'] != null
+          ? (map['narrationEntries'] as List)
+              .map((e) => NarrationEntry.fromMap(e as Map<String, dynamic>))
               .toList()
           : const [],
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, approvalStatus, plannedPath];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries];
 }
 
 /// טווח אורך מסלול

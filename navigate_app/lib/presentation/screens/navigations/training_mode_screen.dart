@@ -8,7 +8,6 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
-import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -159,8 +158,49 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _rejectRoute(String navigatorId) async {
+    final notesController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('פסילת ציר'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('פסילת הציר של $navigatorId.\nרשום הערות ותיקונים למנווט:'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: notesController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'הערות ותיקונים...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('פסול ציר'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
     final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'not_submitted');
+    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(
+      approvalStatus: 'rejected',
+      rejectionNotes: notesController.text.isNotEmpty ? notesController.text : null,
+    );
     final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
     await _navRepo.update(updatedNav);
     setState(() => _currentNavigation = updatedNav);
@@ -168,34 +208,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('הציר של $navigatorId נדחה - דורש תיקון'),
-          backgroundColor: Colors.orange,
+          content: Text('הציר של $navigatorId נפסל'),
+          backgroundColor: Colors.red,
         ),
       );
     }
   }
 
-  void _editNavigatorRoute(String navigatorId) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => RoutesEditScreen(navigation: _currentNavigation),
-      ),
-    ).then((updated) async {
-      if (updated == true) {
-        // טעינה מחדש מה-DB כדי לקבל את הציר המעודכן
-        await _reloadNavigationFromDb();
-        // עריכה מחזירה approvalStatus ל-not_submitted
-        final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-        updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'not_submitted');
-        final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
-        await _navRepo.update(updatedNav);
-        setState(() => _currentNavigation = updatedNav);
-
-        _loadData();
-      }
-    });
-  }
 
   Future<void> _startLearning() async {
     final updatedNav = _currentNavigation.copyWith(
@@ -439,8 +458,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _buildLegendItem('לא הוגש', Colors.grey),
-            _buildLegendItem('ממתין לאישור', Colors.orange),
+            _buildLegendItem('ממתין', Colors.orange),
             _buildLegendItem('מאושר', Colors.green),
+            _buildLegendItem('נפסל', Colors.red),
           ],
         ),
       ),
@@ -464,6 +484,27 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
+  void _viewNavigatorRoute(String navigatorId, domain.AssignedRoute route) {
+    final navigatorPoints = route.plannedPath.isNotEmpty
+        ? route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList()
+        : _buildReferenceRoute(route);
+
+    final center = navigatorPoints.isNotEmpty
+        ? LatLngBounds.fromPoints(navigatorPoints).center
+        : const LatLng(32.0853, 34.7818);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _RouteViewScreen(
+          navigatorId: navigatorId,
+          navigatorPoints: navigatorPoints,
+          center: center,
+        ),
+      ),
+    );
+  }
+
   Widget _buildRouteCard(String navigatorId, domain.AssignedRoute route) {
     final approvalStatus = route.approvalStatus;
 
@@ -480,6 +521,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         statusColor = Colors.orange;
         statusIcon = Icons.hourglass_top;
         statusText = 'ממתין לאישור';
+        break;
+      case 'rejected':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        statusText = 'נפסל';
         break;
       default: // not_submitted
         statusColor = Colors.grey;
@@ -570,25 +616,27 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       ),
                     ),
                   ),
-                  if (approvalStatus == 'approved') ...[
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _rejectRoute(navigatorId),
-                        icon: const Icon(Icons.cancel, size: 18),
-                        label: const Text('בטל אישור'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.orange,
-                        ),
-                      ),
-                    ),
-                  ],
                   const SizedBox(width: 8),
+                  // כפתור פסילת ציר
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _editNavigatorRoute(navigatorId),
-                      icon: const Icon(Icons.edit, size: 18),
-                      label: const Text('ערוך'),
+                      onPressed: (approvalStatus == 'pending_approval' || approvalStatus == 'approved')
+                          ? () => _rejectRoute(navigatorId)
+                          : null,
+                      icon: const Icon(Icons.cancel, size: 18),
+                      label: const Text('פסילת ציר'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // כפתור צפה בציר
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _viewNavigatorRoute(navigatorId, route),
+                      icon: const Icon(Icons.visibility, size: 18),
+                      label: const Text('צפה בציר'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.blue,
                       ),
@@ -626,6 +674,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   case 'pending_approval':
                     chipColor = Colors.orange;
                     chipIcon = Icons.hourglass_top;
+                    break;
+                  case 'rejected':
+                    chipColor = Colors.red;
+                    chipIcon = Icons.cancel;
                     break;
                   default:
                     chipColor = Colors.grey;
@@ -687,7 +739,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                           points: _boundary!.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withOpacity(0.1),
+                          color: Colors.black.withValues(alpha: 0.1),
                           borderColor: Colors.black,
                           borderStrokeWidth: _boundary!.strokeWidth,
                           isFilled: true,
@@ -757,16 +809,36 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  static const List<Color> _routeColors = [
-    Colors.blue,
-    Colors.orange,
-    Colors.purple,
-    Colors.teal,
-  ];
+  /// בניית ציר רפרנס (מנקודות ציון) למנווט
+  List<LatLng> _buildReferenceRoute(domain.AssignedRoute route) {
+    final points = <LatLng>[];
+
+    if (route.startPointId != null) {
+      try {
+        final startPoint = _checkpoints.firstWhere((cp) => cp.id == route.startPointId);
+        points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+      } catch (_) {}
+    }
+
+    for (final checkpointId in route.sequence) {
+      try {
+        final checkpoint = _checkpoints.firstWhere((cp) => cp.id == checkpointId);
+        points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+      } catch (_) {}
+    }
+
+    if (route.endPointId != null && route.endPointId != route.startPointId) {
+      try {
+        final endPoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
+        points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+      } catch (_) {}
+    }
+
+    return points;
+  }
 
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
-    int colorIndex = 0;
 
     for (final entry in _currentNavigation.routes.entries) {
       final navigatorId = entry.key;
@@ -774,38 +846,12 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       if (_selectedNavigators[navigatorId] != true) continue;
 
-      // צבע מחזורי מרשימת הצבעים הסטנדרטית
-      final Color color = _routeColors[colorIndex % _routeColors.length];
-      colorIndex++;
-
-      // בניית הציר המלא
-      List<LatLng> points = [];
-
-      // נקודת התחלה
-      if (route.startPointId != null) {
-        final startPoint = _checkpoints.firstWhere(
-          (cp) => cp.id == route.startPointId,
-          orElse: () => _checkpoints.first,
-        );
-        points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
-      }
-
-      // נקודות המנווט
-      for (final checkpointId in route.sequence) {
-        final checkpoint = _checkpoints.firstWhere(
-          (cp) => cp.id == checkpointId,
-          orElse: () => _checkpoints.first,
-        );
-        points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
-      }
-
-      // נקודת הסיום
-      if (route.endPointId != null && route.endPointId != route.startPointId) {
-        final endPoint = _checkpoints.firstWhere(
-          (cp) => cp.id == route.endPointId,
-          orElse: () => _checkpoints.last,
-        );
-        points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+      // אם יש ציר מעודכן שהמנווט צייר — מציגים אותו; אחרת רפרנס
+      final List<LatLng> points;
+      if (route.plannedPath.isNotEmpty) {
+        points = route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
+      } else {
+        points = _buildReferenceRoute(route);
       }
 
       if (points.isNotEmpty) {
@@ -815,7 +861,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               Polyline(
                 points: points,
                 strokeWidth: 3.0,
-                color: color,
+                color: Colors.blue,
               ),
             ],
           ),
@@ -824,5 +870,87 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
 
     return polylines;
+  }
+}
+
+/// מסך צפייה בציר מנווט — עם MapControls סטנדרטי
+class _RouteViewScreen extends StatefulWidget {
+  final String navigatorId;
+  final List<LatLng> navigatorPoints;
+  final LatLng center;
+
+  const _RouteViewScreen({
+    required this.navigatorId,
+    required this.navigatorPoints,
+    required this.center,
+  });
+
+  @override
+  State<_RouteViewScreen> createState() => _RouteViewScreenState();
+}
+
+class _RouteViewScreenState extends State<_RouteViewScreen> {
+  final MapController _mapController = MapController();
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('ציר של ${widget.navigatorId}'),
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          MapWithTypeSelector(
+            mapController: _mapController,
+            showTypeSelector: false,
+            options: MapOptions(
+              initialCenter: widget.center,
+              initialZoom: 14.0,
+              initialCameraFit: widget.navigatorPoints.length > 1
+                  ? CameraFit.bounds(
+                      bounds: LatLngBounds.fromPoints(widget.navigatorPoints),
+                      padding: const EdgeInsets.all(50),
+                    )
+                  : null,
+              onTap: (tapPosition, point) {
+                if (_measureMode) {
+                  setState(() => _measurePoints.add(point));
+                }
+              },
+            ),
+            layers: [
+              if (widget.navigatorPoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: widget.navigatorPoints,
+                      color: Colors.blue,
+                      strokeWidth: 4.0,
+                    ),
+                  ],
+                ),
+              ...MapControls.buildMeasureLayers(_measurePoints),
+            ],
+          ),
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
+          ),
+        ],
+      ),
+    );
   }
 }

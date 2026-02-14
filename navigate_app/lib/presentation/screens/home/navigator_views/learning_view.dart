@@ -1,14 +1,24 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:csv/csv.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import '../../../../core/utils/geometry_utils.dart';
+import '../../../../core/utils/narration_generator.dart';
+import '../../../../domain/entities/narration_entry.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/user.dart';
+import '../../../../data/repositories/area_repository.dart';
+import '../../../../data/repositories/boundary_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
+import '../../../../data/repositories/unit_repository.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import 'route_editor_screen.dart';
@@ -47,14 +57,26 @@ class _LearningViewState extends State<LearningView>
   /// נקודות ציון טעונות לפי sequence — לשימוש במפה
   List<Checkpoint> _routeCheckpoints = [];
   bool _checkpointsLoaded = false;
+  Checkpoint? _startCheckpoint;
+  Checkpoint? _endCheckpoint;
+
+  /// סיפור דרך — state
+  List<NarrationEntry> _narrationEntries = [];
+
+  /// שמות לתצוגה בפרטי ניווט
+  String? _areaName;
+  String? _boundaryName;
+  String? _unitName;
 
   @override
   void initState() {
     super.initState();
     _currentNavigation = widget.navigation;
+    _loadNarrationFromRoute();
     _buildTabs();
     _tabController = TabController(length: _tabs.length, vsync: this);
     _loadCheckpoints();
+    _loadDisplayNames();
   }
 
   @override
@@ -120,7 +142,7 @@ class _LearningViewState extends State<LearningView>
     }
   }
 
-  /// טעינת נקודות ציון של הציר לפי סדר ה-sequence
+  /// טעינת נקודות ציון של הציר לפי סדר ה-sequence + התחלה/סיום
   Future<void> _loadCheckpoints() async {
     final route = widget.navigation.routes[widget.currentUser.uid];
     if (route == null || route.checkpointIds.isEmpty) {
@@ -134,9 +156,22 @@ class _LearningViewState extends State<LearningView>
         final cp = await _checkpointRepo.getById(cpId);
         if (cp != null) loaded.add(cp);
       }
+
+      // טעינת נקודות התחלה/סיום
+      Checkpoint? startCp;
+      Checkpoint? endCp;
+      if (route.startPointId != null) {
+        startCp = await _checkpointRepo.getById(route.startPointId!);
+      }
+      if (route.endPointId != null) {
+        endCp = await _checkpointRepo.getById(route.endPointId!);
+      }
+
       if (mounted) {
         setState(() {
           _routeCheckpoints = loaded;
+          _startCheckpoint = startCp;
+          _endCheckpoint = endCp;
           _checkpointsLoaded = true;
         });
       }
@@ -145,12 +180,35 @@ class _LearningViewState extends State<LearningView>
     }
   }
 
+  /// טעינת שמות שטח, גבול גזרה ויחידה לתצוגה
+  Future<void> _loadDisplayNames() async {
+    final nav = widget.navigation;
+    try {
+      final area = await AreaRepository().getById(nav.areaId);
+      if (area != null && mounted) setState(() => _areaName = area.name);
+    } catch (_) {}
+
+    try {
+      if (nav.boundaryLayerId != null) {
+        final boundary = await BoundaryRepository().getById(nav.boundaryLayerId!);
+        if (boundary != null && mounted) setState(() => _boundaryName = boundary.name);
+      }
+    } catch (_) {}
+
+    try {
+      if (nav.selectedUnitId != null) {
+        final unit = await UnitRepository().getById(nav.selectedUnitId!);
+        if (unit != null && mounted) setState(() => _unitName = unit.name);
+      }
+    } catch (_) {}
+  }
+
   // ===========================================================================
   // Tab builders
   // ===========================================================================
 
   Widget _buildDetailsTab() {
-    final nav = widget.navigation;
+    final nav = _currentNavigation;
     final route = nav.routes[widget.currentUser.uid];
 
     return SingleChildScrollView(
@@ -159,9 +217,11 @@ class _LearningViewState extends State<LearningView>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _infoCard('שם ניווט', nav.name),
-          _infoCard('שטח', nav.areaId),
+          if (_unitName != null)
+            _infoCard('יחידה', _unitName!),
+          _infoCard('שטח', _areaName ?? nav.areaId),
           if (nav.boundaryLayerId != null)
-            _infoCard('גבול גזרה', nav.boundaryLayerId!),
+            _infoCard('גבול גזרה', _boundaryName ?? nav.boundaryLayerId!),
           if (nav.routeLengthKm != null)
             _infoCard(
               'מרחק ניווט',
@@ -178,7 +238,7 @@ class _LearningViewState extends State<LearningView>
             const SizedBox(height: 8),
             _infoCard('מספר נקודות', '${route.checkpointIds.length}'),
             _infoCard('אורך ציר', '${route.routeLengthKm.toStringAsFixed(2)} ק"מ'),
-            _infoCard('סטטוס', route.status),
+            _infoCard('סטטוס', _approvalStatusLabel(route.approvalStatus)),
           ],
         ],
       ),
@@ -186,7 +246,7 @@ class _LearningViewState extends State<LearningView>
   }
 
   Widget _buildRouteTab() {
-    final route = widget.navigation.routes[widget.currentUser.uid];
+    final route = _currentNavigation.routes[widget.currentUser.uid];
 
     if (route == null) {
       return const Center(child: Text('לא הוקצה ציר'));
@@ -207,35 +267,7 @@ class _LearningViewState extends State<LearningView>
                 ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: route.sequence.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Colors.blue,
-                    child: Text(
-                      '${index + 1}',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                  title: Text(route.sequence[index]),
-                  trailing: Icon(
-                    index == 0
-                        ? Icons.play_arrow
-                        : index == route.sequence.length - 1
-                            ? Icons.flag
-                            : Icons.circle,
-                    size: 16,
-                    color: Colors.blue,
-                  ),
-                );
-              },
-            ),
-          ),
+          _buildCheckpointList(),
           const SizedBox(height: 12),
           _infoCard('אורך ציר', '${route.routeLengthKm.toStringAsFixed(2)} ק"מ'),
         ],
@@ -262,14 +294,57 @@ class _LearningViewState extends State<LearningView>
       );
     }
 
-    final points = _routeCheckpoints
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+
+    // נקודות ציון של המנווט
+    final cpPoints = _routeCheckpoints
         .map((cp) => cp.coordinates.toLatLng())
         .toList();
 
-    // חישוב bounds למיקוד המפה
-    final bounds = LatLngBounds.fromPoints(points);
+    // בניית ציר רפרנס מלא: התחלה → נקודות ציון → סיום
+    final fullRefPoints = <LatLng>[];
+    if (_startCheckpoint != null) {
+      fullRefPoints.add(_startCheckpoint!.coordinates.toLatLng());
+    }
+    fullRefPoints.addAll(cpPoints);
+    if (_endCheckpoint != null) {
+      fullRefPoints.add(_endCheckpoint!.coordinates.toLatLng());
+    }
+    final refPoints = fullRefPoints.isNotEmpty ? fullRefPoints : cpPoints;
+
+    // אם המנווט צייר ציר — מציגים אותו; אחרת ציר רפרנס
+    final hasPlannedPath = route != null && route.plannedPath.isNotEmpty;
+    final plannedPathPoints = hasPlannedPath
+        ? route.plannedPath.map((c) => c.toLatLng()).toList()
+        : <LatLng>[];
+
+    final allPointsForBounds = [...refPoints, ...plannedPathPoints];
+    final bounds = LatLngBounds.fromPoints(
+      allPointsForBounds.length > 1 ? allPointsForBounds : cpPoints,
+    );
 
     final markers = <Marker>[];
+    // marker לנקודת התחלה
+    if (_startCheckpoint != null) {
+      markers.add(Marker(
+        point: _startCheckpoint!.coordinates.toLatLng(),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: 'התחלה: ${_startCheckpoint!.name}',
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.green,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Center(
+              child: Text('H', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ));
+    }
     for (var i = 0; i < _routeCheckpoints.length; i++) {
       final cp = _routeCheckpoints[i];
 
@@ -299,6 +374,27 @@ class _LearningViewState extends State<LearningView>
         ),
       ));
     }
+    // marker לנקודת סיום
+    if (_endCheckpoint != null) {
+      markers.add(Marker(
+        point: _endCheckpoint!.coordinates.toLatLng(),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: 'סיום: ${_endCheckpoint!.name}',
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Center(
+              child: Text('S', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ));
+    }
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -312,7 +408,7 @@ class _LearningViewState extends State<LearningView>
               options: MapOptions(
                 initialCenter: bounds.center,
                 initialZoom: 14.0,
-                initialCameraFit: points.length > 1
+                initialCameraFit: allPointsForBounds.length > 1
                     ? CameraFit.bounds(
                         bounds: bounds,
                         padding: const EdgeInsets.all(40),
@@ -326,10 +422,20 @@ class _LearningViewState extends State<LearningView>
                 },
               ),
               layers: [
-                if (points.length > 1)
+                // ציר רפרנס (כחול בהיר)
+                if (refPoints.length > 1)
                   PolylineLayer(polylines: [
                     Polyline(
-                      points: points,
+                      points: refPoints,
+                      color: Colors.blue.withValues(alpha: 0.3),
+                      strokeWidth: 2.0,
+                    ),
+                  ]),
+                // ציר שצייר המנווט (כתום)
+                if (hasPlannedPath)
+                  PolylineLayer(polylines: [
+                    Polyline(
+                      points: plannedPathPoints,
                       color: Colors.blue,
                       strokeWidth: 3.0,
                     ),
@@ -357,6 +463,113 @@ class _LearningViewState extends State<LearningView>
     );
   }
 
+  /// בניית רשימת נקודות ציר מלאה: התחלה → ביניים → סיום
+  Widget _buildCheckpointList() {
+    // בניית רשימה מסודרת: התחלה, נקודות ציון, סיום
+    final allCheckpoints = <_CheckpointDisplayItem>[];
+    int seq = 1;
+
+    if (_startCheckpoint != null) {
+      allCheckpoints.add(_CheckpointDisplayItem(
+        checkpoint: _startCheckpoint!,
+        sequenceNumber: seq++,
+        role: _CheckpointRole.start,
+      ));
+    }
+
+    for (final cp in _routeCheckpoints) {
+      allCheckpoints.add(_CheckpointDisplayItem(
+        checkpoint: cp,
+        sequenceNumber: seq++,
+        role: _CheckpointRole.middle,
+      ));
+    }
+
+    if (_endCheckpoint != null) {
+      allCheckpoints.add(_CheckpointDisplayItem(
+        checkpoint: _endCheckpoint!,
+        sequenceNumber: seq++,
+        role: _CheckpointRole.end,
+      ));
+    }
+
+    if (allCheckpoints.isEmpty) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('אין נקודות ציון'),
+        ),
+      );
+    }
+
+    return Card(
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: allCheckpoints.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final item = allCheckpoints[index];
+          final cp = item.checkpoint;
+
+          // צבע ואייקון לפי תפקיד
+          final Color circleColor;
+          final IconData trailingIcon;
+          switch (item.role) {
+            case _CheckpointRole.start:
+              circleColor = Colors.green;
+              trailingIcon = Icons.play_arrow;
+              break;
+            case _CheckpointRole.end:
+              circleColor = Colors.red;
+              trailingIcon = Icons.flag;
+              break;
+            case _CheckpointRole.middle:
+              circleColor = Colors.blue;
+              trailingIcon = Icons.circle;
+              break;
+          }
+
+          // חישוב UTM — אם יש ערך ב-coordinates.utm משתמשים בו, אחרת מחשבים
+          final utmStr = cp.coordinates.utm.isNotEmpty
+              ? cp.coordinates.utm
+              : UTMConverter.convertToUTM(cp.coordinates.lat, cp.coordinates.lng);
+
+          return ListTile(
+            leading: CircleAvatar(
+              backgroundColor: circleColor,
+              child: Text(
+                '${item.sequenceNumber}',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ),
+            title: Text(
+              cp.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (cp.description.isNotEmpty)
+                  Text(cp.description),
+                Text(
+                  utmStr,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+            trailing: Icon(trailingIcon, size: 16, color: circleColor),
+            isThreeLine: cp.description.isNotEmpty,
+          );
+        },
+      ),
+    );
+  }
+
   void _openRouteEditor() {
     final route = _currentNavigation.routes[widget.currentUser.uid];
     if (route == null) return;
@@ -373,6 +586,22 @@ class _LearningViewState extends State<LearningView>
             widget.onNavigationUpdated(updatedNav);
           },
         ),
+      ),
+    );
+  }
+
+  void _showRejectionNotes(String? notes) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('הערות פסילת ציר'),
+        content: Text(notes ?? 'לא צוינו הערות'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי'),
+          ),
+        ],
       ),
     );
   }
@@ -437,6 +666,12 @@ class _LearningViewState extends State<LearningView>
         statusTitle = 'ממתין לאישור';
         statusSubtitle = 'הציר נשלח למפקד — ממתין לאישור';
         break;
+      case 'rejected':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        statusTitle = 'ציר נפסל';
+        statusSubtitle = 'לחץ על "קרא הערות" לפרטים, ערוך ושלח מחדש';
+        break;
       default: // not_submitted
         statusColor = Colors.red;
         statusIcon = Icons.warning;
@@ -479,37 +714,39 @@ class _LearningViewState extends State<LearningView>
           ),
           const SizedBox(height: 16),
 
-          // רשימת נקודות ציון
+          // נקודות הציר — אותה תצוגה כמו בטאב "הציר שלי"
           Text(
-            'סדר נקודות',
+            'נקודות הציר',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
           ),
           const SizedBox(height: 8),
-          Card(
-            child: ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: route.sequence.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  leading: CircleAvatar(
-                    radius: 14,
-                    child: Text('${index + 1}', style: const TextStyle(fontSize: 12)),
-                  ),
-                  title: Text(route.sequence[index]),
-                );
-              },
-            ),
-          ),
+          _buildCheckpointList(),
           const SizedBox(height: 16),
 
-          // כפתור 3-מצבים
+          // כפתור פסילה — כאשר הציר נפסל
+          if (approvalStatus == 'rejected') ...[
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _showRejectionNotes(route.rejectionNotes),
+                icon: const Icon(Icons.cancel),
+                label: const Text('ציר נפסל — לחץ כאן על מנת לקרוא הערות'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          // כפתור שליחה/סטטוס
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: approvalStatus == 'not_submitted'
+              onPressed: (approvalStatus == 'not_submitted' || approvalStatus == 'rejected')
                   ? _submitRouteForApproval
                   : null,
               icon: Icon(
@@ -545,42 +782,374 @@ class _LearningViewState extends State<LearningView>
     );
   }
 
-  Future<void> _exportNarrationCsv() async {
+  // ===========================================================================
+  // סיפור דרך — Narration
+  // ===========================================================================
+
+  void _loadNarrationFromRoute() {
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route != null && route.narrationEntries.isNotEmpty) {
+      _narrationEntries = List.from(route.narrationEntries);
+    }
+  }
+
+  /// חישוב סיכומים מתוך הרשימה
+  double get _totalSegmentKm {
+    double sum = 0;
+    for (final e in _narrationEntries) {
+      sum += double.tryParse(e.segmentKm) ?? 0;
+    }
+    return sum;
+  }
+
+  double get _totalWalkingMin {
+    return _narrationEntries
+        .where((e) => e.walkingTimeMin != null)
+        .fold<double>(0, (sum, e) => sum + e.walkingTimeMin!);
+  }
+
+  /// עדכון מספור ומרחק מצטבר אחרי כל שינוי
+  void _recalculateIndicesAndCumulative() {
+    double cumulative = 0;
+    for (int i = 0; i < _narrationEntries.length; i++) {
+      final seg = double.tryParse(_narrationEntries[i].segmentKm) ?? 0;
+      cumulative += seg;
+      _narrationEntries[i] = _narrationEntries[i].copyWith(
+        index: i + 1,
+        cumulativeKm: cumulative.toStringAsFixed(2),
+      );
+    }
+  }
+
+  void _confirmAndReplace(String title, VoidCallback onConfirm) {
+    if (_narrationEntries.isNotEmpty) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: const Text('כבר קיימות שורות בטבלה. האם להחליף?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onConfirm();
+              },
+              child: const Text('החלף'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      onConfirm();
+    }
+  }
+
+  void _generateNarration() {
     final route = _currentNavigation.routes[widget.currentUser.uid];
     if (route == null) return;
 
+    _confirmAndReplace('סיפור דרך אוטומטי', () {
+      final entries = NarrationGenerator.generateFromRoute(
+        route: route,
+        checkpoints: _routeCheckpoints,
+      );
+      setState(() {
+        _narrationEntries = entries;
+      });
+    });
+  }
+
+  void _generateManualNarration() {
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route == null) return;
+
+    _confirmAndReplace('סיפור דרך ידני', () {
+      // יצירת שורות ריקות עם שמות נקודות בלבד
+      final entries = <NarrationEntry>[];
+      for (int i = 0; i < route.sequence.length; i++) {
+        final cpId = route.sequence[i];
+        final cp = _routeCheckpoints.length > i ? _routeCheckpoints[i] : null;
+        final pointName = cp?.name ?? cpId;
+
+        entries.add(NarrationEntry(
+          index: i + 1,
+          pointName: pointName,
+          action: i == 0
+              ? 'התחלה'
+              : i == route.sequence.length - 1
+                  ? 'סיום'
+                  : 'מעבר',
+        ));
+      }
+      setState(() {
+        _narrationEntries = entries;
+      });
+    });
+  }
+
+  void _addNarrationRowAtEnd() {
+    setState(() {
+      _narrationEntries.add(NarrationEntry(
+        index: _narrationEntries.length + 1,
+        pointName: '',
+      ));
+      _recalculateIndicesAndCumulative();
+    });
+  }
+
+  void _insertNarrationRowAfter(int index) {
+    setState(() {
+      _narrationEntries.insert(
+        index + 1,
+        NarrationEntry(index: index + 2, pointName: ''),
+      );
+      _recalculateIndicesAndCumulative();
+    });
+  }
+
+  void _deleteNarrationRow(int index) {
+    if (_narrationEntries.length <= 1) return;
+    setState(() {
+      _narrationEntries.removeAt(index);
+      _recalculateIndicesAndCumulative();
+    });
+  }
+
+  void _updateNarrationEntry(int index, NarrationEntry updated) {
+    setState(() {
+      _narrationEntries[index] = updated;
+      _recalculateIndicesAndCumulative();
+    });
+  }
+
+  Future<void> _saveNarration() async {
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route == null) return;
+
+    final updatedRoute = route.copyWith(narrationEntries: _narrationEntries);
+    final updatedRoutes = Map<String, domain.AssignedRoute>.from(
+      _currentNavigation.routes,
+    );
+    updatedRoutes[widget.currentUser.uid] = updatedRoute;
+
+    final updatedNav = _currentNavigation.copyWith(
+      routes: updatedRoutes,
+      updatedAt: DateTime.now(),
+    );
+
+    try {
+      await _navigationRepo.update(updatedNav);
+      setState(() => _currentNavigation = updatedNav);
+      widget.onNavigationUpdated(updatedNav);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('סיפור הדרך נשמר בהצלחה')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בשמירה: $e')),
+        );
+      }
+    }
+  }
+
+  void _openEntryEditor(int index) {
+    final entry = _narrationEntries[index];
+    final segmentCtrl = TextEditingController(text: entry.segmentKm);
+    final pointNameCtrl = TextEditingController(text: entry.pointName);
+    final bearingCtrl = TextEditingController(text: entry.bearing);
+    final descCtrl = TextEditingController(text: entry.description);
+    final actionCtrl = TextEditingController(text: entry.action);
+    final obstaclesCtrl = TextEditingController(text: entry.obstacles);
+    final elevCtrl = TextEditingController(
+      text: entry.elevationM?.toString() ?? '',
+    );
+    final walkingCtrl = TextEditingController(
+      text: entry.walkingTimeMin?.toStringAsFixed(1) ?? '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('עריכת שורה ${entry.index}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: segmentCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'מקטע (ק"מ)',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: pointNameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'שם הנקודה',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: bearingCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'כיוון',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'תיאור הדרך',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: actionCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'פעולה נדרשת',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: walkingCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'זמן הליכה (דקות)',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: elevCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'גובה (מטרים)',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: obstaclesCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'מכשולים / מגבלות',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('ביטול'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final elev = double.tryParse(elevCtrl.text);
+              final walking = double.tryParse(walkingCtrl.text);
+              // validate segmentKm — only numbers
+              final segText = segmentCtrl.text.trim();
+              final segValid = segText.isEmpty || double.tryParse(segText) != null;
+              if (!segValid) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('מקטע (ק"מ) חייב להיות מספר')),
+                );
+                return;
+              }
+              _updateNarrationEntry(
+                index,
+                entry.copyWith(
+                  segmentKm: segText,
+                  pointName: pointNameCtrl.text,
+                  bearing: bearingCtrl.text,
+                  description: descCtrl.text,
+                  action: actionCtrl.text,
+                  walkingTimeMin: walking,
+                  clearWalkingTime: walkingCtrl.text.isEmpty,
+                  elevationM: elev,
+                  clearElevation: elevCtrl.text.isEmpty,
+                  obstacles: obstaclesCtrl.text,
+                ),
+              );
+              Navigator.pop(ctx);
+            },
+            child: const Text('שמור'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _exportNarrationCsv() async {
+    if (_narrationEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('אין נתוני סיפור דרך לייצוא')),
+      );
+      return;
+    }
+
     final rows = <List<String>>[
-      ['#', 'נקודה', 'פעולה', 'הערות'],
+      ['מסד', 'מקטע (ק"מ)', 'נקודה', 'מרחק מצטבר (ק"מ)', 'כיוון', 'תיאור הדרך', 'פעולה נדרשת', 'זמן הליכה (דק\')', 'מכשולים'],
     ];
 
-    for (var i = 0; i < route.sequence.length; i++) {
-      final cpName = route.sequence[i];
-      final isFirst = i == 0;
-      final isLast = i == route.sequence.length - 1;
-      final action = isFirst
-          ? 'התחלה'
-          : isLast
-              ? 'סיום'
-              : 'מעבר';
-      rows.add(['${i + 1}', cpName, action, '']);
+    for (final entry in _narrationEntries) {
+      rows.add([
+        '${entry.index}',
+        entry.segmentKm,
+        entry.pointName,
+        entry.cumulativeKm,
+        entry.bearing,
+        entry.description,
+        entry.action,
+        entry.walkingTimeMin?.toStringAsFixed(1) ?? '',
+        entry.obstacles,
+      ]);
     }
+
+    // שורת סיכום
+    final totalKm = _totalSegmentKm;
+    final totalMin = _totalWalkingMin;
+    rows.add(['', '', '', totalKm.toStringAsFixed(2), '', '', 'סה"כ', totalMin.toStringAsFixed(1), '']);
 
     final csvData = const ListToCsvConverter().convert(rows);
 
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File(
-        '${dir.path}/narration_${_currentNavigation.id}_${widget.currentUser.uid}.csv',
+      final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'שמור סיפור דרך CSV',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
       );
-      await file.writeAsString('\uFEFF$csvData'); // BOM for Hebrew in Excel
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('הקובץ נשמר: ${file.path}'),
-            duration: const Duration(seconds: 4),
-          ),
-        );
+      if (result != null) {
+        final file = File(result);
+        await file.writeAsString('\uFEFF$csvData', encoding: utf8);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('סיפור דרך נשמר ב-\n$result'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -591,6 +1160,181 @@ class _LearningViewState extends State<LearningView>
     }
   }
 
+  Future<void> _exportNarrationPdf() async {
+    if (_narrationEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('אין נתוני סיפור דרך לייצוא')),
+      );
+      return;
+    }
+
+    try {
+      final regularFont = await PdfGoogleFonts.rubikRegular();
+      final boldFont = await PdfGoogleFonts.rubikBold();
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(
+          base: regularFont,
+          bold: boldFont,
+        ),
+      );
+
+      final totalKm = _totalSegmentKm;
+      final totalMin = _totalWalkingMin;
+
+      // חישוב גובה (אם הוזן)
+      final elevEntries = _narrationEntries.where((e) => e.elevationM != null).toList();
+      double? totalClimb;
+      double? totalDescent;
+      if (elevEntries.length >= 2) {
+        totalClimb = 0;
+        totalDescent = 0;
+        for (int i = 1; i < elevEntries.length; i++) {
+          final diff = elevEntries[i].elevationM! - elevEntries[i - 1].elevationM!;
+          if (diff > 0) {
+            totalClimb = totalClimb! + diff;
+          } else {
+            totalDescent = totalDescent! + diff.abs();
+          }
+        }
+      }
+
+      // PDF RTL — סדר עמודות הפוך: מכשולים ← ... ← מסד
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          textDirection: pw.TextDirection.rtl,
+          margin: const pw.EdgeInsets.all(20),
+          header: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'סיפור דרך — ${_currentNavigation.name}',
+                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                'תאריך: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+              ),
+              pw.SizedBox(height: 8),
+            ],
+          ),
+          footer: (context) => pw.Text(
+            'Navigate App',
+            style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey),
+          ),
+          build: (context) => [
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400),
+                columnWidths: {
+                  // סדר הפוך RTL: מכשולים(0), זמן(1), פעולה(2), תיאור(3), כיוון(4), מצטבר(5), נקודה(6), מקטע(7), #(8)
+                  0: const pw.FlexColumnWidth(1.2),  // מכשולים
+                  1: const pw.FixedColumnWidth(40),   // זמן
+                  2: const pw.FlexColumnWidth(1),     // פעולה
+                  3: const pw.FlexColumnWidth(2.5),   // תיאור
+                  4: const pw.FlexColumnWidth(1),     // כיוון
+                  5: const pw.FixedColumnWidth(50),   // מצטבר
+                  6: const pw.FlexColumnWidth(1.2),   // נקודה
+                  7: const pw.FixedColumnWidth(45),   // מקטע
+                  8: const pw.FixedColumnWidth(30),   // #
+                },
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: PdfColors.deepPurple50),
+                    children: [
+                      _pdfCell('מכשולים', bold: true),
+                      _pdfCell('זמן', bold: true),
+                      _pdfCell('פעולה', bold: true),
+                      _pdfCell('תיאור הדרך', bold: true),
+                      _pdfCell('כיוון', bold: true),
+                      _pdfCell('מצטבר', bold: true),
+                      _pdfCell('נקודה', bold: true),
+                      _pdfCell('מקטע', bold: true),
+                      _pdfCell('#', bold: true),
+                    ],
+                  ),
+                  ..._narrationEntries.map((entry) => pw.TableRow(
+                    children: [
+                      _pdfCell(entry.obstacles),
+                      _pdfCell(entry.walkingTimeMin?.toStringAsFixed(1) ?? ''),
+                      _pdfCell(entry.action),
+                      _pdfCell(entry.description),
+                      _pdfCell(entry.bearing),
+                      _pdfCell(entry.cumulativeKm),
+                      _pdfCell(entry.pointName),
+                      _pdfCell(entry.segmentKm),
+                      _pdfCell('${entry.index}'),
+                    ],
+                  )),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 16),
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('סיכום:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
+                  pw.SizedBox(height: 4),
+                  pw.Text('אורך כולל: ${totalKm.toStringAsFixed(2)} ק"מ', style: const pw.TextStyle(fontSize: 10)),
+                  pw.Text('זמן הליכה כולל (משוער): ${totalMin.toStringAsFixed(0)} דקות', style: const pw.TextStyle(fontSize: 10)),
+                  if (totalClimb != null)
+                    pw.Text('עלייה מצטברת: ${totalClimb.toStringAsFixed(0)} מ\' | ירידה מצטברת: ${totalDescent!.toStringAsFixed(0)} מ\'', style: const pw.TextStyle(fontSize: 10)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'שמור סיפור דרך PDF',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null) {
+        final file = File(result);
+        await file.writeAsBytes(await pdf.save());
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('סיפור דרך נשמר ב-PDF\n$result'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בייצוא PDF: $e')),
+        );
+      }
+    }
+  }
+
+  pw.Widget _pdfCell(String text, {bool bold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: 8,
+          fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+      ),
+    );
+  }
+
   Widget _buildNarrationTab() {
     final route = _currentNavigation.routes[widget.currentUser.uid];
 
@@ -598,153 +1342,243 @@ class _LearningViewState extends State<LearningView>
       return const Center(child: Text('לא הוקצה ציר'));
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // כותרת
-          Row(
+    // סיכומים — חישוב מסכום המקטעים
+    final totalKm = _totalSegmentKm;
+    final totalMin = _totalWalkingMin;
+
+    // גובה
+    final elevEntries = _narrationEntries.where((e) => e.elevationM != null).toList();
+    double? totalClimb;
+    double? totalDescent;
+    if (elevEntries.length >= 2) {
+      totalClimb = 0;
+      totalDescent = 0;
+      for (int i = 1; i < elevEntries.length; i++) {
+        final diff = elevEntries[i].elevationM! - elevEntries[i - 1].elevationM!;
+        if (diff > 0) {
+          totalClimb = totalClimb! + diff;
+        } else {
+          totalDescent = totalDescent! + diff.abs();
+        }
+      }
+    }
+
+    return Column(
+      children: [
+        // כפתורי פעולה עליונים
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              const Icon(Icons.record_voice_over, color: Colors.deepPurple),
-              const SizedBox(width: 8),
-              Text(
-                'סיפור דרך — כרונולוגיה',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+              ElevatedButton.icon(
+                onPressed: _checkpointsLoaded ? _generateNarration : null,
+                icon: const Icon(Icons.auto_fix_high, size: 18),
+                label: const Text('אוטומטי'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: _checkpointsLoaded ? _generateManualNarration : null,
+                icon: const Icon(Icons.edit_note, size: 18),
+                label: const Text('ידני'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple[300],
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _narrationEntries.isNotEmpty ? _saveNarration : null,
+                icon: const Icon(Icons.save, size: 18),
+                label: const Text('שמור'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.deepPurple),
+              ),
+              OutlinedButton.icon(
+                onPressed: _narrationEntries.isNotEmpty ? _exportNarrationCsv : null,
+                icon: const Icon(Icons.table_chart, size: 18),
+                label: const Text('CSV'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.green[700]),
+              ),
+              OutlinedButton.icon(
+                onPressed: _narrationEntries.isNotEmpty ? _exportNarrationPdf : null,
+                icon: const Icon(Icons.picture_as_pdf, size: 18),
+                label: const Text('PDF'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.red[700]),
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            'סדר הנקודות לאורך הציר — רשום הערות לכל תחנה',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 16),
+        ),
+        const SizedBox(height: 8),
 
-          // טבלת כרונולוגיה
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                // כותרת טבלה
-                Container(
-                  color: Colors.deepPurple[50],
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: const Row(
+        // טבלה
+        Expanded(
+          child: _narrationEntries.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      SizedBox(width: 32, child: Text('#', style: TextStyle(fontWeight: FontWeight.bold))),
-                      Expanded(flex: 3, child: Text('נקודה', style: TextStyle(fontWeight: FontWeight.bold))),
-                      Expanded(flex: 2, child: Text('פעולה', style: TextStyle(fontWeight: FontWeight.bold))),
+                      Icon(Icons.record_voice_over, size: 64, color: Colors.grey[300]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'טבלת סיפור דרך ריקה',
+                        style: TextStyle(fontSize: 16, color: Colors.grey[500]),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '"אוטומטי" — יצירה עם חישובים\n"ידני" — טבלה ריקה עם שמות נקודות',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                      ),
+                    ],
+                  ),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // טבלה גלילה אופקית
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          headingRowColor: WidgetStateProperty.all(Colors.deepPurple[50]),
+                          columnSpacing: 12,
+                          dataRowMinHeight: 48,
+                          dataRowMaxHeight: 80,
+                          columns: const [
+                            DataColumn(label: Text('#', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('מקטע\n(ק"מ)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                            DataColumn(label: Text('נקודה', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('מצטבר\n(ק"מ)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                            DataColumn(label: Text('כיוון', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('תיאור הדרך', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('פעולה', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('זמן\n(דק\')', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                            DataColumn(label: Text('גובה\n(מ\')', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                            DataColumn(label: Text('מכשולים', style: TextStyle(fontWeight: FontWeight.bold))),
+                            DataColumn(label: Text('', style: TextStyle())), // פעולות
+                          ],
+                          rows: _narrationEntries.asMap().entries.map((mapEntry) {
+                            final idx = mapEntry.key;
+                            final entry = mapEntry.value;
+                            return DataRow(
+                              cells: [
+                                DataCell(Text('${entry.index}')),
+                                DataCell(Text(entry.segmentKm)),
+                                DataCell(SizedBox(
+                                  width: 100,
+                                  child: Text(entry.pointName, overflow: TextOverflow.ellipsis),
+                                )),
+                                DataCell(Text(entry.cumulativeKm)),
+                                DataCell(SizedBox(
+                                  width: 120,
+                                  child: Text(entry.bearing, style: const TextStyle(fontSize: 12)),
+                                )),
+                                DataCell(SizedBox(
+                                  width: 200,
+                                  child: Text(
+                                    entry.description,
+                                    style: const TextStyle(fontSize: 12),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                )),
+                                DataCell(SizedBox(
+                                  width: 80,
+                                  child: Text(entry.action),
+                                )),
+                                DataCell(Text(entry.walkingTimeMin?.toStringAsFixed(1) ?? '')),
+                                DataCell(Text(entry.elevationM?.toStringAsFixed(0) ?? '')),
+                                DataCell(SizedBox(
+                                  width: 120,
+                                  child: Text(
+                                    entry.obstacles,
+                                    style: const TextStyle(fontSize: 12),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                )),
+                                // פעולות: הוסף + ערוך + מחק
+                                DataCell(Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.add_circle_outline, size: 18, color: Colors.green[700]),
+                                      onPressed: () => _insertNarrationRowAfter(idx),
+                                      tooltip: 'הוסף שורה מתחת',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, size: 18),
+                                      onPressed: () => _openEntryEditor(idx),
+                                      tooltip: 'ערוך',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline, size: 18, color: Colors.red[400]),
+                                      onPressed: _narrationEntries.length > 1
+                                          ? () => _deleteNarrationRow(idx)
+                                          : null,
+                                      tooltip: 'מחק שורה',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                  ],
+                                )),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // כפתור הוספת שורה בסוף
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: _addNarrationRowAtEnd,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('הוסף שורה בסוף'),
+                          style: TextButton.styleFrom(foregroundColor: Colors.deepPurple),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // סיכום
+                      Card(
+                        color: Colors.deepPurple[50],
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'סיכום',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              _infoCard('סה"כ נקודות', '${_narrationEntries.length}'),
+                              _infoCard('אורך כולל', '${totalKm.toStringAsFixed(2)} ק"מ'),
+                              _infoCard('זמן הליכה (משוער)', '${totalMin.toStringAsFixed(0)} דקות'),
+                              if (totalClimb != null) ...[
+                                _infoCard('עלייה מצטברת', '${totalClimb.toStringAsFixed(0)} מ\''),
+                                _infoCard('ירידה מצטברת', '${totalDescent!.toStringAsFixed(0)} מ\''),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                // שורות
-                ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: route.sequence.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final cpName = route.sequence[index];
-                    final isFirst = index == 0;
-                    final isLast = index == route.sequence.length - 1;
-
-                    final actionLabel = isFirst
-                        ? 'התחלה'
-                        : isLast
-                            ? 'סיום'
-                            : 'מעבר';
-                    final actionColor = isFirst
-                        ? Colors.green
-                        : isLast
-                            ? Colors.red
-                            : Colors.blue;
-                    final actionIcon = isFirst
-                        ? Icons.play_arrow
-                        : isLast
-                            ? Icons.flag
-                            : Icons.arrow_forward;
-
-                    // חיפוש ה-checkpoint הטעון כדי להציג קואורדינטות
-                    final loadedCp = _routeCheckpoints.length > index
-                        ? _routeCheckpoints[index]
-                        : null;
-
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 32,
-                            child: CircleAvatar(
-                              radius: 12,
-                              backgroundColor: actionColor,
-                              child: Text(
-                                '${index + 1}',
-                                style: const TextStyle(color: Colors.white, fontSize: 11),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 3,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(cpName, style: const TextStyle(fontWeight: FontWeight.w500)),
-                                if (loadedCp != null)
-                                  Text(
-                                    '${loadedCp.coordinates.lat.toStringAsFixed(5)}, ${loadedCp.coordinates.lng.toStringAsFixed(5)}',
-                                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            flex: 2,
-                            child: Row(
-                              children: [
-                                Icon(actionIcon, size: 16, color: actionColor),
-                                const SizedBox(width: 4),
-                                Text(
-                                  actionLabel,
-                                  style: TextStyle(color: actionColor, fontWeight: FontWeight.w500),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // סיכום
-          _infoCard('סה"כ נקודות', '${route.sequence.length}'),
-          _infoCard('אורך ציר', '${route.routeLengthKm.toStringAsFixed(2)} ק"מ'),
-
-          const SizedBox(height: 16),
-
-          // כפתור ייצוא CSV
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _exportNarrationCsv,
-              icon: const Icon(Icons.download),
-              label: const Text('ייצוא לקובץ CSV'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.deepPurple,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -772,6 +1606,19 @@ class _LearningViewState extends State<LearningView>
   // ===========================================================================
   // Helpers
   // ===========================================================================
+
+  String _approvalStatusLabel(String status) {
+    switch (status) {
+      case 'approved':
+        return 'מאושר';
+      case 'pending_approval':
+        return 'ממתין לאישור';
+      case 'rejected':
+        return 'נפסל';
+      default:
+        return 'טרם נשלח';
+    }
+  }
 
   Widget _infoCard(String label, String value) {
     return Padding(
@@ -829,5 +1676,19 @@ class _LearningTab {
     required this.label,
     required this.icon,
     required this.builder,
+  });
+}
+
+enum _CheckpointRole { start, middle, end }
+
+class _CheckpointDisplayItem {
+  final Checkpoint checkpoint;
+  final int sequenceNumber;
+  final _CheckpointRole role;
+
+  const _CheckpointDisplayItem({
+    required this.checkpoint,
+    required this.sequenceNumber,
+    required this.role,
   });
 }

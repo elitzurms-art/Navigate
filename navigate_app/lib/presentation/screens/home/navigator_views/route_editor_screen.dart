@@ -544,7 +544,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                       PolylineLayer(polylines: [
                         Polyline(
                           points: _waypoints,
-                          color: Colors.orange,
+                          color: Colors.blue,
                           strokeWidth: 3.0,
                         ),
                       ]),
