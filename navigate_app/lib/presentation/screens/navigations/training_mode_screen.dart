@@ -485,12 +485,40 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   void _viewNavigatorRoute(String navigatorId, domain.AssignedRoute route) {
-    final navigatorPoints = route.plannedPath.isNotEmpty
-        ? route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList()
-        : _buildReferenceRoute(route);
+    // בניית ציר רפרנס: התחלה → נקודות ציון → סיום
+    final referencePoints = _buildReferenceRoute(route);
 
-    final center = navigatorPoints.isNotEmpty
-        ? LatLngBounds.fromPoints(navigatorPoints).center
+    // ציר שצייר המנווט (אם יש)
+    final hasPlannedPath = route.plannedPath.isNotEmpty;
+    final plannedPathPoints = hasPlannedPath
+        ? route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList()
+        : <LatLng>[];
+
+    // נקודות ציון של המנווט לפי סדר ה-sequence
+    final routeCheckpoints = <Checkpoint>[];
+    for (final cpId in route.sequence) {
+      try {
+        routeCheckpoints.add(_checkpoints.firstWhere((cp) => cp.id == cpId));
+      } catch (_) {}
+    }
+
+    // נקודות התחלה/סיום
+    Checkpoint? startCheckpoint;
+    Checkpoint? endCheckpoint;
+    if (route.startPointId != null) {
+      try {
+        startCheckpoint = _checkpoints.firstWhere((cp) => cp.id == route.startPointId);
+      } catch (_) {}
+    }
+    if (route.endPointId != null) {
+      try {
+        endCheckpoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
+      } catch (_) {}
+    }
+
+    final allPoints = [...referencePoints, ...plannedPathPoints];
+    final center = allPoints.isNotEmpty
+        ? LatLngBounds.fromPoints(allPoints).center
         : const LatLng(32.0853, 34.7818);
 
     Navigator.push(
@@ -498,8 +526,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       MaterialPageRoute(
         builder: (_) => _RouteViewScreen(
           navigatorId: navigatorId,
-          navigatorPoints: navigatorPoints,
+          referencePoints: referencePoints,
+          plannedPathPoints: plannedPathPoints,
+          hasPlannedPath: hasPlannedPath,
           center: center,
+          routeCheckpoints: routeCheckpoints,
+          startCheckpoint: startCheckpoint,
+          endCheckpoint: endCheckpoint,
         ),
       ),
     );
@@ -750,39 +783,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   // צירי המנווטים
                   ..._buildRoutePolylines(),
 
-                  // נקודות ציון (עיגול כחול עם מספר)
+                  // נקודות ציון רלוונטיות לניווט בלבד (התחלה/סיום/נקודות מנווטים)
                   MarkerLayer(
-                    markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                            ? GeometryUtils.filterPointsInPolygon(
-                                points: _checkpoints,
-                                getCoordinate: (cp) => cp.coordinates,
-                                polygon: _boundary!.coordinates,
-                              )
-                            : _checkpoints)
-                        .map((cp) {
-                      return Marker(
-                        point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
-                        width: 32,
-                        height: 32,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${cp.sequenceNumber}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
+                    markers: _buildNavigationMarkers(),
                   ),
 
                   // שכבות מדידה
@@ -837,6 +840,107 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     return points;
   }
 
+  /// בניית markers לנקודות רלוונטיות לניווט: התחלה (ירוק H), סיום (אדום S), נקודות מנווטים (כחול ממוספר)
+  List<Marker> _buildNavigationMarkers() {
+    final startPointIds = <String>{};
+    final endPointIds = <String>{};
+    final routeCheckpointIds = <String>{};
+
+    for (final route in _currentNavigation.routes.values) {
+      if (route.startPointId != null) startPointIds.add(route.startPointId!);
+      if (route.endPointId != null) endPointIds.add(route.endPointId!);
+      routeCheckpointIds.addAll(route.sequence);
+    }
+
+    final markers = <Marker>[];
+
+    // נקודות התחלה (ירוק H)
+    for (final spId in startPointIds) {
+      try {
+        final cp = _checkpoints.firstWhere((c) => c.id == spId);
+        markers.add(Marker(
+          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: 'התחלה: ${cp.name}',
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.green,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: const Center(
+                child: Text('H', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        ));
+      } catch (_) {}
+    }
+
+    // נקודות ציון של המנווטים (כחול ממוספר) — בלי התחלה/סיום
+    for (final cpId in routeCheckpointIds) {
+      if (startPointIds.contains(cpId) || endPointIds.contains(cpId)) continue;
+      try {
+        final cp = _checkpoints.firstWhere((c) => c.id == cpId);
+        markers.add(Marker(
+          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: cp.name,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Center(
+                child: Text(
+                  '${cp.sequenceNumber}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ));
+      } catch (_) {}
+    }
+
+    // נקודות סיום (אדום S)
+    for (final epId in endPointIds) {
+      if (startPointIds.contains(epId)) continue; // אותה נקודה גם התחלה וגם סיום
+      try {
+        final cp = _checkpoints.firstWhere((c) => c.id == epId);
+        markers.add(Marker(
+          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: 'סיום: ${cp.name}',
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: const Center(
+                child: Text('S', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        ));
+      } catch (_) {}
+    }
+
+    return markers;
+  }
+
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
 
@@ -873,16 +977,26 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 }
 
-/// מסך צפייה בציר מנווט — עם MapControls סטנדרטי
+/// מסך צפייה בציר מנווט — עם נקודות התחלה/סיום ו-MapControls סטנדרטי
 class _RouteViewScreen extends StatefulWidget {
   final String navigatorId;
-  final List<LatLng> navigatorPoints;
+  final List<LatLng> referencePoints;
+  final List<LatLng> plannedPathPoints;
+  final bool hasPlannedPath;
   final LatLng center;
+  final List<Checkpoint> routeCheckpoints;
+  final Checkpoint? startCheckpoint;
+  final Checkpoint? endCheckpoint;
 
   const _RouteViewScreen({
     required this.navigatorId,
-    required this.navigatorPoints,
+    required this.referencePoints,
+    required this.plannedPathPoints,
+    required this.hasPlannedPath,
     required this.center,
+    required this.routeCheckpoints,
+    this.startCheckpoint,
+    this.endCheckpoint,
   });
 
   @override
@@ -896,6 +1010,83 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final allPoints = [...widget.referencePoints, ...widget.plannedPathPoints];
+    final bounds = allPoints.length > 1 ? LatLngBounds.fromPoints(allPoints) : null;
+
+    // בניית markers: התחלה (ירוק H), נקודות ציון (כחול ממוספר), סיום (אדום S)
+    final markers = <Marker>[];
+
+    if (widget.startCheckpoint != null) {
+      markers.add(Marker(
+        point: widget.startCheckpoint!.coordinates.toLatLng(),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: 'התחלה: ${widget.startCheckpoint!.name}',
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.green,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Center(
+              child: Text('H', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ));
+    }
+
+    for (var i = 0; i < widget.routeCheckpoints.length; i++) {
+      final cp = widget.routeCheckpoints[i];
+      markers.add(Marker(
+        point: cp.coordinates.toLatLng(),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: cp.name,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: Center(
+              child: Text(
+                '${i + 1}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+    }
+
+    if (widget.endCheckpoint != null) {
+      markers.add(Marker(
+        point: widget.endCheckpoint!.coordinates.toLatLng(),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: 'סיום: ${widget.endCheckpoint!.name}',
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Center(
+              child: Text('S', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ));
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('ציר של ${widget.navigatorId}'),
@@ -910,9 +1101,9 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
             options: MapOptions(
               initialCenter: widget.center,
               initialZoom: 14.0,
-              initialCameraFit: widget.navigatorPoints.length > 1
+              initialCameraFit: bounds != null
                   ? CameraFit.bounds(
-                      bounds: LatLngBounds.fromPoints(widget.navigatorPoints),
+                      bounds: bounds,
                       padding: const EdgeInsets.all(50),
                     )
                   : null,
@@ -923,16 +1114,26 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
               },
             ),
             layers: [
-              if (widget.navigatorPoints.isNotEmpty)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: widget.navigatorPoints,
-                      color: Colors.blue,
-                      strokeWidth: 4.0,
-                    ),
-                  ],
-                ),
+              // ציר רפרנס (כחול בהיר)
+              if (widget.referencePoints.length > 1)
+                PolylineLayer(polylines: [
+                  Polyline(
+                    points: widget.referencePoints,
+                    color: Colors.blue.withValues(alpha: 0.3),
+                    strokeWidth: 2.0,
+                  ),
+                ]),
+              // ציר שצייר המנווט (כתום)
+              if (widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
+                PolylineLayer(polylines: [
+                  Polyline(
+                    points: widget.plannedPathPoints,
+                    color: Colors.orange,
+                    strokeWidth: 3.0,
+                  ),
+                ]),
+              // נקודות ציון
+              MarkerLayer(markers: markers),
               ...MapControls.buildMeasureLayers(_measurePoints),
             ],
           ),

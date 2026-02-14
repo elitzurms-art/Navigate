@@ -172,10 +172,8 @@ class _MapControlsState extends State<MapControls> {
         _buildMapTypeButton(),
         const SizedBox(height: 4),
         _buildMeasureButton(),
-        if (widget.layers.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          _buildLayersButton(),
-        ],
+        const SizedBox(height: 4),
+        _buildLayersButton(),
       ],
     );
   }

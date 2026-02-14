@@ -81,6 +81,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   String? _dataFatalError;
   DateTime? _lastSyncTime;
 
+  // הרשאות מפקד (cached — לא FutureBuilder)
+  Map<String, PermissionStatus> _commanderPermissions = {};
+  bool _isLoadingPermissions = true;
+
   @override
   void initState() {
     super.initState();
@@ -92,8 +96,23 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       _initializeNavigatorStatuses();
       _loadNavigatorUsers();
       _initDataLoader();
+      _loadCommanderPermissions();
     } else {
       _checkNavigatorSystem();
+    }
+  }
+
+  Future<void> _loadCommanderPermissions() async {
+    try {
+      final perms = await _getAllPermissions();
+      if (mounted) {
+        setState(() {
+          _commanderPermissions = perms;
+          _isLoadingPermissions = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingPermissions = false);
     }
   }
 
@@ -1802,72 +1821,84 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   /// טאב הרשאות למפקד — סקירת הרשאות כלליות
   Widget _buildPermissionsTab() {
-    return FutureBuilder<Map<String, PermissionStatus>>(
-      future: _getAllPermissions(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    if (_isLoadingPermissions) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-        final permissions = snapshot.data!;
+    final permissions = _commanderPermissions;
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'הרשאות מכשיר',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'הרשאות הנדרשות לפעולה תקינה של האפליקציה',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 16),
-              ...permissions.entries.map((entry) {
-                final isGranted = entry.value.isGranted;
-                final isPermanentlyDenied = entry.value.isPermanentlyDenied;
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: Icon(
-                      isGranted ? Icons.check_circle : Icons.cancel,
-                      color: isGranted ? Colors.green : Colors.red,
-                    ),
-                    title: Text(_permissionDisplayName(entry.key)),
-                    subtitle: Text(_permissionStatusText(entry.value)),
-                    trailing: isGranted
-                        ? null
-                        : isPermanentlyDenied
-                            ? TextButton(
-                                onPressed: openAppSettings,
-                                child: const Text('הגדרות'),
-                              )
-                            : TextButton(
-                                onPressed: () async {
-                                  await _requestPermission(_permissionFromKey(entry.key));
-                                  setState(() {});
-                                },
-                                child: const Text('אשר'),
-                              ),
-                  ),
-                );
-              }),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => setState(() {}),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('רענן הרשאות'),
-                ),
-              ),
-            ],
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'הרשאות מכשיר',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-        );
-      },
+          const SizedBox(height: 8),
+          const Text(
+            'הרשאות הנדרשות לפעולה תקינה של האפליקציה',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+          ...permissions.entries.map((entry) {
+            final isGranted = entry.value.isGranted;
+            final isPermanentlyDenied = entry.value.isPermanentlyDenied;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: Icon(
+                  isGranted ? Icons.check_circle : Icons.cancel,
+                  color: isGranted ? Colors.green : Colors.red,
+                ),
+                title: Text(_permissionDisplayName(entry.key)),
+                subtitle: Text(_permissionStatusText(entry.value)),
+                trailing: isGranted
+                    ? null
+                    : isPermanentlyDenied
+                        ? TextButton(
+                            onPressed: openAppSettings,
+                            child: const Text('הגדרות'),
+                          )
+                        : TextButton(
+                            onPressed: () async {
+                              final permission = _permissionFromKey(entry.key);
+                              final result = await permission.request();
+                              if (mounted) {
+                                setState(() {
+                                  _commanderPermissions[entry.key] = result;
+                                });
+                                // אם עדיין לא אושר — הצע לפתוח הגדרות
+                                if (!result.isGranted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('ההרשאה לא אושרה — ניתן לאשר בהגדרות המכשיר'),
+                                      action: SnackBarAction(
+                                        label: 'הגדרות',
+                                        onPressed: openAppSettings,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            child: const Text('אשר'),
+                          ),
+              ),
+            );
+          }),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _loadCommanderPermissions,
+              icon: const Icon(Icons.refresh),
+              label: const Text('רענן הרשאות'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
