@@ -14,18 +14,18 @@ class MapLayerConfig {
   final String label;
   final Color color;
   final bool visible;
-  final double opacity;
+  final double? opacity;
   final ValueChanged<bool> onVisibilityChanged;
-  final ValueChanged<double> onOpacityChanged;
+  final ValueChanged<double>? onOpacityChanged;
 
   const MapLayerConfig({
     required this.id,
     required this.label,
     required this.color,
     required this.visible,
-    required this.opacity,
+    this.opacity,
     required this.onVisibilityChanged,
-    required this.onOpacityChanged,
+    this.onOpacityChanged,
   });
 }
 
@@ -147,7 +147,7 @@ class _MapControlsState extends State<MapControls> {
         // פאנל שכבות (מוצג מתחת לכפתורים)
         if (_showLayersPanel)
           Positioned(
-            top: 8 + 48.0 * 3 + 16, // מתחת ל-3 כפתורים + רווח
+            top: 8 + 44.0 * 3 + 12, // מתחת ל-3 כפתורים + רווח
             right: 8,
             child: _buildLayersPanel(),
           ),
@@ -172,8 +172,10 @@ class _MapControlsState extends State<MapControls> {
         _buildMapTypeButton(),
         const SizedBox(height: 4),
         _buildMeasureButton(),
-        const SizedBox(height: 4),
-        _buildLayersButton(),
+        if (widget.layers.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          _buildLayersButton(),
+        ],
       ],
     );
   }
@@ -417,8 +419,8 @@ class _MapControlsState extends State<MapControls> {
               ),
             ],
           ),
-          // opacity slider — רק כשהשכבה מופעלת
-          if (layer.visible)
+          // opacity slider — רק כשהשכבה מופעלת ויש תמיכה בשקיפות
+          if (layer.visible && layer.opacity != null && layer.onOpacityChanged != null)
             SizedBox(
               height: 28,
               child: Row(
@@ -437,7 +439,7 @@ class _MapControlsState extends State<MapControls> {
                         thumbColor: layer.color,
                       ),
                       child: Slider(
-                        value: layer.opacity,
+                        value: layer.opacity!,
                         min: 0.1,
                         max: 1.0,
                         onChanged: layer.onOpacityChanged,
@@ -447,7 +449,7 @@ class _MapControlsState extends State<MapControls> {
                   SizedBox(
                     width: 32,
                     child: Text(
-                      '${(layer.opacity * 100).round()}%',
+                      '${(layer.opacity! * 100).round()}%',
                       style:
                           TextStyle(fontSize: 10, color: Colors.grey[600]),
                     ),

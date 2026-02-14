@@ -48,7 +48,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
   List<Boundary> _boundaries = [];
   List<Cluster> _clusters = [];
   bool _isLoading = true;
-  bool _showLayerControls = false;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -105,17 +104,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
         title: Text('מפה - ${widget.area.name}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: Icon(_showLayerControls ? Icons.layers_clear : Icons.layers),
-            onPressed: () {
-              setState(() {
-                _showLayerControls = !_showLayerControls;
-              });
-            },
-            tooltip: 'בקרת שכבות',
-          ),
-        ],
       ),
       body: Stack(
         children: [
@@ -267,6 +255,44 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
           // בקרי מפה
           MapControls(
             mapController: _mapController,
+            layers: [
+              MapLayerConfig(
+                id: 'nz',
+                label: 'נ"ז - נקודות ציון',
+                color: Colors.blue,
+                visible: _showNZ,
+                opacity: _nzOpacity,
+                onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nb',
+                label: 'נת"ב - נקודות בטיחות',
+                color: Colors.red,
+                visible: _showNB,
+                opacity: _nbOpacity,
+                onVisibilityChanged: (v) => setState(() => _showNB = v),
+                onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'gg',
+                label: 'ג"ג - גבול גזרה',
+                color: Colors.black,
+                visible: _showGG,
+                opacity: _ggOpacity,
+                onVisibilityChanged: (v) => setState(() => _showGG = v),
+                onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'ba',
+                label: 'ב"א - ביצי איזור',
+                color: Colors.green,
+                visible: _showBA,
+                opacity: _baOpacity,
+                onVisibilityChanged: (v) => setState(() => _showBA = v),
+                onOpacityChanged: (v) => setState(() => _baOpacity = v),
+              ),
+            ],
             measureMode: _measureMode,
             onMeasureModeChanged: (v) => setState(() {
               _measureMode = v;
@@ -288,132 +314,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
               ),
             ),
 
-          // פאנל בקרת שכבות
-          if (_showLayerControls)
-            Positioned(
-              top: 10,
-              left: 10,
-              child: Container(
-                width: 300,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // כותרת
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).primaryColor,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(12),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.layers, color: Colors.white),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'בקרת שכבות',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            icon: const Icon(Icons.close, color: Colors.white, size: 20),
-                            onPressed: () {
-                              setState(() {
-                                _showLayerControls = false;
-                              });
-                            },
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // שכבת נ"ז
-                    _buildLayerControl(
-                      title: 'נ"ז - נקודות ציון',
-                      subtitle: '${_checkpoints.length} נקודות',
-                      color: Colors.blue,
-                      isVisible: _showNZ,
-                      opacity: _nzOpacity,
-                      onVisibilityChanged: (value) {
-                        setState(() => _showNZ = value);
-                      },
-                      onOpacityChanged: (value) {
-                        setState(() => _nzOpacity = value);
-                      },
-                    ),
-
-                    const Divider(height: 1),
-
-                    // שכבת נת"ב
-                    _buildLayerControl(
-                      title: 'נת"ב - נקודות תורפה בטיחותיות',
-                      subtitle: _safetyPoints.isEmpty ? 'אין נקודות' : '${_safetyPoints.length} נקודות',
-                      color: Colors.red,
-                      isVisible: _showNB,
-                      opacity: _nbOpacity,
-                      onVisibilityChanged: (value) {
-                        setState(() => _showNB = value);
-                      },
-                      onOpacityChanged: (value) {
-                        setState(() => _nbOpacity = value);
-                      },
-                    ),
-
-                    const Divider(height: 1),
-
-                    // שכבת ג"ג
-                    _buildLayerControl(
-                      title: 'ג"ג - גבול גזרה',
-                      subtitle: _boundaries.isEmpty ? 'אין גבולות' : '${_boundaries.length} גבולות',
-                      color: Colors.black,
-                      isVisible: _showGG,
-                      opacity: _ggOpacity,
-                      onVisibilityChanged: (value) {
-                        setState(() => _showGG = value);
-                      },
-                      onOpacityChanged: (value) {
-                        setState(() => _ggOpacity = value);
-                      },
-                    ),
-
-                    const Divider(height: 1),
-
-                    // שכבת ב"א
-                    _buildLayerControl(
-                      title: 'ב"א - ביצי איזור',
-                      subtitle: _clusters.isEmpty ? 'אין ביצות' : '${_clusters.length} ביצות',
-                      color: Colors.green,
-                      isVisible: _showBA,
-                      opacity: _baOpacity,
-                      onVisibilityChanged: (value) {
-                        setState(() => _showBA = value);
-                      },
-                      onOpacityChanged: (value) {
-                        setState(() => _baOpacity = value);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
         ],
       ),
       floatingActionButton: Column(
@@ -440,90 +340,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
             },
             child: const Icon(Icons.remove),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLayerControl({
-    required String title,
-    required String subtitle,
-    required Color color,
-    required bool isVisible,
-    required double opacity,
-    required ValueChanged<bool> onVisibilityChanged,
-    required ValueChanged<double> onOpacityChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: color.withOpacity(0.2),
-                radius: 16,
-                child: Icon(Icons.layers, color: color, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: isVisible,
-                onChanged: onVisibilityChanged,
-                activeColor: color,
-              ),
-            ],
-          ),
-          if (isVisible) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const SizedBox(width: 44),
-                const Icon(Icons.opacity, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Slider(
-                    value: opacity,
-                    min: 0.0,
-                    max: 1.0,
-                    divisions: 100,
-                    label: '${(opacity * 100).round()}%',
-                    activeColor: color,
-                    onChanged: onOpacityChanged,
-                  ),
-                ),
-                SizedBox(
-                  width: 40,
-                  child: Text(
-                    '${(opacity * 100).round()}%',
-                    style: const TextStyle(fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );

@@ -291,16 +291,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 ),
               ),
 
-              // שכבות
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildLayerToggle('נ.צ', _showNZ, (v) => setState(() => _showNZ = v)),
-                  _buildLayerToggle('ג.ג', _showGG, (v) => setState(() => _showGG = v)),
-                  _buildLayerToggle('מסלולים', _showTracks, (v) => setState(() => _showTracks = v)),
-                  _buildLayerToggle('דקירות', _showPunches, (v) => setState(() => _showPunches = v)),
-                ],
-              ),
             ],
           ),
         ),
@@ -383,6 +373,40 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ),
               MapControls(
                 mapController: _mapController,
+                layers: [
+                  MapLayerConfig(
+                    id: 'nz',
+                    label: 'נ.צ - נקודות ציון',
+                    color: Colors.blue,
+                    visible: _showNZ,
+                    opacity: _nzOpacity,
+                    onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                    onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'gg',
+                    label: 'ג.ג - גבול גזרה',
+                    color: Colors.blue,
+                    visible: _showGG,
+                    opacity: _ggOpacity,
+                    onVisibilityChanged: (v) => setState(() => _showGG = v),
+                    onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'tracks',
+                    label: 'מסלולים',
+                    color: Colors.orange,
+                    visible: _showTracks,
+                    onVisibilityChanged: (v) => setState(() => _showTracks = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'punches',
+                    label: 'דקירות',
+                    color: Colors.green,
+                    visible: _showPunches,
+                    onVisibilityChanged: (v) => setState(() => _showPunches = v),
+                  ),
+                ],
                 measureMode: _measureMode,
                 onMeasureModeChanged: (v) => setState(() {
                   _measureMode = v;
@@ -557,20 +581,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
 
     return markers.isNotEmpty ? [MarkerLayer(markers: markers)] : [];
-  }
-
-  Widget _buildLayerToggle(String label, bool value, ValueChanged<bool> onChanged) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Checkbox(
-          value: value,
-          onChanged: (v) => onChanged(v ?? false),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        Text(label, style: const TextStyle(fontSize: 12)),
-      ],
-    );
   }
 
   void _showNavigatorDetails(String navigatorId, NavigatorLiveData data) {
