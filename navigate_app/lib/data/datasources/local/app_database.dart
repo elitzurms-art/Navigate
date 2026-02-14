@@ -378,7 +378,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 
   @override
   MigrationStrategy get migration {
@@ -504,6 +504,32 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(checkpoints, checkpoints.coordinatesJson);
           await m.addColumn(navCheckpoints, navCheckpoints.geometryType);
           await m.addColumn(navCheckpoints, navCheckpoints.coordinatesJson);
+        }
+        if (from <= 18 && to >= 19) {
+          // תיקון: הפיכת lat, lng, utm ל-nullable בטבלת safety_points
+          // SQLite לא תומך ב-ALTER COLUMN, לכן יוצרים מחדש את הטבלה
+          await customStatement('''
+            CREATE TABLE safety_points_new (
+              id TEXT NOT NULL,
+              area_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              description TEXT NOT NULL,
+              type TEXT NOT NULL DEFAULT 'point',
+              lat REAL,
+              lng REAL,
+              utm TEXT,
+              coordinates_json TEXT,
+              sequence_number INTEGER NOT NULL,
+              severity TEXT NOT NULL,
+              created_by TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (id)
+            )
+          ''');
+          await customStatement('INSERT INTO safety_points_new SELECT * FROM safety_points');
+          await customStatement('DROP TABLE safety_points');
+          await customStatement('ALTER TABLE safety_points_new RENAME TO safety_points');
         }
       },
     );
