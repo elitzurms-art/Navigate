@@ -63,6 +63,9 @@ class _ActiveViewState extends State<ActiveView> {
   LatLng? _boundaryCenter;
   bool _gpsBlocked = false;
 
+  // דיווח סטטוס ל-system_status (כדי שהמפקד יראה בבדיקת מערכות)
+  Timer? _statusReportTimer;
+
   // Health check
   HealthCheckService? _healthCheckService;
 
@@ -89,6 +92,7 @@ class _ActiveViewState extends State<ActiveView> {
     _gpsCheckTimer?.cancel();
     _elapsedTimer?.cancel();
     _trackSaveTimer?.cancel();
+    _statusReportTimer?.cancel();
     _healthCheckService?.dispose();
     _alertMonitoringService?.dispose();
     _gpsTracker.stopTracking();
@@ -151,6 +155,7 @@ class _ActiveViewState extends State<ActiveView> {
           _startSecurity();
           _startGpsTracking();
           _startGpsSourceCheck();
+          _startStatusReporting();
           _startHealthCheck();
           _startAlertMonitoring();
         }
@@ -276,6 +281,65 @@ class _ActiveViewState extends State<ActiveView> {
   }
 
   // ===========================================================================
+  // System Status Reporting — דיווח ל-Firestore כדי שמפקד יראה בבדיקת מערכות
+  // ===========================================================================
+
+  void _startStatusReporting() {
+    _reportStatusToFirestore();
+    _statusReportTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _reportStatusToFirestore(),
+    );
+  }
+
+  Future<void> _reportStatusToFirestore() async {
+    final uid = widget.currentUser.uid;
+    try {
+      final docRef = FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(_nav.id)
+          .collection('system_status')
+          .doc(uid);
+
+      // מיקום אחרון מה-tracker
+      final points = _gpsTracker.trackPoints;
+      final lastPoint = points.isNotEmpty ? points.last : null;
+
+      final data = <String, dynamic>{
+        'navigatorId': uid,
+        'isConnected': lastPoint != null || _gpsSource != PositionSource.none,
+        'hasGPS': _gpsSource == PositionSource.gps,
+        'gpsAccuracy': lastPoint?.accuracy ?? -1,
+        'receptionLevel': _estimateReceptionLevel(),
+        'positionSource': _gpsSource.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (lastPoint != null) {
+        data['latitude'] = lastPoint.coordinate.lat;
+        data['longitude'] = lastPoint.coordinate.lng;
+        data['positionUpdatedAt'] = FieldValue.serverTimestamp();
+      }
+
+      await docRef.set(data, SetOptions(merge: true));
+    } catch (e) {
+      print('DEBUG ActiveView: system_status report failed: $e');
+    }
+  }
+
+  int _estimateReceptionLevel() {
+    final points = _gpsTracker.trackPoints;
+    if (points.isEmpty) return 0;
+    final accuracy = points.last.accuracy;
+    if (accuracy < 0) return 0;
+    if (accuracy <= 10) return 4;
+    if (accuracy <= 30) return 3;
+    if (accuracy <= 50) return 2;
+    if (accuracy <= 100) return 1;
+    return 0;
+  }
+
+  // ===========================================================================
   // GPS Tracking — שמירה תקופתית ל-DB + סנכרון
   // ===========================================================================
 
@@ -370,6 +434,7 @@ class _ActiveViewState extends State<ActiveView> {
     _alertMonitoringService?.stop();
     _healthCheckService?.dispose();
     _gpsCheckTimer?.cancel();
+    _statusReportTimer?.cancel();
     _elapsedTimer?.cancel();
     await _stopSecurity();
 
@@ -468,6 +533,7 @@ class _ActiveViewState extends State<ActiveView> {
       await _saveTrackPoints();
 
       _startGpsSourceCheck();
+      _startStatusReporting();
       _startHealthCheck();
       _startAlertMonitoring();
 
@@ -528,6 +594,7 @@ class _ActiveViewState extends State<ActiveView> {
       // עצירת שירותים
       _alertMonitoringService?.stop();
       _gpsCheckTimer?.cancel();
+      _statusReportTimer?.cancel();
       _elapsedTimer?.cancel();
       _healthCheckService?.dispose();
       await _stopSecurity();

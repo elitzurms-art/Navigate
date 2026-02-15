@@ -35,26 +35,21 @@ class GPSTrackingService {
     _intervalSeconds = intervalSeconds;
     _boundaryCenter = boundaryCenter;
 
-    // בדיקת הרשאות
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+    // בדיקת הרשאות GPS — אם אין, ממשיך עם fallback אנטנות
+    bool gpsAvailable = false;
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        print('❌ הרשאות GPS נדחו');
-        return false;
+        permission = await Geolocator.requestPermission();
       }
-    }
+      if (permission != LocationPermission.denied &&
+          permission != LocationPermission.deniedForever) {
+        gpsAvailable = await Geolocator.isLocationServiceEnabled();
+      }
+    } catch (_) {}
 
-    if (permission == LocationPermission.deniedForever) {
-      print('❌ הרשאות GPS נדחו לצמיתות');
-      return false;
-    }
-
-    // בדיקה ש-GPS מופעל
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      print('❌ GPS כבוי');
-      return false;
+    if (!gpsAvailable) {
+      print('⚠️ GPS לא זמין — ממשיך עם fallback אנטנות');
     }
 
     _positionStream = StreamController<Position>.broadcast();
@@ -63,34 +58,60 @@ class GPSTrackingService {
 
     // רישום נקודה ראשונה
     try {
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      if (gpsAvailable) {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10),
+        );
 
-      // אם הדיוק נמוך, נסה fallback דרך GPS Plus (אנטנות סלולריות)
-      String source = 'gps';
-      if (position.accuracy > 50) {
-        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
-        if (cellPos != null &&
-            _gpsService.lastPositionSource == PositionSource.cellTower) {
-          // GPS Plus נתן תוצאה טובה יותר
-          _recordPointFromLatLng(
-            cellPos.latitude,
-            cellPos.longitude,
-            position.accuracy,
-            positionSource: 'cellTower',
-          );
-          print('📍 GPS Tracking התחיל - מיקום ראשוני (cellTower): ${cellPos.latitude}, ${cellPos.longitude}');
+        // אם הדיוק נמוך, נסה fallback דרך GPS Plus (אנטנות סלולריות)
+        if (position.accuracy > 50) {
+          final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+          if (cellPos != null &&
+              _gpsService.lastPositionSource == PositionSource.cellTower) {
+            _recordPointFromLatLng(
+              cellPos.latitude,
+              cellPos.longitude,
+              position.accuracy,
+              positionSource: 'cellTower',
+            );
+            print('📍 GPS Tracking התחיל - מיקום ראשוני (cellTower): ${cellPos.latitude}, ${cellPos.longitude}');
+          } else {
+            _recordPoint(position, positionSource: 'gps');
+            print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
+          }
         } else {
-          _recordPoint(position, positionSource: source);
+          _recordPoint(position, positionSource: 'gps');
           print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
         }
       } else {
-        _recordPoint(position, positionSource: source);
-        print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
+        // GPS לא זמין — נסה אנטנות
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null) {
+          _recordPointFromLatLng(
+            cellPos.latitude,
+            cellPos.longitude,
+            -1,
+            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
+                ? 'cellTower'
+                : 'gps',
+          );
+          print('📍 GPS Tracking התחיל - מיקום ראשוני (fallback): ${cellPos.latitude}, ${cellPos.longitude}');
+        } else {
+          print('⚠️ GPS Tracking התחיל ללא מיקום ראשוני');
+        }
       }
     } catch (e) {
       print('❌ שגיאה בקבלת מיקום ראשוני: $e');
+      // נסה fallback אנטנות
+      try {
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null) {
+          _recordPointFromLatLng(cellPos.latitude, cellPos.longitude, -1,
+            positionSource: 'cellTower');
+          print('📍 מיקום ראשוני מ-fallback: ${cellPos.latitude}, ${cellPos.longitude}');
+        }
+      } catch (_) {}
     }
 
     // Timer לרישום מיקום כל X שניות
@@ -120,9 +141,42 @@ class GPSTrackingService {
 
   /// רישום מיקום נוכחי
   Future<void> _recordCurrentPosition() async {
+    // בדיקה מהירה: אם GPS לא זמין, ישר ל-fallback אנטנות
+    bool gpsAvailable = true;
+    try {
+      final perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        gpsAvailable = false;
+      } else {
+        gpsAvailable = await Geolocator.isLocationServiceEnabled();
+      }
+    } catch (_) {
+      gpsAvailable = false;
+    }
+
+    if (!gpsAvailable) {
+      try {
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null) {
+          _recordPointFromLatLng(
+            cellPos.latitude,
+            cellPos.longitude,
+            -1,
+            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
+                ? 'cellTower'
+                : 'gps',
+          );
+        }
+      } catch (e) {
+        print('❌ fallback אנטנות נכשל: $e');
+      }
+      return;
+    }
+
     try {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
       );
 
       // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג

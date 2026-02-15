@@ -404,7 +404,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         for (final doc in snapshot.docs) {
           final data = doc.data();
           final navigatorId = data['navigatorId'] as String? ?? doc.id;
-          print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']}');
+          print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']} posUpdatedAt=${data['positionUpdatedAt']}');
 
           final posUpdatedAt = data['positionUpdatedAt'];
           DateTime? posTime;
@@ -1200,11 +1200,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildLegendItem('בג"ג', Colors.green),
-                _buildLegendItem('קרוב למפקד', Colors.orange),
-                _buildLegendItem('רחוק', Colors.red),
-                _buildLegendItem('לא מחובר', Colors.grey),
-                _buildLegendItem('אין GPS', Colors.black),
+                _buildLegendItem('פעיל / עד 2 דק׳', Colors.green),
+                _buildLegendItem('GPS חליפי', Colors.yellow[700]!),
+                _buildLegendItem('2-10 דק׳ מאות אחרון', Colors.orange),
+                _buildLegendItem('מעל 10 דק׳', Colors.grey),
               ],
             ),
           ),
@@ -1266,29 +1265,32 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         );
                       }
 
-                      // חישוב staleness — ירוק/כתום/אפור
+                      // חישוב צבע לפי מקרא: ירוק=פעיל/עד 2 דק׳, צהוב=GPS חליפי, כתום=2-10 דק׳, אפור=מעל 10 דק׳
                       Color color;
                       double opacity = _navigatorsOpacity;
-                      if (status.isConnected) {
-                        // מחובר עכשיו — ירוק
-                        color = _getConnectivityColor(status);
+
+                      final posTime = status.positionUpdatedAt;
+                      final elapsed = posTime != null
+                          ? DateTime.now().difference(posTime)
+                          : null;
+
+                      if (elapsed == null) {
+                        // אין מידע על זמן — אפור
+                        color = Colors.grey;
+                        opacity = _navigatorsOpacity * 0.6;
+                      } else if (elapsed.inMinutes >= 10) {
+                        // מעל 10 דקות מאות אחרון — אפור
+                        color = Colors.grey;
+                        opacity = _navigatorsOpacity * 0.6;
+                      } else if (elapsed.inMinutes >= 2) {
+                        // 2-10 דקות מאות אחרון — כתום
+                        color = Colors.orange;
+                      } else if (status.positionSource == 'cellTower') {
+                        // פעיל אבל GPS חליפי (אנטנות) — צהוב
+                        color = Colors.yellow[700]!;
                       } else {
-                        // לא מחובר — staleness לפי positionUpdatedAt
-                        final posTime = status.positionUpdatedAt;
-                        if (posTime != null) {
-                          final elapsed = DateTime.now().difference(posTime);
-                          if (elapsed.inMinutes >= 10) {
-                            color = Colors.grey;
-                            opacity = _navigatorsOpacity * 0.6;
-                          } else if (elapsed.inMinutes >= 2) {
-                            color = Colors.orange;
-                          } else {
-                            color = Colors.green; // עדיין בחלון 2 דקות
-                          }
-                        } else {
-                          color = Colors.grey; // אין מידע על זמן — אפור
-                          opacity = _navigatorsOpacity * 0.6;
-                        }
+                        // פעיל / עד 2 דקות מאות אחרון — ירוק
+                        color = Colors.green;
                       }
 
                       return Marker(

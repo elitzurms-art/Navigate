@@ -193,6 +193,17 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             final hasAlert = alertedNavigators.contains(navigatorId);
             final data = _navigatorData[navigatorId]!;
 
+            // מנווט שסיים — לא לדרוס סטטוס finished
+            if (data.personalStatus == NavigatorPersonalStatus.finished) {
+              data.hasActiveAlert = hasAlert;
+              // עדכון דקירות בלבד
+              final localPunches = punchMap[navigatorId] ?? [];
+              if (localPunches.isNotEmpty) {
+                data.punches = localPunches;
+              }
+              continue;
+            }
+
             NavigatorPersonalStatus status;
             List<TrackPoint> points = [];
 
@@ -245,6 +256,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               final last = points.last;
               data.currentPosition = LatLng(last.coordinate.lat, last.coordinate.lng);
               data.lastUpdate = last.timestamp;
+              data.isGpsPlusFix = last.positionSource == 'cellTower';
             }
 
             // עדכון דקירות רק אם יש נתונים מקומיים (לא לדרוס Firestore data בריק)
@@ -454,6 +466,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               final last = liveData.trackPoints.last;
               liveData.currentPosition = LatLng(last.coordinate.lat, last.coordinate.lng);
               liveData.lastUpdate = last.timestamp;
+              liveData.isGpsPlusFix = last.positionSource == 'cellTower';
             }
           } catch (e) {
             print('DEBUG NavigationManagement: parse trackPoints error: $e');
@@ -902,6 +915,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   children: [
                     _mapLegendItem('ממתין', Colors.grey),
                     _mapLegendItem('פעיל', Colors.green),
+                    _mapLegendItem('GPS Plus', Colors.yellow.shade700),
                     _mapLegendItem('סיים', Colors.blue),
                     _mapLegendItem('ללא קליטה', Colors.orange),
                     _mapLegendItem('התרעה', Colors.red),
@@ -1368,12 +1382,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (data.currentPosition == null) continue;
 
-      // === Staleness check — ירוק/כתום/אפור ===
-      final lastUpdate = data.lastUpdate;
+      // === צבע מרקר לפי סטטוס וזמן ===
       Color markerColor;
       double markerOpacity = 1.0;
-      if (lastUpdate != null) {
-        final elapsed = DateTime.now().difference(lastUpdate);
+      final bool isFinished = data.personalStatus == NavigatorPersonalStatus.finished;
+
+      if (isFinished) {
+        // מנווט שסיים — תמיד כחול, אף פעם לא נעלם
+        markerColor = Colors.blue;
+      } else {
+        // מנווט פעיל — staleness משפיע על צבע בלבד
+        final lastUpdate = data.lastUpdate;
+        final elapsed = lastUpdate != null
+            ? DateTime.now().difference(lastUpdate)
+            : Duration.zero;
+
         if (elapsed.inMinutes >= 10) {
           markerColor = Colors.grey;
           markerOpacity = 0.6;
@@ -1382,8 +1405,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         } else {
           markerColor = _getNavigatorStatusColor(data);
         }
-      } else {
-        markerColor = _getNavigatorStatusColor(data);
       }
 
       final markerChild = Column(
@@ -1430,7 +1451,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (data.hasActiveAlert) return Colors.red;
     switch (data.personalStatus) {
       case NavigatorPersonalStatus.active:
-        return Colors.green;
+        return data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green;
       case NavigatorPersonalStatus.finished:
         return Colors.blue;
       case NavigatorPersonalStatus.noReception:
@@ -2037,6 +2058,7 @@ class NavigatorLiveData {
   final String navigatorId;
   NavigatorPersonalStatus personalStatus;
   bool hasActiveAlert;
+  bool isGpsPlusFix;
   LatLng? currentPosition;
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
@@ -2046,6 +2068,7 @@ class NavigatorLiveData {
     required this.navigatorId,
     required this.personalStatus,
     this.hasActiveAlert = false,
+    this.isGpsPlusFix = false,
     this.currentPosition,
     required this.trackPoints,
     required this.punches,
