@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdf/pdf.dart';
+import '../../../core/utils/file_export_helper.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -53,7 +54,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   bool _showNZ = true;
   double _nzOpacity = 1.0;
 
-  bool _showNB = false;
+  bool _showNB = true;
   double _nbOpacity = 0.8;
 
   bool _showGG = true;
@@ -63,7 +64,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   double _baOpacity = 0.7;
 
   // סינון נקודות ציון
-  bool _showDistributedOnly = false;
+  bool _showDistributedOnly = true;
 
   Set<String> get _distributedCheckpointIds {
     final ids = <String>{};
@@ -206,12 +207,12 @@ class _DataExportScreenState extends State<DataExportScreen> {
       // בחירת מיקום שמירה
       final fileName = 'טבלת_צירים_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור טבלת צירים',
         fileName: fileName,
+        bytes: fileBytes,
         type: FileType.custom,
         allowedExtensions: ['csv'],
-        bytes: fileBytes,
       );
 
       if (result != null) {
@@ -282,12 +283,12 @@ class _DataExportScreenState extends State<DataExportScreen> {
       // שמירה
       final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור שכבת נ.צ.',
         fileName: fileName,
+        bytes: fileBytes,
         type: FileType.custom,
         allowedExtensions: ['csv'],
-        bytes: fileBytes,
       );
 
       if (result != null) {
@@ -616,6 +617,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
+  late LatLng _initialCenter;
+  late double _initialZoom;
+
   @override
   void initState() {
     super.initState();
@@ -629,27 +633,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     _baOpacity = widget.initialBaOpacity;
     _showDistributedOnly = widget.initialShowDistributedOnly;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _fitBounds();
-    });
-  }
-
-  void _fitBounds() {
     final mapParams = _calculateMapCenterAndZoom();
-    if (mapParams != null) {
-      try {
-        _mapController.move(mapParams.center, mapParams.zoom);
-      } catch (_) {
-        // Map controller might not be ready yet
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) {
-            try {
-              _mapController.move(mapParams.center, mapParams.zoom);
-            } catch (_) {}
-          }
-        });
-      }
-    }
+    _initialCenter = mapParams?.center ?? const LatLng(31.5, 34.75);
+    _initialZoom = mapParams?.zoom ?? 12.0;
   }
 
   Set<String> get _distributedCheckpointIds {
@@ -780,8 +766,8 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
       mapController: _mapController,
       showTypeSelector: false,
       options: MapOptions(
-        initialCenter: const LatLng(31.5, 34.75),
-        initialZoom: 12,
+        initialCenter: _initialCenter,
+        initialZoom: _initialZoom,
         onTap: (tapPosition, point) {
           if (_measureMode) {
             setState(() => _measurePoints.add(point));
@@ -1049,13 +1035,13 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                 ),
                 pw.SizedBox(height: 12),
                 pw.Directionality(
-                  textDirection: pw.TextDirection.ltr,
+                  textDirection: pw.TextDirection.rtl,
                   child: pw.Table(
                     border: pw.TableBorder.all(color: PdfColors.grey400),
                     columnWidths: {
-                      0: const pw.FixedColumnWidth(40),
+                      0: const pw.FlexColumnWidth(3),
                       1: const pw.FlexColumnWidth(2),
-                      2: const pw.FlexColumnWidth(3),
+                      2: const pw.FixedColumnWidth(40),
                     },
                     children: [
                       pw.TableRow(
@@ -1063,7 +1049,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                         children: [
                           pw.Padding(
                             padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text('#', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+                            child: pw.Text('UTM', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
                           ),
                           pw.Padding(
                             padding: const pw.EdgeInsets.all(4),
@@ -1071,7 +1057,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                           ),
                           pw.Padding(
                             padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text('UTM', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+                            child: pw.Text('#', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
                           ),
                         ],
                       ),
@@ -1085,7 +1071,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                           children: [
                             pw.Padding(
                               padding: const pw.EdgeInsets.all(4),
-                              child: pw.Text('${cp.sequenceNumber}', style: const pw.TextStyle(fontSize: 9)),
+                              child: pw.Text(utm, style: const pw.TextStyle(fontSize: 9)),
                             ),
                             pw.Padding(
                               padding: const pw.EdgeInsets.all(4),
@@ -1093,7 +1079,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                             ),
                             pw.Padding(
                               padding: const pw.EdgeInsets.all(4),
-                              child: pw.Text(utm, style: const pw.TextStyle(fontSize: 9)),
+                              child: pw.Text('${cp.sequenceNumber}', style: const pw.TextStyle(fontSize: 9)),
                             ),
                           ],
                         );
@@ -1118,12 +1104,12 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
       // Save
       final pdfBytes = Uint8List.fromList(await pdf.save());
       final fileName = 'map_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור מפה',
         fileName: fileName,
+        bytes: pdfBytes,
         type: FileType.custom,
         allowedExtensions: ['pdf'],
-        bytes: pdfBytes,
       );
 
       if (result != null) {

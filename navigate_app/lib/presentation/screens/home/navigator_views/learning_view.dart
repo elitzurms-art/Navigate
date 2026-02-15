@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../../../core/utils/file_export_helper.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:pdf/pdf.dart';
@@ -1283,12 +1284,12 @@ class _LearningViewState extends State<LearningView>
     try {
       final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode('\uFEFF$csvData'));
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור סיפור דרך CSV',
         fileName: fileName,
+        bytes: fileBytes,
         type: FileType.custom,
         allowedExtensions: ['csv'],
-        bytes: fileBytes,
       );
 
       if (result != null) {
@@ -1444,12 +1445,12 @@ class _LearningViewState extends State<LearningView>
 
       final pdfBytes = Uint8List.fromList(await pdf.save());
       final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור סיפור דרך PDF',
         fileName: fileName,
+        bytes: pdfBytes,
         type: FileType.custom,
         allowedExtensions: ['pdf'],
-        bytes: pdfBytes,
       );
 
       if (result != null) {

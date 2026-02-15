@@ -60,6 +60,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   bool _hasLocationService = false;
   int _batteryLevel = 0;
   double _gpsAccuracy = -1;
+  LatLng? _currentPosition;
   bool _isCheckingSystem = false;
 
   // הרשאות מכשיר (לטאב הרשאות)
@@ -144,9 +145,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
 
-      // בדיקת דיוק GPS
+      // בדיקת דיוק GPS + מיקום נוכחי
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+        _currentPosition = await _gpsService.getCurrentPosition();
       }
 
       // בדיקת סוללה אמיתית
@@ -183,6 +185,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+        _currentPosition = await _gpsService.getCurrentPosition();
       }
 
       try {
@@ -215,6 +218,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'hasGPS': _hasGpsPermission && _hasLocationService,
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
+        'latitude': _currentPosition?.latitude,
+        'longitude': _currentPosition?.longitude,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -524,7 +529,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           tabs: const [
             Tab(icon: Icon(Icons.people), text: 'מנווטים'),
             Tab(icon: Icon(Icons.battery_charging_full), text: 'אנרגיה'),
-            Tab(icon: Icon(Icons.signal_cellular_alt), text: 'קליטה'),
+            Tab(icon: Icon(Icons.signal_cellular_alt), text: 'צפיה'),
             Tab(icon: Icon(Icons.settings), text: 'מערכת'),
             Tab(icon: Icon(Icons.cloud_download), text: 'נתונים'),
             Tab(icon: Icon(Icons.security), text: 'הרשאות'),

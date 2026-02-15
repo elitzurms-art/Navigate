@@ -913,8 +913,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     return Marker(
                       point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                       width: 40,
-                      height: 40,
+                      height: 46,
                       child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.place,

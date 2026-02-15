@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import '../../../core/utils/file_export_helper.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/checkpoint_punch.dart';
@@ -225,12 +226,12 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
       // שמירה
       final fileBytes = Uint8List.fromList(utf8.encode(gpxContent));
       final fileName = 'GPX_${widget.navigation.name}_$_selectedNavigatorId.gpx';
-      final result = await FilePicker.platform.saveFile(
+      final result = await saveFileWithBytes(
         dialogTitle: 'שמור GPX',
         fileName: fileName,
+        bytes: fileBytes,
         type: FileType.custom,
         allowedExtensions: ['gpx'],
-        bytes: fileBytes,
       );
 
       if (result != null) {

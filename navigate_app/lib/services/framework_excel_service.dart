@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
+import '../core/utils/file_export_helper.dart';
 import '../domain/entities/navigation_tree.dart';
 import '../domain/entities/unit.dart';
 import '../domain/entities/user.dart' as app_user;
@@ -83,12 +84,12 @@ class FrameworkExcelService {
     final defaultFileName = '${unit.name}_$dateStr.xlsx';
 
     final fileBytes = Uint8List.fromList(bytes);
-    final savePath = await FilePicker.platform.saveFile(
+    final savePath = await saveFileWithBytes(
       dialogTitle: 'שמירת קובץ יחידה',
       fileName: defaultFileName,
+      bytes: fileBytes,
       type: FileType.custom,
       allowedExtensions: ['xlsx'],
-      bytes: fileBytes,
     );
 
     if (savePath == null) return null; // User cancelled
