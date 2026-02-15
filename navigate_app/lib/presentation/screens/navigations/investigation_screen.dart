@@ -912,6 +912,19 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   List<Widget> _buildAllNavigatorsRouteLayers() {
     final layers = <Widget>[];
 
+    // Heatmap layer
+    if (_showHeatmap) {
+      final heatTracks = <String, List<TrackPoint>>{};
+      for (final entry in _navigatorDataMap.entries) {
+        if (entry.value.trackPoints.isNotEmpty) {
+          heatTracks[entry.key] = entry.value.trackPoints;
+        }
+      }
+      if (heatTracks.isNotEmpty) {
+        layers.add(NavigatorHeatmapLayer(navigatorTracks: heatTracks));
+      }
+    }
+
     for (final entry in _navigatorDataMap.entries) {
       final data = entry.value;
 
@@ -1005,6 +1018,18 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             id: 'punches', label: 'דקירות', color: Colors.green,
             visible: _showPunches, onVisibilityChanged: (v) => setState(() => _showPunches = v),
             opacity: _punchesOpacity, onOpacityChanged: (v) => setState(() => _punchesOpacity = v),
+          ),
+        if (!_allNavigatorsMode)
+          MapLayerConfig(
+            id: 'deviations', label: 'סטיות', color: Colors.red,
+            visible: _showDeviations, onVisibilityChanged: (v) => setState(() => _showDeviations = v),
+            opacity: 1.0, onOpacityChanged: (_) {},
+          ),
+        if (_allNavigatorsMode)
+          MapLayerConfig(
+            id: 'heatmap', label: 'מפת חום', color: Colors.orange,
+            visible: _showHeatmap, onVisibilityChanged: (v) => setState(() => _showHeatmap = v),
+            opacity: 1.0, onOpacityChanged: (_) {},
           ),
       ],
     );
