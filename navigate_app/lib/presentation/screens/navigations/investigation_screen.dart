@@ -696,37 +696,90 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   // ===========================================================================
 
   Widget _buildMapTab() {
-    return Stack(
+    // TrackPoints for playback
+    final playbackPoints = !_allNavigatorsMode &&
+            _selectedNavigatorId != null &&
+            _navigatorDataMap.containsKey(_selectedNavigatorId!)
+        ? _navigatorDataMap[_selectedNavigatorId!]!.trackPoints
+        : <TrackPoint>[];
+
+    return Column(
       children: [
-        MapWithTypeSelector(
-          showTypeSelector: false,
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: const LatLng(32.0853, 34.7818),
-            initialZoom: 13.0,
-            onTap: (tapPosition, point) {
-              if (_measureMode) {
-                setState(() => _measurePoints.add(point));
-              }
-            },
+        Expanded(
+          child: Stack(
+            children: [
+              MapCaptureWrapper(
+                captureKey: _mapCaptureKey,
+                child: MapWithTypeSelector(
+                  showTypeSelector: false,
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: const LatLng(32.0853, 34.7818),
+                    initialZoom: 13.0,
+                    onTap: (tapPosition, point) {
+                      if (_measureMode) {
+                        setState(() => _measurePoints.add(point));
+                      }
+                    },
+                  ),
+                  layers: [
+                    // Boundary
+                    ..._buildBoundaryLayers(),
+                    // Safety points
+                    ..._buildSafetyLayers(),
+                    // Routes
+                    if (_allNavigatorsMode)
+                      ..._buildAllNavigatorsRouteLayers()
+                    else
+                      ..._buildSingleNavigatorRouteLayers(),
+                    // Checkpoints
+                    if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
+                    // Measure layers
+                    ...MapControls.buildMeasureLayers(_measurePoints),
+                  ],
+                ),
+              ),
+              _buildMapControls(),
+              // Heatmap legend
+              if (_allNavigatorsMode && _showHeatmap)
+                const Positioned(
+                  top: 8,
+                  right: 8,
+                  child: HeatmapLegend(),
+                ),
+            ],
           ),
-          layers: [
-            // Boundary
-            ..._buildBoundaryLayers(),
-            // Safety points
-            ..._buildSafetyLayers(),
-            // Routes
-            if (_allNavigatorsMode)
-              ..._buildAllNavigatorsRouteLayers()
-            else
-              ..._buildSingleNavigatorRouteLayers(),
-            // Checkpoints
-            if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
-            // Measure layers
-            ...MapControls.buildMeasureLayers(_measurePoints),
-          ],
         ),
-        _buildMapControls(),
+        // Route playback
+        if (_showPlayback && playbackPoints.length >= 2)
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: RoutePlaybackWidget(
+              trackPoints: playbackPoints,
+              onPositionChanged: (pos) {
+                _mapController.move(pos, _mapController.camera.zoom);
+              },
+            ),
+          ),
+        // Playback toggle bar
+        if (!_allNavigatorsMode && playbackPoints.length >= 2)
+          Container(
+            color: Colors.grey[100],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton.icon(
+                  onPressed: () => setState(() => _showPlayback = !_showPlayback),
+                  icon: Icon(
+                    _showPlayback ? Icons.stop : Icons.play_arrow,
+                    size: 18,
+                  ),
+                  label: Text(_showPlayback ? 'סגור נגן' : 'נגן מסלול',
+                      style: const TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
