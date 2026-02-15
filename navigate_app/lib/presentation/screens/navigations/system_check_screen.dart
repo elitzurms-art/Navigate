@@ -3,12 +3,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/user.dart' as domain_user;
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../services/navigation_data_loader.dart';
 import '../../../services/gps_service.dart';
@@ -92,6 +94,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   Map<String, PermissionStatus> _commanderPermissions = {};
   bool _isLoadingPermissions = true;
 
+  // Firestore listener — סטטוס מנווטים בזמן אמת (למפקד)
+  StreamSubscription<QuerySnapshot>? _systemStatusListener;
+
+  // טיימר בדיקה מחזורית (למנווט)
+  Timer? _navigatorCheckTimer;
+
   @override
   void initState() {
     super.initState();
@@ -102,6 +110,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     if (widget.isCommander) {
       _initializeNavigatorStatuses();
       _loadNavigatorUsers();
+      _startSystemStatusListener();
       _initDataLoader();
       _loadCommanderPermissions();
     } else {
@@ -147,9 +156,77 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       await _checkDevicePermissions();
 
       setState(() => _isCheckingSystem = false);
+
+      // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
+      _reportStatusToFirestore();
+
+      // הפעלת בדיקה מחזורית כל 15 שניות
+      _navigatorCheckTimer ??= Timer.periodic(
+        const Duration(seconds: 15),
+        (_) => _checkAndReportStatus(),
+      );
     } catch (e) {
       setState(() => _isCheckingSystem = false);
     }
+  }
+
+  /// בדיקה מחזורית ודיווח (מנווט)
+  Future<void> _checkAndReportStatus() async {
+    if (!mounted) return;
+    try {
+      _hasLocationService = await _gpsService.isGpsAvailable();
+      _hasGpsPermission = await _gpsService.checkPermissions();
+
+      if (_hasGpsPermission && _hasLocationService) {
+        _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+      }
+
+      try {
+        _batteryLevel = await _battery.batteryLevel;
+      } catch (_) {
+        _batteryLevel = -1;
+      }
+
+      if (mounted) setState(() {});
+      _reportStatusToFirestore();
+    } catch (_) {}
+  }
+
+  /// כתיבת סטטוס בדיקת מערכות ל-Firestore (מנווט → מפקד)
+  Future<void> _reportStatusToFirestore() async {
+    final uid = widget.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final docRef = FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('system_status')
+          .doc(uid);
+
+      await docRef.set({
+        'navigatorId': uid,
+        'isConnected': true,
+        'batteryLevel': _batteryLevel,
+        'hasGPS': _hasGpsPermission && _hasLocationService,
+        'gpsAccuracy': _gpsAccuracy,
+        'receptionLevel': _estimateReceptionLevel(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      print('DEBUG SystemCheck: failed to report status: $e');
+    }
+  }
+
+  /// הערכת רמת קליטה לפי דיוק GPS
+  int _estimateReceptionLevel() {
+    if (!_hasGpsPermission || !_hasLocationService) return 0;
+    if (_gpsAccuracy < 0) return 0;
+    if (_gpsAccuracy <= 10) return 4; // מצוין
+    if (_gpsAccuracy <= 30) return 3; // טוב
+    if (_gpsAccuracy <= 50) return 2; // בינוני
+    if (_gpsAccuracy <= 100) return 1; // חלש
+    return 0;
   }
 
   Future<void> _checkDevicePermissions() async {
@@ -177,6 +254,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _progressSubscription?.cancel();
     _dataLoader?.dispose();
     _gpsService.dispose();
+    _systemStatusListener?.cancel();
+    _navigatorCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -240,6 +319,38 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       } catch (_) {}
     }
     if (mounted) setState(() {});
+  }
+
+  /// האזנה בזמן אמת לסטטוס מנווטים מ-Firestore (למפקד)
+  void _startSystemStatusListener() {
+    _systemStatusListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('system_status')
+        .snapshots()
+        .listen(
+      (snapshot) {
+        if (!mounted) return;
+        setState(() {
+          for (final doc in snapshot.docs) {
+            final data = doc.data();
+            final navigatorId = data['navigatorId'] as String? ?? doc.id;
+
+            _navigatorStatuses[navigatorId] = NavigatorStatus(
+              isConnected: data['isConnected'] as bool? ?? false,
+              batteryLevel: data['batteryLevel'] as int? ?? 0,
+              hasGPS: data['hasGPS'] as bool? ?? false,
+              receptionLevel: data['receptionLevel'] as int? ?? 0,
+              latitude: (data['latitude'] as num?)?.toDouble(),
+              longitude: (data['longitude'] as num?)?.toDouble(),
+            );
+          }
+        });
+      },
+      onError: (e) {
+        print('DEBUG SystemCheck: system_status listener error: $e');
+      },
+    );
   }
 
   void _initDataLoader() {

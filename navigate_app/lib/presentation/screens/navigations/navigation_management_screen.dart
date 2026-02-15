@@ -166,23 +166,38 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         alertedNavigators.add(alert.navigatorId);
       }
 
-      // מפה של navigatorId → punches
+      // מפה של navigatorId → punches (מקומי)
       final punchMap = <String, List<CheckpointPunch>>{};
       for (final punch in punches) {
         punchMap.putIfAbsent(punch.navigatorId, () => []).add(punch);
       }
+
+      // timeout — מנווט שהיה active נשאר active עד 5× מרווח GPS
+      final timeout = Duration(
+        seconds: widget.navigation.gpsUpdateIntervalSeconds * 5,
+      );
 
       if (mounted) {
         setState(() {
           for (final navigatorId in _navigatorData.keys) {
             final track = trackMap[navigatorId];
             final hasAlert = alertedNavigators.contains(navigatorId);
+            final data = _navigatorData[navigatorId]!;
 
             NavigatorPersonalStatus status;
             List<TrackPoint> points = [];
 
             if (track == null) {
-              status = NavigatorPersonalStatus.waiting;
+              // אין track מקומי — בדוק אם Firestore listener כבר סימן active
+              if (data.personalStatus == NavigatorPersonalStatus.active &&
+                  data.lastUpdate != null &&
+                  data.timeSinceLastUpdate < timeout) {
+                // שמור סטטוס active + נקודות Firestore — לא לדרוס
+                status = NavigatorPersonalStatus.active;
+                points = data.trackPoints;
+              } else {
+                status = NavigatorPersonalStatus.waiting;
+              }
             } else {
               status = NavigatorPersonalStatus.deriveFromTrack(
                 hasTrack: true,
@@ -199,17 +214,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               } catch (_) {}
             }
 
-            final data = _navigatorData[navigatorId]!;
             data.personalStatus = status;
             data.hasActiveAlert = hasAlert;
-            data.trackPoints = points;
-            data.punches = punchMap[navigatorId] ?? [];
 
-            // עדכון מיקום נוכחי מנקודה אחרונה
+            // עדכון נקודות רק אם יש נתונים חדשים (לא לדרוס Firestore data בריק)
             if (points.isNotEmpty) {
+              data.trackPoints = points;
               final last = points.last;
               data.currentPosition = LatLng(last.coordinate.lat, last.coordinate.lng);
               data.lastUpdate = last.timestamp;
+            }
+
+            // עדכון דקירות רק אם יש נתונים מקומיים (לא לדרוס Firestore data בריק)
+            final localPunches = punchMap[navigatorId] ?? [];
+            if (localPunches.isNotEmpty) {
+              data.punches = localPunches;
             }
           }
         });
