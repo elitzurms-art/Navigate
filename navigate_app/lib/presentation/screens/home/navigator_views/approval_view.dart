@@ -1,9 +1,31 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
+import '../../../../domain/entities/nav_layer.dart' as nav;
+import '../../../../domain/entities/checkpoint_punch.dart';
+import '../../../../domain/entities/coordinate.dart';
 import '../../../../domain/entities/user.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../data/repositories/navigation_track_repository.dart';
+import '../../../../data/repositories/checkpoint_punch_repository.dart';
+import '../../../../services/gps_tracking_service.dart';
+import '../../../../services/route_export_service.dart';
+import '../../../widgets/map_with_selector.dart';
+
+/// צבעי מסלול
+const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
+const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
+const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
+const _kEndColor = Color(0xFFF44336); // אדום — S (סיום)
+const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
+const _kBoundaryColor = Colors.black;
+const _kSafetyColor = Color(0xFFFF9800); // כתום
 
 /// תצוגת אישרור למנווט — מפה עם מסלולים מתוכננים ובפועל
-class ApprovalView extends StatelessWidget {
+class ApprovalView extends StatefulWidget {
   final domain.Navigation navigation;
   final User currentUser;
 
@@ -14,85 +36,371 @@ class ApprovalView extends StatelessWidget {
   });
 
   @override
+  State<ApprovalView> createState() => _ApprovalViewState();
+}
+
+class _ApprovalViewState extends State<ApprovalView> {
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
+  final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
+  final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
+  final RouteExportService _exportService = RouteExportService();
+  final MapController _mapController = MapController();
+
+  bool _isLoading = true;
+
+  List<nav.NavCheckpoint> _checkpoints = [];
+  List<nav.NavSafetyPoint> _safetyPoints = [];
+  List<nav.NavBoundary> _boundaries = [];
+  List<LatLng> _plannedRoute = [];
+  List<LatLng> _actualRoute = [];
+  List<TrackPoint> _trackPoints = [];
+  List<CheckpointPunch> _punches = [];
+
+  bool _showPlanned = true;
+  bool _showActual = true;
+  bool _showCheckpoints = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    try {
+      final navId = widget.navigation.id;
+      final userId = widget.currentUser.uid;
+      final route = widget.navigation.routes[userId];
+
+      // שכבות ניווט
+      _checkpoints =
+          await _navLayerRepo.getCheckpointsByNavigation(navId);
+      _safetyPoints =
+          await _navLayerRepo.getSafetyPointsByNavigation(navId);
+      _boundaries =
+          await _navLayerRepo.getBoundariesByNavigation(navId);
+
+      // סינון נקודות לציר הזה
+      if (route != null && route.checkpointIds.isNotEmpty) {
+        final routeCps = <nav.NavCheckpoint>[];
+        for (final cpId in route.checkpointIds) {
+          final matches = _checkpoints
+              .where((c) => c.id == cpId || c.sourceId == cpId)
+              .toList();
+          if (matches.isNotEmpty && !routeCps.contains(matches.first)) {
+            routeCps.add(matches.first);
+          }
+        }
+        if (routeCps.isNotEmpty) _checkpoints = routeCps;
+      }
+
+      // ציר מתוכנן
+      if (route != null && route.plannedPath.isNotEmpty) {
+        _plannedRoute =
+            route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
+      } else {
+        _plannedRoute = _checkpoints
+            .where((c) => !c.isPolygon && c.coordinates != null)
+            .map((c) => LatLng(c.coordinates!.lat, c.coordinates!.lng))
+            .toList();
+      }
+
+      // מסלול בפועל
+      final track =
+          await _trackRepo.getByNavigatorAndNavigation(userId, navId);
+      if (track != null && track.trackPointsJson.isNotEmpty) {
+        try {
+          _trackPoints = (jsonDecode(track.trackPointsJson) as List)
+              .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
+              .toList();
+          _actualRoute = _trackPoints
+              .map((p) => LatLng(p.coordinate.lat, p.coordinate.lng))
+              .toList();
+        } catch (_) {}
+      }
+
+      // דקירות
+      _punches = await _punchRepo.getByNavigator(userId);
+      _punches =
+          _punches.where((p) => p.navigationId == navId).toList();
+
+      _centerMap();
+    } catch (e) {
+      print('DEBUG ApprovalView: Error loading data: $e');
+    }
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  void _centerMap() {
+    if (_boundaries.isNotEmpty) {
+      final boundary = _boundaries.first;
+      if (boundary.coordinates.isNotEmpty) {
+        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
+        _mapController.move(LatLng(center.lat, center.lng), 13.0);
+        return;
+      }
+    }
+    final pointCps = _checkpoints
+        .where((c) => !c.isPolygon && c.coordinates != null)
+        .toList();
+    if (pointCps.isNotEmpty) {
+      final lat = pointCps
+              .map((c) => c.coordinates!.lat)
+              .reduce((a, b) => a + b) /
+          pointCps.length;
+      final lng = pointCps
+              .map((c) => c.coordinates!.lng)
+              .reduce((a, b) => a + b) /
+          pointCps.length;
+      _mapController.move(LatLng(lat, lng), 14.0);
+    }
+  }
+
+  void _onExport() {
+    final route = widget.navigation.routes[widget.currentUser.uid];
+    _exportService.showExportDialog(context,
+        data: ExportData(
+          navigationName: widget.navigation.name,
+          navigatorName: widget.currentUser.fullName,
+          trackPoints: _trackPoints,
+          checkpoints: _checkpoints,
+          punches: _punches,
+          plannedPath: route?.plannedPath,
+        ));
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final route = navigation.routes[currentUser.uid];
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'אישרור ניווט',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            navigation.name,
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 24),
+    final route = widget.navigation.routes[widget.currentUser.uid];
+    final actualCoords = _actualRoute
+        .map((ll) => Coordinate(lat: ll.latitude, lng: ll.longitude, utm: ''))
+        .toList();
+    final actualDistKm = GeometryUtils.calculatePathLengthKm(actualCoords);
+    final plannedDistKm = route?.routeLengthKm ?? 0.0;
 
-          // Placeholder למפה
-          Container(
-            height: 250,
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.map, size: 48, color: Colors.grey[400]),
-                  const SizedBox(height: 8),
-                  Text(
-                    'מפת מסלול — בפיתוח',
-                    style: TextStyle(color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
+    final pointCps = _checkpoints
+        .where((c) => !c.isPolygon && c.coordinates != null)
+        .toList();
+    final center = pointCps.isNotEmpty
+        ? LatLng(
+            pointCps
+                    .map((c) => c.coordinates!.lat)
+                    .reduce((a, b) => a + b) /
+                pointCps.length,
+            pointCps
+                    .map((c) => c.coordinates!.lng)
+                    .reduce((a, b) => a + b) /
+                pointCps.length,
+          )
+        : const LatLng(32.0853, 34.7818);
 
-          // מקרא
-          Row(
+    return Column(
+      children: [
+        // סרגל סטטיסטיקות
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          color: Colors.grey[50],
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _legendItem(Colors.blue, 'מסלול מתוכנן'),
-              const SizedBox(width: 24),
-              _legendItem(Colors.green, 'מסלול בפועל'),
+              _statChip(Icons.route,
+                  '${plannedDistKm.toStringAsFixed(1)} ק"מ', 'מתוכנן'),
+              _statChip(Icons.timeline,
+                  '${actualDistKm.toStringAsFixed(1)} ק"מ', 'בפועל'),
+              _statChip(Icons.flag,
+                  '${_punches.where((p) => !p.isDeleted).length}/${_checkpoints.length}',
+                  'נ.צ.'),
+              IconButton(
+                icon: const Icon(Icons.file_download, size: 22),
+                tooltip: 'ייצוא',
+                onPressed: _onExport,
+              ),
             ],
           ),
-          const SizedBox(height: 24),
+        ),
 
-          // סטטיסטיקות
-          if (route != null) ...[
-            _statCard(context, 'נקודות בציר', '${route.checkpointIds.length}'),
-            _statCard(context, 'אורך מתוכנן', '${route.routeLengthKm.toStringAsFixed(2)} ק"מ'),
-            _statCard(context, 'סטטוס ציר', route.status),
-          ],
-
-          const SizedBox(height: 24),
-
-          // GPX export
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('ייצוא GPX — בפיתוח')),
-                );
-              },
-              icon: const Icon(Icons.download),
-              label: const Text('ייצוא GPX'),
+        // מפה
+        Expanded(
+          child: MapWithTypeSelector(
+            showTypeSelector: false,
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: center,
+              initialZoom: 14.0,
             ),
+            layers: [
+              // גבול גזרה
+              if (_boundaries.isNotEmpty)
+                PolygonLayer(
+                  polygons: _boundaries
+                      .where((b) => b.coordinates.isNotEmpty)
+                      .map((b) => Polygon(
+                            points: b.coordinates
+                                .map((c) => LatLng(c.lat, c.lng))
+                                .toList(),
+                            color: _kBoundaryColor.withOpacity(0.1),
+                            borderColor: _kBoundaryColor,
+                            borderStrokeWidth: 2.0,
+                            isFilled: true,
+                          ))
+                      .toList(),
+                ),
+
+              // ציר מתוכנן (אדום)
+              if (_showPlanned && _plannedRoute.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _plannedRoute,
+                      color: _kPlannedRouteColor,
+                      strokeWidth: 4.0,
+                    ),
+                  ],
+                ),
+
+              // מסלול בפועל (כחול)
+              if (_showActual && _actualRoute.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _actualRoute,
+                      color: _kActualRouteColor,
+                      strokeWidth: 3.0,
+                    ),
+                  ],
+                ),
+
+              // נ"ב
+              if (_safetyPoints.isNotEmpty)
+                MarkerLayer(
+                  markers: _safetyPoints
+                      .where((p) => p.coordinates != null)
+                      .map((p) => Marker(
+                            point: LatLng(
+                                p.coordinates!.lat, p.coordinates!.lng),
+                            width: 30,
+                            height: 30,
+                            child: const Icon(Icons.warning_amber,
+                                color: _kSafetyColor, size: 28),
+                          ))
+                      .toList(),
+                ),
+
+              // נקודות ציון
+              if (_showCheckpoints && pointCps.isNotEmpty)
+                MarkerLayer(
+                  markers: pointCps.map((cp) {
+                    Color bgColor;
+                    String letter;
+                    if (cp.type == 'start') {
+                      bgColor = _kStartColor;
+                      letter = 'H';
+                    } else if (cp.type == 'end') {
+                      bgColor = _kEndColor;
+                      letter = 'S';
+                    } else {
+                      bgColor = _kCheckpointColor;
+                      letter = 'B';
+                    }
+                    final label = '${cp.sequenceNumber}$letter';
+
+                    return Marker(
+                      point:
+                          LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                      width: 38,
+                      height: 38,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: bgColor,
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            label,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+              // דקירות
+              if (_punches.isNotEmpty)
+                MarkerLayer(
+                  markers: _punches.where((p) => !p.isDeleted).map((p) {
+                    Color color;
+                    IconData icon;
+                    if (p.isApproved) {
+                      color = Colors.green;
+                      icon = Icons.check_circle;
+                    } else if (p.isRejected) {
+                      color = Colors.red;
+                      icon = Icons.cancel;
+                    } else {
+                      color = Colors.orange;
+                      icon = Icons.flag;
+                    }
+                    return Marker(
+                      point: LatLng(
+                          p.punchLocation.lat, p.punchLocation.lng),
+                      width: 28,
+                      height: 28,
+                      child: Icon(icon, color: color, size: 26),
+                    );
+                  }).toList(),
+                ),
+            ],
           ),
-        ],
-      ),
+        ),
+
+        // מקרא
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          color: Colors.grey[100],
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
+              _legendItem(_kActualRouteColor, 'מסלול בפועל'),
+              _legendItem(_kStartColor, 'התחלה (H)'),
+              _legendItem(_kEndColor, 'סיום (S)'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statChip(IconData icon, String value, String label) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 20, color: Colors.grey[600]),
+        const SizedBox(height: 2),
+        Text(value,
+            style:
+                const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        Text(label,
+            style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+      ],
     );
   }
 
@@ -101,34 +409,13 @@ class ApprovalView extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 20,
-          height: 4,
-          color: color,
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 6),
-        Text(label, style: const TextStyle(fontSize: 13)),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 11)),
       ],
-    );
-  }
-
-  Widget _statCard(BuildContext context, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
     );
   }
 }

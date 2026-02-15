@@ -435,6 +435,13 @@ class SyncManager {
           return true; // מסומן כמטופל — הקורא ימחק מהתור
         }
 
+        // גרסה מקומית 1 (ברירת מחדל) = הקוד המקומי לא עוקב אחרי גרסאות.
+        // זה לא קונפליקט אמיתי — פשוט bump שקט לגרסה הבאה.
+        if (localVersion <= 1) {
+          localData['version'] = serverVersion + 1;
+          return false; // push עם גרסה מוגדלת ללא שגיאה
+        }
+
         print('SyncManager: CONFLICT detected on $collection/$documentId '
             '(local v$localVersion vs server v$serverVersion)');
 

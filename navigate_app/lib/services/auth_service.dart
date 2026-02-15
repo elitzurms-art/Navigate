@@ -71,7 +71,7 @@ class AuthService {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     );
-    await userRepo.saveUserLocally(devUser);
+    await userRepo.saveUserLocally(devUser, queueSync: false);
   }
 
   /// יצירת משתמשי ניסוי אם לא קיימים
@@ -134,6 +134,7 @@ class AuthService {
       final existing = await userRepo.getUser(user.uid);
       await userRepo.saveUserLocally(
         existing != null ? user.copyWith(createdAt: existing.createdAt) : user,
+        queueSync: false,
       );
     }
   }

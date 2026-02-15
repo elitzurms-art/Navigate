@@ -36,3 +36,6 @@ nul
 **/GoogleService-Info.plist
 **/firebase_options.dart
 **/*firebase-adminsdk*.json
+
+# Node
+**/node_modules/
