@@ -542,6 +542,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
 
+      // איפוס tracks — ניקוי endedAt למקרה של הפעלה מחדש
+      await _trackRepo.resetTracksForNavigation(widget.navigation.id);
+
       // עדכון UI — כל המנווטים לסטטוס "הסתיים"
       if (mounted) {
         setState(() {

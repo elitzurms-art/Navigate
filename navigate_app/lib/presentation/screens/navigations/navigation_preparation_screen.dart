@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/user.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../services/auth_service.dart';
 import 'create_navigation_screen.dart';
@@ -410,6 +411,9 @@ class _NavigationPreparationScreenState
     _showSpinner('מעביר למצב אימון...');
 
     try {
+      // איפוס tracks ישנים (במקרה שהניווט חזר מ-approval/review)
+      await NavigationTrackRepository().resetTracksForNavigation(_navigation.id);
+
       final updatedNavigation = _navigation.copyWith(
         status: 'waiting',
         updatedAt: DateTime.now(),

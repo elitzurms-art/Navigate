@@ -626,27 +626,31 @@ class _DataLoadingScreenState extends State<DataLoadingScreen>
 
   /// בר תחתון
   Widget _buildBottomBar() {
+    final isWaitingCommander = widget.navigation.status == 'waiting' && widget.isCommander;
+
     return BottomAppBar(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
-            // כפתור חזרה
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('חזור'),
+            // כפתור חזרה — מוסתר בסטטוס waiting למפקד
+            if (!isWaitingCommander) ...[
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('חזור'),
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            // כפתור המשך (רק אם הטעינה הושלמה)
+              const SizedBox(width: 12),
+            ],
+            // כפתור המשך/התחל (רק אם הטעינה הושלמה)
             Expanded(
-              flex: 2,
+              flex: isWaitingCommander ? 1 : 2,
               child: ElevatedButton.icon(
                 onPressed: _loadCompleted ? _navigateNext : null,
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('המשך לניווט'),
+                icon: Icon(isWaitingCommander ? Icons.play_arrow : Icons.arrow_forward),
+                label: Text(isWaitingCommander ? 'התחל ניווט' : 'המשך לניווט'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,

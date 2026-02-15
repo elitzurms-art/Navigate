@@ -106,6 +106,7 @@ class _ActiveViewState extends State<ActiveView> {
       final navPunches = punches.where((p) => p.navigationId == _nav.id).toList();
 
       NavigatorPersonalStatus status;
+      NavigationTrack? effectiveTrack = track;
       if (track == null) {
         status = NavigatorPersonalStatus.waiting;
       } else {
@@ -116,9 +117,21 @@ class _ActiveViewState extends State<ActiveView> {
         );
       }
 
+      // Safety net: אם הניווט פעיל/ממתין אבל ה-track המקומי מראה "סיים" —
+      // זהו track ישן מהפעלה קודמת. מוחקים ומאפסים.
+      final navStatus = _nav.status;
+      if (status == NavigatorPersonalStatus.finished &&
+          (navStatus == 'active' || navStatus == 'waiting')) {
+        if (effectiveTrack != null) {
+          await _trackRepo.deleteByNavigation(_nav.id);
+          effectiveTrack = null;
+        }
+        status = NavigatorPersonalStatus.waiting;
+      }
+
       if (mounted) {
         setState(() {
-          _track = track;
+          _track = effectiveTrack;
           _personalStatus = status;
           _punchCount = navPunches.length;
           _isLoading = false;

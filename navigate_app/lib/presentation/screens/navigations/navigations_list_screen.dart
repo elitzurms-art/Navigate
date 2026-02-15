@@ -829,6 +829,70 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     }
   }
 
+  Future<void> _goBackToPreparation(domain.Navigation navigation) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('החזרה להכנה'),
+        content: const Text('האם להחזיר את הניווט למצב "הכנה"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('החזר'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final updated = navigation.copyWith(
+      status: 'preparation',
+      updatedAt: DateTime.now(),
+    );
+    await _repository.update(updated);
+    _loadNavigations();
+  }
+
+  /// התחלת ניווט (status → active) ופתיחת מסך ניהול
+  Future<void> _startNavigationAndOpen(domain.Navigation navigation) async {
+    try {
+      await _resetNavigatorData(navigation.id);
+      final updated = navigation.copyWith(
+        status: 'active',
+        activeStartTime: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      await _repository.update(updated);
+
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => NavigationManagementScreen(navigation: updated),
+          ),
+        ).then((_) => _loadNavigations());
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('הניווט הופעל בהצלחה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   // ======== פתיחת מסכים ========
 
   /// פתיחת מסך מתאים לפי סטטוס הניווט
@@ -852,25 +916,29 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             onLoadingComplete: () {
               Navigator.pop(context);
 
-              Widget nextScreen;
               final isCmd = _currentUser != null && _currentUser!.hasCommanderPermissions;
-              switch (navigation.status) {
-                case 'waiting':
-                  nextScreen = isCmd
-                      ? NavigationManagementScreen(navigation: navigation)
-                      : WaitingScreen(navigation: navigation);
-                  break;
-                case 'active':
-                  nextScreen = NavigationManagementScreen(navigation: navigation);
-                  break;
-                default:
-                  nextScreen = WaitingScreen(navigation: navigation);
-              }
 
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => nextScreen),
-              ).then((_) => _loadNavigations());
+              if (navigation.status == 'waiting' && isCmd) {
+                // "התחל ניווט" — reset + status active + open management
+                _startNavigationAndOpen(navigation);
+              } else {
+                Widget nextScreen;
+                switch (navigation.status) {
+                  case 'waiting':
+                    nextScreen = WaitingScreen(navigation: navigation);
+                    break;
+                  case 'active':
+                    nextScreen = NavigationManagementScreen(navigation: navigation);
+                    break;
+                  default:
+                    nextScreen = WaitingScreen(navigation: navigation);
+                }
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => nextScreen),
+                ).then((_) => _loadNavigations());
+              }
             },
           ),
         ),
@@ -1237,7 +1305,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         break;
 
       case 'waiting':
-        // ממתין — מפקד יכול להתחיל את הניווט
+        // ממתין — מפקד יכול להתחיל, להחזיר להכנה, לערוך או למחוק
         if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
           items.add(const PopupMenuItem(
             value: 'start_navigation',
@@ -1246,6 +1314,37 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
                 Icon(Icons.play_arrow, color: Colors.green),
                 SizedBox(width: 8),
                 Text('התחל ניווט'),
+              ],
+            ),
+          ));
+          items.add(const PopupMenuItem(
+            value: 'back_to_preparation',
+            child: Row(
+              children: [
+                Icon(Icons.undo, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('החזר להכנה'),
+              ],
+            ),
+          ));
+          items.add(const PopupMenuItem(
+            value: 'edit',
+            child: Row(
+              children: [
+                Icon(Icons.edit, color: Colors.blue),
+                SizedBox(width: 8),
+                Text('הגדרות ניווט'),
+              ],
+            ),
+          ));
+          items.add(const PopupMenuDivider());
+          items.add(const PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(Icons.delete, color: Colors.red),
+                SizedBox(width: 8),
+                Text('מחק', style: TextStyle(color: Colors.red)),
               ],
             ),
           ));
@@ -1327,6 +1426,10 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
       case 'back_to_ready':
         _goBackToReady(navigation);
+        break;
+
+      case 'back_to_preparation':
+        _goBackToPreparation(navigation);
         break;
 
       case 'export_routes':

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart' hide Query;
 import 'package:uuid/uuid.dart';
 import '../datasources/local/app_database.dart';
@@ -107,6 +108,35 @@ class NavigationTrackRepository {
     await (_db.delete(_db.navigationTracks)
           ..where((t) => t.navigationId.equals(navigationId)))
         .go();
+  }
+
+  /// איפוס כל ה-tracks לניווט — endedAt=null, isActive=false
+  /// (לשימוש כשניווט חוזר ל-waiting/active אחרי סיום כללי)
+  Future<void> resetTracksForNavigation(String navigationId) async {
+    // איפוס מקומי ב-Drift
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.navigationId.equals(navigationId)))
+        .write(const NavigationTracksCompanion(
+      endedAt: Value(null),
+      isActive: Value(false),
+    ));
+
+    // איפוס ב-Firestore
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        await doc.reference.update({
+          'endedAt': null,
+          'isActive': false,
+        });
+      }
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
   }
 
   /// גזירת סטטוס אישי מרשומת track
