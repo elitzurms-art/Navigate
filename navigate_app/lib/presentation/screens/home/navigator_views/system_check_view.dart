@@ -169,18 +169,23 @@ class _SystemCheckViewState extends State<SystemCheckView> {
           .collection('system_status')
           .doc(uid);
 
-      await docRef.set({
+      final data = <String, dynamic>{
         'navigatorId': uid,
         'isConnected': _currentPosition != null,
         'batteryLevel': _batteryLevel,
         'hasGPS': _hasGpsPermission && _hasLocationService,
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
-        'latitude': _currentPosition?.latitude,
-        'longitude': _currentPosition?.longitude,
         'positionSource': _gpsService.lastPositionSource.name,
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      };
+      // רק מעדכן מיקום כשיש — לא דורס עם null
+      if (_currentPosition != null) {
+        data['latitude'] = _currentPosition!.latitude;
+        data['longitude'] = _currentPosition!.longitude;
+        data['positionUpdatedAt'] = FieldValue.serverTimestamp();
+      }
+      await docRef.set(data, SetOptions(merge: true));
     } catch (e) {
       print('DEBUG SystemCheckView: failed to report status: $e');
     }

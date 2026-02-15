@@ -1368,19 +1368,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (data.currentPosition == null) continue;
 
-      // === Staleness check ===
-      // >10 דקות מאז עדכון אחרון — הסמן נעלם
+      // === Staleness check — ירוק/כתום/אפור ===
       final lastUpdate = data.lastUpdate;
+      Color markerColor;
+      double markerOpacity = 1.0;
       if (lastUpdate != null) {
         final elapsed = DateTime.now().difference(lastUpdate);
-        if (elapsed.inMinutes >= 10) continue; // נעלם לאחר 10 דקות
+        if (elapsed.inMinutes >= 10) {
+          markerColor = Colors.grey;
+          markerOpacity = 0.6;
+        } else if (elapsed.inMinutes >= 2) {
+          markerColor = Colors.orange;
+        } else {
+          markerColor = _getNavigatorStatusColor(data);
+        }
+      } else {
+        markerColor = _getNavigatorStatusColor(data);
       }
-
-      // 2-10 דקות — סמן אפור עם שקיפות 0.6
-      final bool isStale = lastUpdate != null &&
-          DateTime.now().difference(lastUpdate).inMinutes >= 2;
-
-      final markerColor = isStale ? Colors.grey : _getNavigatorStatusColor(data);
 
       final markerChild = Column(
         children: [
@@ -1412,8 +1416,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           point: data.currentPosition!,
           width: 60,
           height: 60,
-          child: isStale
-              ? Opacity(opacity: 0.6, child: markerChild)
+          child: markerOpacity < 1.0
+              ? Opacity(opacity: markerOpacity, child: markerChild)
               : markerChild,
         ),
       );

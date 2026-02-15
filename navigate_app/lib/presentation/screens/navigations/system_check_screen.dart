@@ -352,6 +352,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             final data = doc.data();
             final navigatorId = data['navigatorId'] as String? ?? doc.id;
 
+            final posUpdatedAt = data['positionUpdatedAt'];
+            DateTime? posTime;
+            if (posUpdatedAt is Timestamp) {
+              posTime = posUpdatedAt.toDate();
+            } else if (posUpdatedAt is String) {
+              posTime = DateTime.tryParse(posUpdatedAt);
+            }
+
             _navigatorStatuses[navigatorId] = NavigatorStatus(
               isConnected: data['isConnected'] as bool? ?? false,
               batteryLevel: data['batteryLevel'] as int? ?? 0,
@@ -360,6 +368,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               latitude: (data['latitude'] as num?)?.toDouble(),
               longitude: (data['longitude'] as num?)?.toDouble(),
               positionSource: data['positionSource'] as String? ?? 'gps',
+              positionUpdatedAt: posTime,
             );
           }
         });
@@ -397,6 +406,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           final navigatorId = data['navigatorId'] as String? ?? doc.id;
           print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']}');
 
+          final posUpdatedAt = data['positionUpdatedAt'];
+          DateTime? posTime;
+          if (posUpdatedAt is Timestamp) {
+            posTime = posUpdatedAt.toDate();
+          } else if (posUpdatedAt is String) {
+            posTime = DateTime.tryParse(posUpdatedAt);
+          }
+
           _navigatorStatuses[navigatorId] = NavigatorStatus(
             isConnected: data['isConnected'] as bool? ?? false,
             batteryLevel: data['batteryLevel'] as int? ?? 0,
@@ -405,6 +422,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             latitude: (data['latitude'] as num?)?.toDouble(),
             longitude: (data['longitude'] as num?)?.toDouble(),
             positionSource: data['positionSource'] as String? ?? 'gps',
+            positionUpdatedAt: posTime,
           );
         }
       });
@@ -1238,7 +1256,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       final navigatorId = entry.key;
                       final status = entry.value;
 
-                      if (!status.isConnected || status.latitude == null) {
+                      // אין מיקום בכלל — לא מציג סמן
+                      if (status.latitude == null) {
                         return Marker(
                           point: const LatLng(0, 0),
                           width: 0,
@@ -1247,14 +1266,37 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         );
                       }
 
-                      final color = _getConnectivityColor(status);
+                      // חישוב staleness — ירוק/כתום/אפור
+                      Color color;
+                      double opacity = _navigatorsOpacity;
+                      if (status.isConnected) {
+                        // מחובר עכשיו — ירוק
+                        color = _getConnectivityColor(status);
+                      } else {
+                        // לא מחובר — staleness לפי positionUpdatedAt
+                        final posTime = status.positionUpdatedAt;
+                        if (posTime != null) {
+                          final elapsed = DateTime.now().difference(posTime);
+                          if (elapsed.inMinutes >= 10) {
+                            color = Colors.grey;
+                            opacity = _navigatorsOpacity * 0.6;
+                          } else if (elapsed.inMinutes >= 2) {
+                            color = Colors.orange;
+                          } else {
+                            color = Colors.green; // עדיין בחלון 2 דקות
+                          }
+                        } else {
+                          color = Colors.grey; // אין מידע על זמן — אפור
+                          opacity = _navigatorsOpacity * 0.6;
+                        }
+                      }
 
                       return Marker(
                         point: LatLng(status.latitude!, status.longitude!),
                         width: 60,
                         height: 60,
                         child: Opacity(
-                          opacity: _navigatorsOpacity,
+                          opacity: opacity,
                           child: Column(
                             children: [
                               Icon(
@@ -2208,6 +2250,7 @@ class NavigatorStatus {
   final double? latitude;
   final double? longitude;
   final String positionSource; // 'gps', 'cellTower', or 'none'
+  final DateTime? positionUpdatedAt; // מתי עודכן המיקום לאחרונה
 
   NavigatorStatus({
     required this.isConnected,
@@ -2217,5 +2260,6 @@ class NavigatorStatus {
     this.latitude,
     this.longitude,
     this.positionSource = 'gps',
+    this.positionUpdatedAt,
   });
 }
