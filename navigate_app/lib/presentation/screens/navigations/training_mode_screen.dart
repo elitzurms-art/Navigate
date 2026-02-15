@@ -65,6 +65,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   StreamSubscription<List<NavigatorAlert>>? _alertSubscription;
   List<NavigatorAlert> _activeAlerts = [];
 
+  // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
+  StreamSubscription<domain.Navigation?>? _navigationListener;
+
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
 
@@ -77,6 +80,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _loadData();
     _reloadNavigationFromDb();
     _startAlertListener();
+    _startNavigationListener();
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
@@ -87,6 +91,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   @override
   void dispose() {
     _alertSubscription?.cancel();
+    _navigationListener?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -140,6 +145,29 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         });
       }
     } catch (_) {}
+  }
+
+  // ===========================================================================
+  // Navigation listener — realtime route/status updates from Firestore
+  // ===========================================================================
+
+  void _startNavigationListener() {
+    _navigationListener = _navRepo.watchNavigation(widget.navigation.id).listen(
+      (nav) {
+        if (!mounted || nav == null) return;
+        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+        if (_currentNavigation.routes != nav.routes ||
+            _currentNavigation.status != nav.status) {
+          setState(() {
+            _currentNavigation = nav;
+            _learningStarted = nav.status == 'learning';
+          });
+        }
+      },
+      onError: (e) {
+        print('DEBUG TrainingMode: navigation listener error: $e');
+      },
+    );
   }
 
   // ===========================================================================

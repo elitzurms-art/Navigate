@@ -366,13 +366,14 @@ class SyncManager {
         }
       }
 
-      // ביצוע הפעולה ב-Firestore
+      // ביצוע הפעולה ב-Firestore (version ייתכן שהוגדל ב-last-write-wins)
+      final pushVersion = (data['version'] as int?) ?? item.version;
       await _executeFirestoreOperation(
         collection: item.collectionName,
         documentId: item.recordId,
         operation: item.operation,
         data: data,
-        version: item.version,
+        version: pushVersion,
       );
 
       // הצלחה - סימון כמסונכרן
@@ -425,8 +426,15 @@ class SyncManager {
         return false;
       }
 
-      // אם גרסת השרת >= גרסה מקומית: קונפליקט!
+      // אם גרסת השרת >= גרסה מקומית: בדיקת קונפליקט
       if (serverVersion >= localVersion) {
+        // אם אותה גרסה — בדוק אם הנתונים זהים (כבר מסונכרן)
+        if (serverVersion == localVersion &&
+            _isDataEquivalent(localData, serverData)) {
+          print('SyncManager: Already in sync $collection/$documentId (v$localVersion)');
+          return true; // מסומן כמטופל — הקורא ימחק מהתור
+        }
+
         print('SyncManager: CONFLICT detected on $collection/$documentId '
             '(local v$localVersion vs server v$serverVersion)');
 
@@ -441,18 +449,11 @@ class SyncManager {
         );
 
         if (!autoResolved) {
-          // לא ניתן לפתור אוטומטית - הוסף לתור קונפליקטים
-          await _db.insertConflict(
-            ConflictQueueCompanion.insert(
-              collectionName: collection,
-              recordId: documentId,
-              localDataJson: jsonEncode(_sanitizeForJson(localData)),
-              serverDataJson: jsonEncode(_sanitizeForJson(serverData)),
-              localVersion: localVersion,
-              serverVersion: serverVersion,
-              detectedAt: DateTime.now(),
-            ),
-          );
+          // last-write-wins: דחוף עם גרסה מוגדלת במקום להיתקע בתור קונפליקטים
+          print('SyncManager: Resolving with last-write-wins for $collection/$documentId '
+              '(bumping to v${serverVersion + 1})');
+          localData['version'] = serverVersion + 1;
+          return false; // תן ל-push להמשיך עם הגרסה המוגדלת
         }
 
         return true;
@@ -1166,6 +1167,28 @@ class SyncManager {
   // ---------------------------------------------------------------------------
   // Automatic conflict resolution
   // ---------------------------------------------------------------------------
+
+  /// השוואת נתונים תוכניים (מתעלמת משדות metadata כמו version, updatedAt)
+  bool _isDataEquivalent(
+      Map<String, dynamic> localData, Map<String, dynamic> serverData) {
+    const metadataKeys = {
+      'version',
+      'updatedAt',
+      'createdAt',
+      'syncedAt',
+      'lastModified'
+    };
+
+    final localFiltered = Map<String, dynamic>.from(localData)
+      ..removeWhere((k, _) => metadataKeys.contains(k));
+    final serverFiltered = Map<String, dynamic>.from(serverData)
+      ..removeWhere((k, _) => metadataKeys.contains(k));
+
+    // Firestore Timestamp → String normalization
+    final localJson = jsonEncode(_sanitizeForJson(localFiltered));
+    final serverJson = jsonEncode(_sanitizeForJson(serverFiltered));
+    return localJson == serverJson;
+  }
 
   /// ניסיון לפתור קונפליקט אוטומטית (לנתונים בטוחים)
   ///
