@@ -21,6 +21,12 @@ class GpsService {
   /// סף דיוק (במטרים) — מתחתיו GPS מספיק טוב, מעליו מנסה fallback
   static const double _accuracyThreshold = 50.0;
 
+  /// OpenCellID API key (free tier)
+  static const String _openCellIdApiKey = 'pk.2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d';
+
+  /// סף מרחק ממרכז הג"ג — מעל 50 ק"מ = GPS חסום/מזויף
+  static const double _maxDistanceFromBoundary = 50000.0; // 50 km in meters
+
   /// אתחול שירות אנטנות (נקרא פעם אחת, lazy)
   Future<void> _ensureCellServiceInitialized() async {
     if (_cellInitialized) return;
@@ -28,9 +34,37 @@ class GpsService {
       _cellService = CellLocationService();
       await _cellService!.initialize();
       _cellInitialized = true;
+      // Try to download tower data if needed (non-blocking)
+      ensureTowerData();
     } catch (e) {
       print('DEBUG GpsService: cell service init failed: $e');
       _cellService = null;
+    }
+  }
+
+  /// בדיקה שיש נתוני אנטנות — מוריד MCC 425 (ישראל) אם חסר
+  Future<void> ensureTowerData() async {
+    try {
+      await _ensureCellServiceInitialized();
+      if (_cellService == null) return;
+
+      final count = await _cellService!.towerCount(mcc: 425);
+      if (count > 0) {
+        print('DEBUG GpsService: tower data exists ($count towers for MCC 425)');
+        return;
+      }
+
+      print('DEBUG GpsService: no tower data — downloading MCC 425...');
+      final downloaded = await _cellService!.downloadTowerData(
+        apiKey: _openCellIdApiKey,
+        mcc: 425,
+        onProgress: (downloaded, total) {
+          print('DEBUG GpsService: tower download progress: $downloaded/$total');
+        },
+      );
+      print('DEBUG GpsService: downloaded $downloaded towers for MCC 425');
+    } catch (e) {
+      print('DEBUG GpsService: ensureTowerData failed: $e');
     }
   }
 
@@ -64,15 +98,17 @@ class GpsService {
   /// קבלת מיקום נוכחי — עם fallback לאנטנות
   Future<LatLng?> getCurrentPosition({
     bool highAccuracy = true,
+    LatLng? boundaryCenter,
   }) async {
     try {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
         // אין הרשאות GPS — נסה אנטנות
-        final cellPos = await _getCellPosition();
-        if (cellPos != null) {
+        print('DEBUG GpsService: no GPS permission, trying cell fallback');
+        final cellResult = await _getCellPosition();
+        if (cellResult != null) {
           _lastPositionSource = PositionSource.cellTower;
-          return cellPos;
+          return cellResult.latLng;
         }
         _lastPositionSource = PositionSource.none;
         return null;
@@ -82,45 +118,132 @@ class GpsService {
         desiredAccuracy: highAccuracy
             ? LocationAccuracy.high
             : LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 10),
       );
+      print('DEBUG GpsService: GPS position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy.toStringAsFixed(0)}m');
+
+      final gpsLatLng = LatLng(position.latitude, position.longitude);
+
+      // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
+      if (boundaryCenter != null) {
+        final distanceFromBoundary = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          boundaryCenter.latitude,
+          boundaryCenter.longitude,
+        );
+
+        if (distanceFromBoundary > _maxDistanceFromBoundary) {
+          print('DEBUG GpsService: GPS likely spoofed/blocked! '
+              'Distance from boundary center: ${(distanceFromBoundary / 1000).toStringAsFixed(1)} km');
+          final cellResult = await _getCellPosition();
+          if (cellResult != null) {
+            _lastPositionSource = PositionSource.cellTower;
+            return cellResult.latLng;
+          }
+          // Even if cell fails, still return GPS — better than nothing
+          _lastPositionSource = PositionSource.gps;
+          return gpsLatLng;
+        }
+      }
 
       // אם הדיוק נמוך, נסה fallback
       if (position.accuracy > _accuracyThreshold) {
-        final cellPos = await _getCellPosition();
-        if (cellPos != null) {
-          print('DEBUG GpsService: GPS accuracy ${position.accuracy.toStringAsFixed(0)}m > threshold, using cell fallback');
+        final cellResult = await _getCellPosition();
+        if (cellResult != null && cellResult.accuracyMeters < position.accuracy) {
+          print('DEBUG GpsService: GPS accuracy ${position.accuracy.toStringAsFixed(0)}m > threshold, '
+              'cell accuracy ${cellResult.accuracyMeters.toStringAsFixed(0)}m is better — using cell fallback');
           _lastPositionSource = PositionSource.cellTower;
-          return cellPos;
+          return cellResult.latLng;
         }
       }
 
       _lastPositionSource = PositionSource.gps;
-      return LatLng(position.latitude, position.longitude);
+      return gpsLatLng;
     } catch (e) {
       // GPS נכשל לחלוטין — נסה אנטנות
       print('DEBUG GpsService: GPS failed ($e), trying cell fallback');
-      final cellPos = await _getCellPosition();
-      if (cellPos != null) {
+      final cellResult = await _getCellPosition();
+      if (cellResult != null) {
         _lastPositionSource = PositionSource.cellTower;
-        return cellPos;
+        return cellResult.latLng;
       }
       _lastPositionSource = PositionSource.none;
       return null;
     }
   }
 
-  /// קבלת מיקום מאנטנות סלולריות
-  Future<LatLng?> _getCellPosition() async {
+  /// קבלת מיקום עם פרטי דיוק מלאים
+  Future<({LatLng position, double accuracy, PositionSource source})?> getCurrentPositionWithAccuracy({
+    bool highAccuracy = true,
+    LatLng? boundaryCenter,
+  }) async {
+    try {
+      final hasPermission = await checkPermissions();
+      if (!hasPermission) {
+        final cellResult = await _getCellPosition();
+        if (cellResult != null) {
+          return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+        }
+        return null;
+      }
+
+      final gpsPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: highAccuracy ? LocationAccuracy.high : LocationAccuracy.medium,
+      );
+
+      final gpsLatLng = LatLng(gpsPosition.latitude, gpsPosition.longitude);
+
+      // בדיקת GPS חסום/מזויף
+      if (boundaryCenter != null) {
+        final dist = Geolocator.distanceBetween(
+          gpsPosition.latitude, gpsPosition.longitude,
+          boundaryCenter.latitude, boundaryCenter.longitude,
+        );
+        if (dist > _maxDistanceFromBoundary) {
+          final cellResult = await _getCellPosition();
+          if (cellResult != null) {
+            return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+          }
+          return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
+        }
+      }
+
+      // השוואת דיוק
+      if (gpsPosition.accuracy > _accuracyThreshold) {
+        final cellResult = await _getCellPosition();
+        if (cellResult != null && cellResult.accuracyMeters < gpsPosition.accuracy) {
+          return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+        }
+      }
+
+      return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
+    } catch (e) {
+      final cellResult = await _getCellPosition();
+      if (cellResult != null) {
+        return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+      }
+      return null;
+    }
+  }
+
+  /// קבלת מיקום מאנטנות סלולריות — מחזיר תוצאה מלאה
+  Future<CellPositionResult?> _getCellPosition() async {
     try {
       await _ensureCellServiceInitialized();
-      if (_cellService == null) return null;
+      if (_cellService == null) {
+        print('DEBUG GpsService: cell service is null after init');
+        return null;
+      }
+
+      final towerCount = await _cellService!.towerCount();
+      print('DEBUG GpsService: cell tower DB has $towerCount towers');
 
       final result = await _cellService!.calculatePosition();
       if (result != null) {
         print('DEBUG GpsService: cell position: ${result.lat}, ${result.lon} ± ${result.accuracyMeters.toStringAsFixed(0)}m (${result.towerCount} towers)');
-        return result.latLng;
       }
-      return null;
+      return result;
     } catch (e) {
       print('DEBUG GpsService: cell position failed: $e');
       return null;

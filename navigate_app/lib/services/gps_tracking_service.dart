@@ -1,17 +1,21 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import '../domain/entities/coordinate.dart';
+import 'gps_service.dart';
 
 /// שירות מעקב GPS
 class GPSTrackingService {
   Timer? _trackingTimer;
   StreamController<Position>? _positionStream;
   List<TrackPoint> _trackPoints = [];
+  final GpsService _gpsService = GpsService();
 
   bool _isTracking = false;
   bool get isTracking => _isTracking;
 
   int _intervalSeconds = 30;
+  LatLng? _boundaryCenter;
   int get intervalSeconds => _intervalSeconds;
 
   /// Stream של מיקומים
@@ -22,13 +26,14 @@ class GPSTrackingService {
   List<TrackPoint> get trackPoints => List.unmodifiable(_trackPoints);
 
   /// התחלת מעקב GPS
-  Future<bool> startTracking({int intervalSeconds = 30}) async {
+  Future<bool> startTracking({int intervalSeconds = 30, LatLng? boundaryCenter}) async {
     if (_isTracking) {
       print('⚠️ GPS Tracking כבר פעיל');
       return false;
     }
 
     _intervalSeconds = intervalSeconds;
+    _boundaryCenter = boundaryCenter;
 
     // בדיקת הרשאות
     LocationPermission permission = await Geolocator.checkPermission();
@@ -61,8 +66,29 @@ class GPSTrackingService {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-      _recordPoint(position);
-      print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
+
+      // אם הדיוק נמוך, נסה fallback דרך GPS Plus (אנטנות סלולריות)
+      String source = 'gps';
+      if (position.accuracy > 50) {
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null &&
+            _gpsService.lastPositionSource == PositionSource.cellTower) {
+          // GPS Plus נתן תוצאה טובה יותר
+          _recordPointFromLatLng(
+            cellPos.latitude,
+            cellPos.longitude,
+            position.accuracy,
+            positionSource: 'cellTower',
+          );
+          print('📍 GPS Tracking התחיל - מיקום ראשוני (cellTower): ${cellPos.latitude}, ${cellPos.longitude}');
+        } else {
+          _recordPoint(position, positionSource: source);
+          print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
+        }
+      } else {
+        _recordPoint(position, positionSource: source);
+        print('📍 GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
+      }
     } catch (e) {
       print('❌ שגיאה בקבלת מיקום ראשוני: $e');
     }
@@ -98,15 +124,73 @@ class GPSTrackingService {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-      _recordPoint(position);
+
+      // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
+      if (_boundaryCenter != null) {
+        final dist = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          _boundaryCenter!.latitude,
+          _boundaryCenter!.longitude,
+        );
+        if (dist > 50000) {
+          // GPS likely spoofed — try cell towers
+          final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+          if (cellPos != null &&
+              _gpsService.lastPositionSource == PositionSource.cellTower) {
+            _recordPointFromLatLng(
+              cellPos.latitude,
+              cellPos.longitude,
+              position.accuracy,
+              positionSource: 'cellTower',
+            );
+            _positionStream?.add(position);
+            return;
+          }
+        }
+      }
+
+      // אם הדיוק נמוך (> 50 מטר), נסה fallback דרך GPS Plus
+      if (position.accuracy > 50) {
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null &&
+            _gpsService.lastPositionSource == PositionSource.cellTower) {
+          _recordPointFromLatLng(
+            cellPos.latitude,
+            cellPos.longitude,
+            position.accuracy,
+            positionSource: 'cellTower',
+          );
+          _positionStream?.add(position);
+          return;
+        }
+      }
+
+      _recordPoint(position, positionSource: 'gps');
       _positionStream?.add(position);
     } catch (e) {
-      print('❌ שגיאה ברישום מיקום: $e');
+      // GPS failed completely — try cell tower fallback
+      print('❌ שגיאה ברישום מיקום: $e — מנסה fallback אנטנות');
+      try {
+        final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (cellPos != null) {
+          _recordPointFromLatLng(
+            cellPos.latitude,
+            cellPos.longitude,
+            -1,
+            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
+                ? 'cellTower'
+                : 'gps',
+          );
+        }
+      } catch (_) {
+        print('❌ גם fallback אנטנות נכשל');
+      }
     }
   }
 
-  /// רישום נקודה
-  void _recordPoint(Position position) {
+  /// רישום נקודה מ-Position (Geolocator)
+  void _recordPoint(Position position, {String positionSource = 'gps'}) {
     final point = TrackPoint(
       coordinate: Coordinate(
         lat: position.latitude,
@@ -118,10 +202,33 @@ class GPSTrackingService {
       altitude: position.altitude,
       speed: position.speed,
       heading: position.heading,
+      positionSource: positionSource,
     );
 
     _trackPoints.add(point);
-    print('📍 רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng}');
+    print('📍 רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
+  }
+
+  /// רישום נקודה מ-LatLng (GPS Plus fallback)
+  void _recordPointFromLatLng(
+    double lat,
+    double lng,
+    double accuracy, {
+    String positionSource = 'cellTower',
+  }) {
+    final point = TrackPoint(
+      coordinate: Coordinate(
+        lat: lat,
+        lng: lng,
+        utm: _convertToUTM(lat, lng),
+      ),
+      timestamp: DateTime.now(),
+      accuracy: accuracy,
+      positionSource: positionSource,
+    );
+
+    _trackPoints.add(point);
+    print('📍 רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
   }
 
   /// המרה ל-UTM (פשוט)
@@ -202,6 +309,7 @@ class TrackPoint {
   final double? altitude;
   final double? speed;
   final double? heading;
+  final String positionSource;
 
   TrackPoint({
     required this.coordinate,
@@ -210,6 +318,7 @@ class TrackPoint {
     this.altitude,
     this.speed,
     this.heading,
+    this.positionSource = 'gps',
   });
 
   Map<String, dynamic> toMap() {
@@ -222,6 +331,7 @@ class TrackPoint {
       if (altitude != null) 'altitude': altitude,
       if (speed != null) 'speed': speed,
       if (heading != null) 'heading': heading,
+      'positionSource': positionSource,
     };
   }
 
@@ -237,6 +347,7 @@ class TrackPoint {
       altitude: map['altitude'] as double?,
       speed: map['speed'] as double?,
       heading: map['heading'] as double?,
+      positionSource: map['positionSource'] as String? ?? 'gps',
     );
   }
 }

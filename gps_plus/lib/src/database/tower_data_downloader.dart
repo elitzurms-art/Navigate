@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:csv/csv.dart';
 import 'package:http/http.dart' as http;
@@ -48,8 +49,9 @@ class TowerDataDownloader {
       );
     }
 
-    // Parse CSV data
-    final csvString = utf8.decode(response.bodyBytes);
+    // Decompress gzip and parse CSV data
+    final decompressed = gzip.decode(response.bodyBytes);
+    final csvString = utf8.decode(decompressed);
     final towers = _parseCsv(csvString);
 
     if (towers.isEmpty) {

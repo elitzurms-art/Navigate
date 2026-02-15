@@ -63,15 +63,38 @@ class TowerDatabase {
     List<CellTowerInfo> towers,
   ) async {
     _ensureInitialized();
+    if (towers.isEmpty) return {};
 
-    final result = <int, TowerLocation>{};
-    for (var i = 0; i < towers.length; i++) {
-      final location = await lookupTower(towers[i]);
-      if (location != null) {
-        result[i] = location;
+    // Build a single query with OR conditions
+    final whereParts = <String>[];
+    final whereArgs = <dynamic>[];
+    for (final tower in towers) {
+      whereParts.add('(mcc = ? AND mnc = ? AND lac = ? AND cid = ?)');
+      whereArgs.addAll([tower.mcc, tower.mnc, tower.lac, tower.cid]);
+    }
+
+    final results = await _db!.query(
+      'towers',
+      where: whereParts.join(' OR '),
+      whereArgs: whereArgs,
+    );
+
+    // Map results back to input indices
+    final resultMap = <int, TowerLocation>{};
+    for (final row in results) {
+      final location = TowerLocation.fromMap(row);
+      // Find the matching input tower index
+      for (var i = 0; i < towers.length; i++) {
+        if (towers[i].mcc == location.mcc &&
+            towers[i].mnc == location.mnc &&
+            towers[i].lac == location.lac &&
+            towers[i].cid == location.cid) {
+          resultMap[i] = location;
+          break;
+        }
       }
     }
-    return result;
+    return resultMap;
   }
 
   /// Inserts or replaces tower records in bulk.

@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/user.dart';
+import 'package:latlong2/latlong.dart';
 import '../../../../services/gps_service.dart';
 
 /// תצוגת בדיקת מערכות למנווט
@@ -37,6 +38,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   bool _hasLocationService = false;
   bool _isCheckingGps = true;
   double _gpsAccuracy = -1;
+  LatLng? _currentPosition;
 
   Map<String, PermissionStatus> _permissions = {};
   bool _isCheckingPermissions = true;
@@ -95,6 +97,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
       }
+      // תמיד מנסה לקבל מיקום — גם דרך אנטנות אם GPS כבוי
+      _currentPosition = await _gpsService.getCurrentPosition();
       if (mounted) setState(() => _isCheckingGps = false);
     } catch (_) {
       if (mounted) setState(() => _isCheckingGps = false);
@@ -138,6 +142,10 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
       }
 
+      // תמיד מנסה לקבל מיקום — גם דרך אנטנות אם GPS כבוי
+      _currentPosition = await _gpsService.getCurrentPosition();
+      print('DEBUG SystemCheckView: perm=$_hasGpsPermission svc=$_hasLocationService pos=$_currentPosition accuracy=$_gpsAccuracy source=${_gpsService.lastPositionSource}');
+
       try {
         _batteryLevel = await _battery.batteryLevel;
       } catch (_) {
@@ -146,7 +154,9 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
       if (mounted) setState(() {});
       _reportStatusToFirestore();
-    } catch (_) {}
+    } catch (e) {
+      print('DEBUG SystemCheckView: _checkAndReport error: $e');
+    }
   }
 
   /// כתיבת סטטוס בדיקת מערכות ל-Firestore (מנווט → מפקד)
@@ -161,11 +171,14 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
       await docRef.set({
         'navigatorId': uid,
-        'isConnected': true,
+        'isConnected': _currentPosition != null,
         'batteryLevel': _batteryLevel,
         'hasGPS': _hasGpsPermission && _hasLocationService,
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
+        'latitude': _currentPosition?.latitude,
+        'longitude': _currentPosition?.longitude,
+        'positionSource': _gpsService.lastPositionSource.name,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {

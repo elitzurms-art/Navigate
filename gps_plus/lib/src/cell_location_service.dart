@@ -27,6 +27,9 @@ class CellLocationService {
   late final TowerDataDownloader _downloader;
 
   bool _initialized = false;
+  CellPositionResult? _lastResult;
+  DateTime? _lastResultTime;
+  static const _cacheDuration = Duration(seconds: 3);
 
   CellLocationService({
     TowerDatabase? database,
@@ -62,6 +65,14 @@ class CellLocationService {
   Future<CellPositionResult?> calculatePosition() async {
     _ensureInitialized();
 
+    // Return cached result if recent enough
+    if (_lastResult != null && _lastResultTime != null) {
+      final elapsed = DateTime.now().difference(_lastResultTime!);
+      if (elapsed < _cacheDuration) {
+        return _lastResult;
+      }
+    }
+
     final towers = await getVisibleTowers();
     if (towers.isEmpty) return null;
 
@@ -78,10 +89,13 @@ class CellLocationService {
       matchedLocations.add(entry.value);
     }
 
-    return _engine.calculate(
+    final result = _engine.calculate(
       towers: matchedTowers,
       locations: matchedLocations,
     );
+    _lastResult = result;
+    _lastResultTime = DateTime.now();
+    return result;
   }
 
   /// Downloads tower data for a specific MCC (country code).

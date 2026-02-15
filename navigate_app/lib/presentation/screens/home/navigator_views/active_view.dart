@@ -17,6 +17,8 @@ import '../../../../services/gps_tracking_service.dart';
 import '../../../../services/health_check_service.dart';
 import '../../../../services/security_manager.dart';
 import '../../../../services/alert_monitoring_service.dart';
+import 'package:latlong2/latlong.dart';
+import '../../../../data/repositories/boundary_repository.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -41,6 +43,7 @@ class _ActiveViewState extends State<ActiveView> {
   final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
+  final BoundaryRepository _boundaryRepo = BoundaryRepository();
 
   NavigatorPersonalStatus _personalStatus = NavigatorPersonalStatus.waiting;
   NavigationTrack? _track;
@@ -57,6 +60,8 @@ class _ActiveViewState extends State<ActiveView> {
   // GPS source tracking
   PositionSource _gpsSource = PositionSource.none;
   Timer? _gpsCheckTimer;
+  LatLng? _boundaryCenter;
+  bool _gpsBlocked = false;
 
   // Health check
   HealthCheckService? _healthCheckService;
@@ -96,6 +101,7 @@ class _ActiveViewState extends State<ActiveView> {
   // ===========================================================================
 
   Future<void> _loadTrackState() async {
+    await _computeBoundaryCenter();
     try {
       final track = await _trackRepo.getByNavigatorAndNavigation(
         widget.currentUser.uid,
@@ -159,6 +165,31 @@ class _ActiveViewState extends State<ActiveView> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _computeBoundaryCenter() async {
+    try {
+      final boundaryLayerId = _nav.boundaryLayerId;
+      if (boundaryLayerId == null || boundaryLayerId.isEmpty) return;
+
+      final boundary = await _boundaryRepo.getById(boundaryLayerId);
+      if (boundary == null || boundary.coordinates.isEmpty) return;
+
+      // Compute centroid of boundary polygon
+      double latSum = 0;
+      double lngSum = 0;
+      for (final coord in boundary.coordinates) {
+        latSum += coord.lat;
+        lngSum += coord.lng;
+      }
+      _boundaryCenter = LatLng(
+        latSum / boundary.coordinates.length,
+        lngSum / boundary.coordinates.length,
+      );
+      print('DEBUG ActiveView: boundary center = ${_boundaryCenter!.latitude}, ${_boundaryCenter!.longitude}');
+    } catch (e) {
+      print('DEBUG ActiveView: failed to compute boundary center: $e');
     }
   }
 
@@ -229,10 +260,17 @@ class _ActiveViewState extends State<ActiveView> {
   }
 
   Future<void> _checkGpsSource() async {
-    await _gpsService.getCurrentPosition(highAccuracy: false);
+    await _gpsService.getCurrentPosition(
+      highAccuracy: false,
+      boundaryCenter: _boundaryCenter,
+    );
     if (mounted) {
+      final source = _gpsService.lastPositionSource;
       setState(() {
-        _gpsSource = _gpsService.lastPositionSource;
+        _gpsSource = source;
+        // If we have a boundary and GPS source is cellTower, it might be blocked
+        _gpsBlocked = _boundaryCenter != null &&
+            source == PositionSource.cellTower;
       });
     }
   }
@@ -243,7 +281,10 @@ class _ActiveViewState extends State<ActiveView> {
 
   Future<void> _startGpsTracking() async {
     final interval = _nav.gpsUpdateIntervalSeconds;
-    final started = await _gpsTracker.startTracking(intervalSeconds: interval);
+    final started = await _gpsTracker.startTracking(
+      intervalSeconds: interval,
+      boundaryCenter: _boundaryCenter,
+    );
     if (!started) {
       print('DEBUG ActiveView: GPS tracking failed to start');
       return;
@@ -416,7 +457,16 @@ class _ActiveViewState extends State<ActiveView> {
 
       // הפעלת שירותים
       await _startSecurity();
+
+      // שמירת ה-track ב-state לפני GPS כדי ש-_saveTrackPoints יוכל לגשת אליו
+      _track = track;
+
       await _startGpsTracking();
+
+      // שמירה מיידית של הנקודה הראשונה ל-Drift + סנכרון ל-Firestore
+      // כדי שהמפקד יראה את המנווט על המפה מיד (בלי לחכות ~30 שניות לבאצ' הבא)
+      await _saveTrackPoints();
+
       _startGpsSourceCheck();
       _startHealthCheck();
       _startAlertMonitoring();
@@ -959,19 +1009,26 @@ class _ActiveViewState extends State<ActiveView> {
     IconData icon;
     String label;
     Color color;
-    switch (_gpsSource) {
-      case PositionSource.gps:
-        icon = Icons.gps_fixed;
-        label = 'GPS';
-        color = Colors.green;
-      case PositionSource.cellTower:
-        icon = Icons.cell_tower;
-        label = 'אנטנות';
-        color = Colors.orange;
-      case PositionSource.none:
-        icon = Icons.gps_off;
-        label = 'אין מיקום';
-        color = Colors.red;
+
+    if (_gpsBlocked) {
+      icon = Icons.gps_off;
+      label = 'GPS חסום';
+      color = Colors.red;
+    } else {
+      switch (_gpsSource) {
+        case PositionSource.gps:
+          icon = Icons.gps_fixed;
+          label = 'GPS';
+          color = Colors.green;
+        case PositionSource.cellTower:
+          icon = Icons.cell_tower;
+          label = 'אנטנות';
+          color = Colors.orange;
+        case PositionSource.none:
+          icon = Icons.gps_off;
+          label = 'אין מיקום';
+          color = Colors.red;
+      }
     }
     return Row(
       mainAxisSize: MainAxisSize.min,

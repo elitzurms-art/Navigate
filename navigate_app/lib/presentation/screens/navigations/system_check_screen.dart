@@ -186,6 +186,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
         _currentPosition = await _gpsService.getCurrentPosition();
+        print('DEBUG SystemCheck navigator: perm=$_hasGpsPermission svc=$_hasLocationService pos=$_currentPosition accuracy=$_gpsAccuracy source=${_gpsService.lastPositionSource}');
+      } else {
+        print('DEBUG SystemCheck navigator: GPS skipped — perm=$_hasGpsPermission svc=$_hasLocationService');
       }
 
       try {
@@ -196,7 +199,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
       if (mounted) setState(() {});
       _reportStatusToFirestore();
-    } catch (_) {}
+    } catch (e) {
+      print('DEBUG SystemCheck navigator: _checkAndReportStatus error: $e');
+    }
   }
 
   /// כתיבת סטטוס בדיקת מערכות ל-Firestore (מנווט → מפקד)
@@ -213,13 +218,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
       await docRef.set({
         'navigatorId': uid,
-        'isConnected': true,
+        'isConnected': _currentPosition != null,
         'batteryLevel': _batteryLevel,
         'hasGPS': _hasGpsPermission && _hasLocationService,
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
+        'positionSource': _gpsService.lastPositionSource.name,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -353,6 +359,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               receptionLevel: data['receptionLevel'] as int? ?? 0,
               latitude: (data['latitude'] as num?)?.toDouble(),
               longitude: (data['longitude'] as num?)?.toDouble(),
+              positionSource: data['positionSource'] as String? ?? 'gps',
             );
           }
         });
@@ -383,10 +390,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           .get();
 
       if (!mounted) return;
+      print('DEBUG SystemCheck poll: ${snapshot.docs.length} docs');
       setState(() {
         for (final doc in snapshot.docs) {
           final data = doc.data();
           final navigatorId = data['navigatorId'] as String? ?? doc.id;
+          print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']}');
 
           _navigatorStatuses[navigatorId] = NavigatorStatus(
             isConnected: data['isConnected'] as bool? ?? false,
@@ -395,6 +404,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             receptionLevel: data['receptionLevel'] as int? ?? 0,
             latitude: (data['latitude'] as num?)?.toDouble(),
             longitude: (data['longitude'] as num?)?.toDouble(),
+            positionSource: data['positionSource'] as String? ?? 'gps',
           );
         }
       });
@@ -792,7 +802,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               _buildMiniIndicator(
                 icon: status.hasGPS ? Icons.gps_fixed : Icons.gps_off,
                 color: status.isConnected
-                    ? (status.hasGPS ? Colors.green : Colors.red)
+                    ? (!status.hasGPS
+                        ? Colors.red
+                        : status.positionSource == 'cellTower'
+                            ? Colors.orange
+                            : Colors.green)
                     : Colors.grey,
               ),
               const SizedBox(width: 8),
@@ -922,11 +936,19 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               _buildDetailRow(
                 'GPS',
                 status.isConnected
-                    ? (status.hasGPS ? 'פעיל ותקין' : 'לא פעיל')
+                    ? (!status.hasGPS
+                        ? 'לא פעיל'
+                        : status.positionSource == 'cellTower'
+                            ? 'מערכת חליפית תקינה'
+                            : 'פעיל ותקין')
                     : 'לא ידוע',
                 status.hasGPS ? Icons.gps_fixed : Icons.gps_off,
                 status.isConnected
-                    ? (status.hasGPS ? Colors.green : Colors.red)
+                    ? (!status.hasGPS
+                        ? Colors.red
+                        : status.positionSource == 'cellTower'
+                            ? Colors.orange
+                            : Colors.green)
                     : Colors.grey,
               ),
               if (status.isConnected && status.hasGPS && status.latitude != null) ...[
@@ -1774,29 +1796,54 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               child: Column(
                 children: [
                   // סטטוס כללי
-                  Card(
-                    color: (isBatteryOk && isGpsOk) ? Colors.green[50] : Colors.red[50],
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        children: [
-                          Icon(
-                            (isBatteryOk && isGpsOk) ? Icons.check_circle : Icons.error,
-                            size: 80,
-                            color: (isBatteryOk && isGpsOk) ? Colors.green : Colors.red,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            (isBatteryOk && isGpsOk) ? 'המערכת תקינה' : 'יש בעיות במערכת',
-                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: (isBatteryOk && isGpsOk) ? Colors.green[900] : Colors.red[900],
-                                ),
-                          ),
-                        ],
+                  Builder(builder: (context) {
+                    final isCellTowerFallback = isGpsOk && _gpsService.lastPositionSource == PositionSource.cellTower;
+                    final allOk = isBatteryOk && isGpsOk;
+                    final cardColor = !allOk
+                        ? Colors.red[50]
+                        : isCellTowerFallback
+                            ? Colors.orange[50]
+                            : Colors.green[50];
+                    final iconColor = !allOk
+                        ? Colors.red
+                        : isCellTowerFallback
+                            ? Colors.orange
+                            : Colors.green;
+                    final textColor = !allOk
+                        ? Colors.red[900]
+                        : isCellTowerFallback
+                            ? Colors.orange[900]
+                            : Colors.green[900];
+                    final statusText = !allOk
+                        ? 'יש בעיות במערכת'
+                        : isCellTowerFallback
+                            ? 'מערכת חליפית תקינה'
+                            : 'המערכת תקינה';
+
+                    return Card(
+                      color: cardColor,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          children: [
+                            Icon(
+                              allOk ? Icons.check_circle : Icons.error,
+                              size: 80,
+                              color: iconColor,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              statusText,
+                              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: textColor,
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
 
                   // הרשאות מכשיר
                   if (_permissionStatuses.isNotEmpty)
@@ -1805,41 +1852,58 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   const SizedBox(height: 24),
 
                   // בדיקת מיקום
-                  Card(
-                    child: ListTile(
-                      leading: Icon(
-                        isGpsOk ? Icons.check_circle : Icons.error,
-                        color: isGpsOk ? Colors.green : Colors.red,
-                        size: 40,
-                      ),
-                      title: const Text('מיקום GPS'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isGpsOk ? 'תקין - המיקום פועל' : 'לא תקין - בעיה במיקום',
-                            style: TextStyle(
-                              color: isGpsOk ? Colors.green[700] : Colors.red[700],
-                            ),
-                          ),
-                          if (isGpsOk && _gpsAccuracy > 0)
+                  Builder(builder: (context) {
+                    final isCellTower = _gpsService.lastPositionSource == PositionSource.cellTower;
+                    final gpsStatusText = !isGpsOk
+                        ? 'לא תקין - בעיה במיקום'
+                        : isCellTower
+                            ? 'מערכת חליפית - מיקום מאנטנות סלולריות'
+                            : 'תקין - המיקום פועל';
+                    final gpsStatusColor = !isGpsOk
+                        ? Colors.red[700]
+                        : isCellTower
+                            ? Colors.orange[700]
+                            : Colors.green[700];
+                    final gpsIconColor = !isGpsOk
+                        ? Colors.red
+                        : isCellTower
+                            ? Colors.orange
+                            : Colors.green;
+
+                    return Card(
+                      child: ListTile(
+                        leading: Icon(
+                          isGpsOk ? Icons.check_circle : Icons.error,
+                          color: gpsIconColor,
+                          size: 40,
+                        ),
+                        title: const Text('מיקום GPS'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              'דיוק: ${_gpsAccuracy.toStringAsFixed(0)} מטר',
-                              style: TextStyle(
-                                color: isGpsAccuracyOk ? Colors.green[600] : Colors.orange[700],
-                                fontSize: 12,
-                              ),
+                              gpsStatusText,
+                              style: TextStyle(color: gpsStatusColor),
                             ),
-                        ],
+                            if (isGpsOk && _gpsAccuracy > 0)
+                              Text(
+                                'דיוק: ${_gpsAccuracy.toStringAsFixed(0)} מטר',
+                                style: TextStyle(
+                                  color: isGpsAccuracyOk ? Colors.green[600] : Colors.orange[700],
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                        trailing: !isGpsOk
+                            ? ElevatedButton(
+                                onPressed: _requestPermissions,
+                                child: const Text('אשר הרשאות'),
+                              )
+                            : null,
                       ),
-                      trailing: !isGpsOk
-                          ? ElevatedButton(
-                              onPressed: _requestPermissions,
-                              child: const Text('אשר הרשאות'),
-                            )
-                          : null,
-                    ),
-                  ),
+                    );
+                  }),
 
                   if (!_hasGpsPermission)
                     Card(
@@ -2143,6 +2207,7 @@ class NavigatorStatus {
   final int receptionLevel; // 0-4 (0=אין, 4=מצוין)
   final double? latitude;
   final double? longitude;
+  final String positionSource; // 'gps', 'cellTower', or 'none'
 
   NavigatorStatus({
     required this.isConnected,
@@ -2151,5 +2216,6 @@ class NavigatorStatus {
     this.receptionLevel = 0,
     this.latitude,
     this.longitude,
+    this.positionSource = 'gps',
   });
 }

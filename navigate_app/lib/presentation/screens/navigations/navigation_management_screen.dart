@@ -48,7 +48,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   late TabController _tabController;
   Timer? _refreshTimer;
+  Timer? _stalenessTimer;
   StreamSubscription<QuerySnapshot>? _tracksListener;
+  StreamSubscription<QuerySnapshot>? _systemStatusListener;
   StreamSubscription<List<NavigatorAlert>>? _alertsListener;
   StreamSubscription<List<CheckpointPunch>>? _punchesListener;
 
@@ -86,18 +88,25 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _loadData();
     _initializeNavigators();
     _startTrackListener();
+    _startSystemStatusListener();
     _startAlertsListener();
     _startPunchesListener();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
     });
+    // רענון מראה סמנים כל 30 שניות — מעבר ירוק→אפור→נעלם
+    _stalenessTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _stalenessTimer?.cancel();
     _tracksListener?.cancel();
+    _systemStatusListener?.cancel();
     _alertsListener?.cancel();
     _punchesListener?.cancel();
     _tabController.dispose();
@@ -268,6 +277,70 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         print('DEBUG NavigationManagement: track listener error: $e');
       },
     );
+  }
+
+  // ===========================================================================
+  // Firestore Listener — system_status fallback (מיקום מנווטים בבדיקת מערכות)
+  // ===========================================================================
+
+  void _startSystemStatusListener() {
+    _systemStatusListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('system_status')
+        .snapshots()
+        .listen(
+      (snapshot) {
+        _updateNavigatorDataFromSystemStatus(snapshot);
+      },
+      onError: (e) {
+        print('DEBUG NavigationManagement: system_status listener error: $e');
+      },
+    );
+  }
+
+  void _updateNavigatorDataFromSystemStatus(QuerySnapshot snapshot) {
+    if (!mounted) return;
+
+    setState(() {
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final navigatorId = data['navigatorId'] as String? ?? doc.id;
+
+        final latitude = (data['latitude'] as num?)?.toDouble();
+        final longitude = (data['longitude'] as num?)?.toDouble();
+
+        // רק אם יש מיקום תקין
+        if (latitude == null || longitude == null) continue;
+        if (latitude == 0.0 && longitude == 0.0) continue;
+
+        // אם מנווט חדש שלא ברשימה (מקרה קצה)
+        if (!_navigatorData.containsKey(navigatorId)) {
+          _selectedNavigators[navigatorId] = true;
+          _navigatorData[navigatorId] = NavigatorLiveData(
+            navigatorId: navigatorId,
+            personalStatus: NavigatorPersonalStatus.waiting,
+            trackPoints: [],
+            punches: [],
+          );
+        }
+
+        final liveData = _navigatorData[navigatorId]!;
+
+        // fallback בלבד — לא לדרוס נתוני track אמיתיים
+        if (liveData.currentPosition == null) {
+          liveData.currentPosition = LatLng(latitude, longitude);
+
+          // עדכון lastUpdate מ-system_status
+          final updatedAtRaw = data['updatedAt'];
+          if (updatedAtRaw is Timestamp) {
+            liveData.lastUpdate = updatedAtRaw.toDate();
+          } else if (updatedAtRaw is String) {
+            liveData.lastUpdate = DateTime.tryParse(updatedAtRaw);
+          }
+        }
+      }
+    });
   }
 
   // ===========================================================================
@@ -1295,36 +1368,53 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (data.currentPosition == null) continue;
 
-      final markerColor = _getNavigatorStatusColor(data);
+      // === Staleness check ===
+      // >10 דקות מאז עדכון אחרון — הסמן נעלם
+      final lastUpdate = data.lastUpdate;
+      if (lastUpdate != null) {
+        final elapsed = DateTime.now().difference(lastUpdate);
+        if (elapsed.inMinutes >= 10) continue; // נעלם לאחר 10 דקות
+      }
+
+      // 2-10 דקות — סמן אפור עם שקיפות 0.6
+      final bool isStale = lastUpdate != null &&
+          DateTime.now().difference(lastUpdate).inMinutes >= 2;
+
+      final markerColor = isStale ? Colors.grey : _getNavigatorStatusColor(data);
+
+      final markerChild = Column(
+        children: [
+          Icon(
+            Icons.person_pin_circle,
+            color: markerColor,
+            size: 40,
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: markerColor,
+                width: 2,
+              ),
+            ),
+            child: Text(
+              navigatorId,
+              style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      );
+
       markers.add(
         Marker(
           point: data.currentPosition!,
           width: 60,
           height: 60,
-          child: Column(
-            children: [
-              Icon(
-                Icons.person_pin_circle,
-                color: markerColor,
-                size: 40,
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: markerColor,
-                    width: 2,
-                  ),
-                ),
-                child: Text(
-                  navigatorId,
-                  style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
+          child: isStale
+              ? Opacity(opacity: 0.6, child: markerChild)
+              : markerChild,
         ),
       );
     }
