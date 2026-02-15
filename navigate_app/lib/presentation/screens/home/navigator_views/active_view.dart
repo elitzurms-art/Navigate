@@ -628,6 +628,7 @@ class _ActiveViewState extends State<ActiveView> {
       case NavigatorPersonalStatus.waiting:
         return _buildWaitingView();
       case NavigatorPersonalStatus.active:
+      case NavigatorPersonalStatus.noReception:
         return _buildActiveView();
       case NavigatorPersonalStatus.finished:
         return _buildFinishedView();

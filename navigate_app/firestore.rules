@@ -320,6 +320,13 @@ service cloud.firestore {
 
         allow delete: if isDeveloperOrAdmin();
       }
+
+      // ----- System Status (system check) -----
+      match /system_status/{statusId} {
+        allow read: if isAuthenticated();
+        allow create, update: if isAuthenticated();
+        allow delete: if isDeveloperOrAdmin();
+      }
     }
 
     // =========================================================================

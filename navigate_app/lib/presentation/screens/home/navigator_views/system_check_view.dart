@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/user.dart';
 import '../../../../services/gps_service.dart';
@@ -33,9 +36,12 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   bool _hasGpsPermission = false;
   bool _hasLocationService = false;
   bool _isCheckingGps = true;
+  double _gpsAccuracy = -1;
 
   Map<String, PermissionStatus> _permissions = {};
   bool _isCheckingPermissions = true;
+
+  Timer? _periodicTimer;
 
   @override
   void initState() {
@@ -45,6 +51,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
   @override
   void dispose() {
+    _periodicTimer?.cancel();
     _gpsService.dispose();
     super.dispose();
   }
@@ -85,6 +92,9 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     try {
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
+      if (_hasGpsPermission && _hasLocationService) {
+        _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+      }
       if (mounted) setState(() => _isCheckingGps = false);
     } catch (_) {
       if (mounted) setState(() => _isCheckingGps = false);
@@ -106,6 +116,72 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     } catch (_) {
       if (mounted) setState(() => _isCheckingPermissions = false);
     }
+
+    // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
+    _reportStatusToFirestore();
+
+    // הפעלת בדיקה מחזורית כל 15 שניות
+    _periodicTimer ??= Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _checkAndReport(),
+    );
+  }
+
+  /// בדיקה מחזורית ודיווח ל-Firestore
+  Future<void> _checkAndReport() async {
+    if (!mounted) return;
+    try {
+      _hasLocationService = await _gpsService.isGpsAvailable();
+      _hasGpsPermission = await _gpsService.checkPermissions();
+
+      if (_hasGpsPermission && _hasLocationService) {
+        _gpsAccuracy = await _gpsService.getCurrentAccuracy();
+      }
+
+      try {
+        _batteryLevel = await _battery.batteryLevel;
+      } catch (_) {
+        _batteryLevel = -1;
+      }
+
+      if (mounted) setState(() {});
+      _reportStatusToFirestore();
+    } catch (_) {}
+  }
+
+  /// כתיבת סטטוס בדיקת מערכות ל-Firestore (מנווט → מפקד)
+  Future<void> _reportStatusToFirestore() async {
+    final uid = widget.currentUser.uid;
+    try {
+      final docRef = FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('system_status')
+          .doc(uid);
+
+      await docRef.set({
+        'navigatorId': uid,
+        'isConnected': true,
+        'batteryLevel': _batteryLevel,
+        'hasGPS': _hasGpsPermission && _hasLocationService,
+        'gpsAccuracy': _gpsAccuracy,
+        'receptionLevel': _estimateReceptionLevel(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      print('DEBUG SystemCheckView: failed to report status: $e');
+    }
+  }
+
+  /// הערכת רמת קליטה לפי דיוק GPS
+  int _estimateReceptionLevel() {
+    if (!_hasGpsPermission || !_hasLocationService) return 0;
+    if (_gpsAccuracy < 0) return 0;
+    if (_gpsAccuracy <= 10) return 4; // מצוין
+    if (_gpsAccuracy <= 30) return 3; // טוב
+    if (_gpsAccuracy <= 50) return 2; // בינוני
+    if (_gpsAccuracy <= 100) return 1; // חלש
+    return 0;
   }
 
   Color _batteryColor() {

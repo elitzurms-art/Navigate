@@ -133,6 +133,28 @@ class CheckpointPunchRepository {
     });
   }
 
+  /// מחיקת כל הדקירות לניווט (איפוס לפני התחלה מחדש)
+  Future<void> deleteByNavigation(String navigationId) async {
+    try {
+      // מחיקה מקומית — השארת דקירות של ניווטים אחרים
+      final all = await getAll();
+      final filtered = all.where((p) => p.navigationId != navigationId).toList();
+      final prefs = await SharedPreferences.getInstance();
+      final json = filtered.map((p) => jsonEncode(p.toMap())).toList();
+      await prefs.setStringList(_key, json);
+
+      // מחיקה מ-Firestore
+      try {
+        final snapshot = await _punchesCollection(navigationId).get();
+        for (final doc in snapshot.docs) {
+          await doc.reference.delete();
+        }
+      } catch (_) {}
+    } catch (e) {
+      print('DEBUG CheckpointPunchRepo: error deleting by navigation: $e');
+    }
+  }
+
   /// אישור דקירה
   Future<void> approve(String punchId, String approvedBy) async {
     final punches = await getAll();

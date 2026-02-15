@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../domain/entities/user.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../data/repositories/navigation_track_repository.dart';
+import '../../../data/repositories/checkpoint_punch_repository.dart';
+import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/area_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import 'create_navigation_screen.dart';
@@ -1343,6 +1348,31 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     }
   }
 
+  /// איפוס נתוני מנווטים — tracks, דקירות, התראות — לפני התחלת ניווט פעיל
+  Future<void> _resetNavigatorData(String navigationId) async {
+    final trackRepo = NavigationTrackRepository();
+    final punchRepo = CheckpointPunchRepository();
+    final alertRepo = NavigatorAlertRepository();
+
+    // מחיקה מקומית (Drift)
+    await trackRepo.deleteByNavigation(navigationId);
+    await punchRepo.deleteByNavigation(navigationId);
+    await alertRepo.deleteByNavigation(navigationId);
+
+    // מחיקה מ-Firestore — tracks
+    try {
+      final tracksSnapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .get();
+      for (final doc in tracksSnapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (_) {
+      // Firestore לא זמין — ימחק בסנכרון הבא
+    }
+  }
+
   Future<void> _startNavigation(domain.Navigation navigation) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1365,6 +1395,9 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     if (confirmed != true) return;
 
     try {
+      // איפוס סטטוסים אישיים — מחיקת tracks, דקירות והתראות ישנים
+      await _resetNavigatorData(navigation.id);
+
       final updated = navigation.copyWith(
         status: 'active',
         activeStartTime: DateTime.now(),

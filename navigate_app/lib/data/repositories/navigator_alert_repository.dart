@@ -98,6 +98,18 @@ class NavigatorAlertRepository {
     });
   }
 
+  /// מחיקת כל ההתראות לניווט (איפוס לפני התחלה מחדש)
+  Future<void> deleteByNavigation(String navigationId) async {
+    try {
+      final snapshot = await _alertsCollection(navigationId).get();
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      print('DEBUG NavigatorAlertRepository: error deleting by navigation: $e');
+    }
+  }
+
   /// ספירת התראות פעילות
   Future<int> countActive(String navigationId) async {
     final active = await getActiveByNavigation(navigationId);

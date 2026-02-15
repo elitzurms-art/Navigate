@@ -102,6 +102,13 @@ class NavigationTrackRepository {
     );
   }
 
+  /// מחיקת כל ה-tracks לניווט (איפוס לפני התחלה מחדש)
+  Future<void> deleteByNavigation(String navigationId) async {
+    await (_db.delete(_db.navigationTracks)
+          ..where((t) => t.navigationId.equals(navigationId)))
+        .go();
+  }
+
   /// גזירת סטטוס אישי מרשומת track
   Future<NavigatorPersonalStatus> getPersonalStatus({
     required String navigatorUserId,

@@ -189,11 +189,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
             if (track == null) {
               // אין track מקומי — בדוק אם Firestore listener כבר סימן active
-              if (data.personalStatus == NavigatorPersonalStatus.active &&
-                  data.lastUpdate != null &&
-                  data.timeSinceLastUpdate < timeout) {
-                // שמור סטטוס active + נקודות Firestore — לא לדרוס
-                status = NavigatorPersonalStatus.active;
+              if ((data.personalStatus == NavigatorPersonalStatus.active ||
+                   data.personalStatus == NavigatorPersonalStatus.noReception) &&
+                  data.lastUpdate != null) {
+                if (data.timeSinceLastUpdate < timeout) {
+                  // שמור סטטוס active + נקודות Firestore — לא לדרוס
+                  status = NavigatorPersonalStatus.active;
+                } else {
+                  // timeout — מנווט לא דיווח מעל הזמן שהוגדר
+                  status = NavigatorPersonalStatus.noReception;
+                }
                 points = data.trackPoints;
               } else {
                 status = NavigatorPersonalStatus.waiting;
@@ -212,6 +217,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     .map((p) => TrackPoint.fromMap(p as Map<String, dynamic>))
                     .toList();
               } catch (_) {}
+
+              // timeout — מנווט פעיל שלא דיווח מעל הזמן שהוגדר
+              if (status == NavigatorPersonalStatus.active && points.isNotEmpty) {
+                final lastPointTime = points.last.timestamp;
+                if (DateTime.now().difference(lastPointTime) > timeout) {
+                  status = NavigatorPersonalStatus.noReception;
+                }
+              }
             }
 
             data.personalStatus = status;
@@ -595,7 +608,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   List<_NavigatorPairDistance> _getInterNavigatorDistances() {
     final activeWithPosition = _navigatorData.entries
         .where((e) =>
-            e.value.personalStatus == NavigatorPersonalStatus.active &&
+            (e.value.personalStatus == NavigatorPersonalStatus.active ||
+             e.value.personalStatus == NavigatorPersonalStatus.noReception) &&
             e.value.currentPosition != null)
         .toList();
 
@@ -667,6 +681,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         return Icons.navigation;
       case NavigatorPersonalStatus.finished:
         return Icons.check_circle;
+      case NavigatorPersonalStatus.noReception:
+        return Icons.signal_wifi_off;
     }
   }
 
@@ -802,6 +818,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           color: Colors.grey[100],
           child: Column(
             children: [
+              // מקרא סטטוסים
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _mapLegendItem('ממתין', Colors.grey),
+                    _mapLegendItem('פעיל', Colors.green),
+                    _mapLegendItem('סיים', Colors.blue),
+                    _mapLegendItem('ללא קליטה', Colors.orange),
+                    _mapLegendItem('התרעה', Colors.red),
+                  ],
+                ),
+              ),
               // בחירת מנווטים
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -994,6 +1024,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     final finishedCount = _navigatorData.values
         .where((d) => d.personalStatus == NavigatorPersonalStatus.finished)
         .length;
+    final noReceptionCount = _navigatorData.values
+        .where((d) => d.personalStatus == NavigatorPersonalStatus.noReception)
+        .length;
     final alertCount = _activeAlerts.length;
     final distances = _getInterNavigatorDistances();
 
@@ -1015,6 +1048,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               _summaryChip(Icons.people, '$total מנווטים'),
               _summaryChip(Icons.navigation, '$activeCount פעילים'),
               _summaryChip(Icons.check_circle, '$finishedCount סיימו'),
+              if (noReceptionCount > 0)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.signal_wifi_off, size: 16, color: Colors.orange),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$noReceptionCount ללא קליטה',
+                      style: const TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
               if (alertCount > 0)
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1184,7 +1229,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             Polyline(
               points: points,
               strokeWidth: 3,
-              color: (data.personalStatus == NavigatorPersonalStatus.active ? Colors.green : Colors.grey).withValues(alpha: _tracksOpacity),
+              color: _getTrackColor(data.personalStatus).withValues(alpha: _tracksOpacity),
             ),
           ],
         ),
@@ -1285,8 +1330,40 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Color _getNavigatorStatusColor(NavigatorLiveData data) {
     if (data.hasActiveAlert) return Colors.red;
-    if (data.personalStatus == NavigatorPersonalStatus.active) return Colors.green;
-    return Colors.grey; // waiting / finished
+    switch (data.personalStatus) {
+      case NavigatorPersonalStatus.active:
+        return Colors.green;
+      case NavigatorPersonalStatus.finished:
+        return Colors.blue;
+      case NavigatorPersonalStatus.noReception:
+        return Colors.orange;
+      case NavigatorPersonalStatus.waiting:
+        return Colors.grey;
+    }
+  }
+
+  Widget _mapLegendItem(String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.circle, size: 10, color: color),
+        const SizedBox(width: 3),
+        Text(label, style: const TextStyle(fontSize: 10)),
+      ],
+    );
+  }
+
+  Color _getTrackColor(NavigatorPersonalStatus status) {
+    switch (status) {
+      case NavigatorPersonalStatus.active:
+        return Colors.green;
+      case NavigatorPersonalStatus.finished:
+        return Colors.blue;
+      case NavigatorPersonalStatus.noReception:
+        return Colors.orange;
+      case NavigatorPersonalStatus.waiting:
+        return Colors.grey;
+    }
   }
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
@@ -1394,6 +1471,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     final finishedCount = _navigatorData.values
         .where((d) => d.personalStatus == NavigatorPersonalStatus.finished)
         .length;
+    final noReceptionCount = _navigatorData.values
+        .where((d) => d.personalStatus == NavigatorPersonalStatus.noReception)
+        .length;
 
     // התקדמות נ"צ
     int totalCheckpoints = 0;
@@ -1476,6 +1556,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             )),
           ],
         ),
+        if (noReceptionCount > 0) ...[
+          const SizedBox(height: 8),
+          _dashboardMetricCard(
+            icon: Icons.signal_wifi_off,
+            label: 'ללא קליטה',
+            value: '$noReceptionCount',
+            color: Colors.orange,
+          ),
+        ],
         const SizedBox(height: 12),
 
         // התקדמות נ"צ

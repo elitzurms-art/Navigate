@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
@@ -11,6 +12,7 @@ import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
@@ -67,6 +69,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
+  // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
+  Timer? _navigationPollTimer;
 
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
@@ -81,6 +85,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _reloadNavigationFromDb();
     _startAlertListener();
     _startNavigationListener();
+    _startNavigationPolling();
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
@@ -92,6 +97,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   void dispose() {
     _alertSubscription?.cancel();
     _navigationListener?.cancel();
+    _navigationPollTimer?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -168,6 +174,48 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         print('DEBUG TrainingMode: navigation listener error: $e');
       },
     );
+  }
+
+  // ===========================================================================
+  // Navigation polling fallback — direct Firestore .get() every 10 seconds
+  // (bypasses Windows threading bug with .snapshots() listeners)
+  // ===========================================================================
+
+  void _startNavigationPolling() {
+    // שאילתה ראשונית מיידית
+    _pollNavigation();
+    _navigationPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _pollNavigation(),
+    );
+  }
+
+  Future<void> _pollNavigation() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .get();
+
+      if (!mounted || !snapshot.exists || snapshot.data() == null) return;
+
+      final data = snapshot.data()!;
+      data['id'] = snapshot.id;
+      final nav = domain.Navigation.fromMap(data);
+
+      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+      if (_currentNavigation.routes != nav.routes ||
+          _currentNavigation.status != nav.status) {
+        setState(() {
+          _currentNavigation = nav;
+          _learningStarted = nav.status == 'learning';
+        });
+        // עדכון DB מקומי כדי לשמור על סנכרון Drift
+        await _navRepo.updateLocalFromFirestore(nav);
+      }
+    } catch (e) {
+      print('DEBUG TrainingMode: poll error: $e');
+    }
   }
 
   // ===========================================================================

@@ -2,7 +2,8 @@
 enum NavigatorPersonalStatus {
   waiting('waiting', 'ממתין'),
   active('active', 'פעיל'),
-  finished('finished', 'סיים');
+  finished('finished', 'סיים'),
+  noReception('no_reception', 'ללא קליטה');
 
   final String code;
   final String displayName;
@@ -20,6 +21,7 @@ enum NavigatorPersonalStatus {
   /// - אין רשומה / isActive=false + endedAt=null → ממתין
   /// - isActive=true + endedAt=null → פעיל
   /// - isActive=false + endedAt!=null → סיים
+  /// הערה: noReception נגזר בשכבת ה-UI (navigation_management_screen) לפי timeout
   static NavigatorPersonalStatus deriveFromTrack({
     required bool hasTrack,
     required bool isActive,

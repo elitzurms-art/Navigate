@@ -97,6 +97,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   // Firestore listener — סטטוס מנווטים בזמן אמת (למפקד)
   StreamSubscription<QuerySnapshot>? _systemStatusListener;
 
+  // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
+  Timer? _statusPollTimer;
+
   // טיימר בדיקה מחזורית (למנווט)
   Timer? _navigatorCheckTimer;
 
@@ -111,6 +114,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       _initializeNavigatorStatuses();
       _loadNavigatorUsers();
       _startSystemStatusListener();
+      _startStatusPolling();
       _initDataLoader();
       _loadCommanderPermissions();
     } else {
@@ -255,6 +259,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _dataLoader?.dispose();
     _gpsService.dispose();
     _systemStatusListener?.cancel();
+    _statusPollTimer?.cancel();
     _navigatorCheckTimer?.cancel();
     super.dispose();
   }
@@ -351,6 +356,46 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         print('DEBUG SystemCheck: system_status listener error: $e');
       },
     );
+  }
+
+  /// polling fallback — שאילתת Firestore ישירה כל 10 שניות
+  /// (עוקף את בעיית ה-threading של snapshots ב-Windows)
+  void _startStatusPolling() {
+    // שאילתה ראשונית מיידית
+    _pollNavigatorStatuses();
+    _statusPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _pollNavigatorStatuses(),
+    );
+  }
+
+  Future<void> _pollNavigatorStatuses() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('system_status')
+          .get();
+
+      if (!mounted) return;
+      setState(() {
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final navigatorId = data['navigatorId'] as String? ?? doc.id;
+
+          _navigatorStatuses[navigatorId] = NavigatorStatus(
+            isConnected: data['isConnected'] as bool? ?? false,
+            batteryLevel: data['batteryLevel'] as int? ?? 0,
+            hasGPS: data['hasGPS'] as bool? ?? false,
+            receptionLevel: data['receptionLevel'] as int? ?? 0,
+            latitude: (data['latitude'] as num?)?.toDouble(),
+            longitude: (data['longitude'] as num?)?.toDouble(),
+          );
+        }
+      });
+    } catch (e) {
+      print('DEBUG SystemCheck: poll error: $e');
+    }
   }
 
   void _initDataLoader() {
@@ -591,6 +636,20 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     );
 
     if (confirmed != true) return;
+
+    // Clean up system_status documents from Firestore
+    try {
+      final statusCollection = FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(_currentNavigation.id)
+          .collection('system_status');
+      final snapshot = await statusCollection.get();
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      print('DEBUG SystemCheck: failed to clean up system_status: $e');
+    }
 
     final updatedNavigation = _currentNavigation.copyWith(
       status: 'preparation',
