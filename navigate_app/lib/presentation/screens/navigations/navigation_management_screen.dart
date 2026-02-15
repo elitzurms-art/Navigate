@@ -49,6 +49,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   late TabController _tabController;
   Timer? _refreshTimer;
   Timer? _stalenessTimer;
+  Timer? _tracksPollTimer;
+  Timer? _punchesPollTimer;
   StreamSubscription<QuerySnapshot>? _tracksListener;
   StreamSubscription<QuerySnapshot>? _systemStatusListener;
   StreamSubscription<List<NavigatorAlert>>? _alertsListener;
@@ -91,6 +93,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startSystemStatusListener();
     _startAlertsListener();
     _startPunchesListener();
+    _startTracksPolling();
+    _startPunchesPolling();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
@@ -105,6 +109,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   void dispose() {
     _refreshTimer?.cancel();
     _stalenessTimer?.cancel();
+    _tracksPollTimer?.cancel();
+    _punchesPollTimer?.cancel();
     _tracksListener?.cancel();
     _systemStatusListener?.cancel();
     _alertsListener?.cancel();
@@ -339,16 +345,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
         final liveData = _navigatorData[navigatorId]!;
 
-        // fallback בלבד — לא לדרוס נתוני track אמיתיים
-        if (liveData.currentPosition == null) {
-          liveData.currentPosition = LatLng(latitude, longitude);
+        // עדכון מיקום מ-system_status — רק אם אין נתונים או ה-timestamp חדש יותר
+        DateTime? statusTime;
+        final updatedAtRaw = data['updatedAt'];
+        if (updatedAtRaw is Timestamp) {
+          statusTime = updatedAtRaw.toDate();
+        } else if (updatedAtRaw is String) {
+          statusTime = DateTime.tryParse(updatedAtRaw);
+        }
 
-          // עדכון lastUpdate מ-system_status
-          final updatedAtRaw = data['updatedAt'];
-          if (updatedAtRaw is Timestamp) {
-            liveData.lastUpdate = updatedAtRaw.toDate();
-          } else if (updatedAtRaw is String) {
-            liveData.lastUpdate = DateTime.tryParse(updatedAtRaw);
+        final shouldUpdate = liveData.currentPosition == null ||
+            (statusTime != null &&
+             (liveData.lastUpdate == null || statusTime.isAfter(liveData.lastUpdate!)));
+
+        if (shouldUpdate) {
+          liveData.currentPosition = LatLng(latitude, longitude);
+          if (statusTime != null) {
+            liveData.lastUpdate = statusTime;
           }
         }
       }
@@ -409,6 +422,66 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         print('DEBUG NavigationManagement: punches listener error: $e');
       },
     );
+  }
+
+  // ===========================================================================
+  // Polling Fallback — שאילתת Firestore ישירה כל 10 שניות
+  // (עוקף את בעיית ה-threading של snapshots ב-Windows)
+  // ===========================================================================
+
+  void _startTracksPolling() {
+    _pollTracks();
+    _tracksPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _pollTracks(),
+    );
+  }
+
+  Future<void> _pollTracks() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: widget.navigation.id)
+          .get();
+
+      if (!mounted) return;
+      _updateNavigatorDataFromFirestore(snapshot);
+    } catch (e) {
+      print('DEBUG NavigationManagement: tracks poll error: $e');
+    }
+  }
+
+  void _startPunchesPolling() {
+    _pollPunches();
+    _punchesPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _pollPunches(),
+    );
+  }
+
+  Future<void> _pollPunches() async {
+    try {
+      final punches = await _punchRepo.getByNavigationFromFirestore(
+        widget.navigation.id,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        final punchMap = <String, List<CheckpointPunch>>{};
+        for (final punch in punches) {
+          punchMap.putIfAbsent(punch.navigatorId, () => []).add(punch);
+        }
+        for (final entry in _navigatorData.entries) {
+          final navPunches = punchMap[entry.key] ?? [];
+          // עדכון רק אם יש נתונים חדשים (לא לדרוס ברשימה ריקה)
+          if (navPunches.isNotEmpty || entry.value.punches.isEmpty) {
+            entry.value.punches = navPunches;
+          }
+        }
+      });
+    } catch (e) {
+      print('DEBUG NavigationManagement: punches poll error: $e');
+    }
   }
 
   Future<void> _resolveAlert(NavigatorAlert alert) async {

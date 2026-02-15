@@ -9,9 +9,12 @@ import '../../../../domain/entities/user.dart';
 import '../../../../domain/entities/navigator_personal_status.dart';
 import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/checkpoint_punch_repository.dart';
+import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigator_alert_repository.dart';
 import '../../../../data/datasources/local/app_database.dart' hide User;
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/utils/geometry_utils.dart';
+import '../../../../domain/entities/checkpoint.dart' as domain_cp;
 import '../../../../services/gps_service.dart';
 import '../../../../services/gps_tracking_service.dart';
 import '../../../../services/health_check_service.dart';
@@ -43,6 +46,7 @@ class _ActiveViewState extends State<ActiveView> {
   final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
+  final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
 
   NavigatorPersonalStatus _personalStatus = NavigatorPersonalStatus.waiting;
@@ -51,6 +55,7 @@ class _ActiveViewState extends State<ActiveView> {
 
   int _punchCount = 0;
   bool _securityActive = false;
+  List<domain_cp.Checkpoint> _routeCheckpoints = [];
 
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
@@ -106,6 +111,7 @@ class _ActiveViewState extends State<ActiveView> {
 
   Future<void> _loadTrackState() async {
     await _computeBoundaryCenter();
+    await _loadRouteCheckpoints();
     try {
       final track = await _trackRepo.getByNavigatorAndNavigation(
         widget.currentUser.uid,
@@ -195,6 +201,22 @@ class _ActiveViewState extends State<ActiveView> {
       print('DEBUG ActiveView: boundary center = ${_boundaryCenter!.latitude}, ${_boundaryCenter!.longitude}');
     } catch (e) {
       print('DEBUG ActiveView: failed to compute boundary center: $e');
+    }
+  }
+
+  Future<void> _loadRouteCheckpoints() async {
+    try {
+      final route = _route;
+      if (route == null) return;
+
+      final allCheckpoints = await _checkpointRepo.getByArea(_nav.areaId);
+      final routeCpIds = route.checkpointIds.toSet();
+      _routeCheckpoints = allCheckpoints
+          .where((cp) => routeCpIds.contains(cp.id) && !cp.isPolygon && cp.coordinates != null)
+          .toList();
+      print('DEBUG ActiveView: loaded ${_routeCheckpoints.length} route checkpoints');
+    } catch (e) {
+      print('DEBUG ActiveView: failed to load checkpoints: $e');
     }
   }
 
@@ -366,16 +388,18 @@ class _ActiveViewState extends State<ActiveView> {
     if (_track == null) return;
 
     final points = _gpsTracker.trackPoints;
-    if (points.isEmpty) return;
 
     try {
-      await _trackRepo.updateTrackPoints(_track!.id, points);
+      // עדכון נקודות ב-Drift (רק אם יש)
+      if (points.isNotEmpty) {
+        await _trackRepo.updateTrackPoints(_track!.id, points);
+      }
 
-      // סנכרון ל-Firestore
+      // סנכרון ל-Firestore — גם ללא נקודות, כדי שהמפקד יראה סטטוס פעיל
       final updatedTrack = await _trackRepo.getById(_track!.id);
       await _trackRepo.syncTrackToFirestore(updatedTrack);
 
-      if (mounted) {
+      if (mounted && points.isNotEmpty) {
         setState(() => _trackPointCount = points.length);
       }
 
@@ -526,10 +550,12 @@ class _ActiveViewState extends State<ActiveView> {
       // שמירת ה-track ב-state לפני GPS כדי ש-_saveTrackPoints יוכל לגשת אליו
       _track = track;
 
+      // סנכרון מיידי ל-Firestore — כדי שהמפקד יראה את המנווט כ"פעיל" גם ללא GPS
+      await _trackRepo.syncTrackToFirestore(track);
+
       await _startGpsTracking();
 
-      // שמירה מיידית של הנקודה הראשונה ל-Drift + סנכרון ל-Firestore
-      // כדי שהמפקד יראה את המנווט על המפה מיד (בלי לחכות ~30 שניות לבאצ' הבא)
+      // שמירה מיידית של הנקודה הראשונה (אם יש) ל-Drift + סנכרון ל-Firestore
       await _saveTrackPoints();
 
       _startGpsSourceCheck();
@@ -624,14 +650,93 @@ class _ActiveViewState extends State<ActiveView> {
   // ===========================================================================
 
   Future<void> _punchCheckpoint() async {
-    // TODO: implement real punch logic with GPS + verification
-    setState(() => _punchCount++);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('דקירה #$_punchCount נרשמה'),
-        backgroundColor: Colors.blue,
-      ),
+    if (_routeCheckpoints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('אין נקודות ציון בציר'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // קבלת מיקום GPS נוכחי
+    final posResult = await _gpsService.getCurrentPositionWithAccuracy(
+      boundaryCenter: _boundaryCenter,
     );
+    if (posResult == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('לא ניתן לקבל מיקום GPS'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    final currentCoord = Coordinate(
+      lat: posResult.position.latitude,
+      lng: posResult.position.longitude,
+      utm: '',
+    );
+
+    // מציאת הנקודה הקרובה ביותר מציר המנווט
+    domain_cp.Checkpoint? nearestCp;
+    double nearestDistance = double.infinity;
+
+    for (final cp in _routeCheckpoints) {
+      final dist = GeometryUtils.distanceBetweenMeters(
+        currentCoord,
+        cp.coordinates!,
+      );
+      if (dist < nearestDistance) {
+        nearestDistance = dist;
+        nearestCp = cp;
+      }
+    }
+
+    if (nearestCp == null) return;
+
+    // יצירת דקירה
+    final now = DateTime.now();
+    final punch = CheckpointPunch(
+      id: '${widget.currentUser.uid}_${nearestCp.id}_${now.millisecondsSinceEpoch}',
+      navigationId: _nav.id,
+      navigatorId: widget.currentUser.uid,
+      checkpointId: nearestCp.id,
+      punchLocation: currentCoord,
+      punchTime: now,
+      distanceFromCheckpoint: nearestDistance,
+    );
+
+    try {
+      await _punchRepo.create(punch);
+      print('DEBUG ActiveView: punch created for checkpoint ${nearestCp.name}, distance=${nearestDistance.toStringAsFixed(0)}m');
+
+      if (mounted) {
+        setState(() => _punchCount++);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'דקירה ב-${nearestCp.name} (${nearestDistance.toStringAsFixed(0)} מ\')',
+            ),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      print('DEBUG ActiveView: punch error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בדקירה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _reportStatus() async {

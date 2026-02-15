@@ -338,6 +338,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         );
       case NavigatorScreenState.active:
         return ActiveView(
+          key: ValueKey('active_${_currentNavigation!.id}_${_currentNavigation!.updatedAt}'),
           navigation: _currentNavigation!,
           currentUser: _currentUser!,
           onNavigationUpdated: _onNavigationUpdated,
