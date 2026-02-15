@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
 import '../domain/entities/navigation_tree.dart';
@@ -81,20 +82,18 @@ class FrameworkExcelService {
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}-${now.minute.toString().padLeft(2, '0')}';
     final defaultFileName = '${unit.name}_$dateStr.xlsx';
 
+    final fileBytes = Uint8List.fromList(bytes);
     final savePath = await FilePicker.platform.saveFile(
       dialogTitle: 'שמירת קובץ יחידה',
       fileName: defaultFileName,
       type: FileType.custom,
       allowedExtensions: ['xlsx'],
+      bytes: fileBytes,
     );
 
     if (savePath == null) return null; // User cancelled
 
-    final filePath = savePath.endsWith('.xlsx') ? savePath : '$savePath.xlsx';
-    final file = File(filePath);
-    await file.writeAsBytes(bytes);
-
-    return filePath;
+    return savePath.endsWith('.xlsx') ? savePath : '$savePath.xlsx';
   }
 
   /// Imports sub-frameworks from an Excel file.

@@ -212,6 +212,26 @@ class GeometryUtils {
         c.lng <= max(a.lng, b.lng);
   }
 
+  /// בדיקה אם קטע קו נכנס לפוליגון או חותך את צלעותיו
+  static bool doesSegmentIntersectPolygon(
+    Coordinate segA,
+    Coordinate segB,
+    List<Coordinate> polygon,
+  ) {
+    if (polygon.length < 3) return false;
+
+    // בדיקה 1: האם נקודת ההתחלה בתוך הפוליגון
+    if (isPointInPolygon(segA, polygon)) return true;
+
+    // בדיקה 2: האם צלעות הפוליגון חותכות את הקטע
+    for (int i = 0; i < polygon.length; i++) {
+      final j = (i + 1) % polygon.length;
+      if (_doSegmentsIntersect(segA, segB, polygon[i], polygon[j])) return true;
+    }
+
+    return false;
+  }
+
   /// סינון פוליגונים שחותכים פוליגון נתון
   static List<T> filterPolygonsIntersecting<T>({
     required List<T> polygons,

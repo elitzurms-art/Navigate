@@ -130,6 +130,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   int _batteryPercentage = 20;
   bool _noReceptionAlertEnabled = false;
   int _noReceptionMinTime = 30;
+  bool _healthCheckEnabled = true;
+  int _healthCheckIntervalMinutes = 60;
 
   @override
   void initState() {
@@ -405,6 +407,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _batteryPercentage = nav.alerts.batteryPercentage ?? 20;
     _noReceptionAlertEnabled = nav.alerts.noReceptionAlertEnabled;
     _noReceptionMinTime = nav.alerts.noReceptionMinTime ?? 60;
+    _healthCheckEnabled = nav.alerts.healthCheckEnabled;
+    _healthCheckIntervalMinutes = nav.alerts.healthCheckIntervalMinutes;
 
     // טעינת אזור, עץ וגבול
     await _loadAreaTreeAndBoundary();
@@ -1341,6 +1345,45 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               const Divider(),
             ],
 
+            // בדיקת תקינות מנווטים
+            SwitchListTile(
+              title: const Text('בדיקת תקינות'),
+              subtitle: const Text('דרוש דיווח תקינות תקופתי ממנווטים'),
+              value: _healthCheckEnabled,
+              onChanged: (value) {
+                setState(() => _healthCheckEnabled = value);
+              },
+            ),
+            if (_healthCheckEnabled) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _healthCheckIntervalMinutes >= 60
+                          ? 'זמן בין בדיקות: ${(_healthCheckIntervalMinutes / 60).toStringAsFixed(_healthCheckIntervalMinutes % 60 == 0 ? 0 : 1)} שעות'
+                          : 'זמן בין בדיקות: $_healthCheckIntervalMinutes דקות',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    ),
+                    Slider(
+                      value: _healthCheckIntervalMinutes.toDouble(),
+                      min: 30,
+                      max: 600,
+                      divisions: 19,
+                      label: _healthCheckIntervalMinutes >= 60
+                          ? '${(_healthCheckIntervalMinutes / 60).toStringAsFixed(_healthCheckIntervalMinutes % 60 == 0 ? 0 : 1)} שעות'
+                          : '$_healthCheckIntervalMinutes דקות',
+                      onChanged: (value) {
+                        setState(() => _healthCheckIntervalMinutes = value.round());
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const Divider(),
+
             SwitchListTile(
               title: const Text('הפעל התראות'),
               value: _alertsEnabled,
@@ -1670,6 +1713,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         batteryPercentage: _batteryAlertEnabled ? _batteryPercentage : null,
         noReceptionAlertEnabled: _noReceptionAlertEnabled,
         noReceptionMinTime: _noReceptionAlertEnabled ? _noReceptionMinTime : null,
+        healthCheckEnabled: _healthCheckEnabled,
+        healthCheckIntervalMinutes: _healthCheckIntervalMinutes,
       );
 
       // חישוב מיקום פתיחת מפה - במרכז הגבול אם קיים

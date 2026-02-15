@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/entities/user.dart' as app_user;
 import '../data/repositories/user_repository.dart';
 import 'session_service.dart';
+import 'notification_service.dart';
 
 /// שירות אימות — מבוסס מספר אישי + SMS / Email Link
 class AuthService {
@@ -214,6 +215,9 @@ class AuthService {
         print('DEBUG: Anonymous sign-in failed: $e');
       }
     }
+
+    // רישום FCM token
+    await NotificationService().setUserId(personalNumber);
   }
 
   // ─── הרשמה ───
@@ -428,6 +432,7 @@ class AuthService {
 
   /// יציאה
   Future<void> signOut() async {
+    await NotificationService().clearToken();
     await SessionService().clearSession();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('logged_in_uid');

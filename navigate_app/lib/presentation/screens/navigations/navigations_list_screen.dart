@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../domain/entities/navigation.dart' as domain;
@@ -55,6 +56,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   Set<String> _expandedNodes = {};
   bool _isLoading = false;
   User? _currentUser;
+  StreamSubscription<List<domain.Navigation>>? _navigationsListener;
 
   @override
   void initState() {
@@ -63,6 +65,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     _loadCurrentUser();
     _loadAreaNames();
     _loadNavigations();
+    _startNavigationsListener();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -93,6 +96,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   @override
   void dispose() {
+    _navigationsListener?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -102,6 +106,43 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     if (state == AppLifecycleState.resumed) {
       _loadNavigations();
     }
+  }
+
+  /// האזנה בזמן אמת לשינויי ניווטים ב-Firestore
+  void _startNavigationsListener() {
+    _navigationsListener?.cancel();
+    _navigationsListener = _repository.watchAllNavigations().listen(
+      (firestoreNavigations) async {
+        if (!mounted) return;
+        // בדיקה אם יש שינוי בסטטוס של אחד הניווטים הקיימים
+        bool hasChanges = false;
+        for (final fsNav in firestoreNavigations) {
+          final existing = _navigations.where((n) => n.id == fsNav.id).firstOrNull;
+          if (existing == null) {
+            hasChanges = true; // ניווט חדש
+            break;
+          }
+          if (existing.status != fsNav.status || existing.updatedAt != fsNav.updatedAt) {
+            hasChanges = true; // סטטוס או נתונים השתנו
+            break;
+          }
+        }
+        // בדיקה אם ניווט נמחק
+        if (!hasChanges && _navigations.length != firestoreNavigations.length) {
+          hasChanges = true;
+        }
+        if (hasChanges) {
+          // עדכון local DB ורענון תצוגה
+          for (final nav in firestoreNavigations) {
+            await _repository.updateLocalFromFirestore(nav);
+          }
+          _loadNavigations();
+        }
+      },
+      onError: (e) {
+        print('DEBUG: Navigations listener error: $e');
+      },
+    );
   }
 
   Future<void> _loadNavigations() async {

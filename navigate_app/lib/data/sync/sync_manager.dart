@@ -38,6 +38,11 @@ const int _maxRetryCount = 10;
 /// - Exponential backoff בניסיונות חוזרים
 /// - פתרון קונפליקטים אוטומטי לנתונים בטוחים
 class SyncManager {
+  // Singleton pattern
+  static final SyncManager _instance = SyncManager._internal();
+  factory SyncManager() => _instance;
+  SyncManager._internal();
+
   final AppDatabase _db = AppDatabase();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Connectivity _connectivity = Connectivity();
@@ -69,6 +74,22 @@ class SyncManager {
 
   /// האם כבר בוצע סנכרון ראשוני (למניעת כפילויות)
   bool _didInitialSync = false;
+
+  /// Completer לסנכרון ראשוני — מאפשר למסכים להמתין לסיום
+  Completer<void> _initialSyncCompleter = Completer<void>();
+
+  /// האם הסנכרון הראשוני הושלם
+  bool get didInitialSync => _didInitialSync;
+
+  /// המתנה לסיום הסנכרון הראשוני (עם timeout)
+  Future<void> waitForInitialSync({Duration timeout = const Duration(seconds: 15)}) async {
+    if (_didInitialSync) return;
+    try {
+      await _initialSyncCompleter.future.timeout(timeout);
+    } catch (_) {
+      print('SyncManager: waitForInitialSync timed out after ${timeout.inSeconds}s');
+    }
+  }
 
   /// האם יש משתמש מאומת ב-Firebase Auth
   bool get _isAuthenticated => _auth.currentUser != null;
@@ -159,9 +180,20 @@ class SyncManager {
       }
       _didInitialSync = true;
       print('SyncManager: User authenticated — triggering sync.');
-      pullAll().then((_) => processSyncQueue());
+      pullAll().then((_) {
+        if (!_initialSyncCompleter.isCompleted) {
+          _initialSyncCompleter.complete();
+        }
+        processSyncQueue();
+      }).catchError((e) {
+        print('SyncManager: Initial pullAll failed: $e');
+        if (!_initialSyncCompleter.isCompleted) {
+          _initialSyncCompleter.complete(); // השלם גם בשגיאה כדי לא לחסום
+        }
+      });
     } else if (user == null) {
       _didInitialSync = false;
+      _initialSyncCompleter = Completer<void>(); // איפוס ל-login הבא
       print('SyncManager: User signed out — pausing Firestore sync.');
     }
   }
@@ -1124,6 +1156,7 @@ class SyncManager {
         role: data['role'] as String? ?? 'navigator',
         frameworkId: const Value(null),
         unitId: Value(data['unitId'] as String?),
+        fcmToken: Value(data['fcmToken'] as String?),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),

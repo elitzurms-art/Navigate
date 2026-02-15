@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'dart:io';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -207,17 +205,16 @@ class _DataExportScreenState extends State<DataExportScreen> {
 
       // בחירת מיקום שמירה
       final fileName = 'טבלת_צירים_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור טבלת צירים',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['csv'],
+        bytes: fileBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsString(csvWithBom, encoding: utf8);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -284,17 +281,16 @@ class _DataExportScreenState extends State<DataExportScreen> {
 
       // שמירה
       final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור שכבת נ.צ.',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['csv'],
+        bytes: fileBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsString(csvWithBom, encoding: utf8);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1120,18 +1116,17 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
       }
 
       // Save
+      final pdfBytes = Uint8List.fromList(await pdf.save());
       final fileName = 'map_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור מפה',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['pdf'],
+        bytes: pdfBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsBytes(await pdf.save());
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

@@ -169,6 +169,10 @@ class NavigationAlerts extends Equatable {
   final bool noReceptionAlertEnabled;
   final int? noReceptionMinTime; // שניות
 
+  // בדיקת תקינות מנווטים
+  final bool healthCheckEnabled;
+  final int healthCheckIntervalMinutes; // דקות (30-600, קפיצות 30)
+
   const NavigationAlerts({
     required this.enabled,
     this.speedAlertEnabled = false,
@@ -188,6 +192,8 @@ class NavigationAlerts extends Equatable {
     this.batteryPercentage,
     this.noReceptionAlertEnabled = false,
     this.noReceptionMinTime,
+    this.healthCheckEnabled = true,
+    this.healthCheckIntervalMinutes = 60,
   });
 
   NavigationAlerts copyWith({
@@ -209,6 +215,8 @@ class NavigationAlerts extends Equatable {
     int? batteryPercentage,
     bool? noReceptionAlertEnabled,
     int? noReceptionMinTime,
+    bool? healthCheckEnabled,
+    int? healthCheckIntervalMinutes,
   }) {
     return NavigationAlerts(
       enabled: enabled ?? this.enabled,
@@ -230,6 +238,8 @@ class NavigationAlerts extends Equatable {
       batteryPercentage: batteryPercentage ?? this.batteryPercentage,
       noReceptionAlertEnabled: noReceptionAlertEnabled ?? this.noReceptionAlertEnabled,
       noReceptionMinTime: noReceptionMinTime ?? this.noReceptionMinTime,
+      healthCheckEnabled: healthCheckEnabled ?? this.healthCheckEnabled,
+      healthCheckIntervalMinutes: healthCheckIntervalMinutes ?? this.healthCheckIntervalMinutes,
     );
   }
 
@@ -253,6 +263,8 @@ class NavigationAlerts extends Equatable {
       if (batteryPercentage != null) 'batteryPercentage': batteryPercentage,
       'noReceptionAlertEnabled': noReceptionAlertEnabled,
       if (noReceptionMinTime != null) 'noReceptionMinTime': noReceptionMinTime,
+      'healthCheckEnabled': healthCheckEnabled,
+      'healthCheckIntervalMinutes': healthCheckIntervalMinutes,
     };
   }
 
@@ -277,6 +289,8 @@ class NavigationAlerts extends Equatable {
       batteryPercentage: map['batteryPercentage'] as int?,
       noReceptionAlertEnabled: map['noReceptionAlertEnabled'] as bool? ?? false,
       noReceptionMinTime: map['noReceptionMinTime'] as int?,
+      healthCheckEnabled: map['healthCheckEnabled'] as bool? ?? true,
+      healthCheckIntervalMinutes: map['healthCheckIntervalMinutes'] as int? ?? 60,
     );
   }
 
@@ -300,6 +314,8 @@ class NavigationAlerts extends Equatable {
         batteryPercentage,
         noReceptionAlertEnabled,
         noReceptionMinTime,
+        healthCheckEnabled,
+        healthCheckIntervalMinutes,
       ];
 }
 

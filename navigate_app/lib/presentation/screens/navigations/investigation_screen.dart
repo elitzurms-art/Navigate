@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
@@ -222,18 +223,17 @@ ${data.trackPoints.map((tp) => '      <trkpt lat="${tp.coordinate.lat}" lon="${t
 </gpx>''';
 
       // שמירה
+      final fileBytes = Uint8List.fromList(utf8.encode(gpxContent));
       final fileName = 'GPX_${widget.navigation.name}_$_selectedNavigatorId.gpx';
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור GPX',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['gpx'],
+        bytes: fileBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsString(gpxContent);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

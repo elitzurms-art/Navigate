@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -1282,17 +1282,16 @@ class _LearningViewState extends State<LearningView>
 
     try {
       final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
+      final fileBytes = Uint8List.fromList(utf8.encode('\uFEFF$csvData'));
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור סיפור דרך CSV',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['csv'],
+        bytes: fileBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsString('\uFEFF$csvData', encoding: utf8);
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1443,18 +1442,17 @@ class _LearningViewState extends State<LearningView>
         ),
       );
 
+      final pdfBytes = Uint8List.fromList(await pdf.save());
       final fileName = 'סיפור_דרך_${_currentNavigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'שמור סיפור דרך PDF',
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: ['pdf'],
+        bytes: pdfBytes,
       );
 
       if (result != null) {
-        final file = File(result);
-        await file.writeAsBytes(await pdf.save());
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

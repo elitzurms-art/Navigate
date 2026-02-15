@@ -12,6 +12,7 @@ class User extends Equatable {
   final bool emailVerified;
   final String role; // 'admin', 'commander', 'navigator', 'unit_admin', 'developer'
   final String? unitId; // יחידה שהמשתמש שייך אליה
+  final String? fcmToken; // FCM push notification token
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -25,6 +26,7 @@ class User extends Equatable {
     this.emailVerified = false,
     required this.role,
     this.unitId,
+    this.fcmToken,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -74,6 +76,7 @@ class User extends Equatable {
     bool? emailVerified,
     String? role,
     String? unitId,
+    String? fcmToken,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -87,6 +90,7 @@ class User extends Equatable {
       emailVerified: emailVerified ?? this.emailVerified,
       role: role ?? this.role,
       unitId: unitId ?? this.unitId,
+      fcmToken: fcmToken ?? this.fcmToken,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -106,6 +110,7 @@ class User extends Equatable {
       'emailVerified': emailVerified,
       'role': role,
       if (unitId != null) 'unitId': unitId,
+      if (fcmToken != null) 'fcmToken': fcmToken,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -143,6 +148,7 @@ class User extends Equatable {
       emailVerified: map['emailVerified'] as bool? ?? false,
       role: map['role'] as String? ?? 'navigator',
       unitId: map['unitId'] as String?,
+      fcmToken: map['fcmToken'] as String?,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'] as String)
           : DateTime.now(),
@@ -163,6 +169,7 @@ class User extends Equatable {
     emailVerified,
     role,
     unitId,
+    fcmToken,
     createdAt,
     updatedAt,
   ];

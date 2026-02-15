@@ -21,6 +21,7 @@ class Users extends Table {
   BoolColumn get emailVerified => boolean().withDefault(const Constant(false))();
   TextColumn get frameworkId => text().nullable()();
   TextColumn get unitId => text().nullable()();
+  TextColumn get fcmToken => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -378,7 +379,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration {
@@ -508,6 +509,7 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 18 && to >= 19) {
           // תיקון: הפיכת lat, lng, utm ל-nullable בטבלת safety_points
           // SQLite לא תומך ב-ALTER COLUMN, לכן יוצרים מחדש את הטבלה
+          await customStatement('DROP TABLE IF EXISTS safety_points_new');
           await customStatement('''
             CREATE TABLE safety_points_new (
               id TEXT NOT NULL,
@@ -527,9 +529,15 @@ class AppDatabase extends _$AppDatabase {
               PRIMARY KEY (id)
             )
           ''');
-          await customStatement('INSERT INTO safety_points_new SELECT * FROM safety_points');
+          await customStatement('''
+            INSERT INTO safety_points_new (id, area_id, name, description, type, lat, lng, utm, coordinates_json, sequence_number, severity, created_by, created_at, updated_at)
+            SELECT id, area_id, name, description, type, lat, lng, utm, coordinates_json, sequence_number, severity, created_by, created_at, updated_at FROM safety_points
+          ''');
           await customStatement('DROP TABLE safety_points');
           await customStatement('ALTER TABLE safety_points_new RENAME TO safety_points');
+        }
+        if (from <= 19 && to >= 20) {
+          await m.addColumn(users, users.fcmToken);
         }
       },
     );

@@ -3,9 +3,16 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:gps_plus/gps_plus.dart';
 
+/// מקור מיקום אחרון
+enum PositionSource { gps, cellTower, none }
+
 /// שירות GPS ומיקום — עם fallback לאנטנות סלולריות דרך gps_plus
 class GpsService {
   StreamSubscription<Position>? _positionSubscription;
+
+  /// מקור המיקום האחרון שהתקבל
+  PositionSource _lastPositionSource = PositionSource.none;
+  PositionSource get lastPositionSource => _lastPositionSource;
 
   // Cell tower fallback
   CellLocationService? _cellService;
@@ -62,7 +69,13 @@ class GpsService {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
         // אין הרשאות GPS — נסה אנטנות
-        return await _getCellPosition();
+        final cellPos = await _getCellPosition();
+        if (cellPos != null) {
+          _lastPositionSource = PositionSource.cellTower;
+          return cellPos;
+        }
+        _lastPositionSource = PositionSource.none;
+        return null;
       }
 
       final position = await Geolocator.getCurrentPosition(
@@ -76,15 +89,23 @@ class GpsService {
         final cellPos = await _getCellPosition();
         if (cellPos != null) {
           print('DEBUG GpsService: GPS accuracy ${position.accuracy.toStringAsFixed(0)}m > threshold, using cell fallback');
+          _lastPositionSource = PositionSource.cellTower;
           return cellPos;
         }
       }
 
+      _lastPositionSource = PositionSource.gps;
       return LatLng(position.latitude, position.longitude);
     } catch (e) {
       // GPS נכשל לחלוטין — נסה אנטנות
       print('DEBUG GpsService: GPS failed ($e), trying cell fallback');
-      return await _getCellPosition();
+      final cellPos = await _getCellPosition();
+      if (cellPos != null) {
+        _lastPositionSource = PositionSource.cellTower;
+        return cellPos;
+      }
+      _lastPositionSource = PositionSource.none;
+      return null;
     }
   }
 

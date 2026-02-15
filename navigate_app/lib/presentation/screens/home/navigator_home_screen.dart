@@ -32,13 +32,14 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   String? _error;
 
   Timer? _pollTimer;
+  StreamSubscription<domain.Navigation?>? _navigationListener;
 
   @override
   void initState() {
     super.initState();
     _loadState();
-    // סקר כל 30 שניות לשינויי סטטוס
-    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    // סקר כל 60 שניות כ-fallback (Firestore listener הוא העיקרי)
+    _pollTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _loadState(silent: true);
     });
   }
@@ -46,7 +47,38 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _navigationListener?.cancel();
     super.dispose();
+  }
+
+  /// התחלת האזנה בזמן אמת למסמך ניווט ב-Firestore
+  void _startNavigationListener(String navigationId) {
+    // ביטול listener קודם אם קיים
+    _navigationListener?.cancel();
+    _navigationListener = _navigationRepo.watchNavigation(navigationId).listen(
+      (nav) {
+        if (!mounted) return;
+        if (nav == null) {
+          // הניווט נמחק — טעינה מחדש
+          _loadState(silent: true);
+          return;
+        }
+        // עדכון local DB בלי sync חזרה
+        _navigationRepo.updateLocalFromFirestore(nav);
+        // עדכון UI אם הסטטוס או הנתונים השתנו
+        if (_currentNavigation == null ||
+            _currentNavigation!.status != nav.status ||
+            _currentNavigation!.updatedAt != nav.updatedAt) {
+          setState(() {
+            _currentNavigation = nav;
+            _state = statusToScreenState(nav.status);
+          });
+        }
+      },
+      onError: (e) {
+        print('DEBUG: Navigation listener error: $e');
+      },
+    );
   }
 
   /// טעינת מצב — silent=true לא מציג loading spinner
@@ -101,11 +133,18 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       if (!mounted) return;
 
       if (bestNav == null) {
+        _navigationListener?.cancel();
+        _navigationListener = null;
         setState(() {
           _state = NavigatorScreenState.noActiveNavigation;
           _currentNavigation = null;
         });
         return;
+      }
+
+      // התחלת listener בזמן אמת אם הניווט השתנה
+      if (_currentNavigation?.id != bestNav.id) {
+        _startNavigationListener(bestNav.id);
       }
 
       setState(() {

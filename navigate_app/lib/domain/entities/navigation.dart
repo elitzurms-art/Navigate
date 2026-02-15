@@ -183,6 +183,26 @@ class NavigationPermissions extends Equatable {
   List<Object?> get props => [managers, viewers];
 }
 
+DateTime _parseDateTime(dynamic value) {
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.parse(value);
+  // Firestore Timestamp: has toDate() method
+  if (value != null && value.runtimeType.toString() == 'Timestamp') {
+    return (value as dynamic).toDate();
+  }
+  return DateTime.now();
+}
+
+DateTime? _parseDateTimeOrNull(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value);
+  if (value.runtimeType.toString() == 'Timestamp') {
+    return (value as dynamic).toDate();
+  }
+  return null;
+}
+
 /// ישות ניווט
 class Navigation extends Equatable {
   final String id;
@@ -455,11 +475,11 @@ class Navigation extends Equatable {
   factory Navigation.fromMap(Map<String, dynamic> map) {
     return Navigation(
       id: map['id'] as String,
-      name: map['name'] as String,
-      status: map['status'] as String,
-      createdBy: map['createdBy'] as String,
-      treeId: map['treeId'] as String,
-      areaId: map['areaId'] as String,
+      name: map['name'] as String? ?? '',
+      status: map['status'] as String? ?? 'preparation',
+      createdBy: map['createdBy'] as String? ?? '',
+      treeId: map['treeId'] as String? ?? '',
+      areaId: map['areaId'] as String? ?? '',
       selectedUnitId: (map['selectedUnitId'] ?? map['frameworkId']) as String?,
       selectedSubFrameworkIds: map['selectedSubFrameworkIds'] != null
           ? List<String>.from(map['selectedSubFrameworkIds'] as List)
@@ -467,11 +487,11 @@ class Navigation extends Equatable {
       selectedParticipantIds: map['selectedParticipantIds'] != null
           ? List<String>.from(map['selectedParticipantIds'] as List)
           : const [],
-      layerNzId: map['layerNzId'] as String,
-      layerNbId: map['layerNbId'] as String,
-      layerGgId: map['layerGgId'] as String,
+      layerNzId: map['layerNzId'] as String? ?? '',
+      layerNbId: map['layerNbId'] as String? ?? '',
+      layerGgId: map['layerGgId'] as String? ?? '',
       layerBaId: map['layerBaId'] as String?,
-      distributionMethod: map['distributionMethod'] as String,
+      distributionMethod: map['distributionMethod'] as String? ?? 'automatic',
       navigationType: map['navigationType'] as String?,
       executionOrder: map['executionOrder'] as String?,
       routeLengthKm: map['routeLengthKm'] != null
@@ -514,21 +534,15 @@ class Navigation extends Equatable {
       ),
       routesStage: map['routesStage'] as String?,
       routesDistributed: map['routesDistributed'] as bool? ?? false,
-      trainingStartTime: map['trainingStartTime'] != null
-          ? DateTime.parse(map['trainingStartTime'] as String)
-          : null,
-      systemCheckStartTime: map['systemCheckStartTime'] != null
-          ? DateTime.parse(map['systemCheckStartTime'] as String)
-          : null,
-      activeStartTime: map['activeStartTime'] != null
-          ? DateTime.parse(map['activeStartTime'] as String)
-          : null,
-      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int,
+      trainingStartTime: _parseDateTimeOrNull(map['trainingStartTime']),
+      systemCheckStartTime: _parseDateTimeOrNull(map['systemCheckStartTime']),
+      activeStartTime: _parseDateTimeOrNull(map['activeStartTime']),
+      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 30,
       permissions: NavigationPermissions.fromMap(
         map['permissions'] as Map<String, dynamic>,
       ),
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
+      createdAt: _parseDateTime(map['createdAt']),
+      updatedAt: _parseDateTime(map['updatedAt']),
     );
   }
 

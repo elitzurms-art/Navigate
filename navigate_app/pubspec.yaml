@@ -30,6 +30,7 @@ dependencies:
   # Database & Storage
   cloud_firestore: ^6.1.2  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
   firebase_storage: ^13.0.6  # גרסה מעודכנת תואמת ל-Flutter 3.27.1
+  firebase_messaging: ^16.1.1
   drift: ^2.14.1
   sqlite3_flutter_libs: ^0.5.20
   path_provider: ^2.1.2
@@ -50,7 +51,7 @@ dependencies:
     path: ../gps_plus
 
   # File handling
-  file_picker: ^6.1.1
+  file_picker: ^8.0.0
   csv: ^6.0.0
   pdf: ^3.10.7
   printing: ^5.12.0

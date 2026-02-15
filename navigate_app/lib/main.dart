@@ -11,6 +11,7 @@ import 'core/map_config.dart';
 import 'data/repositories/navigation_tree_repository.dart';
 import 'data/repositories/user_repository.dart';
 import 'data/sync/sync_manager.dart';
+import 'services/notification_service.dart';
 import 'domain/entities/hat_type.dart';
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/auth/register_screen.dart';
@@ -59,6 +60,12 @@ void main() async {
   // התחלת סנכרון עם Firebase
   final syncManager = SyncManager();
   await syncManager.start();
+
+  // אתחול שירות התראות push
+  final notificationService = NotificationService();
+  await notificationService.initialize(
+    userId: (await SharedPreferences.getInstance()).getString('logged_in_uid'),
+  );
 
   runApp(const NavigateApp());
 }
@@ -209,7 +216,12 @@ class _HomeRouterState extends State<HomeRouter> {
         return;
       }
 
-      // 2. סריקת כובעים
+      // 2. המתנה לסנכרון ראשוני — הנתונים (עצים, יחידות) חייבים להיות ב-DB המקומי
+      print('DEBUG HomeRouter: waiting for initial sync...');
+      await SyncManager().waitForInitialSync();
+      print('DEBUG HomeRouter: initial sync done');
+
+      // 3. סריקת כובעים
       final user = await _authService.getCurrentUser();
       print('DEBUG HomeRouter: user=${user?.uid}, role=${user?.role}');
       if (user == null) {

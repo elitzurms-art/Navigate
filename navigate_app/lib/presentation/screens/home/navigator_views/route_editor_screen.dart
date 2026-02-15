@@ -56,6 +56,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
   List<Cluster> _clusters = [];
+  Boundary? _navigationBoundary;
 
   bool _showGG = true;
   bool _showNZ = true;
@@ -92,11 +93,20 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
       final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
+
+      // טעינת הג"ג הספציפי של הניווט
+      Boundary? navBoundary;
+      final boundaryId = widget.navigation.boundaryLayerId;
+      if (boundaryId != null && boundaryId.isNotEmpty) {
+        navBoundary = await _boundaryRepo.getById(boundaryId);
+      }
+
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
           _boundaries = boundaries;
           _clusters = clusters;
+          _navigationBoundary = navBoundary;
         });
       }
     } catch (_) {}
@@ -220,6 +230,59 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         }
         if (!passesNear) {
           return 'הציר לא עובר ליד נקודת ציון ${cp.name}. יש לוודא שהציר עובר ליד כל הנקודות.';
+        }
+      }
+    }
+
+    // בדיקת ג"ג — הציר חייב להישאר בתוך גבול הגזרה
+    if (_navigationBoundary != null &&
+        _navigationBoundary!.coordinates.length >= 3 &&
+        _waypoints.isNotEmpty) {
+      final boundaryCoords = _navigationBoundary!.coordinates;
+
+      // בדיקת כל waypoint בתוך הפוליגון
+      for (final wp in _waypoints) {
+        final coord = Coordinate(lat: wp.latitude, lng: wp.longitude, utm: '');
+        if (!GeometryUtils.isPointInPolygon(coord, boundaryCoords)) {
+          return 'הציר חורג מגבול הגזרה. יש לוודא שכל הציר נמצא בתוך הגבול.';
+        }
+      }
+
+    }
+
+    // בדיקת נת"ב — הציר לא עובר דרך נקודות בטיחות בחומרה בינונית+
+    if (_waypoints.length >= 2) {
+      const dangerousSeverities = {'medium', 'high', 'critical'};
+      const safetyThreshold = 25.0; // מטרים
+
+      final dangerousSafetyPoints = _safetyPoints
+          .where((sp) => dangerousSeverities.contains(sp.severity))
+          .toList();
+
+      for (final sp in dangerousSafetyPoints) {
+        if (sp.type == 'point' && sp.coordinates != null) {
+          // נת"ב נקודה — בדיקת מרחק מכל מקטע
+          for (int i = 0; i < _waypoints.length - 1; i++) {
+            final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
+            final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
+            final dist = GeometryUtils.distanceFromPointToSegmentMeters(
+              sp.coordinates!,
+              segA,
+              segB,
+            );
+            if (dist <= safetyThreshold) {
+              return 'הציר עובר דרך אזור מסוכן: ${sp.name}. יש לתכנן מסלול שעוקף אזורים מסוכנים.';
+            }
+          }
+        } else if (sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.length >= 3) {
+          // נת"ב פוליגון — בדיקה אם מקטע כלשהו חותך/נכנס לפוליגון
+          for (int i = 0; i < _waypoints.length - 1; i++) {
+            final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
+            final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
+            if (GeometryUtils.doesSegmentIntersectPolygon(segA, segB, sp.polygonCoordinates!)) {
+              return 'הציר עובר דרך אזור מסוכן: ${sp.name}. יש לתכנן מסלול שעוקף אזורים מסוכנים.';
+            }
+          }
         }
       }
     }

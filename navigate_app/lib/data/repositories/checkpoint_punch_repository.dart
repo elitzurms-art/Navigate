@@ -1,15 +1,25 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../domain/entities/checkpoint_punch.dart';
 
 /// Repository לניהול דקירות נקודות
 class CheckpointPunchRepository {
   static const String _key = 'checkpoint_punches';
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  CollectionReference<Map<String, dynamic>> _punchesCollection(String navigationId) {
+    return _firestore
+        .collection('navigations')
+        .doc(navigationId)
+        .collection('checkpoint_punches');
+  }
 
   /// יצירת דקירה חדשה
   Future<void> create(CheckpointPunch punch) async {
-    print('📌 יוצר דקירה: ${punch.checkpointId}');
+    print('DEBUG CheckpointPunchRepo: creating punch ${punch.checkpointId}');
     try {
+      // שמירה מקומית (SharedPreferences)
       final punches = await getAll();
       punches.add(punch);
 
@@ -17,11 +27,15 @@ class CheckpointPunchRepository {
       final punchesJson = punches.map((p) => jsonEncode(p.toMap())).toList();
       await prefs.setStringList(_key, punchesJson);
 
-      print('✓ דקירה נשמרה');
-
-      // TODO: סנכרון ל-Firestore
+      // סנכרון ל-Firestore
+      try {
+        await _punchesCollection(punch.navigationId).doc(punch.id).set(punch.toMap());
+        print('DEBUG CheckpointPunchRepo: punch synced to Firestore');
+      } catch (e) {
+        print('DEBUG CheckpointPunchRepo: Firestore sync failed (offline?): $e');
+      }
     } catch (e) {
-      print('❌ שגיאה ביצירת דקירה: $e');
+      print('DEBUG CheckpointPunchRepo: error creating punch: $e');
       rethrow;
     }
   }
@@ -29,6 +43,7 @@ class CheckpointPunchRepository {
   /// עדכון דקירה (שינוי סטטוס)
   Future<void> update(CheckpointPunch punch) async {
     try {
+      // עדכון מקומי
       final punches = await getAll();
       final index = punches.indexWhere((p) => p.id == punch.id);
       if (index != -1) {
@@ -38,10 +53,18 @@ class CheckpointPunchRepository {
         final punchesJson = punches.map((p) => jsonEncode(p.toMap())).toList();
         await prefs.setStringList(_key, punchesJson);
 
-        print('✓ דקירה עודכנה');
+        print('DEBUG CheckpointPunchRepo: punch updated locally');
+      }
+
+      // סנכרון ל-Firestore
+      try {
+        await _punchesCollection(punch.navigationId).doc(punch.id).set(punch.toMap());
+        print('DEBUG CheckpointPunchRepo: punch update synced to Firestore');
+      } catch (e) {
+        print('DEBUG CheckpointPunchRepo: Firestore update sync failed: $e');
       }
     } catch (e) {
-      print('❌ שגיאה בעדכון דקירה: $e');
+      print('DEBUG CheckpointPunchRepo: error updating punch: $e');
       rethrow;
     }
   }
@@ -84,6 +107,30 @@ class CheckpointPunchRepository {
   Future<List<CheckpointPunch>> getByNavigator(String navigatorId) async {
     final all = await getAll();
     return all.where((p) => p.navigatorId == navigatorId).toList();
+  }
+
+  /// קבלת דקירות לניווט מ-Firestore (לשימוש מפקדים)
+  Future<List<CheckpointPunch>> getByNavigationFromFirestore(String navigationId) async {
+    try {
+      final snapshot = await _punchesCollection(navigationId).get();
+      return snapshot.docs
+          .map((doc) => CheckpointPunch.fromMap(doc.data()))
+          .toList();
+    } catch (e) {
+      print('DEBUG CheckpointPunchRepo: Firestore getByNavigation error: $e');
+      return [];
+    }
+  }
+
+  /// האזנה בזמן אמת לדקירות (לשימוש מפקדים)
+  Stream<List<CheckpointPunch>> watchPunches(String navigationId) {
+    return _punchesCollection(navigationId)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs
+          .map((doc) => CheckpointPunch.fromMap(doc.data()))
+          .toList();
+    });
   }
 
   /// אישור דקירה

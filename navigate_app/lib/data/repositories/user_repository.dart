@@ -108,6 +108,7 @@ class UserRepository {
           role: user.role,
           frameworkId: const Value(null), // deprecated
           unitId: Value(user.unitId),
+          fcmToken: Value(user.fcmToken),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         ),
@@ -139,6 +140,7 @@ class UserRepository {
       emailVerified: row.emailVerified,
       role: row.role,
       unitId: row.unitId,
+      fcmToken: row.fcmToken,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     );
@@ -177,6 +179,29 @@ class UserRepository {
       }
     } catch (e) {
       print('DEBUG: Error updating user unitId: $e');
+    }
+  }
+
+  /// עדכון FCM token של משתמש (מקומי + תור סנכרון)
+  Future<void> updateFcmToken(String uid, String? fcmToken) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        fcmToken: Value(fcmToken),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {'fcmToken': fcmToken, 'updatedAt': now.toIso8601String()},
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error updating FCM token: $e');
     }
   }
 

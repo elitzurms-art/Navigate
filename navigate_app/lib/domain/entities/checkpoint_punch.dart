@@ -136,13 +136,30 @@ class CheckpointPunch extends Equatable {
 /// סוג התראה
 enum AlertType {
   emergency('emergency', 'חירום', '🚨'),
-  barbur('barbur', 'ברבור', '⚠️');
+  barbur('barbur', 'ברבור', '⚠️'),
+  healthCheckExpired('health_check_expired', 'תקינות לא דווחה', '⏰'),
+  healthReport('health_report', 'דיווח תקינות', '✅'),
+  speed('speed', 'חריגת מהירות', '🏎️'),
+  noMovement('no_movement', 'חוסר תנועה', '⏸️'),
+  boundary('boundary', 'חריגת גבול גזרה', '🚧'),
+  routeDeviation('route_deviation', 'סטייה מציר', '↗️'),
+  safetyPoint('safety_point', 'קרבת נת"ב', '⛔'),
+  proximity('proximity', 'קרבת מנווטים', '👥'),
+  battery('battery', 'סוללה נמוכה', '🔋'),
+  noReception('no_reception', 'חוסר קליטה', '📵');
 
   final String code;
   final String displayName;
   final String emoji;
 
   const AlertType(this.code, this.displayName, this.emoji);
+
+  static AlertType fromCode(String code) {
+    return AlertType.values.firstWhere(
+      (t) => t.code == code,
+      orElse: () => AlertType.emergency,
+    );
+  }
 }
 
 /// התראה ממנווט
@@ -156,6 +173,8 @@ class NavigatorAlert extends Equatable {
   final bool isActive;
   final DateTime? resolvedAt;
   final String? resolvedBy;
+  final int? minutesOverdue; // דקות מעבר לזמן המוגדר (לבדיקת תקינות)
+  final String? navigatorName; // שם המנווט (לתצוגה בהתראה)
 
   const NavigatorAlert({
     required this.id,
@@ -167,6 +186,8 @@ class NavigatorAlert extends Equatable {
     this.isActive = true,
     this.resolvedAt,
     this.resolvedBy,
+    this.minutesOverdue,
+    this.navigatorName,
   });
 
   Map<String, dynamic> toMap() {
@@ -182,6 +203,8 @@ class NavigatorAlert extends Equatable {
       'isActive': isActive,
       if (resolvedAt != null) 'resolvedAt': resolvedAt!.toIso8601String(),
       if (resolvedBy != null) 'resolvedBy': resolvedBy,
+      if (minutesOverdue != null) 'minutesOverdue': minutesOverdue,
+      if (navigatorName != null) 'navigatorName': navigatorName,
     };
   }
 
@@ -190,11 +213,11 @@ class NavigatorAlert extends Equatable {
       id: map['id'] as String,
       navigationId: map['navigationId'] as String,
       navigatorId: map['navigatorId'] as String,
-      type: AlertType.values.firstWhere((t) => t.code == map['type']),
+      type: AlertType.fromCode(map['type'] as String),
       location: Coordinate(
-        lat: map['lat'] as double,
-        lng: map['lng'] as double,
-        utm: map['utm'] as String,
+        lat: (map['lat'] as num?)?.toDouble() ?? 0,
+        lng: (map['lng'] as num?)?.toDouble() ?? 0,
+        utm: map['utm'] as String? ?? '',
       ),
       timestamp: DateTime.parse(map['timestamp'] as String),
       isActive: map['isActive'] as bool? ?? true,
@@ -202,6 +225,8 @@ class NavigatorAlert extends Equatable {
           ? DateTime.parse(map['resolvedAt'] as String)
           : null,
       resolvedBy: map['resolvedBy'] as String?,
+      minutesOverdue: map['minutesOverdue'] as int?,
+      navigatorName: map['navigatorName'] as String?,
     );
   }
 

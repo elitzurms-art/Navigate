@@ -649,6 +649,94 @@ class NavigationRepository {
     }
   }
 
+  // ----------------------------- Navigation document listeners ------------
+
+  /// Listen for realtime changes on a single navigation document
+  Stream<domain.Navigation?> watchNavigation(String navigationId) {
+    return _firestore
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId)
+        .snapshots()
+        .map((snapshot) {
+      if (!snapshot.exists || snapshot.data() == null) return null;
+      final data = snapshot.data()!;
+      data['id'] = snapshot.id;
+      try {
+        return domain.Navigation.fromMap(data);
+      } catch (e) {
+        print('DEBUG: Error parsing navigation from Firestore snapshot: $e');
+        return null;
+      }
+    });
+  }
+
+  /// Listen for realtime changes on all navigations in Firestore
+  Stream<List<domain.Navigation>> watchAllNavigations() {
+    return _firestore
+        .collection(AppConstants.navigationsCollection)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        try {
+          return domain.Navigation.fromMap(data);
+        } catch (e) {
+          print('DEBUG: Error parsing navigation ${doc.id}: $e');
+          return null;
+        }
+      }).whereType<domain.Navigation>().toList();
+    });
+  }
+
+  /// Update local DB from a Firestore navigation snapshot (without re-queuing sync)
+  Future<void> updateLocalFromFirestore(domain.Navigation nav) async {
+    try {
+      await (_db.update(_db.navigations)..where((n) => n.id.equals(nav.id)))
+          .write(
+        NavigationsCompanion(
+          name: Value(nav.name),
+          status: Value(nav.status),
+          frameworkId: Value(nav.selectedUnitId),
+          selectedSubFrameworkIdsJson: Value(nav.selectedSubFrameworkIds.isNotEmpty
+              ? jsonEncode(nav.selectedSubFrameworkIds)
+              : null),
+          selectedParticipantIdsJson: Value(nav.selectedParticipantIds.isNotEmpty
+              ? jsonEncode(nav.selectedParticipantIds)
+              : null),
+          navigationType: Value(nav.navigationType),
+          executionOrder: Value(nav.executionOrder),
+          boundaryLayerId: Value(nav.boundaryLayerId),
+          routeLengthJson: Value(nav.routeLengthKm != null
+              ? jsonEncode(nav.routeLengthKm!.toMap())
+              : null),
+          distributeNow: Value(nav.distributeNow),
+          safetyTimeJson: Value(nav.safetyTime != null
+              ? jsonEncode(nav.safetyTime!.toMap())
+              : null),
+          learningSettingsJson: Value(jsonEncode(nav.learningSettings.toMap())),
+          verificationSettingsJson: Value(jsonEncode(nav.verificationSettings.toMap())),
+          allowOpenMap: Value(nav.allowOpenMap),
+          showSelfLocation: Value(nav.showSelfLocation),
+          showRouteOnMap: Value(nav.showRouteOnMap),
+          alertsJson: Value(jsonEncode(nav.alerts.toMap())),
+          reviewSettingsJson: Value(jsonEncode(nav.reviewSettings.toMap())),
+          displaySettingsJson: Value(jsonEncode(nav.displaySettings.toMap())),
+          routesJson: Value(jsonEncode(nav.routes.map((k, v) => MapEntry(k, v.toMap())))),
+          routesStage: Value(nav.routesStage),
+          routesDistributed: Value(nav.routesDistributed),
+          trainingStartTime: Value(nav.trainingStartTime),
+          systemCheckStartTime: Value(nav.systemCheckStartTime),
+          activeStartTime: Value(nav.activeStartTime),
+          permissionsJson: Value(jsonEncode(nav.permissions.toMap())),
+          updatedAt: Value(nav.updatedAt),
+        ),
+      );
+    } catch (e) {
+      print('DEBUG: Error updating local navigation from Firestore: $e');
+    }
+  }
+
   // ----------------------------- Realtime listeners -----------------------
 
   /// Listen for realtime track updates on an active navigation

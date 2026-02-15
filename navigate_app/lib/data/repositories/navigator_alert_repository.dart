@@ -1,88 +1,101 @@
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/checkpoint_punch.dart';
 
-/// Repository להתראות מנווטים
+/// Repository להתראות מנווטים — Firestore-based
 class NavigatorAlertRepository {
-  static const String _key = 'navigator_alerts';
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  CollectionReference<Map<String, dynamic>> _alertsCollection(String navigationId) {
+    return _firestore
+        .collection('navigations')
+        .doc(navigationId)
+        .collection('navigator_alerts');
+  }
 
   /// יצירת התראה חדשה
   Future<void> create(NavigatorAlert alert) async {
-    print('🚨 יוצר התראה: ${alert.type.displayName} - ${alert.navigatorId}');
+    print('DEBUG NavigatorAlertRepository: creating alert ${alert.type.displayName} for ${alert.navigatorId}');
     try {
-      final alerts = await getAll();
-      alerts.add(alert);
-
-      final prefs = await SharedPreferences.getInstance();
-      final alertsJson = alerts.map((a) => jsonEncode(a.toMap())).toList();
-      await prefs.setStringList(_key, alertsJson);
-
-      print('✓ התראה נשמרה');
-
-      // TODO: שליחת push notification למפקדים
+      await _alertsCollection(alert.navigationId).doc(alert.id).set(alert.toMap());
+      print('DEBUG NavigatorAlertRepository: alert saved');
     } catch (e) {
-      print('❌ שגיאה ביצירת התראה: $e');
+      print('DEBUG NavigatorAlertRepository: error creating alert: $e');
       rethrow;
     }
   }
 
-  /// עדכון התראה (סגירה)
-  Future<void> resolve(String alertId, String resolvedBy) async {
+  /// עדכון התראה (סגירה/resolve)
+  Future<void> resolve(String navigationId, String alertId, String resolvedBy) async {
     try {
-      final alerts = await getAll();
-      final index = alerts.indexWhere((a) => a.id == alertId);
-      if (index != -1) {
-        final resolved = NavigatorAlert(
-          id: alerts[index].id,
-          navigationId: alerts[index].navigationId,
-          navigatorId: alerts[index].navigatorId,
-          type: alerts[index].type,
-          location: alerts[index].location,
-          timestamp: alerts[index].timestamp,
-          isActive: false,
-          resolvedAt: DateTime.now(),
-          resolvedBy: resolvedBy,
-        );
-
-        alerts[index] = resolved;
-
-        final prefs = await SharedPreferences.getInstance();
-        final alertsJson = alerts.map((a) => jsonEncode(a.toMap())).toList();
-        await prefs.setStringList(_key, alertsJson);
-
-        print('✓ התראה נסגרה');
-      }
+      await _alertsCollection(navigationId).doc(alertId).update({
+        'isActive': false,
+        'resolvedAt': DateTime.now().toIso8601String(),
+        'resolvedBy': resolvedBy,
+      });
+      print('DEBUG NavigatorAlertRepository: alert resolved');
     } catch (e) {
-      print('❌ שגיאה בעדכון התראה: $e');
+      print('DEBUG NavigatorAlertRepository: error resolving alert: $e');
     }
   }
 
-  /// קבלת כל ההתראות
-  Future<List<NavigatorAlert>> getAll() async {
+  /// קבלת כל ההתראות לניווט
+  Future<List<NavigatorAlert>> getAll(String navigationId) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final alertsJson = prefs.getStringList(_key) ?? [];
+      final snapshot = await _alertsCollection(navigationId)
+          .orderBy('timestamp', descending: true)
+          .get();
 
-      return alertsJson.map((json) {
-        final map = jsonDecode(json) as Map<String, dynamic>;
-        return NavigatorAlert.fromMap(map);
+      return snapshot.docs.map((doc) {
+        return NavigatorAlert.fromMap(doc.data());
       }).toList();
     } catch (e) {
-      print('❌ שגיאה בטעינת התראות: $e');
+      print('DEBUG NavigatorAlertRepository: error loading alerts: $e');
       return [];
     }
   }
 
-  /// קבלת התראות פעילות לניווט
+  /// קבלת התראות פעילות לניווט (לא healthReport)
   Future<List<NavigatorAlert>> getActiveByNavigation(String navigationId) async {
-    final all = await getAll();
-    return all.where((a) => a.navigationId == navigationId && a.isActive).toList();
+    try {
+      final snapshot = await _alertsCollection(navigationId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      return snapshot.docs
+          .map((doc) => NavigatorAlert.fromMap(doc.data()))
+          .where((a) => a.type != AlertType.healthReport)
+          .toList();
+    } catch (e) {
+      print('DEBUG NavigatorAlertRepository: error loading active alerts: $e');
+      return [];
+    }
   }
 
-  /// קבלת התראות למנווט
-  Future<List<NavigatorAlert>> getByNavigator(String navigatorId) async {
-    final all = await getAll();
-    return all.where((a) => a.navigatorId == navigatorId).toList();
+  /// האזנה בזמן אמת להתראות פעילות (לשימוש מפקדים)
+  Stream<List<NavigatorAlert>> watchActiveAlerts(String navigationId) {
+    return _alertsCollection(navigationId)
+        .where('isActive', isEqualTo: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs
+          .map((doc) => NavigatorAlert.fromMap(doc.data()))
+          .where((a) => a.type != AlertType.healthReport)
+          .toList();
+    });
+  }
+
+  /// האזנה להתראות resolved (למנווט — לקבלת reset מרחוק)
+  Stream<List<NavigatorAlert>> watchResolvedAlerts(String navigationId, String navigatorId) {
+    return _alertsCollection(navigationId)
+        .where('navigatorId', isEqualTo: navigatorId)
+        .where('isActive', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs
+          .map((doc) => NavigatorAlert.fromMap(doc.data()))
+          .toList();
+    });
   }
 
   /// ספירת התראות פעילות
