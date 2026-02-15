@@ -1013,26 +1013,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               },
             ),
             RadioListTile<String>(
-              title: Row(
-                children: [
-                  const Text('ידני באפליקציה'),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      'בפיתוח',
-                      style: TextStyle(fontSize: 10, color: Colors.orange),
-                    ),
-                  ),
-                ],
-              ),
+              title: const Text('ידני באפליקציה'),
               value: 'manual_app',
               groupValue: _distributionMethod,
-              onChanged: null, // disabled
+              onChanged: (value) {
+                setState(() => _distributionMethod = value!);
+              },
             ),
 
           ],

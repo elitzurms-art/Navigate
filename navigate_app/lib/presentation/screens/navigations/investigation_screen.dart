@@ -124,8 +124,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   List<nav.NavCheckpoint> _myCheckpoints = [];
   List<LatLng> _myPlannedRoute = [];
   List<LatLng> _myActualRoute = [];
+  List<TrackPoint> _myTrackPoints = [];
   List<CheckpointPunch> _myPunches = [];
   NavigationScore? _myScore;
+  String? _myUserId;
 
   @override
   void initState() {
@@ -174,6 +176,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   Future<void> _loadNavigatorViewData() async {
     final user = await AuthService().getCurrentUser();
     if (user == null) return;
+    _myUserId = user.uid;
 
     final route = widget.navigation.routes[user.uid];
     if (route == null) return;
@@ -200,15 +203,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           .toList();
     }
 
-    // Actual route from track
+    // Actual route from track (store raw TrackPoints too)
     final track = await _trackRepo.getByNavigatorAndNavigation(
         user.uid, widget.navigation.id);
     if (track != null && track.trackPointsJson.isNotEmpty) {
       try {
-        final points = (jsonDecode(track.trackPointsJson) as List)
+        _myTrackPoints = (jsonDecode(track.trackPointsJson) as List)
             .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
             .toList();
-        _myActualRoute = points
+        _myActualRoute = _myTrackPoints
             .map((p) => LatLng(p.coordinate.lat, p.coordinate.lng))
             .toList();
       } catch (_) {}
@@ -370,18 +373,26 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               )
             : [];
       }
-    } else if (widget.isNavigator && _myActualRoute.length >= 2) {
+    } else if (widget.isNavigator && _myTrackPoints.length >= 2) {
       // ניתוח למנווט עצמו
-      final user = widget.navigation.routes.keys.isNotEmpty
-          ? widget.navigation.routes.keys.first
-          : null;
-      if (user != null) {
-        final route = widget.navigation.routes[user];
+      final uid = _myUserId;
+      if (uid != null) {
+        final route = widget.navigation.routes[uid];
         if (route != null) {
-          final trackPts = <TrackPoint>[];
-          // Track points already decoded in _myActualRoute
-          _selectedSpeedProfile = _analysisService.calculateSpeedProfile(
-              trackPoints: trackPts);
+          _selectedNavStats = _analysisService.calculateStatistics(
+            trackPoints: _myTrackPoints,
+            checkpoints: _myCheckpoints,
+            punches: _myPunches,
+            route: route,
+            plannedRoute: _myPlannedRoute.length >= 2 ? _myPlannedRoute : null,
+          );
+          _selectedSpeedProfile = _selectedNavStats?.speedProfile ?? [];
+          _selectedDeviations = _myPlannedRoute.length >= 2
+              ? _analysisService.analyzeDeviations(
+                  plannedRoute: _myPlannedRoute,
+                  actualTrack: _myTrackPoints,
+                )
+              : [];
         }
       }
     }
@@ -1104,6 +1115,22 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         children: [
           _buildSummaryCards(),
           const SizedBox(height: 16),
+
+          // Speed profile chart for selected navigator
+          if (!_allNavigatorsMode && _selectedSpeedProfile.isNotEmpty) ...[
+            SpeedProfileChart(
+              segments: _selectedSpeedProfile,
+              thresholdSpeedKmh: 8.0,
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Route analysis summary for selected navigator
+          if (!_allNavigatorsMode && _selectedNavStats != null) ...[
+            _buildAnalysisSummaryCard(_selectedNavStats!),
+            const SizedBox(height: 16),
+          ],
+
           const Text('פירוט לפי מנווט',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -1163,6 +1190,76 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAnalysisSummaryCard(RouteStatistics stats) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('ניתוח מסלול',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: _analysisStat(
+                  'מרחק מתוכנן',
+                  '${stats.plannedDistanceKm.toStringAsFixed(1)} ק"מ',
+                  Icons.route, Colors.red,
+                )),
+                Expanded(child: _analysisStat(
+                  'מרחק בפועל',
+                  '${stats.actualDistanceKm.toStringAsFixed(1)} ק"מ',
+                  Icons.timeline, Colors.blue,
+                )),
+                Expanded(child: _analysisStat(
+                  'מהירות מקסימלית',
+                  '${stats.maxSpeedKmh.toStringAsFixed(1)} קמ"ש',
+                  Icons.speed, Colors.orange,
+                )),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _analysisStat(
+                  'סטיות',
+                  '${stats.deviationCount}',
+                  Icons.warning, Colors.red,
+                )),
+                Expanded(child: _analysisStat(
+                  'סטייה מקסימלית',
+                  '${stats.maxDeviation.toStringAsFixed(0)} מ\'',
+                  Icons.trending_up, Colors.deepOrange,
+                )),
+                Expanded(child: _analysisStat(
+                  'נ.צ. שנדקרו',
+                  '${stats.checkpointsPunched}/${stats.totalCheckpoints}',
+                  Icons.flag, Colors.green,
+                )),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _analysisStat(String label, String value, IconData icon, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(height: 2),
+        Text(value,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        Text(label,
+            style: TextStyle(fontSize: 9, color: Colors.grey[600]),
+            textAlign: TextAlign.center),
+      ],
     );
   }
 
@@ -1247,13 +1344,40 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       return const Center(child: Text('אין נתונים'));
     }
 
-    return ListView.builder(
+    // Build navigator color map for comparison widget
+    final navigatorColors = <String, Color>{};
+    for (final entry in _navigatorDataMap.entries) {
+      navigatorColors[entry.key] = entry.value.color;
+    }
+
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
-      itemCount: _navigatorDataMap.length,
-      itemBuilder: (context, index) {
-        final entry = _navigatorDataMap.entries.elementAt(index);
-        return _buildNavigatorScoreCard(entry.key, entry.value);
-      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Navigator comparison cards (ranked)
+          if (_navigatorComparisons.isNotEmpty) ...[
+            const Text('השוואת מנווטים',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 280,
+              child: NavigatorComparisonWidget(
+                comparisons: _navigatorComparisons,
+                navigatorColors: navigatorColors,
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Detailed score cards
+          const Text('פירוט ציונים',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          ..._navigatorDataMap.entries.map((entry) =>
+              _buildNavigatorScoreCard(entry.key, entry.value)),
+        ],
+      ),
     );
   }
 
@@ -1428,6 +1552,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
+          MapExportButton(
+            captureKey: _mapCaptureKey,
+            navigationName: widget.navigation.name,
+          ),
           IconButton(
             icon: const Icon(Icons.file_download),
             tooltip: 'ייצוא',
@@ -1445,73 +1573,161 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           Expanded(
             child: Stack(
               children: [
-                MapWithTypeSelector(
-                  showTypeSelector: false,
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: center,
-                    initialZoom: 14.0,
-                    onTap: (tapPosition, point) {
-                      if (_measureMode) {
-                        setState(() => _measurePoints.add(point));
-                      }
-                    },
+                MapCaptureWrapper(
+                  captureKey: _mapCaptureKey,
+                  child: MapWithTypeSelector(
+                    showTypeSelector: false,
+                    mapController: _mapController,
+                    options: MapOptions(
+                      initialCenter: center,
+                      initialZoom: 14.0,
+                      onTap: (tapPosition, point) {
+                        if (_measureMode) {
+                          setState(() => _measurePoints.add(point));
+                        }
+                      },
+                    ),
+                    layers: [
+                      ..._buildBoundaryLayers(),
+                      // Planned route (RED)
+                      if (_showPlanned && _myPlannedRoute.length > 1)
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: _myPlannedRoute,
+                              color: _kPlannedRouteColor.withValues(
+                                  alpha: _plannedOpacity),
+                              strokeWidth: 4.0,
+                            ),
+                          ],
+                        ),
+                      // Actual route (BLUE)
+                      if (_showRoutes && _myActualRoute.length > 1)
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: _myActualRoute,
+                              color: _kActualRouteColor.withValues(
+                                  alpha: _routesOpacity),
+                              strokeWidth: 3.0,
+                            ),
+                          ],
+                        ),
+                      // Deviation segments overlay
+                      if (_showDeviations && _selectedDeviations.isNotEmpty && _myTrackPoints.isNotEmpty)
+                        for (final dev in _selectedDeviations)
+                          if (() {
+                            final start = dev.startIndex.clamp(0, _myTrackPoints.length - 1);
+                            final end = (dev.endIndex + 1).clamp(0, _myTrackPoints.length);
+                            return end - start > 1;
+                          }())
+                            PolylineLayer(
+                              polylines: [
+                                Polyline(
+                                  points: _myTrackPoints
+                                      .sublist(
+                                        dev.startIndex.clamp(0, _myTrackPoints.length - 1),
+                                        (dev.endIndex + 1).clamp(0, _myTrackPoints.length),
+                                      )
+                                      .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
+                                      .toList(),
+                                  color: _analysisService.getDeviationColor(dev.maxDeviation)
+                                      .withValues(alpha: 0.8),
+                                  strokeWidth: 6.0,
+                                ),
+                              ],
+                            ),
+                      // Checkpoints
+                      if (_showNZ) ..._buildCheckpointMarkers(_myCheckpoints),
+                      // Safety
+                      ..._buildSafetyLayers(),
+                      // Punches
+                      if (_showPunches && _myPunches.isNotEmpty)
+                        MarkerLayer(
+                          markers: _myPunches
+                              .map((p) => _buildPunchMarker(p))
+                              .toList(),
+                        ),
+                      ...MapControls.buildMeasureLayers(_measurePoints),
+                    ],
                   ),
-                  layers: [
-                    ..._buildBoundaryLayers(),
-                    // Planned route (RED)
-                    if (_showPlanned && _myPlannedRoute.length > 1)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _myPlannedRoute,
-                            color: _kPlannedRouteColor.withValues(
-                                alpha: _plannedOpacity),
-                            strokeWidth: 4.0,
-                          ),
-                        ],
-                      ),
-                    // Actual route (BLUE)
-                    if (_showRoutes && _myActualRoute.length > 1)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _myActualRoute,
-                            color: _kActualRouteColor.withValues(
-                                alpha: _routesOpacity),
-                            strokeWidth: 3.0,
-                          ),
-                        ],
-                      ),
-                    // Checkpoints
-                    if (_showNZ) ..._buildCheckpointMarkers(_myCheckpoints),
-                    // Safety
-                    ..._buildSafetyLayers(),
-                    // Punches
-                    if (_showPunches && _myPunches.isNotEmpty)
-                      MarkerLayer(
-                        markers: _myPunches
-                            .map((p) => _buildPunchMarker(p))
-                            .toList(),
-                      ),
-                    ...MapControls.buildMeasureLayers(_measurePoints),
-                  ],
                 ),
                 _buildMapControls(),
               ],
             ),
           ),
-          // Legend
+          // Route playback
+          if (_showPlayback && _myTrackPoints.length >= 2)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: RoutePlaybackWidget(
+                trackPoints: _myTrackPoints,
+                onPositionChanged: (pos) {
+                  _mapController.move(pos, _mapController.camera.zoom);
+                },
+              ),
+            ),
+          // Speed profile + analysis + controls bar
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             color: Colors.grey[100],
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
-                _legendItem(_kActualRouteColor, 'מסלול בפועל'),
-                _legendItem(_kStartColor, 'התחלה (H)'),
-                _legendItem(_kEndColor, 'סיום (S)'),
+                // Playback + deviation toggles
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_myTrackPoints.length >= 2)
+                      TextButton.icon(
+                        onPressed: () => setState(() => _showPlayback = !_showPlayback),
+                        icon: Icon(
+                          _showPlayback ? Icons.stop : Icons.play_arrow,
+                          size: 16,
+                        ),
+                        label: Text(_showPlayback ? 'סגור נגן' : 'נגן מסלול',
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                    if (_selectedDeviations.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => setState(() => _showDeviations = !_showDeviations),
+                        icon: Icon(
+                          _showDeviations ? Icons.visibility : Icons.visibility_off,
+                          size: 16,
+                          color: Colors.red,
+                        ),
+                        label: Text(_showDeviations ? 'הסתר סטיות' : 'הצג סטיות',
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                  ],
+                ),
+                // Speed profile chart
+                if (_selectedSpeedProfile.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: SpeedProfileChart(
+                      segments: _selectedSpeedProfile,
+                      thresholdSpeedKmh: 8.0,
+                    ),
+                  ),
+                // Analysis summary
+                if (_selectedNavStats != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: _buildAnalysisSummaryCard(_selectedNavStats!),
+                  ),
+                // Legend
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
+                      _legendItem(_kActualRouteColor, 'מסלול בפועל'),
+                      _legendItem(_kStartColor, 'התחלה (H)'),
+                      _legendItem(_kEndColor, 'סיום (S)'),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

@@ -47,6 +47,14 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   bool _waypointsEnabled = false;
   List<WaypointCheckpoint> _waypoints = [];
 
+  // קריטריון ניקוד
+  String _scoringCriterion = 'fairness';
+
+  // Progress
+  bool _isDistributing = false;
+  int _progressCurrent = 0;
+  int _progressTotal = 1000;
+
   @override
   void initState() {
     super.initState();
@@ -82,7 +90,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
       // אם אין נקודות ניווטיות — ננסה להעתיק שכבות מהשטח
       if (navCheckpoints.isEmpty) {
-        print('DEBUG: No nav checkpoints found, attempting to copy layers from area');
         await _layerCopyService.copyLayersForNavigation(
           navigationId: widget.navigation.id,
           boundaryId: widget.navigation.boundaryLayerId ?? '',
@@ -98,9 +105,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       // אם עדיין אין — טעינה ישירה מנקודות השטח
       List<Checkpoint> checkpoints;
       if (navCheckpoints.isEmpty) {
-        print('DEBUG: Still no nav checkpoints, loading area checkpoints directly');
         checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
-        print('DEBUG: Loaded ${checkpoints.length} area checkpoints as fallback');
       } else {
         // המרה ל-Checkpoint עם sourceId כ-ID (תאימות לאחור)
         checkpoints = navCheckpoints.map((nc) => Checkpoint(
@@ -174,63 +179,208 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       }
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isDistributing = true;
+      _progressCurrent = 0;
+      _progressTotal = 1000;
+    });
 
     try {
-      // חלוקה אוטומטית (הנקודות כבר מסוננות לפי גבול גזרה)
-      final routes = await _distributionService.distributeAutomatically(
+      final distributionResult = await _distributionService.distributeAutomatically(
         navigation: widget.navigation,
         tree: _tree!,
         checkpoints: _checkpoints,
         boundary: null,
         startPointId: _startPointId,
         endPointId: _endPointId,
+        waypoints: _waypointsEnabled ? _waypoints : [],
         executionOrder: _executionOrder,
         checkpointsPerNavigator: _checkpointsPerNavigator,
         minRouteLength: _minRouteLength,
         maxRouteLength: _maxRouteLength,
+        scoringCriterion: _scoringCriterion,
+        onProgress: (current, total) {
+          if (mounted) {
+            setState(() {
+              _progressCurrent = current;
+              _progressTotal = total;
+            });
+          }
+        },
       );
 
-      // עדכון ניווט עם הצירים החדשים
-      final updatedNavigation = widget.navigation.copyWith(
-        routes: routes,
-        routesStage: 'verification',
-        routesDistributed: true,
-        navigationType: _navigationType,
-        executionOrder: _executionOrder,
-        routeLengthKm: domain.RouteLengthRange(
-          min: _minRouteLength,
-          max: _maxRouteLength,
-        ),
-        checkpointsPerNavigator: _checkpointsPerNavigator,
-        startPoint: _startPointId,
-        endPoint: _endPointId,
-        waypointSettings: WaypointSettings(
-          enabled: _waypointsEnabled,
-          waypoints: _waypoints,
-        ),
-        updatedAt: DateTime.now(),
-      );
+      setState(() => _isDistributing = false);
 
-      await _navRepo.update(updatedNavigation);
+      // --- טיפול בתוצאה ---
+      if (distributionResult.needsApproval) {
+        final approved = await _showApprovalDialog(distributionResult);
+        if (approved == null) return; // ביטל
 
-      if (mounted) {
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => RoutesVerificationScreen(navigation: updatedNavigation),
-          ),
-        );
-        if (result == true && mounted) {
-          Navigator.pop(context, true);
+        if (approved == 'accept_best') {
+          // אישור החלוקה הטובה ביותר כמו שהיא
+          await _saveAndNavigate(distributionResult.routes, distributionResult);
+        } else if (approved == 'expand_range') {
+          // הרצה מחדש עם טווח מורחב
+          final option = distributionResult.approvalOptions
+              .firstWhere((o) => o.type == 'expand_range');
+          setState(() {
+            _minRouteLength = option.expandedMin!;
+            _maxRouteLength = option.expandedMax!;
+          });
+          await _distribute(); // הרצה מחדש
+        } else if (approved == 'reduce_checkpoints') {
+          // הרצה מחדש עם פחות נקודות
+          final option = distributionResult.approvalOptions
+              .firstWhere((o) => o.type == 'reduce_checkpoints');
+          setState(() {
+            _checkpointsPerNavigator = option.reducedCheckpoints!;
+          });
+          await _distribute(); // הרצה מחדש
         }
+      } else {
+        // הצלחה — שמירה ומעבר לוידוא
+        await _saveAndNavigate(distributionResult.routes, distributionResult);
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() => _isDistributing = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה בחלוקה: $e')),
         );
+      }
+    }
+  }
+
+  Future<String?> _showApprovalDialog(domain.DistributionResult result) async {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        // סיכום צירים חורגים
+        final outOfRange = result.routes.values.where((r) => r.status != 'optimal').length;
+        final total = result.routes.length;
+
+        return AlertDialog(
+          title: const Text('חלוקה חורגת מהטווח'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$outOfRange מתוך $total צירים חורגים מטווח '
+                '${_minRouteLength.toStringAsFixed(1)} — ${_maxRouteLength.toStringAsFixed(1)} ק"מ',
+                style: const TextStyle(fontSize: 14),
+              ),
+              if (result.hasSharedCheckpoints) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${result.sharedCheckpointCount} נקודות משותפות בין מנווטים',
+                  style: TextStyle(fontSize: 13, color: Colors.orange[700]),
+                ),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'בחר פעולה:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              ...result.approvalOptions.map((option) {
+                IconData icon;
+                Color color;
+                switch (option.type) {
+                  case 'expand_range':
+                    icon = Icons.open_in_full;
+                    color = Colors.blue;
+                    break;
+                  case 'reduce_checkpoints':
+                    icon = Icons.remove_circle_outline;
+                    color = Colors.orange;
+                    break;
+                  case 'accept_best':
+                    icon = Icons.check_circle_outline;
+                    color = Colors.green;
+                    break;
+                  default:
+                    icon = Icons.help_outline;
+                    color = Colors.grey;
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(context, option.type),
+                    icon: Icon(icon, color: color),
+                    label: Text(option.label),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: color,
+                      minimumSize: const Size(double.infinity, 44),
+                      alignment: Alignment.centerRight,
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('ביטול'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _saveAndNavigate(
+    Map<String, domain.AssignedRoute> routes,
+    domain.DistributionResult distributionResult,
+  ) async {
+    // הצגת הודעה על שיתוף אם יש
+    if (distributionResult.hasSharedCheckpoints && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'שים לב: ${distributionResult.sharedCheckpointCount} נקודות משותפות בין מנווטים',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // עדכון ניווט עם הצירים החדשים
+    final updatedNavigation = widget.navigation.copyWith(
+      routes: routes,
+      routesStage: 'verification',
+      routesDistributed: true,
+      navigationType: _navigationType,
+      executionOrder: _executionOrder,
+      routeLengthKm: domain.RouteLengthRange(
+        min: _minRouteLength,
+        max: _maxRouteLength,
+      ),
+      checkpointsPerNavigator: _checkpointsPerNavigator,
+      startPoint: _startPointId,
+      endPoint: _endPointId,
+      waypointSettings: WaypointSettings(
+        enabled: _waypointsEnabled,
+        waypoints: _waypoints,
+      ),
+      updatedAt: DateTime.now(),
+    );
+
+    await _navRepo.update(updatedNavigation);
+
+    if (mounted) {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RoutesVerificationScreen(navigation: updatedNavigation),
+        ),
+      );
+      if (result == true && mounted) {
+        Navigator.pop(context, true);
       }
     }
   }
@@ -245,69 +395,163 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'הגדרות חלוקה',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // סוג ניווט
-                    _buildNavigationTypeSection(),
-                    const SizedBox(height: 16),
-
-                    // אופן ביצוע
-                    _buildExecutionOrderSection(),
-                    const SizedBox(height: 16),
-
-                    // טווח אורך ציר
-                    _buildRouteLengthSection(),
-                    const SizedBox(height: 16),
-
-                    // כמות נקודות למנווט
-                    _buildCheckpointsPerNavigatorSection(),
-                    const SizedBox(height: 16),
-
-                    // נקודות התחלה וסיום
-                    _buildStartEndPointsSection(),
-                    const SizedBox(height: 16),
-
-                    // נקודות ביניים
-                    _buildWaypointsSection(),
-                    const SizedBox(height: 24),
-
-                    // אשכולות/ביצים (בפיתוח)
-                    if (_navigationType == 'clusters' || _navigationType == 'eggs')
-                      _buildClustersSection(),
-
-                    const SizedBox(height: 32),
-
-                    // כפתור חלוקה
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton.icon(
-                        onPressed: _distribute,
-                        icon: const Icon(Icons.auto_awesome),
-                        label: const Text('חלק אוטומטית'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
+          : _isDistributing
+              ? _buildProgressView()
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'הגדרות חלוקה',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 24),
+
+                        // סוג ניווט
+                        _buildNavigationTypeSection(),
+                        const SizedBox(height: 16),
+
+                        // אופן ביצוע
+                        _buildExecutionOrderSection(),
+                        const SizedBox(height: 16),
+
+                        // טווח אורך ציר
+                        _buildRouteLengthSection(),
+                        const SizedBox(height: 16),
+
+                        // כמות נקודות למנווט
+                        _buildCheckpointsPerNavigatorSection(),
+                        const SizedBox(height: 16),
+
+                        // נקודות התחלה וסיום
+                        _buildStartEndPointsSection(),
+                        const SizedBox(height: 16),
+
+                        // נקודות ביניים
+                        _buildWaypointsSection(),
+                        const SizedBox(height: 16),
+
+                        // קריטריון ניקוד
+                        _buildScoringCriterionSection(),
+                        const SizedBox(height: 24),
+
+                        // אשכולות/ביצים (בפיתוח)
+                        if (_navigationType == 'clusters' || _navigationType == 'eggs')
+                          _buildClustersSection(),
+
+                        const SizedBox(height: 32),
+
+                        // כפתור חלוקה
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton.icon(
+                            onPressed: _distribute,
+                            icon: const Icon(Icons.auto_awesome),
+                            label: const Text('חלק אוטומטית'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
+    );
+  }
+
+  Widget _buildProgressView() {
+    final progress = _progressTotal > 0 ? _progressCurrent / _progressTotal : 0.0;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.auto_awesome, size: 64, color: Colors.blue),
+            const SizedBox(height: 24),
+            const Text(
+              'מחלק צירים...',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 12,
+                backgroundColor: Colors.grey[200],
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
               ),
             ),
+            const SizedBox(height: 12),
+            Text(
+              'בודק אופציה $_progressCurrent / $_progressTotal',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${(progress * 100).toStringAsFixed(0)}%',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScoringCriterionSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'קריטריון חלוקה',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'איך האלגוריתם בוחר את החלוקה הטובה ביותר',
+                  child: Icon(Icons.info_outline, size: 18, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            RadioListTile<String>(
+              title: const Text('הוגנות'),
+              subtitle: const Text('אורך צירים אחיד ככל האפשר'),
+              value: 'fairness',
+              groupValue: _scoringCriterion,
+              onChanged: (value) => setState(() => _scoringCriterion = value!),
+            ),
+            RadioListTile<String>(
+              title: const Text('קרבה לאמצע הטווח'),
+              subtitle: const Text('כל הצירים קרובים לאמצע הטווח'),
+              value: 'midpoint',
+              groupValue: _scoringCriterion,
+              onChanged: (value) => setState(() => _scoringCriterion = value!),
+            ),
+            RadioListTile<String>(
+              title: const Text('מקסימום ייחודיות'),
+              subtitle: const Text('כמה שפחות נקודות משותפות בין מנווטים'),
+              value: 'uniqueness',
+              groupValue: _scoringCriterion,
+              onChanged: (value) => setState(() => _scoringCriterion = value!),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -603,12 +847,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   }
 
   Widget _buildWaypointCard(int index, WaypointCheckpoint waypoint) {
-    // מציאת נקודת הציון
-    final checkpoint = _checkpoints.firstWhere(
-      (cp) => cp.id == waypoint.checkpointId,
-      orElse: () => _checkpoints.first,
-    );
-
     return Card(
       color: Colors.blue[50],
       margin: const EdgeInsets.only(bottom: 12),

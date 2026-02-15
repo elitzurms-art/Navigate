@@ -44,9 +44,14 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   double _nbOpacity = 1.0;
   bool _showRoutes = true;
   double _routesOpacity = 1.0;
+  bool _showWaypoints = true;
+  double _waypointsOpacity = 1.0;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  // נקודות משותפות
+  Set<String> _sharedCheckpointIds = {};
 
   @override
   void initState() {
@@ -57,6 +62,21 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     for (final navigatorId in widget.navigation.routes.keys) {
       _selectedNavigators[navigatorId] = true;
     }
+    // חישוב נקודות משותפות
+    _calculateSharedCheckpoints();
+  }
+
+  void _calculateSharedCheckpoints() {
+    final checkpointCount = <String, int>{};
+    for (final route in widget.navigation.routes.values) {
+      for (final cpId in route.checkpointIds) {
+        checkpointCount[cpId] = (checkpointCount[cpId] ?? 0) + 1;
+      }
+    }
+    _sharedCheckpointIds = checkpointCount.entries
+        .where((e) => e.value > 1)
+        .map((e) => e.key)
+        .toSet();
   }
 
   @override
@@ -142,6 +162,21 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         );
       }
     }
+  }
+
+  /// איסוף כל מזהי waypoints מכל הצירים
+  Set<String> get _allWaypointIds {
+    final ids = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      ids.addAll(route.waypointIds);
+    }
+    // גם מהגדרות ה-navigation
+    if (widget.navigation.waypointSettings.enabled) {
+      for (final wp in widget.navigation.waypointSettings.waypoints) {
+        ids.add(wp.checkpointId);
+      }
+    }
+    return ids;
   }
 
   Future<void> _finishVerification() async {
@@ -302,6 +337,30 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           _buildLegend(),
           const SizedBox(height: 16),
 
+          // הודעה על שיתוף נקודות
+          if (_sharedCheckpointIds.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Card(
+                color: Colors.orange[50],
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.people, color: Colors.orange[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${_sharedCheckpointIds.length} נקודות משותפות בין מנווטים',
+                          style: TextStyle(color: Colors.orange[700]),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
           // טבלה
           _buildRoutesTable(),
         ],
@@ -314,12 +373,28 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       color: Colors.grey[100],
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        child: Column(
           children: [
-            _buildLegendItem('קצר חריג', Colors.yellow[700]!),
-            _buildLegendItem('בטווח', Colors.blue),
-            _buildLegendItem('ארוך מדי', Colors.red),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildLegendItem('קצר חריג', Colors.yellow[700]!),
+                _buildLegendItem('בטווח', Colors.blue),
+                _buildLegendItem('ארוך מדי', Colors.red),
+              ],
+            ),
+            if (_allWaypointIds.isNotEmpty || _sharedCheckpointIds.isNotEmpty) ...[
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  if (_allWaypointIds.isNotEmpty)
+                    _buildLegendIconItem('נקודת ביניים', Icons.star, Colors.purple),
+                  if (_sharedCheckpointIds.isNotEmpty)
+                    _buildLegendIconItem('נקודה משותפת', Icons.people, Colors.orange),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -343,6 +418,16 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     );
   }
 
+  Widget _buildLegendIconItem(String label, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 12)),
+      ],
+    );
+  }
+
   Widget _buildRoutesTable() {
     final routes = widget.navigation.routes;
     if (routes.isEmpty) {
@@ -357,6 +442,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         0: FlexColumnWidth(2),
         1: FlexColumnWidth(1),
         2: FlexColumnWidth(1),
+        3: FlexColumnWidth(1),
       },
       children: [
         // כותרות
@@ -375,6 +461,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               padding: EdgeInsets.all(8),
               child: Text('אורך (ק"מ)', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
+            Padding(
+              padding: EdgeInsets.all(8),
+              child: Text('ביניים', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
         // שורות
@@ -382,13 +472,20 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           final navigatorId = entry.key;
           final route = entry.value;
           final color = _getRouteColor(route.status);
+          final hasShared = route.checkpointIds.any((id) => _sharedCheckpointIds.contains(id));
 
           return TableRow(
             decoration: BoxDecoration(color: color.withOpacity(0.1)),
             children: [
               Padding(
                 padding: const EdgeInsets.all(8),
-                child: Text(navigatorId),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(navigatorId)),
+                    if (hasShared)
+                      Icon(Icons.people, size: 14, color: Colors.orange[700]),
+                  ],
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.all(8),
@@ -411,6 +508,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                   ],
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text('${route.waypointIds.length}'),
+              ),
             ],
           );
         }),
@@ -432,6 +533,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   }
 
   Widget _buildMapView() {
+    final waypointIds = _allWaypointIds;
+
     return Column(
       children: [
         // בורר מנווטים
@@ -502,7 +605,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                   // ציור הצירים
                   if (_showRoutes) ..._buildRoutePolylines(),
 
-                  // נקודות ציון - רק אלה בתוך הגבול (ורק point checkpoints)
+                  // נקודות ציון — רגילות
                   if (_showNZ)
                     MarkerLayer(
                       markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
@@ -512,8 +615,13 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                   polygon: _boundary!.coordinates,
                                 )
                               : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
+                          .where((cp) => !waypointIds.contains(cp.id)) // סנן waypoints — יוצגו בנפרד
                           .map((cp) {
-                        final markerColor = cp.color == 'green' ? Colors.green : Colors.blue;
+                        final isShared = _sharedCheckpointIds.contains(cp.id);
+                        final markerColor = isShared
+                            ? Colors.orange
+                            : (cp.color == 'green' ? Colors.green : Colors.blue);
+
                         return Marker(
                           point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                           width: 36,
@@ -524,17 +632,56 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                               decoration: BoxDecoration(
                                 color: markerColor,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 2),
+                                border: Border.all(
+                                  color: isShared ? Colors.orange[900]! : Colors.white,
+                                  width: isShared ? 3 : 2,
+                                ),
                               ),
                               child: Center(
-                                child: Text(
-                                  '${cp.sequenceNumber}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
+                                child: isShared
+                                    ? const Icon(Icons.people, size: 14, color: Colors.white)
+                                    : Text(
+                                        '${cp.sequenceNumber}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+
+                  // נקודות ביניים (waypoints) — אייקון כוכב סגול
+                  if (_showWaypoints && waypointIds.isNotEmpty)
+                    MarkerLayer(
+                      markers: _checkpoints
+                          .where((cp) => waypointIds.contains(cp.id) && !cp.isPolygon && cp.coordinates != null)
+                          .map((cp) {
+                        return Marker(
+                          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                          width: 40,
+                          height: 40,
+                          child: Opacity(
+                            opacity: _waypointsOpacity,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.purple,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.purple.withValues(alpha: 0.4),
+                                    blurRadius: 6,
+                                    spreadRadius: 1,
                                   ),
-                                ),
+                                ],
+                              ),
+                              child: const Center(
+                                child: Icon(Icons.star, size: 20, color: Colors.white),
                               ),
                             ),
                           ),
@@ -602,6 +749,13 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     onVisibilityChanged: (v) => setState(() => _showNZ = v),
                     opacity: _nzOpacity,
                     onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                  ),
+                  MapLayerConfig(
+                    id: 'waypoints', label: 'נקודות ביניים', color: Colors.purple,
+                    visible: _showWaypoints,
+                    onVisibilityChanged: (v) => setState(() => _showWaypoints = v),
+                    opacity: _waypointsOpacity,
+                    onOpacityChanged: (v) => setState(() => _waypointsOpacity = v),
                   ),
                   MapLayerConfig(
                     id: 'nb', label: 'נקודות בטיחות', color: Colors.red,

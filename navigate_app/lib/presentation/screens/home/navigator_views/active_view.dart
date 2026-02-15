@@ -133,13 +133,24 @@ class _ActiveViewState extends State<ActiveView> {
         );
       }
 
-      // Safety net: אם הניווט פעיל/ממתין אבל ה-track המקומי מראה "סיים" —
-      // זהו track ישן מהפעלה קודמת. מוחקים ומאפסים.
+      // Safety net: זיהוי track ישן מהפעלה קודמת ומחיקתו.
+      // מקרה 1: track מראה "סיים" אבל הניווט פעיל/ממתין.
+      // מקרה 2: track מראה "פעיל" אבל activeStartTime של הניווט חדש יותר — הניווט הופעל מחדש.
       final navStatus = _nav.status;
+      bool isStaleTrack = false;
       if (status == NavigatorPersonalStatus.finished &&
           (navStatus == 'active' || navStatus == 'waiting')) {
+        isStaleTrack = true;
+      }
+      if (effectiveTrack != null &&
+          _nav.activeStartTime != null &&
+          effectiveTrack.startedAt.isBefore(_nav.activeStartTime!)) {
+        isStaleTrack = true;
+      }
+      if (isStaleTrack) {
         if (effectiveTrack != null) {
           await _trackRepo.deleteByNavigation(_nav.id);
+          await _punchRepo.deleteByNavigation(_nav.id);
           effectiveTrack = null;
         }
         status = NavigatorPersonalStatus.waiting;
@@ -433,7 +444,11 @@ class _ActiveViewState extends State<ActiveView> {
           .doc(_track!.id)
           .get();
 
-      if (!doc.exists) return;
+      if (!doc.exists) {
+        // המפקד מחק את ה-track (איפוס לפני הפעלה מחדש)
+        await _performRemoteStop();
+        return;
+      }
 
       final data = doc.data();
       if (data == null) return;

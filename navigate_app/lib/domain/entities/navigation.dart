@@ -11,6 +11,7 @@ class AssignedRoute extends Equatable {
   final List<String> sequence;
   final String? startPointId; // נקודת התחלה של הציר
   final String? endPointId; // נקודת הסיום של הציר
+  final List<String> waypointIds; // מזהי נקודות ביניים (משותפות לכל המנווטים)
   final String status; // 'optimal', 'too_short', 'too_long', 'needs_adjustment'
   final bool isVerified; // האם הציר עבר וידוא
   final String approvalStatus; // 'not_submitted', 'pending_approval', 'approved', 'rejected'
@@ -27,6 +28,7 @@ class AssignedRoute extends Equatable {
     required this.sequence,
     this.startPointId,
     this.endPointId,
+    this.waypointIds = const [],
     this.status = 'optimal',
     this.isVerified = false,
     this.approvalStatus = 'not_submitted',
@@ -41,6 +43,7 @@ class AssignedRoute extends Equatable {
     List<String>? sequence,
     String? startPointId,
     String? endPointId,
+    List<String>? waypointIds,
     String? status,
     bool? isVerified,
     String? approvalStatus,
@@ -55,6 +58,7 @@ class AssignedRoute extends Equatable {
       sequence: sequence ?? this.sequence,
       startPointId: startPointId ?? this.startPointId,
       endPointId: endPointId ?? this.endPointId,
+      waypointIds: waypointIds ?? this.waypointIds,
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
       approvalStatus: approvalStatus ?? this.approvalStatus,
@@ -71,6 +75,7 @@ class AssignedRoute extends Equatable {
       'sequence': sequence,
       if (startPointId != null) 'startPointId': startPointId,
       if (endPointId != null) 'endPointId': endPointId,
+      if (waypointIds.isNotEmpty) 'waypointIds': waypointIds,
       'status': status,
       'isVerified': isVerified,
       'approvalStatus': approvalStatus,
@@ -95,6 +100,9 @@ class AssignedRoute extends Equatable {
       sequence: List<String>.from(map['sequence'] as List),
       startPointId: map['startPointId'] as String?,
       endPointId: map['endPointId'] as String?,
+      waypointIds: map['waypointIds'] != null
+          ? List<String>.from(map['waypointIds'] as List)
+          : const [],
       status: map['status'] as String? ?? 'optimal',
       isVerified: map['isVerified'] as bool? ?? false,
       approvalStatus: approvalStatus,
@@ -113,7 +121,52 @@ class AssignedRoute extends Equatable {
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries];
+}
+
+/// אפשרות אישור כשחלוקה חורגת מהטווח
+class ApprovalOption extends Equatable {
+  final String type; // 'expand_range', 'reduce_checkpoints', 'accept_best'
+  final String label; // תיאור לתצוגה
+  final double? expandedMin; // טווח מורחב (עבור expand_range)
+  final double? expandedMax;
+  final int? reducedCheckpoints; // כמות מופחתת (עבור reduce_checkpoints)
+  final int? outOfRangeCount; // כמות צירים חורגים (עבור accept_best)
+
+  const ApprovalOption({
+    required this.type,
+    required this.label,
+    this.expandedMin,
+    this.expandedMax,
+    this.reducedCheckpoints,
+    this.outOfRangeCount,
+  });
+
+  @override
+  List<Object?> get props => [type, label, expandedMin, expandedMax, reducedCheckpoints, outOfRangeCount];
+}
+
+/// תוצאת חלוקה אוטומטית
+class DistributionResult extends Equatable {
+  final String status; // 'success', 'needs_approval'
+  final Map<String, AssignedRoute> routes;
+  final List<ApprovalOption> approvalOptions;
+  final bool hasSharedCheckpoints;
+  final int sharedCheckpointCount;
+
+  const DistributionResult({
+    required this.status,
+    required this.routes,
+    this.approvalOptions = const [],
+    this.hasSharedCheckpoints = false,
+    this.sharedCheckpointCount = 0,
+  });
+
+  bool get isSuccess => status == 'success';
+  bool get needsApproval => status == 'needs_approval';
+
+  @override
+  List<Object?> get props => [status, routes, approvalOptions, hasSharedCheckpoints, sharedCheckpointCount];
 }
 
 /// טווח אורך מסלול

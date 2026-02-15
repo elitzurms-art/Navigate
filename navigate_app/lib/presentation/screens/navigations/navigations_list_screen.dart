@@ -1474,6 +1474,18 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     } catch (_) {
       // Firestore לא זמין — ימחק בסנכרון הבא
     }
+
+    // מחיקה מ-Firestore — ציונים (subcollection)
+    try {
+      final scoresSnapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navScoresPath(navigationId))
+          .get();
+      for (final doc in scoresSnapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (_) {
+      // Firestore לא זמין — ימחק בסנכרון הבא
+    }
   }
 
   Future<void> _startNavigation(domain.Navigation navigation) async {

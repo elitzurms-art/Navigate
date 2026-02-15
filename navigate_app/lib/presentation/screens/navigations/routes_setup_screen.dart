@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import 'routes_manual_upload_screen.dart';
 import 'routes_automatic_setup_screen.dart';
+import 'routes_manual_app_screen.dart';
 
 /// שלב 2 - בחירת שיטת יצירת צירים
 class RoutesSetupScreen extends StatelessWidget {
@@ -17,7 +18,7 @@ class RoutesSetupScreen extends StatelessWidget {
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -84,7 +85,30 @@ class RoutesSetupScreen extends StatelessWidget {
               },
             ),
 
-            const Spacer(),
+            const SizedBox(height: 16),
+
+            // אופציה 3 - חלוקה ידנית באפליקציה
+            _buildOptionCard(
+              context,
+              title: 'חלוקה ידנית באפליקציה',
+              description: 'בחר ידנית נקודות ציון לכל מנווט,\n'
+                  'סדר את הסדר וצפה בתצוגה מקדימה על מפה.',
+              icon: Icons.touch_app,
+              color: Colors.orange,
+              onTap: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => RoutesManualAppScreen(navigation: navigation),
+                  ),
+                );
+                if (result == true && context.mounted) {
+                  Navigator.pop(context, true);
+                }
+              },
+            ),
+
+            const SizedBox(height: 16),
 
             // הסבר על השלבים הבאים
             Card(
