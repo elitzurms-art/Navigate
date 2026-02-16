@@ -110,6 +110,12 @@ class NavigatorAlertRepository {
     }
   }
 
+  /// קבלת התראות למנווט ספציפי (ללא healthReport)
+  Future<List<NavigatorAlert>> getByNavigator(String navigationId, String navigatorId) async {
+    final all = await getAll(navigationId);
+    return all.where((a) => a.navigatorId == navigatorId && a.type != AlertType.healthReport).toList();
+  }
+
   /// ספירת התראות פעילות
   Future<int> countActive(String navigationId) async {
     final active = await getActiveByNavigation(navigationId);

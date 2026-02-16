@@ -82,6 +82,10 @@ class _ActiveViewState extends State<ActiveView> {
   Duration _elapsed = Duration.zero;
   DateTime? _startTime;
 
+  // נתוני סיכום סיום
+  double _actualDistanceKm = 0;
+  List<NavigatorAlert> _navigatorAlerts = [];
+
   domain.Navigation get _nav => widget.navigation;
   domain.AssignedRoute? get _route => _nav.routes[widget.currentUser.uid];
 
@@ -623,6 +627,9 @@ class _ActiveViewState extends State<ActiveView> {
 
     setState(() => _isLoading = true);
     try {
+      // שמירת מרחק בפועל לפני עצירת tracking
+      _actualDistanceKm = _gpsTracker.getTotalDistance();
+
       // עצירת GPS tracking + שמירה סופית
       await _stopGpsTracking();
 
@@ -642,6 +649,11 @@ class _ActiveViewState extends State<ActiveView> {
 
       final endTime = DateTime.now();
       _elapsed = endTime.difference(_startTime ?? endTime);
+
+      // טעינת התראות שהיו למנווט
+      try {
+        _navigatorAlerts = await _alertRepo.getByNavigator(_nav.id, widget.currentUser.uid);
+      } catch (_) {}
 
       setState(() {
         _personalStatus = NavigatorPersonalStatus.finished;
@@ -717,7 +729,7 @@ class _ActiveViewState extends State<ActiveView> {
     // יצירת דקירה
     final now = DateTime.now();
     final punch = CheckpointPunch(
-      id: '${widget.currentUser.uid}_${nearestCp.id}_${now.millisecondsSinceEpoch}',
+      id: '${widget.currentUser.uid}-${_punchCount + 1}',
       navigationId: _nav.id,
       navigatorId: widget.currentUser.uid,
       checkpointId: nearestCp.id,
@@ -735,7 +747,7 @@ class _ActiveViewState extends State<ActiveView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'דקירה ב-${nearestCp.name} (${nearestDistance.toStringAsFixed(0)} מ\')',
+              'דקירה ${widget.currentUser.uid}-${_punchCount}: ${nearestCp.name} (${nearestDistance.toStringAsFixed(0)} מ\')',
             ),
             backgroundColor: Colors.blue,
           ),
@@ -1115,46 +1127,121 @@ class _ActiveViewState extends State<ActiveView> {
 
   Widget _buildFinishedView() {
     final route = _route;
+
+    // קיבוץ התראות לפי סוג
+    final alertCounts = <AlertType, int>{};
+    for (final alert in _navigatorAlerts) {
+      alertCounts[alert.type] = (alertCounts[alert.type] ?? 0) + 1;
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.check_circle,
-              size: 80,
-              color: Colors.green[400],
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'הניווט הסתיים',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.check_circle,
+                size: 80,
+                color: Colors.green[400],
               ),
-            ),
-            const SizedBox(height: 32),
-            _summaryRow(
-              icon: Icons.timer,
-              label: 'זמן כולל',
-              value: _formatDuration(_elapsed),
-            ),
-            const Divider(),
-            _summaryRow(
-              icon: Icons.location_on,
-              label: 'דקירות',
-              value: '$_punchCount',
-            ),
-            if (route != null) ...[
+              const SizedBox(height: 24),
+              const Text(
+                'הניווט הסתיים',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 32),
+              _summaryRow(
+                icon: Icons.timer,
+                label: 'זמן כולל',
+                value: _formatDuration(_elapsed),
+              ),
               const Divider(),
               _summaryRow(
-                icon: Icons.route,
-                label: 'אורך מסלול',
-                value: '${route.routeLengthKm.toStringAsFixed(1)} ק"מ',
+                icon: Icons.location_on,
+                label: 'דקירות',
+                value: '$_punchCount',
               ),
+              if (route != null) ...[
+                const Divider(),
+                _summaryRow(
+                  icon: Icons.route,
+                  label: 'מסלול מתוכנן',
+                  value: '${route.routeLengthKm.toStringAsFixed(1)} ק"מ',
+                ),
+              ],
+              const Divider(),
+              _summaryRow(
+                icon: Icons.straighten,
+                label: 'מסלול בפועל',
+                value: '${_actualDistanceKm.toStringAsFixed(1)} ק"מ',
+              ),
+              const Divider(),
+              _summaryRow(
+                icon: Icons.gpp_maybe,
+                label: 'חריגות אמינות',
+                value: 'בפיתוח',
+                valueColor: Colors.grey,
+              ),
+              const Divider(),
+              const SizedBox(height: 16),
+              // סקציית התראות
+              if (alertCounts.isEmpty)
+                Row(
+                  children: [
+                    Icon(Icons.notifications_none, size: 28, color: Colors.grey[400]),
+                    const SizedBox(width: 12),
+                    Text(
+                      'לא היו התראות',
+                      style: TextStyle(fontSize: 16, color: Colors.grey[400]),
+                    ),
+                  ],
+                )
+              else ...[
+                Row(
+                  children: [
+                    Icon(Icons.warning_amber, size: 28, color: Colors.orange[700]),
+                    const SizedBox(width: 12),
+                    Text(
+                      'התראות (${_navigatorAlerts.length}):',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange[700],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...alertCounts.entries.map((entry) => Padding(
+                  padding: const EdgeInsets.only(right: 40, bottom: 4),
+                  child: Row(
+                    children: [
+                      Text(entry.key.emoji, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 8),
+                      Text(
+                        entry.key.displayName,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '×${entry.value}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1164,12 +1251,13 @@ class _ActiveViewState extends State<ActiveView> {
     required IconData icon,
     required String label,
     required String value,
+    Color? valueColor,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Icon(icon, size: 28, color: Colors.grey[600]),
+          Icon(icon, size: 28, color: valueColor ?? Colors.grey[600]),
           const SizedBox(width: 12),
           Text(
             label,
@@ -1178,9 +1266,10 @@ class _ActiveViewState extends State<ActiveView> {
           const Spacer(),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
+              color: valueColor,
             ),
           ),
         ],
