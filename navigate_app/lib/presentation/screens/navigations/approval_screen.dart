@@ -92,6 +92,8 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
   // ציונים (עריכה מקומית)
   final Map<String, NavigationScore> _scores = {};
+  // ציונים אוטומטיים מקוריים (לייחוס)
+  final Map<String, int> _autoScores = {};
 
   // שכבות מפה
   bool _showGG = true;
@@ -354,6 +356,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         );
 
         _scores[navId] = score;
+        _autoScores[navId] = score.totalScore;
       }
 
       setState(() => _isLoading = false);
@@ -396,9 +399,12 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           children: [
             TextField(
               controller: scoreController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'ציון (0-100)',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                helperText: _autoScores.containsKey(navigatorId)
+                    ? 'ציון אוטומטי: ${_autoScores[navigatorId]}'
+                    : null,
               ),
               keyboardType: TextInputType.number,
             ),
@@ -584,76 +590,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     }
   }
 
-  Future<void> _returnToPreparation() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('חזרה להכנה'),
-        content: const Text('האם להחזיר את הניווט למצב הכנה?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.orange),
-            child: const Text('חזרה להכנה'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      final updatedNav = _currentNavigation.copyWith(
-        status: 'preparation',
-        updatedAt: DateTime.now(),
-      );
-      await _navRepo.update(updatedNav);
-      _currentNavigation = updatedNav;
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _deleteNavigation() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('מחיקת ניווט'),
-        content: const Text('פעולה זו בלתי הפיכה!\nכל נתוני הניווט יימחקו לצמיתות.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('מחק'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      await _navRepo.delete(_currentNavigation.id);
-      if (mounted) Navigator.pop(context, 'deleted');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
+  // _returnToPreparation and _deleteNavigation removed — no longer in bottom bar
 
   void _onExport() {
     final navId = _selectedNavigatorId;
@@ -857,49 +794,20 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       bottomNavigationBar: _isLoading ? null : SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _returnToPreparation,
-                  icon: const Icon(Icons.undo, size: 18),
-                  label: const Text('חזרה להכנה', style: TextStyle(fontSize: 13)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _moveToReview,
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('הבא', style: TextStyle(fontSize: 16)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 48),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: _moveToReview,
-                  icon: const Icon(Icons.arrow_forward, size: 18),
-                  label: const Text('המשך לתחקור', style: TextStyle(fontSize: 13)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                onPressed: _deleteNavigation,
-                icon: const Icon(Icons.delete_forever),
-                color: Colors.red,
-                tooltip: 'מחיקת ניווט',
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.red.withOpacity(0.1),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1656,27 +1564,44 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          leading: Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: scoreColor.withOpacity(0.15),
-              border: Border.all(color: scoreColor, width: 3),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+          leading: GestureDetector(
+            onTap: () => _editScore(navigatorId),
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Text('${score.totalScore}',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: scoreColor)),
-                Text(grade,
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: scoreColor)),
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scoreColor.withOpacity(0.15),
+                    border: Border.all(
+                      color: score.isManual ? Colors.orange : scoreColor,
+                      width: 3,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('${score.totalScore}',
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: scoreColor)),
+                      Text(grade,
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: scoreColor)),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  top: -4,
+                  left: -4,
+                  child: Icon(Icons.edit, size: 16,
+                      color: score.isManual ? Colors.orange : Colors.grey[400]),
+                ),
               ],
             ),
           ),
@@ -1686,6 +1611,18 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 child: Text(name,
                     style: const TextStyle(fontWeight: FontWeight.bold)),
               ),
+              if (score.isManual)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  margin: const EdgeInsets.only(left: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange),
+                  ),
+                  child: const Text('ידני',
+                      style: TextStyle(fontSize: 10, color: Colors.orange)),
+                ),
               if (score.isPublished)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1699,10 +1636,20 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 ),
             ],
           ),
-          subtitle: Text(
-            'נ.צ.: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
-            'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
-            style: const TextStyle(fontSize: 12),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'נ.צ.: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
+                'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
+                style: const TextStyle(fontSize: 12),
+              ),
+              if (score.isManual && _autoScores.containsKey(navigatorId))
+                Text(
+                  'ציון אוטומטי: ${_autoScores[navigatorId]}',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic),
+                ),
+            ],
           ),
           children: [
             // Checkpoint details

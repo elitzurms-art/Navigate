@@ -1059,8 +1059,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       points: _boundary!.coordinates
                           .map((coord) => LatLng(coord.lat, coord.lng))
                           .toList(),
-                      color: Colors.blue.withOpacity(0.2 * _ggOpacity),
-                      borderColor: Colors.blue,
+                      color: Colors.black.withOpacity(0.2 * _ggOpacity),
+                      borderColor: Colors.black,
                       borderStrokeWidth: 2,
                     ),
                   ],
@@ -1124,7 +1124,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   MapLayerConfig(
                     id: 'gg',
                     label: 'גבול גזרה',
-                    color: Colors.blue,
+                    color: Colors.black,
                     visible: _showGG,
                     opacity: _ggOpacity,
                     onVisibilityChanged: (v) => setState(() => _showGG = v),

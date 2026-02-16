@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../domain/entities/checkpoint_punch.dart';
 import '../domain/entities/coordinate.dart';
 import '../domain/entities/navigation_settings.dart';
 import '../domain/entities/safety_point.dart';
 import '../core/utils/geometry_utils.dart';
+import '../core/constants/app_constants.dart';
 import '../data/repositories/navigator_alert_repository.dart';
 import '../data/repositories/boundary_repository.dart';
 import '../data/repositories/safety_point_repository.dart';
@@ -38,6 +41,10 @@ class AlertMonitoringService {
   Coordinate? _lastMovementCoordinate;
   Timer? _noMovementTimer;
 
+  // Proximity tracking (קרבת מנווטים)
+  Timer? _proximityPollTimer;
+  final Map<String, _OtherNavigatorPosition> _otherPositions = {};
+
   // GPS stream subscription
   StreamSubscription<Position>? _positionSubscription;
 
@@ -47,12 +54,13 @@ class AlertMonitoringService {
   bool _isRunning = false;
   bool get isRunning => _isRunning;
 
-  static const Map<AlertType, Duration> _cooldowns = {
+  static const Map<AlertType, Duration> _defaultCooldowns = {
     AlertType.speed: Duration(minutes: 3),
     AlertType.noMovement: Duration(minutes: 10),
     AlertType.boundary: Duration(minutes: 5),
     AlertType.routeDeviation: Duration(minutes: 5),
     AlertType.safetyPoint: Duration(minutes: 5),
+    AlertType.proximity: Duration(minutes: 5), // fallback, overridden by proximityMinTime
   };
 
   /// סף דיוק GPS — מעל 50 מטר, מדלגים על בדיקות (מניעת false positives)
@@ -98,6 +106,11 @@ class AlertMonitoringService {
       );
     }
 
+    // הפעלת polling קרבת מנווטים
+    if (alertsConfig.navigatorProximityAlertEnabled) {
+      _startProximityPolling();
+    }
+
     print('DEBUG AlertMonitoring: started for navigator $navigatorId');
   }
 
@@ -107,6 +120,8 @@ class AlertMonitoringService {
     _positionSubscription = null;
     _noMovementTimer?.cancel();
     _noMovementTimer = null;
+    _proximityPollTimer?.cancel();
+    _proximityPollTimer = null;
     _isRunning = false;
     print('DEBUG AlertMonitoring: stopped');
   }
@@ -116,6 +131,7 @@ class AlertMonitoringService {
     stop();
     _boundaryPolygon = null;
     _safetyPoints = [];
+    _otherPositions.clear();
     _lastAlertTime.clear();
   }
 
@@ -182,6 +198,9 @@ class AlertMonitoringService {
     }
     if (alertsConfig.nbAlertEnabled) {
       _checkSafetyPointProximity(trackPoint);
+    }
+    if (alertsConfig.navigatorProximityAlertEnabled) {
+      _checkProximity(trackPoint);
     }
 
     // עדכון מעקב תנועה
@@ -381,7 +400,92 @@ class AlertMonitoringService {
   }
 
   // ===========================================================================
-  // Stubs: Battery, No Reception, Proximity
+  // Check: Navigator Proximity (קרבת מנווטים)
+  // ===========================================================================
+
+  /// Polling מיקומי מנווטים אחרים מ-Firestore כל 10 שניות
+  void _startProximityPolling() {
+    // polling מיידי ראשון
+    _pollOtherNavigators();
+    _proximityPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _pollOtherNavigators(),
+    );
+    print('DEBUG AlertMonitoring: proximity polling started');
+  }
+
+  Future<void> _pollOtherNavigators() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final uid = data['navigatorUserId'] as String?;
+        if (uid == null || uid == navigatorId) continue; // דילוג על עצמי
+
+        final trackPointsJson = data['trackPointsJson'] as String?;
+        if (trackPointsJson == null || trackPointsJson.isEmpty) continue;
+
+        try {
+          final List<dynamic> points = jsonDecode(trackPointsJson);
+          if (points.isEmpty) continue;
+
+          // נקודה אחרונה = מיקום עדכני
+          final lastPoint = points.last as Map<String, dynamic>;
+          final lat = (lastPoint['lat'] as num?)?.toDouble();
+          final lng = (lastPoint['lng'] as num?)?.toDouble();
+          final timestampStr = lastPoint['timestamp'] as String?;
+
+          if (lat == null || lng == null) continue;
+
+          _otherPositions[uid] = _OtherNavigatorPosition(
+            coordinate: Coordinate(lat: lat, lng: lng, utm: ''),
+            timestamp: timestampStr != null
+                ? DateTime.tryParse(timestampStr) ?? DateTime.now()
+                : DateTime.now(),
+          );
+        } catch (_) {
+          // JSON parse error — skip
+        }
+      }
+    } catch (e) {
+      print('DEBUG AlertMonitoring: proximity poll error: $e');
+    }
+  }
+
+  /// בדיקת קרבה לכל מנווט אחר
+  void _checkProximity(TrackPoint point) {
+    final proximityDist = alertsConfig.proximityDistance;
+    if (proximityDist == null || _otherPositions.isEmpty) return;
+
+    final now = DateTime.now();
+    const staleThreshold = Duration(minutes: 5);
+
+    for (final entry in _otherPositions.entries) {
+      final other = entry.value;
+
+      // דילוג על מיקומים ישנים מדי (>5 דק')
+      if (now.difference(other.timestamp) > staleThreshold) continue;
+
+      final distance = GeometryUtils.distanceBetweenMeters(
+        point.coordinate,
+        other.coordinate,
+      );
+
+      if (distance < proximityDist) {
+        print('DEBUG AlertMonitoring: proximity alert! ${distance.toStringAsFixed(0)}m from navigator ${entry.key} (threshold: ${proximityDist}m)');
+        _sendAlert(AlertType.proximity, point.coordinate);
+        return; // התראה אחת מספיקה
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Stubs: Battery, No Reception
   // ===========================================================================
 
   // ignore: unused_element
@@ -394,16 +498,19 @@ class AlertMonitoringService {
     // TODO: requires deeper connectivity_plus integration
   }
 
-  // Proximity (קרבת מנווטים) — requires cross-device location sharing, skipped
-
   // ===========================================================================
   // Alert Sending with Cooldown
   // ===========================================================================
 
   Future<void> _sendAlert(AlertType type, Coordinate location) async {
-    // בדיקת cooldown
+    // בדיקת cooldown — proximity משתמש בהגדרת proximityMinTime מהניווט
     final lastTime = _lastAlertTime[type];
-    final cooldown = _cooldowns[type] ?? const Duration(minutes: 5);
+    Duration cooldown;
+    if (type == AlertType.proximity && alertsConfig.proximityMinTime != null) {
+      cooldown = Duration(minutes: alertsConfig.proximityMinTime!);
+    } else {
+      cooldown = _defaultCooldowns[type] ?? const Duration(minutes: 5);
+    }
 
     if (lastTime != null && DateTime.now().difference(lastTime) < cooldown) {
       print('DEBUG AlertMonitoring: cooldown active for ${type.code}, skipping');
@@ -429,4 +536,15 @@ class AlertMonitoringService {
       print('DEBUG AlertMonitoring: failed to send alert: $e');
     }
   }
+}
+
+/// מיקום מנווט אחר (לבדיקת קרבה)
+class _OtherNavigatorPosition {
+  final Coordinate coordinate;
+  final DateTime timestamp;
+
+  _OtherNavigatorPosition({
+    required this.coordinate,
+    required this.timestamp,
+  });
 }

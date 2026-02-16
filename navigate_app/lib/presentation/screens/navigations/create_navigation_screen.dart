@@ -17,7 +17,6 @@ import '../../../services/auth_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../core/map_config.dart';
-import 'routes_verification_screen.dart';
 import 'navigation_preparation_screen.dart';
 
 /// מסך יצירת/עריכת ניווט
@@ -112,7 +111,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
 
   // התראות
-  bool _alertsEnabled = false;
+  bool _alertsEnabled = true;
   bool _speedAlertEnabled = false;
   int _maxSpeed = 50;
   bool _noMovementAlertEnabled = false;
@@ -570,11 +569,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     _buildFieldAndParticipantsSettings(),
                     const SizedBox(height: 24),
 
-                    // הגדרות נקודות
-                    _buildSectionTitle('הגדרות נקודות'),
-                    _buildCheckpointSettings(),
-                    const SizedBox(height: 24),
-
                     // הגדרות למידה
                     _buildSectionTitle('הגדרות למידה'),
                     _buildLearningSettings(),
@@ -918,115 +912,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     );
   }
 
-  Widget _buildCheckpointSettings() {
-    // אם הצירים כבר חולקו ואושרו - הצג אופציה לעריכה
-    final routesDistributed = widget.navigation?.routesDistributed ?? false;
-    final routesReady = widget.navigation?.routesStage == 'ready' ||
-                        widget.navigation?.routesStage == 'verification';
-
-    if (routesDistributed && routesReady) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text(
-                    'הגדרת נקודות',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      'הושלם',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'הצירים חולקו ואושרו (${widget.navigation!.routes.length} צירים)',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => RoutesVerificationScreen(
-                          navigation: widget.navigation!,
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.edit),
-                  label: const Text('עריכת נקודות'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.blue,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // אחרת - הצג את האופציות הרגילות
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('חלוקת נקודות', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            RadioListTile<String>(
-              title: const Text('אוטומטי'),
-              value: 'automatic',
-              groupValue: _distributionMethod,
-              onChanged: (value) {
-                setState(() => _distributionMethod = value!);
-              },
-            ),
-            RadioListTile<String>(
-              title: const Text('העלאת קובץ ידני'),
-              value: 'manual_full',
-              groupValue: _distributionMethod,
-              onChanged: (value) {
-                setState(() => _distributionMethod = value!);
-              },
-            ),
-            RadioListTile<String>(
-              title: const Text('ידני באפליקציה'),
-              value: 'manual_app',
-              groupValue: _distributionMethod,
-              onChanged: (value) {
-                setState(() => _distributionMethod = value!);
-              },
-            ),
-
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildLearningSettings() {
     return Card(
       child: Padding(
@@ -1288,19 +1173,19 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
             ],
 
             if (_allowOpenMap && !widget.alertsOnlyMode) ...[
-              CheckboxListTile(
+              SwitchListTile(
                 title: const Text('אפשר הצגת מיקום עצמי למנווט'),
                 value: _showSelfLocation,
                 onChanged: (value) {
-                  setState(() => _showSelfLocation = value ?? false);
+                  setState(() => _showSelfLocation = value);
                 },
               ),
               if (_showSelfLocation)
-                CheckboxListTile(
+                SwitchListTile(
                   title: const Text('הצג ציר ניווט על המפה'),
                   value: _showRouteOnMap,
                   onChanged: (value) {
-                    setState(() => _showRouteOnMap = value ?? false);
+                    setState(() => _showRouteOnMap = value);
                   },
                 ),
             ],

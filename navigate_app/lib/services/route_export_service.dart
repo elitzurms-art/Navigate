@@ -607,6 +607,7 @@ class RouteExportService {
   }) async {
     final format = await showModalBottomSheet<ExportFormat>(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),

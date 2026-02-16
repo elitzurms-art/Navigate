@@ -602,6 +602,57 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             onPressed: () =>
                 setState(() => _allNavigatorsMode = !_allNavigatorsMode),
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'אפשרויות',
+            onSelected: (value) {
+              switch (value) {
+                case 'back_to_preparation':
+                  _returnToPreparation();
+                  break;
+                case 'save_navigation':
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('בפיתוח')),
+                  );
+                  break;
+                case 'delete_navigation':
+                  _deleteNavigation();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'back_to_preparation',
+                child: Row(
+                  children: [
+                    Icon(Icons.undo, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Text('חזרה להכנה'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'save_navigation',
+                child: Row(
+                  children: [
+                    Icon(Icons.save, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('שמירת ניווט'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'delete_navigation',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_forever, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('מחיקת ניווט'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: _isLoading
@@ -664,38 +715,20 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _returnToPreparation,
-                  icon: const Icon(Icons.undo),
-                  label: const Text('חזרה להכנה'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 48),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('סיום', style: TextStyle(fontSize: 16)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 48),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _deleteNavigation,
-                  icon: const Icon(Icons.delete_forever),
-                  label: const Text('מחיקת ניווט'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(0, 48),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

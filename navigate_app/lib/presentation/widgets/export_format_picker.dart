@@ -48,7 +48,12 @@ class _ExportFormatPickerState extends State<ExportFormatPicker> {
       textDirection: TextDirection.rtl,
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 12,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -79,8 +84,15 @@ class _ExportFormatPickerState extends State<ExportFormatPicker> {
               ),
               const SizedBox(height: 16),
 
-              // Format options
-              ..._formats.map((opt) => _buildOption(opt, theme)),
+              // Format options — scrollable for small screens
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: _formats.map((opt) => _buildOption(opt, theme)).toList(),
+                  ),
+                ),
+              ),
 
               const SizedBox(height: 16),
 

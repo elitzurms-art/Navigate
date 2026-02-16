@@ -771,6 +771,11 @@ class RouteAnalysisService {
     RouteStatistics stats,
     List<CheckpointTimingResult> timings,
   ) {
+    // מנווט שלא זז — ציון 0
+    if (stats.actualDistanceKm * 1000 <= 50) {
+      return 0;
+    }
+
     double cpScore = 0;
     if (stats.totalCheckpoints > 0) {
       cpScore = (stats.checkpointsApproved / stats.totalCheckpoints) * 100;
