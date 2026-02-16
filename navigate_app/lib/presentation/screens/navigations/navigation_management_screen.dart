@@ -96,6 +96,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Timer? _centeringTimer;
   StreamSubscription? _mapGestureSubscription;
 
+  // הדגשה חד-פעמית (מרכז פעם אחת)
+  String? _oneTimeCenteredNavigatorId;
+  StreamSubscription? _oneTimeGestureSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -130,6 +134,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _punchesListener?.cancel();
     _centeringTimer?.cancel();
     _mapGestureSubscription?.cancel();
+    _oneTimeGestureSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -375,13 +380,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         final data = doc.data() as Map<String, dynamic>;
         final navigatorId = data['navigatorId'] as String? ?? doc.id;
 
-        final latitude = (data['latitude'] as num?)?.toDouble();
-        final longitude = (data['longitude'] as num?)?.toDouble();
-
-        // רק אם יש מיקום תקין
-        if (latitude == null || longitude == null) continue;
-        if (latitude == 0.0 && longitude == 0.0) continue;
-
         // אם מנווט חדש שלא ברשימה (מקרה קצה)
         if (!_navigatorData.containsKey(navigatorId)) {
           _selectedNavigators[navigatorId] = true;
@@ -394,6 +392,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
 
         final liveData = _navigatorData[navigatorId]!;
+
+        // עדכון מצב סוללה
+        final batteryRaw = data['batteryLevel'];
+        if (batteryRaw is int) {
+          liveData.batteryLevel = batteryRaw;
+        } else if (batteryRaw is num) {
+          liveData.batteryLevel = batteryRaw.toInt();
+        }
+
+        final latitude = (data['latitude'] as num?)?.toDouble();
+        final longitude = (data['longitude'] as num?)?.toDouble();
+
+        // עדכון מיקום — רק אם יש מיקום תקין
+        if (latitude == null || longitude == null) continue;
+        if (latitude == 0.0 && longitude == 0.0) continue;
 
         // עדכון מיקום מ-system_status — רק אם אין נתונים או ה-timestamp חדש יותר
         DateTime? statusTime;
@@ -575,6 +588,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
         final liveData = _navigatorData[navigatorId]!;
 
+        // מנווט שסיים ידנית — לא לדרוס סטטוס finished
+        if (liveData.personalStatus == NavigatorPersonalStatus.finished) {
+          // עדכון נקודות מסלול בלבד (לא סטטוס)
+          final trackPointsRaw = data['trackPointsJson'];
+          if (trackPointsRaw != null && trackPointsRaw is String && trackPointsRaw.isNotEmpty) {
+            try {
+              final pointsList = jsonDecode(trackPointsRaw) as List;
+              liveData.trackPoints = pointsList
+                  .map((p) => TrackPoint.fromMap(p as Map<String, dynamic>))
+                  .toList();
+            } catch (_) {}
+          }
+          continue;
+        }
+
         // פרסור trackPoints
         final trackPointsRaw = data['trackPointsJson'];
         if (trackPointsRaw != null && trackPointsRaw is String && trackPointsRaw.isNotEmpty) {
@@ -648,18 +676,39 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
       final now = DateTime.now();
 
-      for (final doc in snapshot.docs) {
-        // עדכון Firestore: isActive=false + endedAt
-        await doc.reference.update({
-          'isActive': false,
-          'endedAt': now.toIso8601String(),
-        });
+      if (snapshot.docs.isEmpty) {
+        // אין track פעיל — מנסה לחפש בלי isActive filter (אולי השדה חסר)
+        final allTracks = await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: widget.navigation.id)
+            .where('navigatorUserId', isEqualTo: navigatorId)
+            .get();
 
-        // עדכון מקומי ב-Drift
-        try {
-          await _trackRepo.endNavigation(doc.id);
-        } catch (_) {
-          // ייתכן שה-track לא קיים מקומית אצל המפקד
+        for (final doc in allTracks.docs) {
+          final trackData = doc.data();
+          if (trackData['endedAt'] == null) {
+            // track ללא endedAt — מסמן כמסיים
+            await doc.reference.update({
+              'isActive': false,
+              'endedAt': now.toIso8601String(),
+            });
+            try { await _trackRepo.endNavigation(doc.id); } catch (_) {}
+          }
+        }
+      } else {
+        for (final doc in snapshot.docs) {
+          // עדכון Firestore: isActive=false + endedAt
+          await doc.reference.update({
+            'isActive': false,
+            'endedAt': now.toIso8601String(),
+          });
+
+          // עדכון מקומי ב-Drift
+          try {
+            await _trackRepo.endNavigation(doc.id);
+          } catch (_) {
+            // ייתכן שה-track לא קיים מקומית אצל המפקד
+          }
         }
       }
 
@@ -789,11 +838,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
   }
 
-  void _measureDistance() {
-    // מעבר לטאב סטטוס שמציג מרחקים בין מנווטים
-    _tabController.animateTo(1);
-  }
-
   // ===========================================================================
   // מרכוז מפה — Centering Logic
   // ===========================================================================
@@ -919,6 +963,27 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         _centeringMode = CenteringMode.off;
         _centeredNavigatorId = null;
       });
+    }
+  }
+
+  /// הדגשה חד-פעמית (עיגול כחול) — יורדת כשהמשתמש נוגע במפה
+  void _setOneTimeHighlight(String navigatorId) {
+    _oneTimeGestureSubscription?.cancel();
+    setState(() => _oneTimeCenteredNavigatorId = navigatorId);
+
+    _oneTimeGestureSubscription = _mapController.mapEventStream.listen((event) {
+      if (event.source != MapEventSource.mapController &&
+          event.source != MapEventSource.nonRotatedSizeChange) {
+        _clearOneTimeHighlight();
+      }
+    });
+  }
+
+  void _clearOneTimeHighlight() {
+    _oneTimeGestureSubscription?.cancel();
+    _oneTimeGestureSubscription = null;
+    if (mounted) {
+      setState(() => _oneTimeCenteredNavigatorId = null);
     }
   }
 
@@ -1120,11 +1185,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.straighten),
-            tooltip: 'מדידת מרחק',
-            onPressed: _measureDistance,
-          ),
           IconButton(
             icon: const Icon(Icons.stop_circle),
             tooltip: 'סיום ניווט כללי',
@@ -1707,7 +1767,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
 
-      final isCentered = _centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off;
+      final isCentered = (_centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off)
+          || _oneTimeCenteredNavigatorId == navigatorId;
 
       Widget markerChild = Column(
         children: [
@@ -1886,9 +1947,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             color: data.personalStatus == NavigatorPersonalStatus.noReception ? Colors.red : Colors.green,
                           ),
                           _deviceChip(
-                            icon: Icons.battery_unknown,
-                            label: 'N/A',
-                            color: Colors.grey,
+                            icon: data.batteryLevel != null
+                                ? (data.batteryLevel! > 50
+                                    ? Icons.battery_full
+                                    : data.batteryLevel! > 20
+                                        ? Icons.battery_3_bar
+                                        : Icons.battery_alert)
+                                : Icons.battery_unknown,
+                            label: data.batteryLevel != null
+                                ? '${data.batteryLevel}%'
+                                : 'N/A',
+                            color: data.batteryLevel != null
+                                ? (data.batteryLevel! > 50
+                                    ? Colors.green
+                                    : data.batteryLevel! > 20
+                                        ? Colors.orange
+                                        : Colors.red)
+                                : Colors.grey,
                           ),
                         ],
                       ),
@@ -1927,7 +2002,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                 onPressed: () {
                                   Navigator.pop(ctx);
                                   _tabController.animateTo(0);
-                                  _mapController.move(data.currentPosition!, 16.0);
+                                  // עיכוב — ממתין שה-sheet ייסגר והטאב יעבור לפני ההזזה
+                                  Future.delayed(const Duration(milliseconds: 400), () {
+                                    if (!mounted) return;
+                                    _mapController.move(data.currentPosition!, 16.0);
+                                    _setOneTimeHighlight(navigatorId);
+                                  });
                                 },
                               ),
                             ),
@@ -2544,6 +2624,7 @@ class NavigatorLiveData {
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
   DateTime? lastUpdate;
+  int? batteryLevel; // 0-100%, null = לא ידוע
 
   NavigatorLiveData({
     required this.navigatorId,
@@ -2554,6 +2635,7 @@ class NavigatorLiveData {
     required this.trackPoints,
     required this.punches,
     this.lastUpdate,
+    this.batteryLevel,
   });
 
   /// מרחק כולל שנעבר בק"מ

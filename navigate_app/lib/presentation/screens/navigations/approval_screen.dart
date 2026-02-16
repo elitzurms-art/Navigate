@@ -153,6 +153,19 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
           widget.navigation.id);
 
+      // Firestore fallback — שכבות נוצרות במכשיר המפקד, מכשירים אחרים צריכים לסנכרן
+      if (_navCheckpoints.isEmpty && _navSafetyPoints.isEmpty && _navBoundaries.isEmpty) {
+        try {
+          await _navLayerRepo.syncAllLayersFromFirestore(widget.navigation.id);
+          _navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
+              widget.navigation.id);
+          _navSafetyPoints = await _navLayerRepo.getSafetyPointsByNavigation(
+              widget.navigation.id);
+          _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+              widget.navigation.id);
+        } catch (_) {}
+      }
+
       if (!widget.isNavigator) {
         await _loadCommanderData();
         _computeAnalysis();
@@ -168,18 +181,36 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     final navigatorIds = widget.navigation.routes.keys.toList();
     int colorIdx = 0;
 
+    // טעינת tracks מ-Firestore (המפקד לא מחזיק tracks מקומיים — sync pushOnly)
+    final Map<String, String> firestoreTrackPoints = {};
+    try {
+      final firestoreTracks = await _trackRepo.getByNavigationFromFirestore(
+          widget.navigation.id);
+      for (final track in firestoreTracks) {
+        if (track.trackPointsJson.isNotEmpty) {
+          firestoreTrackPoints[track.navigatorUserId] = track.trackPointsJson;
+        }
+      }
+    } catch (_) {}
+
     for (final navId in navigatorIds) {
       final route = widget.navigation.routes[navId]!;
       final color = _kNavigatorColors[colorIdx % _kNavigatorColors.length];
       colorIdx++;
 
-      // Track points
+      // Track points — נסיון מקומי, fallback ל-Firestore
       List<TrackPoint> trackPoints = [];
       final track = await _trackRepo.getByNavigatorAndNavigation(
           navId, widget.navigation.id);
+      String? trackJson;
       if (track != null && track.trackPointsJson.isNotEmpty) {
+        trackJson = track.trackPointsJson;
+      } else if (firestoreTrackPoints.containsKey(navId)) {
+        trackJson = firestoreTrackPoints[navId];
+      }
+      if (trackJson != null) {
         try {
-          trackPoints = (jsonDecode(track.trackPointsJson) as List)
+          trackPoints = (jsonDecode(trackJson) as List)
               .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
               .toList();
         } catch (_) {}

@@ -91,6 +91,19 @@ class _ApprovalViewState extends State<ApprovalView> {
       _boundaries =
           await _navLayerRepo.getBoundariesByNavigation(navId);
 
+      // Firestore fallback — שכבות נוצרות במכשיר המפקד, מכשירים אחרים צריכים לסנכרן
+      if (_checkpoints.isEmpty && _safetyPoints.isEmpty && _boundaries.isEmpty) {
+        try {
+          await _navLayerRepo.syncAllLayersFromFirestore(navId);
+          _checkpoints =
+              await _navLayerRepo.getCheckpointsByNavigation(navId);
+          _safetyPoints =
+              await _navLayerRepo.getSafetyPointsByNavigation(navId);
+          _boundaries =
+              await _navLayerRepo.getBoundariesByNavigation(navId);
+        } catch (_) {}
+      }
+
       // סינון נקודות לציר הזה
       if (route != null && route.checkpointIds.isNotEmpty) {
         final routeCps = <nav.NavCheckpoint>[];
@@ -116,12 +129,28 @@ class _ApprovalViewState extends State<ApprovalView> {
             .toList();
       }
 
-      // מסלול בפועל
+      // מסלול בפועל — נסיון מקומי, fallback ל-Firestore
+      String? trackJson;
       final track =
           await _trackRepo.getByNavigatorAndNavigation(userId, navId);
       if (track != null && track.trackPointsJson.isNotEmpty) {
+        trackJson = track.trackPointsJson;
+      } else {
         try {
-          _trackPoints = (jsonDecode(track.trackPointsJson) as List)
+          final firestoreTracks =
+              await _trackRepo.getByNavigationFromFirestore(navId);
+          final myTrack = firestoreTracks
+              .where((t) => t.navigatorUserId == userId)
+              .toList();
+          if (myTrack.isNotEmpty &&
+              myTrack.first.trackPointsJson.isNotEmpty) {
+            trackJson = myTrack.first.trackPointsJson;
+          }
+        } catch (_) {}
+      }
+      if (trackJson != null) {
+        try {
+          _trackPoints = (jsonDecode(trackJson) as List)
               .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
               .toList();
           _actualRoute = _trackPoints

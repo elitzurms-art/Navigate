@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
 import '../core/utils/file_export_helper.dart';
 import '../domain/entities/coordinate.dart';
@@ -778,7 +779,8 @@ class RouteExportService {
       }).toList(),
     };
 
-    final content = const JsonEncoder.withIndent('  ').convert(exportData);
+    final sanitized = _sanitizeForJson(exportData);
+    final content = const JsonEncoder.withIndent('  ').convert(sanitized);
     final fileName = _sanitizeFileName('${navigation.name}.nav.json');
 
     return saveFileWithBytes(
@@ -1008,5 +1010,19 @@ class RouteExportService {
 
   String _sanitizeFileName(String name) {
     return name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  }
+
+  /// המרת Timestamp/DateTime ל-ISO string רקורסיבית — מניעת שגיאת jsonEncode
+  dynamic _sanitizeForJson(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate().toIso8601String();
+    } else if (value is DateTime) {
+      return value.toIso8601String();
+    } else if (value is Map) {
+      return value.map((k, v) => MapEntry(k.toString(), _sanitizeForJson(v)));
+    } else if (value is List) {
+      return value.map((item) => _sanitizeForJson(item)).toList();
+    }
+    return value;
   }
 }

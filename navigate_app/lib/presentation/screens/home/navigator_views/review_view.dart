@@ -112,6 +112,19 @@ class _ReviewViewState extends State<ReviewView> {
       _boundaries =
           await _navLayerRepo.getBoundariesByNavigation(navId);
 
+      // Firestore fallback — שכבות נוצרות במכשיר המפקד, מכשירים אחרים צריכים לסנכרן
+      if (_checkpoints.isEmpty && _safetyPoints.isEmpty && _boundaries.isEmpty) {
+        try {
+          await _navLayerRepo.syncAllLayersFromFirestore(navId);
+          _checkpoints =
+              await _navLayerRepo.getCheckpointsByNavigation(navId);
+          _safetyPoints =
+              await _navLayerRepo.getSafetyPointsByNavigation(navId);
+          _boundaries =
+              await _navLayerRepo.getBoundariesByNavigation(navId);
+        } catch (_) {}
+      }
+
       // סינון נקודות לציר הזה
       if (route != null && route.checkpointIds.isNotEmpty) {
         final routeCps = <nav.NavCheckpoint>[];
@@ -137,12 +150,28 @@ class _ReviewViewState extends State<ReviewView> {
             .toList();
       }
 
-      // מסלול בפועל
+      // מסלול בפועל — נסיון מקומי, fallback ל-Firestore
+      String? trackJson;
       final track =
           await _trackRepo.getByNavigatorAndNavigation(userId, navId);
       if (track != null && track.trackPointsJson.isNotEmpty) {
+        trackJson = track.trackPointsJson;
+      } else {
         try {
-          _trackPoints = (jsonDecode(track.trackPointsJson) as List)
+          final firestoreTracks =
+              await _trackRepo.getByNavigationFromFirestore(navId);
+          final myTrack = firestoreTracks
+              .where((t) => t.navigatorUserId == userId)
+              .toList();
+          if (myTrack.isNotEmpty &&
+              myTrack.first.trackPointsJson.isNotEmpty) {
+            trackJson = myTrack.first.trackPointsJson;
+          }
+        } catch (_) {}
+      }
+      if (trackJson != null) {
+        try {
+          _trackPoints = (jsonDecode(trackJson) as List)
               .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
               .toList();
           _actualRoute = _trackPoints
@@ -511,11 +540,30 @@ class _ReviewViewState extends State<ReviewView> {
                         return Marker(
                           point: LatLng(
                               p.punchLocation.lat, p.punchLocation.lng),
-                          width: 28,
-                          height: 28,
+                          width: 80,
+                          height: 45,
                           child: Opacity(
                             opacity: _punchesOpacity,
-                            child: Icon(icon, color: color, size: 26),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(icon, color: color, size: 22),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 2, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.85),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    p.id,
+                                    style: const TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       }).toList(),
@@ -526,6 +574,24 @@ class _ReviewViewState extends State<ReviewView> {
                 ],
               ),
               _buildMapControls(),
+              // כפתור מסך מלא
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Material(
+                  color: Colors.white,
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _openFullscreenMap(center),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.fullscreen, size: 22),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -843,6 +909,390 @@ class _ReviewViewState extends State<ReviewView> {
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 11)),
       ],
+    );
+  }
+
+  void _openFullscreenMap(LatLng center) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullscreenReviewMap(
+          center: center,
+          checkpoints: _checkpoints,
+          safetyPoints: _safetyPoints,
+          boundaries: _boundaries,
+          plannedRoute: _plannedRoute,
+          actualRoute: _actualRoute,
+          trackPoints: _trackPoints,
+          punches: _punches,
+          deviations: _deviations,
+        ),
+      ),
+    );
+  }
+}
+
+/// מסך מפה מלא לתחקיר מנווט
+class _FullscreenReviewMap extends StatefulWidget {
+  final LatLng center;
+  final List<nav.NavCheckpoint> checkpoints;
+  final List<nav.NavSafetyPoint> safetyPoints;
+  final List<nav.NavBoundary> boundaries;
+  final List<LatLng> plannedRoute;
+  final List<LatLng> actualRoute;
+  final List<TrackPoint> trackPoints;
+  final List<CheckpointPunch> punches;
+  final List<DeviationSegment> deviations;
+
+  const _FullscreenReviewMap({
+    required this.center,
+    required this.checkpoints,
+    required this.safetyPoints,
+    required this.boundaries,
+    required this.plannedRoute,
+    required this.actualRoute,
+    required this.trackPoints,
+    required this.punches,
+    required this.deviations,
+  });
+
+  @override
+  State<_FullscreenReviewMap> createState() => _FullscreenReviewMapState();
+}
+
+class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
+  final MapController _mapController = MapController();
+  final RouteAnalysisService _analysisService = RouteAnalysisService();
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
+
+  bool _showGG = true;
+  bool _showNZ = true;
+  bool _showNB = false;
+  bool _showPlanned = true;
+  bool _showActual = true;
+  bool _showPunches = true;
+  bool _showDeviations = true;
+
+  double _ggOpacity = 1.0;
+  double _nzOpacity = 1.0;
+  double _nbOpacity = 1.0;
+  double _plannedOpacity = 1.0;
+  double _actualOpacity = 1.0;
+  double _punchesOpacity = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final pointCps = widget.checkpoints
+        .where((c) => !c.isPolygon && c.coordinates != null)
+        .toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('מפת תחקיר'),
+        backgroundColor: Theme.of(context).primaryColor,
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        children: [
+          MapWithTypeSelector(
+            mapController: _mapController,
+            showTypeSelector: false,
+            options: MapOptions(
+              initialCenter: widget.center,
+              initialZoom: 14.0,
+              onTap: (tapPosition, point) {
+                if (_measureMode) {
+                  setState(() => _measurePoints.add(point));
+                }
+              },
+            ),
+            layers: [
+              // גבול גזרה
+              if (_showGG && widget.boundaries.isNotEmpty)
+                PolygonLayer(
+                  polygons: widget.boundaries
+                      .where((b) => b.coordinates.isNotEmpty)
+                      .map((b) => Polygon(
+                            points: b.coordinates
+                                .map((c) => LatLng(c.lat, c.lng))
+                                .toList(),
+                            color: _kBoundaryColor
+                                .withValues(alpha: 0.1 * _ggOpacity),
+                            borderColor: _kBoundaryColor
+                                .withValues(alpha: _ggOpacity),
+                            borderStrokeWidth: 2.0,
+                            isFilled: true,
+                          ))
+                      .toList(),
+                ),
+
+              // ציר מתוכנן
+              if (_showPlanned && widget.plannedRoute.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: widget.plannedRoute,
+                      color: _kPlannedRouteColor
+                          .withValues(alpha: _plannedOpacity),
+                      strokeWidth: 4.0,
+                    ),
+                  ],
+                ),
+
+              // מסלול בפועל
+              if (_showActual && widget.actualRoute.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: widget.actualRoute,
+                      color: _kActualRouteColor
+                          .withValues(alpha: _actualOpacity),
+                      strokeWidth: 3.0,
+                    ),
+                  ],
+                ),
+
+              // שכבת סטיות
+              if (_showActual &&
+                  _showDeviations &&
+                  widget.deviations.isNotEmpty)
+                for (final dev in widget.deviations)
+                  if ((dev.endIndex + 1)
+                              .clamp(0, widget.trackPoints.length) -
+                          dev.startIndex
+                              .clamp(0, widget.trackPoints.length - 1) >
+                      1)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: widget.trackPoints
+                              .sublist(
+                                dev.startIndex
+                                    .clamp(0, widget.trackPoints.length - 1),
+                                (dev.endIndex + 1)
+                                    .clamp(0, widget.trackPoints.length),
+                              )
+                              .map((tp) => LatLng(
+                                  tp.coordinate.lat, tp.coordinate.lng))
+                              .toList(),
+                          color: _analysisService
+                              .getDeviationColor(dev.maxDeviation)
+                              .withValues(alpha: 0.8 * _actualOpacity),
+                          strokeWidth: 6.0,
+                        ),
+                      ],
+                    ),
+
+              // נת"בים
+              if (_showNB && widget.safetyPoints.isNotEmpty)
+                MarkerLayer(
+                  markers: widget.safetyPoints
+                      .where((p) => p.coordinates != null)
+                      .map((p) => Marker(
+                            point: LatLng(
+                                p.coordinates!.lat, p.coordinates!.lng),
+                            width: 30,
+                            height: 30,
+                            child: Opacity(
+                              opacity: _nbOpacity,
+                              child: const Icon(Icons.warning_amber,
+                                  color: _kSafetyColor, size: 28),
+                            ),
+                          ))
+                      .toList(),
+                ),
+
+              // נקודות ציון
+              if (_showNZ && pointCps.isNotEmpty)
+                MarkerLayer(
+                  markers: pointCps.map((cp) {
+                    Color bgColor;
+                    String letter;
+                    if (cp.type == 'start') {
+                      bgColor = _kStartColor;
+                      letter = 'H';
+                    } else if (cp.type == 'end') {
+                      bgColor = _kEndColor;
+                      letter = 'S';
+                    } else {
+                      bgColor = _kCheckpointColor;
+                      letter = 'B';
+                    }
+                    final label = '${cp.sequenceNumber}$letter';
+                    return Marker(
+                      point: LatLng(
+                          cp.coordinates!.lat, cp.coordinates!.lng),
+                      width: 38,
+                      height: 38,
+                      child: Opacity(
+                        opacity: _nzOpacity,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: bgColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Text(
+                              label,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+              // דקירות
+              if (_showPunches && widget.punches.isNotEmpty)
+                MarkerLayer(
+                  markers:
+                      widget.punches.where((p) => !p.isDeleted).map((p) {
+                    Color color;
+                    IconData icon;
+                    if (p.isApproved) {
+                      color = Colors.green;
+                      icon = Icons.check_circle;
+                    } else if (p.isRejected) {
+                      color = Colors.red;
+                      icon = Icons.cancel;
+                    } else {
+                      color = Colors.orange;
+                      icon = Icons.flag;
+                    }
+                    return Marker(
+                      point: LatLng(
+                          p.punchLocation.lat, p.punchLocation.lng),
+                      width: 80,
+                      height: 45,
+                      child: Opacity(
+                        opacity: _punchesOpacity,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icon, color: color, size: 22),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 2, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.85),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                p.id,
+                                style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+              // שכבות מדידה
+              ...MapControls.buildMeasureLayers(_measurePoints),
+            ],
+          ),
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () =>
+                setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
+            layers: [
+              MapLayerConfig(
+                id: 'gg',
+                label: 'גבול גזרה',
+                color: _kBoundaryColor,
+                visible: _showGG,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showGG = v),
+                opacity: _ggOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _ggOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nz',
+                label: 'נקודות ציון',
+                color: Colors.blue,
+                visible: _showNZ,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showNZ = v),
+                opacity: _nzOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _nzOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nb',
+                label: 'נת"בים',
+                color: _kSafetyColor,
+                visible: _showNB,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showNB = v),
+                opacity: _nbOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _nbOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'planned',
+                label: 'ציר מתוכנן',
+                color: _kPlannedRouteColor,
+                visible: _showPlanned,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showPlanned = v),
+                opacity: _plannedOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _plannedOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'actual',
+                label: 'מסלול בפועל',
+                color: _kActualRouteColor,
+                visible: _showActual,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showActual = v),
+                opacity: _actualOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _actualOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'punches',
+                label: 'דקירות',
+                color: Colors.green,
+                visible: _showPunches,
+                onVisibilityChanged: (v) =>
+                    setState(() => _showPunches = v),
+                opacity: _punchesOpacity,
+                onOpacityChanged: (v) =>
+                    setState(() => _punchesOpacity = v),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

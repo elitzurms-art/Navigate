@@ -169,6 +169,19 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
           widget.navigation.id);
 
+      // Firestore fallback — שכבות נוצרות במכשיר המפקד, מכשירים אחרים צריכים לסנכרן
+      if (_navCheckpoints.isEmpty && _navSafetyPoints.isEmpty && _navBoundaries.isEmpty) {
+        try {
+          await _navLayerRepo.syncAllLayersFromFirestore(widget.navigation.id);
+          _navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
+              widget.navigation.id);
+          _navSafetyPoints = await _navLayerRepo.getSafetyPointsByNavigation(
+              widget.navigation.id);
+          _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+              widget.navigation.id);
+        } catch (_) {}
+      }
+
       if (widget.isNavigator) {
         await _loadNavigatorViewData();
       } else {
@@ -217,11 +230,25 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     }
 
     // Actual route from track (store raw TrackPoints too)
+    // נסיון מקומי, fallback ל-Firestore
+    String? trackJson;
     final track = await _trackRepo.getByNavigatorAndNavigation(
         user.uid, widget.navigation.id);
     if (track != null && track.trackPointsJson.isNotEmpty) {
+      trackJson = track.trackPointsJson;
+    } else {
       try {
-        _myTrackPoints = (jsonDecode(track.trackPointsJson) as List)
+        final firestoreTracks = await _trackRepo.getByNavigationFromFirestore(
+            widget.navigation.id);
+        final myTrack = firestoreTracks.where((t) => t.navigatorUserId == user.uid).toList();
+        if (myTrack.isNotEmpty && myTrack.first.trackPointsJson.isNotEmpty) {
+          trackJson = myTrack.first.trackPointsJson;
+        }
+      } catch (_) {}
+    }
+    if (trackJson != null) {
+      try {
+        _myTrackPoints = (jsonDecode(trackJson) as List)
             .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
             .toList();
         _myActualRoute = _myTrackPoints
@@ -252,18 +279,36 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     final navigatorIds = widget.navigation.routes.keys.toList();
     int colorIdx = 0;
 
+    // טעינת tracks מ-Firestore (המפקד לא מחזיק tracks מקומיים — sync pushOnly)
+    final Map<String, String> firestoreTrackPoints = {};
+    try {
+      final firestoreTracks = await _trackRepo.getByNavigationFromFirestore(
+          widget.navigation.id);
+      for (final track in firestoreTracks) {
+        if (track.trackPointsJson.isNotEmpty) {
+          firestoreTrackPoints[track.navigatorUserId] = track.trackPointsJson;
+        }
+      }
+    } catch (_) {}
+
     for (final navId in navigatorIds) {
       final route = widget.navigation.routes[navId]!;
       final color = _kNavigatorColors[colorIdx % _kNavigatorColors.length];
       colorIdx++;
 
-      // Track points
+      // Track points — נסיון מקומי, fallback ל-Firestore
       List<TrackPoint> trackPoints = [];
       final track = await _trackRepo.getByNavigatorAndNavigation(
           navId, widget.navigation.id);
+      String? trackJson;
       if (track != null && track.trackPointsJson.isNotEmpty) {
+        trackJson = track.trackPointsJson;
+      } else if (firestoreTrackPoints.containsKey(navId)) {
+        trackJson = firestoreTrackPoints[navId];
+      }
+      if (trackJson != null) {
         try {
-          trackPoints = (jsonDecode(track.trackPointsJson) as List)
+          trackPoints = (jsonDecode(trackJson) as List)
               .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
               .toList();
         } catch (_) {}
@@ -352,26 +397,31 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   void _centerMapOnData() {
-    if (_navBoundaries.isNotEmpty) {
-      final boundary = _navBoundaries.first;
-      if (boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-        _mapController.move(LatLng(center.lat, center.lng), 13.0);
-        return;
-      }
-    }
-    final pointCps = _navCheckpoints
-        .where((c) => !c.isPolygon && c.coordinates != null)
-        .toList();
-    if (pointCps.isNotEmpty) {
-      final lat =
-          pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
-              pointCps.length;
-      final lng =
-          pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
-              pointCps.length;
-      _mapController.move(LatLng(lat, lng), 14.0);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        if (_navBoundaries.isNotEmpty) {
+          final boundary = _navBoundaries.first;
+          if (boundary.coordinates.isNotEmpty) {
+            final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
+            _mapController.move(LatLng(center.lat, center.lng), 13.0);
+            return;
+          }
+        }
+        final pointCps = _navCheckpoints
+            .where((c) => !c.isPolygon && c.coordinates != null)
+            .toList();
+        if (pointCps.isNotEmpty) {
+          final lat =
+              pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
+                  pointCps.length;
+          final lng =
+              pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
+                  pointCps.length;
+          _mapController.move(LatLng(lat, lng), 14.0);
+        }
+      } catch (_) {}
+    });
   }
 
   // ===========================================================================

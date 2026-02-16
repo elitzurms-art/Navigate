@@ -24,11 +24,42 @@ class NavigationTrackRepository {
         .getSingleOrNull();
   }
 
-  /// שליפת כל ה-tracks לניווט
+  /// שליפת כל ה-tracks לניווט (מקומי)
   Future<List<NavigationTrack>> getByNavigation(String navigationId) async {
     return await (_db.select(_db.navigationTracks)
           ..where((t) => t.navigationId.equals(navigationId)))
         .get();
+  }
+
+  /// שליפת tracks מ-Firestore (לשימוש במפקד/מנהל שאין לו tracks מקומיים)
+  Future<List<NavigationTrack>> getByNavigationFromFirestore(String navigationId) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .get();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      return NavigationTrack(
+        id: data['id'] as String? ?? doc.id,
+        navigationId: data['navigationId'] as String? ?? navigationId,
+        navigatorUserId: data['navigatorUserId'] as String? ?? '',
+        trackPointsJson: data['trackPointsJson'] as String? ?? '[]',
+        stabbingsJson: data['stabbingsJson'] as String? ?? '[]',
+        startedAt: data['startedAt'] != null
+            ? (data['startedAt'] is Timestamp
+                ? (data['startedAt'] as Timestamp).toDate()
+                : DateTime.tryParse(data['startedAt'].toString()) ?? DateTime.now())
+            : DateTime.now(),
+        endedAt: data['endedAt'] != null
+            ? (data['endedAt'] is Timestamp
+                ? (data['endedAt'] as Timestamp).toDate()
+                : DateTime.tryParse(data['endedAt'].toString()))
+            : null,
+        isActive: data['isActive'] as bool? ?? false,
+        isDisqualified: data['isDisqualified'] as bool? ?? false,
+      );
+    }).toList();
   }
 
   /// התחלת ניווט — יצירת רשומת track עם isActive=true
