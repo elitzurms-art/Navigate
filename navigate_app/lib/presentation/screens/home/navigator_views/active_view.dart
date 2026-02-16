@@ -20,6 +20,8 @@ import '../../../../services/gps_tracking_service.dart';
 import '../../../../services/health_check_service.dart';
 import '../../../../services/security_manager.dart';
 import '../../../../services/alert_monitoring_service.dart';
+import '../../../../domain/entities/security_violation.dart';
+import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
 
@@ -55,6 +57,7 @@ class _ActiveViewState extends State<ActiveView> {
 
   int _punchCount = 0;
   bool _securityActive = false;
+  bool _isDisqualified = false;
   List<domain_cp.Checkpoint> _routeCheckpoints = [];
 
   // GPS tracking
@@ -165,6 +168,7 @@ class _ActiveViewState extends State<ActiveView> {
           _track = effectiveTrack;
           _personalStatus = status;
           _punchCount = navPunches.length;
+          _isDisqualified = effectiveTrack?.isDisqualified ?? false;
           _isLoading = false;
         });
 
@@ -264,10 +268,14 @@ class _ActiveViewState extends State<ActiveView> {
   Future<void> _startSecurity() async {
     if (_securityActive) return;
 
+    // רישום callback לפסילה על חריגה קריטית (iOS Guided Access exit וכו')
+    _securityManager.onCriticalViolation = (type) => _handleDisqualification(type);
+
     final success = await _securityManager.startNavigationSecurity(
       navigationId: _nav.id,
       navigatorId: widget.currentUser.uid,
       settings: _nav.securitySettings,
+      navigatorName: widget.currentUser.fullName,
     );
 
     if (mounted) {
@@ -288,6 +296,51 @@ class _ActiveViewState extends State<ActiveView> {
     if (!_securityActive) return;
     await _securityManager.stopNavigationSecurity(normalEnd: true);
     _securityActive = false;
+  }
+
+  /// פסילת מנווט — סימון ב-track + שליחת התראה למפקד
+  Future<void> _handleDisqualification(ViolationType type) async {
+    if (_isDisqualified || _track == null) return;
+
+    try {
+      // סימון isDisqualified=true ב-track
+      await _trackRepo.disqualifyNavigator(_track!.id);
+
+      // שליחת התראה למפקד
+      await _securityManager.sendDisqualificationAlert(
+        navigationId: _nav.id,
+        navigatorId: widget.currentUser.uid,
+        navigatorName: widget.currentUser.fullName,
+      );
+    } catch (e) {
+      print('DEBUG ActiveView: disqualification error: $e');
+    }
+
+    if (mounted) {
+      setState(() => _isDisqualified = true);
+      HapticFeedback.heavyImpact();
+    }
+  }
+
+  /// הצגת דיאלוג ביטול נעילה
+  Future<void> _showUnlockDialog() async {
+    final securityLevel = await _securityManager.getSecurityLevel();
+    if (!mounted) return;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => UnlockDialog(
+        correctCode: _nav.securitySettings.unlockCode ?? '',
+        securityLevel: securityLevel,
+        onDisqualificationConfirmed: () =>
+            _handleDisqualification(ViolationType.exitLockTask),
+      ),
+    );
+
+    if (result == true) {
+      await _stopSecurity();
+    }
   }
 
   // ===========================================================================
@@ -886,15 +939,29 @@ class _ActiveViewState extends State<ActiveView> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    Widget content;
     switch (_personalStatus) {
       case NavigatorPersonalStatus.waiting:
-        return _buildWaitingView();
+        content = _buildWaitingView();
       case NavigatorPersonalStatus.active:
       case NavigatorPersonalStatus.noReception:
-        return _buildActiveView();
+        content = _buildActiveView();
       case NavigatorPersonalStatus.finished:
-        return _buildFinishedView();
+        content = _buildFinishedView();
     }
+
+    // PopScope — מניעת חזרה בזמן ניווט פעיל (שכבת הגנה נוספת)
+    if (_personalStatus == NavigatorPersonalStatus.active && _securityActive) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _showUnlockDialog();
+        },
+        child: content,
+      );
+    }
+
+    return content;
   }
 
   // ---------------------------------------------------------------------------
@@ -981,14 +1048,35 @@ class _ActiveViewState extends State<ActiveView> {
           ),
         // Status bar with elapsed timer
         _buildActiveStatusBar(),
+        // Disqualification banner
+        if (_isDisqualified)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: Colors.red,
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.block, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'הניווט נפסל — ציון 0',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
         // Security indicator
-        if (_securityActive)
+        if (_securityActive && !_isDisqualified)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             color: Colors.green.withOpacity(0.15),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.lock, size: 14, color: Colors.green[700]),
@@ -996,6 +1084,19 @@ class _ActiveViewState extends State<ActiveView> {
                 Text(
                   'אבטחה פעילה',
                   style: TextStyle(fontSize: 12, color: Colors.green[700], fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: _showUnlockDialog,
+                  child: Text(
+                    'ביטול נעילה',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.red[700],
+                      fontWeight: FontWeight.bold,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1142,18 +1243,37 @@ class _ActiveViewState extends State<ActiveView> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                Icons.check_circle,
+                _isDisqualified ? Icons.block : Icons.check_circle,
                 size: 80,
-                color: Colors.green[400],
+                color: _isDisqualified ? Colors.red[400] : Colors.green[400],
               ),
               const SizedBox(height: 24),
-              const Text(
-                'הניווט הסתיים',
+              Text(
+                _isDisqualified ? 'הניווט נפסל' : 'הניווט הסתיים',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
+                  color: _isDisqualified ? Colors.red : null,
                 ),
               ),
+              if (_isDisqualified) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red[300]!),
+                  ),
+                  child: Text(
+                    'פריצת אבטחה — ציון 0',
+                    style: TextStyle(
+                      color: Colors.red[900],
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 32),
               _summaryRow(
                 icon: Icons.timer,

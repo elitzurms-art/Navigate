@@ -146,7 +146,8 @@ enum AlertType {
   safetyPoint('safety_point', 'קרבת נת"ב', '⛔'),
   proximity('proximity', 'קרבת מנווטים', '👥'),
   battery('battery', 'סוללה נמוכה', '🔋'),
-  noReception('no_reception', 'חוסר קליטה', '📵');
+  noReception('no_reception', 'חוסר קליטה', '📵'),
+  securityBreach('security_breach', 'פריצת אבטחה', '🔓');
 
   final String code;
   final String displayName;

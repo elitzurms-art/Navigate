@@ -12,7 +12,6 @@ import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
 import '../navigations/create_navigation_screen.dart';
-import '../navigations/approval_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../navigations/investigation_screen.dart';
@@ -78,7 +77,7 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
       final allNavs = await _repository.getAll();
       // סינון - מצב למידה ותחקור: אישור או תחקור
       final filteredNavs = allNavs
-          .where((nav) => nav.status == 'approval' || nav.status == 'review')
+          .where((nav) => nav.status == 'review' || nav.status == 'approval')
           .toList();
       setState(() {
         _navigations = filteredNavs;
@@ -135,18 +134,16 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
     }
   }
 
-  /// פתיחת מסך מתאים לפי סטטוס הניווט
+  /// פתיחת מסך תחקור
   void _openNavigationScreen(domain.Navigation navigation) {
-    Widget screen;
-    if (navigation.status == 'approval') {
-      screen = ApprovalScreen(navigation: navigation, isNavigator: true);
-    } else {
-      screen = InvestigationScreen(navigation: navigation, isNavigator: true);
-    }
-
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => screen),
+      MaterialPageRoute(
+        builder: (context) => InvestigationScreen(
+          navigation: navigation,
+          isNavigator: true,
+        ),
+      ),
     ).then((_) => _loadNavigations());
   }
 
@@ -170,10 +167,9 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'approval':
-        return 'אישור';
+      case 'approval': // backward compat
       case 'review':
-        return 'סקירה';
+        return 'תחקור';
       default:
         return status;
     }
@@ -181,10 +177,9 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'approval':
-        return Colors.amber;
+      case 'approval': // backward compat
       case 'review':
-        return Colors.deepPurple;
+        return Colors.green;
       default:
         return Colors.grey;
     }
@@ -633,13 +628,8 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () => _openNavigationScreen(navigation),
-                  icon: Icon(
-                    navigation.status == 'approval' ? Icons.check_circle : Icons.analytics,
-                    size: 18,
-                  ),
-                  label: Text(
-                    navigation.status == 'approval' ? 'כניסה לאישור' : 'כניסה לתחקור',
-                  ),
+                  icon: const Icon(Icons.analytics, size: 18),
+                  label: const Text('כניסה לתחקור'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _getStatusColor(navigation.status),
                     foregroundColor: Colors.white,

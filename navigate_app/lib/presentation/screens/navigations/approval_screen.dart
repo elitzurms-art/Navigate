@@ -258,6 +258,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
         color: color,
+        isDisqualified: track?.isDisqualified ?? false,
       );
     }
 
@@ -353,6 +354,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           navigatorId: navId,
           punches: data.punches,
           verificationSettings: widget.navigation.verificationSettings,
+          isDisqualified: data.isDisqualified,
         );
 
         _scores[navId] = score;
@@ -1400,6 +1402,18 @@ class _ApprovalScreenState extends State<ApprovalScreen>
               const SizedBox(width: 6),
               Text(_getNavigatorDisplayName(navId),
                   style: const TextStyle(fontSize: 13)),
+              if (data.isDisqualified) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text('נפסל',
+                      style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                ),
+              ],
             ])),
             DataCell(Text('${data.plannedDistanceKm.toStringAsFixed(1)} ק"מ')),
             DataCell(Text(data.actualDistanceKm > 0
@@ -1546,7 +1560,23 @@ class _ApprovalScreenState extends State<ApprovalScreen>
             backgroundColor: data.color.withOpacity(0.2),
             child: Icon(Icons.person, color: data.color),
           ),
-          title: Text(name),
+          title: Row(
+            children: [
+              Text(name),
+              if (data.isDisqualified) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('נפסל — פריצת אבטחה',
+                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ],
+          ),
           subtitle: Text('נ.צ.: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
               'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
             style: const TextStyle(fontSize: 12),
@@ -1611,6 +1641,17 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 child: Text(name,
                     style: const TextStyle(fontWeight: FontWeight.bold)),
               ),
+              if (data.isDisqualified)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  margin: const EdgeInsets.only(left: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('נפסל',
+                      style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
               if (score.isManual)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1901,6 +1942,7 @@ class _NavigatorData {
   final int checkpointsHit;
   final int totalCheckpoints;
   final Color color;
+  final bool isDisqualified;
 
   _NavigatorData({
     required this.navigatorId,
@@ -1916,5 +1958,6 @@ class _NavigatorData {
     required this.checkpointsHit,
     required this.totalCheckpoints,
     required this.color,
+    this.isDisqualified = false,
   });
 }

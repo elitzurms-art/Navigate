@@ -1,19 +1,27 @@
 import 'dart:async';
 import 'package:uuid/uuid.dart';
 import '../domain/entities/security_violation.dart';
+import '../domain/entities/checkpoint_punch.dart';
+import '../domain/entities/coordinate.dart';
 import '../data/repositories/security_violation_repository.dart';
+import '../data/repositories/navigator_alert_repository.dart';
 import 'device_security_service.dart';
 
 /// מנהל אבטחה מרכזי
 class SecurityManager {
   final DeviceSecurityService _deviceSecurity = DeviceSecurityService();
   final SecurityViolationRepository _violationRepo = SecurityViolationRepository();
+  final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
   final Uuid _uuid = const Uuid();
 
   String? _currentNavigationId;
   String? _currentNavigatorId;
+  String? _currentNavigatorName;
   SecuritySettings? _currentSettings;
   StreamController<SecurityViolation>? _violationStream;
+
+  /// callback לפסילת מנווט כשמתרחשת חריגה קריטית
+  Function(ViolationType)? onCriticalViolation;
 
   /// האם בוצע ניטור כרגע
   bool get isMonitoring => _currentNavigationId != null;
@@ -27,11 +35,13 @@ class SecurityManager {
     required String navigationId,
     required String navigatorId,
     required SecuritySettings settings,
+    String? navigatorName,
   }) async {
     print('🔒 מתחיל ניטור אבטחה לניווט $navigationId');
 
     _currentNavigationId = navigationId;
     _currentNavigatorId = navigatorId;
+    _currentNavigatorName = navigatorName;
     _currentSettings = settings;
     _violationStream = StreamController<SecurityViolation>.broadcast();
 
@@ -90,9 +100,6 @@ class SecurityManager {
     // עצירת ניטור אירועים
     _deviceSecurity.stopMonitoring();
 
-    // ביטול נעילה
-    final securityLevel = await _deviceSecurity.getSecurityLevel();
-
     if (!normalEnd) {
       // סיום חריג - רישום
       await _logViolation(
@@ -105,7 +112,9 @@ class SecurityManager {
     // ניקוי
     _currentNavigationId = null;
     _currentNavigatorId = null;
+    _currentNavigatorName = null;
     _currentSettings = null;
+    onCriticalViolation = null;
     await _violationStream?.close();
     _violationStream = null;
 
@@ -140,6 +149,11 @@ class SecurityManager {
     }
 
     await _logViolation(type, severity, type.displayName);
+
+    // חריגות קריטיות — פסילת מנווט
+    if (severity == ViolationSeverity.critical) {
+      onCriticalViolation?.call(type);
+    }
   }
 
   /// רישום חריגה
@@ -176,7 +190,52 @@ class SecurityManager {
     if (_currentSettings != null &&
         count >= _currentSettings!.maxViolationsBeforeAlert) {
       print('🚨 התראה: $count חריגות - חרג מהמותר!');
-      // TODO: שליחת התראה למפקד
+      // שליחת התראה למפקד
+      await _sendSecurityAlert(description);
+    }
+  }
+
+  /// שליחת NavigatorAlert למפקד על פריצת אבטחה
+  Future<void> _sendSecurityAlert(String description) async {
+    if (_currentNavigationId == null || _currentNavigatorId == null) return;
+
+    try {
+      final alert = NavigatorAlert(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        navigationId: _currentNavigationId!,
+        navigatorId: _currentNavigatorId!,
+        type: AlertType.securityBreach,
+        location: const Coordinate(lat: 0, lng: 0, utm: ''),
+        timestamp: DateTime.now(),
+        navigatorName: _currentNavigatorName,
+      );
+      await _alertRepo.create(alert);
+      print('🔓 התראת פריצת אבטחה נשלחה למפקד');
+    } catch (e) {
+      print('⚠️ שגיאה בשליחת התראת אבטחה: $e');
+    }
+  }
+
+  /// שליחת התראת אבטחה חיצונית (לקריאה מ-active_view)
+  Future<void> sendDisqualificationAlert({
+    required String navigationId,
+    required String navigatorId,
+    String? navigatorName,
+  }) async {
+    try {
+      final alert = NavigatorAlert(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        navigationId: navigationId,
+        navigatorId: navigatorId,
+        type: AlertType.securityBreach,
+        location: const Coordinate(lat: 0, lng: 0, utm: ''),
+        timestamp: DateTime.now(),
+        navigatorName: navigatorName,
+      );
+      await _alertRepo.create(alert);
+      print('🔓 התראת פסילה נשלחה למפקד');
+    } catch (e) {
+      print('⚠️ שגיאה בשליחת התראת פסילה: $e');
     }
   }
 

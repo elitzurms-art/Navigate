@@ -378,8 +378,8 @@ class Navigation extends Equatable {
   bool get isWaiting => status == 'waiting';
   bool get isSystemCheck => status == 'system_check';
   bool get isActive => status == 'active';
-  bool get isApproval => status == 'approval';
-  bool get isReview => status == 'review';
+  bool get isApproval => status == 'approval'; // backward compat — mapped to review
+  bool get isReview => status == 'review' || status == 'approval';
 
   Navigation copyWith({
     String? id,

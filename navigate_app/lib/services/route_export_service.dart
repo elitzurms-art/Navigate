@@ -3,8 +3,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../core/utils/file_export_helper.dart';
 import '../domain/entities/coordinate.dart';
+import '../domain/entities/navigation.dart' as domain;
 import '../domain/entities/nav_layer.dart';
 import '../domain/entities/checkpoint_punch.dart';
+import '../domain/entities/navigation_score.dart';
+import '../data/repositories/nav_layer_repository.dart';
+import '../data/repositories/navigation_track_repository.dart';
+import '../data/repositories/checkpoint_punch_repository.dart';
+import '../data/repositories/navigation_repository.dart';
 import '../presentation/widgets/export_format_picker.dart';
 import 'gps_tracking_service.dart';
 
@@ -675,6 +681,109 @@ class RouteExportService {
         const SnackBar(content: Text('הקובץ יוצא בהצלחה')),
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full Navigation Export (.nav.json)
+  // ---------------------------------------------------------------------------
+
+  /// ייצוא ניווט מלא לקובץ JSON — כולל כל הנתונים
+  Future<String?> exportFullNavigation({
+    required domain.Navigation navigation,
+  }) async {
+    final navLayerRepo = NavLayerRepository();
+    final trackRepo = NavigationTrackRepository();
+    final punchRepo = CheckpointPunchRepository();
+    final navRepo = NavigationRepository();
+
+    // טעינת שכבות
+    final checkpoints = await navLayerRepo.getCheckpointsByNavigation(navigation.id);
+    final safetyPoints = await navLayerRepo.getSafetyPointsByNavigation(navigation.id);
+    final boundaries = await navLayerRepo.getBoundariesByNavigation(navigation.id);
+
+    // טעינת tracks לכל מנווט
+    final tracks = <String, dynamic>{};
+    for (final navId in navigation.routes.keys) {
+      final track = await trackRepo.getByNavigatorAndNavigation(navId, navigation.id);
+      if (track != null && track.trackPointsJson.isNotEmpty) {
+        try {
+          tracks[navId] = jsonDecode(track.trackPointsJson);
+        } catch (_) {}
+      }
+    }
+
+    // טעינת דקירות
+    List<CheckpointPunch> punches = [];
+    try {
+      punches = await punchRepo.getByNavigationFromFirestore(navigation.id);
+    } catch (_) {
+      for (final navId in navigation.routes.keys) {
+        final navPunches = await punchRepo.getByNavigator(navId);
+        punches.addAll(
+          navPunches.where((p) => p.navigationId == navigation.id),
+        );
+      }
+    }
+
+    // טעינת ציונים
+    final scores = <String, dynamic>{};
+    try {
+      final scoresList = await navRepo.fetchScoresFromFirestore(navigation.id);
+      for (final s in scoresList) {
+        final navigatorId = s['navigatorId'] as String?;
+        if (navigatorId != null) {
+          scores[navigatorId] = s;
+        }
+      }
+    } catch (_) {}
+
+    // בניית JSON
+    final exportData = {
+      'version': 1,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'navigation': navigation.toMap(),
+      'routes': navigation.routes.map((k, v) => MapEntry(k, v.toMap())),
+      'tracks': tracks,
+      'punches': punches.map((p) => p.toMap()).toList(),
+      'scores': scores,
+      'checkpoints': checkpoints.map((c) => {
+        'id': c.id,
+        'sourceId': c.sourceId,
+        'name': c.name,
+        'type': c.type,
+        'sequenceNumber': c.sequenceNumber,
+        'labels': c.labels,
+        if (c.coordinates != null) 'coordinates': c.coordinates!.toMap(),
+        if (c.description.isNotEmpty) 'description': c.description,
+        'geometryType': c.geometryType,
+        if (c.polygonCoordinates != null && c.polygonCoordinates!.isNotEmpty)
+          'polygonCoordinates': c.polygonCoordinates!.map((co) => co.toMap()).toList(),
+      }).toList(),
+      'boundaries': boundaries.map((b) => {
+        'id': b.id,
+        'sourceId': b.sourceId,
+        'name': b.name,
+        'coordinates': b.coordinates.map((c) => c.toMap()).toList(),
+      }).toList(),
+      'safetyPoints': safetyPoints.map((s) => {
+        'id': s.id,
+        'sourceId': s.sourceId,
+        'name': s.name,
+        if (s.coordinates != null) 'coordinates': s.coordinates!.toMap(),
+        if (s.polygonCoordinates != null && s.polygonCoordinates!.isNotEmpty)
+          'polygonCoordinates': s.polygonCoordinates!.map((co) => co.toMap()).toList(),
+      }).toList(),
+    };
+
+    final content = const JsonEncoder.withIndent('  ').convert(exportData);
+    final fileName = _sanitizeFileName('${navigation.name}.nav.json');
+
+    return saveFileWithBytes(
+      dialogTitle: 'שמירת ניווט',
+      fileName: fileName,
+      bytes: Uint8List.fromList(utf8.encode(content)),
+      allowedExtensions: ['json'],
+    );
   }
 
   // ---------------------------------------------------------------------------

@@ -11,8 +11,23 @@ class ScoringService {
     required String navigatorId,
     required List<CheckpointPunch> punches,
     required VerificationSettings verificationSettings,
+    bool isDisqualified = false,
   }) {
     print('מחשב ציון אוטומטי ל-$navigatorId');
+
+    // מנווט שנפסל מקבל ציון 0
+    if (isDisqualified) {
+      return NavigationScore(
+        id: '${navigationId}_${navigatorId}_${DateTime.now().millisecondsSinceEpoch}',
+        navigationId: navigationId,
+        navigatorId: navigatorId,
+        totalScore: 0,
+        checkpointScores: {},
+        calculatedAt: DateTime.now(),
+        isManual: false,
+        notes: 'נפסל — פריצת אבטחה',
+      );
+    }
 
     Map<String, CheckpointScore> checkpointScores = {};
     int totalScore = 0;

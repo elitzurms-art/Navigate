@@ -103,6 +103,26 @@ class NavigationTrackRepository {
     );
   }
 
+  /// פסילת מנווט — סימון isDisqualified=true ב-Drift + Firestore
+  Future<void> disqualifyNavigator(String trackId) async {
+    // עדכון ב-Drift
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(const NavigationTracksCompanion(
+      isDisqualified: Value(true),
+    ));
+
+    // עדכון ישיר ב-Firestore
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'isDisqualified': true});
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
+  }
+
   /// מחיקת כל ה-tracks לניווט (איפוס לפני התחלה מחדש)
   Future<void> deleteByNavigation(String navigationId) async {
     await (_db.delete(_db.navigationTracks)

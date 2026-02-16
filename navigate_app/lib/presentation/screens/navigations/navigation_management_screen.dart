@@ -710,9 +710,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         });
       }
 
-      // עדכון סטטוס ניווט
+      // עדכון סטטוס ניווט — ישירות לתחקור (ללא שלב אישור נפרד)
       final updatedNavigation = widget.navigation.copyWith(
-        status: 'approval',
+        status: 'review',
         activeStartTime: null,
         updatedAt: now,
       );
@@ -722,7 +722,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('הניווט הסתיים - מעבר למצב אישור'),
+            content: Text('הניווט הסתיים - מעבר לתחקור'),
             backgroundColor: Colors.green,
           ),
         );
@@ -2119,6 +2119,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       case AlertType.healthCheckExpired:
       case AlertType.healthReport:
         return Colors.blue;
+      case AlertType.securityBreach:
+        return Colors.red;
     }
   }
 }

@@ -16,12 +16,12 @@ import '../../../data/repositories/unit_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
+import '../../../services/route_export_service.dart';
 import 'create_navigation_screen.dart';
 import 'training_mode_screen.dart';
 import 'system_check_screen.dart';
 import 'routes_verification_screen.dart';
 import 'routes_setup_screen.dart';
-import 'approval_screen.dart';
 import 'investigation_screen.dart';
 import 'waiting_screen.dart';
 import 'navigator_planning_screen.dart';
@@ -987,11 +987,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         );
         break;
 
-      case 'approval':
-        final isNavigatorApproval = _currentUser == null || !_currentUser!.hasCommanderPermissions;
-        screen = ApprovalScreen(navigation: navigation, isNavigator: isNavigatorApproval);
-        break;
-
+      case 'approval': // backward compat — ניווטים ישנים
       case 'review':
         final isNavigatorReview = _currentUser == null || !_currentUser!.hasCommanderPermissions;
         screen = InvestigationScreen(navigation: navigation, isNavigator: isNavigatorReview);
@@ -1053,10 +1049,9 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         return 'בדיקת מערכת';
       case 'active':
         return 'פעיל';
-      case 'approval':
-        return 'אישור';
+      case 'approval': // backward compat
       case 'review':
-        return 'סקירה';
+        return 'תחקור';
       default:
         return status;
     }
@@ -1076,10 +1071,9 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         return Colors.purple;
       case 'active':
         return Colors.green;
-      case 'approval':
-        return Colors.amber;
+      case 'approval': // backward compat
       case 'review':
-        return Colors.grey;
+        return Colors.green;
       default:
         return Colors.grey;
     }
@@ -1099,8 +1093,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         return Icons.verified_user;
       case 'active':
         return Icons.play_circle_filled;
-      case 'approval':
-        return Icons.thumb_up;
+      case 'approval': // backward compat
       case 'review':
         return Icons.rate_review;
       default:
@@ -1351,6 +1344,43 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         }
         break;
 
+      case 'approval':
+      case 'review':
+        if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
+          items.add(const PopupMenuItem(
+            value: 'back_to_preparation',
+            child: Row(
+              children: [
+                Icon(Icons.undo, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('חזרה להכנה'),
+              ],
+            ),
+          ));
+          items.add(const PopupMenuItem(
+            value: 'save_navigation',
+            child: Row(
+              children: [
+                Icon(Icons.save, color: Colors.blue),
+                SizedBox(width: 8),
+                Text('שמירת ניווט'),
+              ],
+            ),
+          ));
+          items.add(const PopupMenuDivider());
+          items.add(const PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(Icons.delete_forever, color: Colors.red),
+                SizedBox(width: 8),
+                Text('מחיקת ניווט', style: TextStyle(color: Colors.red)),
+              ],
+            ),
+          ));
+        }
+        break;
+
       default:
         break;
     }
@@ -1445,9 +1475,34 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         _startNavigation(navigation);
         break;
 
+      case 'save_navigation':
+        _saveNavigationToFile(navigation);
+        break;
+
       case 'delete':
         _deleteNavigation(navigation);
         break;
+    }
+  }
+
+  Future<void> _saveNavigationToFile(domain.Navigation navigation) async {
+    try {
+      final exportService = RouteExportService();
+      final path = await exportService.exportFullNavigation(navigation: navigation);
+      if (path != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('הניווט נשמר בהצלחה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בשמירה: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 

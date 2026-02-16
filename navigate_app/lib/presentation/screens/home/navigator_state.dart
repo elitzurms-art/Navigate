@@ -8,7 +8,6 @@ enum NavigatorScreenState {
   systemCheck,
   waiting,
   active,
-  approval,
   review,
   error,
 }
@@ -24,8 +23,7 @@ int navigationStatusPriority(String status) {
       return 5;
     case 'learning':
       return 4;
-    case 'approval':
-      return 3;
+    case 'approval': // backward compat
     case 'review':
       return 2;
     case 'preparation':
@@ -50,8 +48,7 @@ NavigatorScreenState statusToScreenState(String status) {
       return NavigatorScreenState.waiting;
     case 'active':
       return NavigatorScreenState.active;
-    case 'approval':
-      return NavigatorScreenState.approval;
+    case 'approval': // backward compat
     case 'review':
       return NavigatorScreenState.review;
     default:

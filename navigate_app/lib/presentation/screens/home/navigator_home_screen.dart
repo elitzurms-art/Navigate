@@ -9,7 +9,6 @@ import 'navigator_state.dart';
 import 'navigator_views/learning_view.dart';
 import 'navigator_views/system_check_view.dart';
 import 'navigator_views/active_view.dart';
-import 'navigator_views/approval_view.dart';
 import 'navigator_views/review_view.dart';
 import 'navigator_views/navigator_map_screen.dart';
 
@@ -343,11 +342,6 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           currentUser: _currentUser!,
           onNavigationUpdated: _onNavigationUpdated,
         );
-      case NavigatorScreenState.approval:
-        return ApprovalView(
-          navigation: _currentNavigation!,
-          currentUser: _currentUser!,
-        );
       case NavigatorScreenState.review:
         return ReviewView(
           navigation: _currentNavigation!,
@@ -564,10 +558,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         return 'המתנה';
       case NavigatorScreenState.active:
         return 'ניווט פעיל';
-      case NavigatorScreenState.approval:
-        return 'אישרור';
       case NavigatorScreenState.review:
-        return 'תחקיר';
+        return 'תחקור';
       case NavigatorScreenState.error:
         return 'Navigate';
     }

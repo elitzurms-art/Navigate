@@ -48,7 +48,7 @@ const _kNavigatorColors = [
   Color(0xFF795548),
 ];
 
-/// מסך תחקור ניווט — מפקד (פר-מנווט + כולם) ומנווט
+/// מסך תחקור ניווט מאוחד — מפקד (4 טאבים) ומנווט (single scroll)
 class InvestigationScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final String? navigatorId;
@@ -86,10 +86,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   List<nav.NavSafetyPoint> _navSafetyPoints = [];
   List<nav.NavBoundary> _navBoundaries = [];
 
-  // נתוני מנווטים
+  // נתוני מנווטים (commander mode)
   final Map<String, _NavigatorData> _navigatorDataMap = {};
   String? _selectedNavigatorId;
   bool _allNavigatorsMode = false;
+
+  // ציונים (עריכה מקומית — commander)
+  final Map<String, NavigationScore> _scores = {};
+  // ציונים אוטומטיים מקוריים (לייחוס)
+  final Map<String, int> _autoScores = {};
 
   // שכבות מפה
   bool _showGG = true;
@@ -109,7 +114,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
-  // חותינ תואצות
+  // ניתוח
   RouteStatistics? _selectedNavStats;
   List<SpeedSegment> _selectedSpeedProfile = [];
   List<DeviationSegment> _selectedDeviations = [];
@@ -119,6 +124,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   bool _showPlayback = false;
 
   late domain.Navigation _currentNavigation;
+
+  // הגדרות אישור (commander settings tab)
+  bool _autoApprovalEnabled = true;
 
   // Navigator view data
   List<nav.NavCheckpoint> _myCheckpoints = [];
@@ -134,7 +142,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     super.initState();
     _currentNavigation = widget.navigation;
     if (!widget.isNavigator) {
-      _tabController = TabController(length: 3, vsync: this);
+      _tabController = TabController(length: 4, vsync: this);
     }
     _loadAllData();
   }
@@ -144,6 +152,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     _tabController?.dispose();
     super.dispose();
   }
+
+  // ===========================================================================
+  // Data Loading
+  // ===========================================================================
 
   Future<void> _loadAllData() async {
     setState(() => _isLoading = true);
@@ -184,8 +196,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     // Checkpoints for this navigator's route
     _myCheckpoints = [];
     for (final cpId in route.checkpointIds) {
-      final cp = _navCheckpoints.where((c) =>
-          c.id == cpId || c.sourceId == cpId).toList();
+      final cp = _navCheckpoints
+          .where((c) => c.id == cpId || c.sourceId == cpId)
+          .toList();
       if (cp.isNotEmpty && !_myCheckpoints.contains(cp.first)) {
         _myCheckpoints.add(cp.first);
       }
@@ -193,9 +206,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     if (_myCheckpoints.isEmpty) _myCheckpoints = _navCheckpoints;
 
     // Planned route
-    _myPlannedRoute = route.plannedPath
-        .map((c) => LatLng(c.lat, c.lng))
-        .toList();
+    _myPlannedRoute =
+        route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
     if (_myPlannedRoute.isEmpty) {
       _myPlannedRoute = _myCheckpoints
           .where((c) => !c.isPolygon && c.coordinates != null)
@@ -225,11 +237,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
     // Score
     try {
-      final scores = await _navRepo.fetchScoresFromFirestore(
-          widget.navigation.id);
-      final myScoreMap = scores
-          .where((s) => s['navigatorId'] == user.uid)
-          .toList();
+      final scores =
+          await _navRepo.fetchScoresFromFirestore(widget.navigation.id);
+      final myScoreMap =
+          scores.where((s) => s['navigatorId'] == user.uid).toList();
       if (myScoreMap.isNotEmpty) {
         _myScore = NavigationScore.fromMap(myScoreMap.first);
       }
@@ -270,15 +281,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       }
 
       // Planned route
-      final plannedRoute = route.plannedPath
-          .map((c) => LatLng(c.lat, c.lng))
-          .toList();
+      final plannedRoute =
+          route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
 
       // Route checkpoints
       List<nav.NavCheckpoint> routeCps = [];
       for (final cpId in route.checkpointIds) {
-        final matches = _navCheckpoints.where((c) =>
-            c.id == cpId || c.sourceId == cpId).toList();
+        final matches = _navCheckpoints
+            .where((c) => c.id == cpId || c.sourceId == cpId)
+            .toList();
         if (matches.isNotEmpty && !routeCps.contains(matches.first)) {
           routeCps.add(matches.first);
         }
@@ -287,13 +298,19 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       // Score
       NavigationScore? score;
       try {
-        final scores = await _navRepo.fetchScoresFromFirestore(
-            widget.navigation.id);
-        final match = scores.where((s) => s['navigatorId'] == navId).toList();
+        final scores =
+            await _navRepo.fetchScoresFromFirestore(widget.navigation.id);
+        final match =
+            scores.where((s) => s['navigatorId'] == navId).toList();
         if (match.isNotEmpty) {
           score = NavigationScore.fromMap(match.first);
         }
       } catch (_) {}
+
+      // Track score for editing
+      if (score != null) {
+        _scores[navId] = score;
+      }
 
       // Compute stats
       final actualCoords = trackPoints
@@ -320,7 +337,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         score: score,
         plannedDistanceKm: route.routeLengthKm,
         actualDistanceKm: actualDistKm,
-        totalDuration: totalDuration.isNegative ? Duration.zero : totalDuration,
+        totalDuration:
+            totalDuration.isNegative ? Duration.zero : totalDuration,
         avgSpeedKmh: avgSpeedKmh,
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
@@ -345,14 +363,22 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         .where((c) => !c.isPolygon && c.coordinates != null)
         .toList();
     if (pointCps.isNotEmpty) {
-      final lat = pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) / pointCps.length;
-      final lng = pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) / pointCps.length;
+      final lat =
+          pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
+              pointCps.length;
+      final lng =
+          pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
+              pointCps.length;
       _mapController.move(LatLng(lat, lng), 14.0);
     }
   }
 
+  // ===========================================================================
+  // Analysis
+  // ===========================================================================
+
   void _computeAnalysis() {
-    // ניתוח למנווט נבחר
+    // ניתוח למנווט נבחר (commander)
     final navId = widget.isNavigator ? null : _selectedNavigatorId;
     if (navId != null && _navigatorDataMap.containsKey(navId)) {
       final data = _navigatorDataMap[navId]!;
@@ -363,7 +389,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           checkpoints: data.routeCheckpoints,
           punches: data.punches,
           route: route,
-          plannedRoute: data.plannedRoute.length >= 2 ? data.plannedRoute : null,
+          plannedRoute:
+              data.plannedRoute.length >= 2 ? data.plannedRoute : null,
         );
         _selectedSpeedProfile = _selectedNavStats?.speedProfile ?? [];
         _selectedDeviations = data.plannedRoute.length >= 2
@@ -384,7 +411,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             checkpoints: _myCheckpoints,
             punches: _myPunches,
             route: route,
-            plannedRoute: _myPlannedRoute.length >= 2 ? _myPlannedRoute : null,
+            plannedRoute:
+                _myPlannedRoute.length >= 2 ? _myPlannedRoute : null,
           );
           _selectedSpeedProfile = _selectedNavStats?.speedProfile ?? [];
           _selectedDeviations = _myPlannedRoute.length >= 2
@@ -397,7 +425,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       }
     }
 
-    // השוואת מנווטים
+    // השוואת מנווטים (commander only)
     if (!widget.isNavigator) {
       final inputs = _navigatorDataMap.entries.map((e) {
         return NavigatorComparisonInput(
@@ -427,6 +455,221 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         ? '...${navigatorId.substring(navigatorId.length - 4)}'
         : navigatorId;
   }
+
+  // ===========================================================================
+  // Score Actions (Commander)
+  // ===========================================================================
+
+  Future<void> _calculateAllScores() async {
+    setState(() => _isLoading = true);
+
+    try {
+      for (final entry in _navigatorDataMap.entries) {
+        final navId = entry.key;
+        final data = entry.value;
+
+        final score = _scoringService.calculateAutomaticScore(
+          navigationId: widget.navigation.id,
+          navigatorId: navId,
+          punches: data.punches,
+          verificationSettings: widget.navigation.verificationSettings,
+        );
+
+        _scores[navId] = score;
+        _autoScores[navId] = score.totalScore;
+      }
+
+      setState(() => _isLoading = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('ציונים חושבו בהצלחה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _editScore(String navigatorId) {
+    final currentScore = _scores[navigatorId];
+    if (currentScore == null) return;
+
+    final scoreController = TextEditingController(
+      text: currentScore.totalScore.toString(),
+    );
+    final notesController = TextEditingController(
+      text: currentScore.notes ?? '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title:
+            Text('עריכת ציון - ${_getNavigatorDisplayName(navigatorId)}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: scoreController,
+              decoration: InputDecoration(
+                labelText: 'ציון (0-100)',
+                border: const OutlineInputBorder(),
+                helperText: _autoScores.containsKey(navigatorId)
+                    ? 'ציון אוטומטי: ${_autoScores[navigatorId]}'
+                    : null,
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: notesController,
+              decoration: const InputDecoration(
+                labelText: 'הערות',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newScore = int.tryParse(scoreController.text) ??
+                  currentScore.totalScore;
+              setState(() {
+                _scores[navigatorId] = _scoringService.updateScore(
+                  currentScore,
+                  newTotalScore: newScore.clamp(0, 100),
+                  newNotes: notesController.text,
+                );
+              });
+              Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.green),
+            child: const Text('שמור'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _publishScore(String navigatorId) async {
+    final score = _scores[navigatorId];
+    if (score == null) return;
+
+    try {
+      final published = _scoringService.publishScore(score);
+      _scores[navigatorId] = published;
+
+      await _navRepo.pushScore(
+        navigationId: widget.navigation.id,
+        navigatorId: navigatorId,
+        scoreData: published.toMap(),
+      );
+
+      setState(() {});
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'ציון הופץ ל-${_getNavigatorDisplayName(navigatorId)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _publishAllScores() async {
+    final unpublished =
+        _scores.entries.where((e) => !e.value.isPublished).toList();
+
+    if (unpublished.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('כל הציונים כבר הופצו')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('הפצת ציונים'),
+        content: Text(
+          'האם להפיץ ${unpublished.length} ציונים לכל המנווטים?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.green),
+            child: const Text('הפץ'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      for (final entry in unpublished) {
+        final published = _scoringService.publishScore(entry.value);
+        _scores[entry.key] = published;
+
+        await _navRepo.pushScore(
+          navigationId: widget.navigation.id,
+          navigatorId: entry.key,
+          scoreData: published.toMap(),
+        );
+      }
+
+      setState(() => _isLoading = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('כל הציונים הופצו בהצלחה!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Status Transitions & Navigation Actions
+  // ===========================================================================
 
   Future<void> _returnToPreparation() async {
     final confirmed = await showDialog<bool>(
@@ -471,7 +714,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('מחיקת ניווט'),
-        content: const Text('פעולה זו בלתי הפיכה!\nכל נתוני הניווט יימחקו לצמיתות.'),
+        content: const Text(
+            'פעולה זו בלתי הפיכה!\nכל נתוני הניווט יימחקו לצמיתות.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -499,6 +743,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     }
   }
 
+  // ===========================================================================
+  // Export
+  // ===========================================================================
+
   void _onExport() {
     if (widget.isNavigator) {
       _exportNavigatorData();
@@ -525,14 +773,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     } catch (_) {}
 
     if (!mounted) return;
-    _exportService.showExportDialog(context, data: ExportData(
-      navigationName: widget.navigation.name,
-      navigatorName: user.fullName,
-      trackPoints: exportTrackPts,
-      checkpoints: _myCheckpoints,
-      punches: _myPunches,
-      plannedPath: route?.plannedPath,
-    ));
+    _exportService.showExportDialog(context,
+        data: ExportData(
+          navigationName: widget.navigation.name,
+          navigatorName: user.fullName,
+          trackPoints: exportTrackPts,
+          checkpoints: _myCheckpoints,
+          punches: _myPunches,
+          plannedPath: route?.plannedPath,
+        ));
   }
 
   Future<void> _exportCommanderData() async {
@@ -542,15 +791,20 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     if (data == null) return;
     final route = widget.navigation.routes[navId];
 
-    _exportService.showExportDialog(context, data: ExportData(
-      navigationName: widget.navigation.name,
-      navigatorName: _getNavigatorDisplayName(navId),
-      trackPoints: data.trackPoints,
-      checkpoints: data.routeCheckpoints,
-      punches: data.punches,
-      plannedPath: route?.plannedPath,
-    ));
+    _exportService.showExportDialog(context,
+        data: ExportData(
+          navigationName: widget.navigation.name,
+          navigatorName: _getNavigatorDisplayName(navId),
+          trackPoints: data.trackPoints,
+          checkpoints: data.routeCheckpoints,
+          punches: data.punches,
+          plannedPath: route?.plannedPath,
+        ));
   }
+
+  // ===========================================================================
+  // Build
+  // ===========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -559,7 +813,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   // ===========================================================================
-  // Commander View
+  // Commander View — 4 tabs: מפה | ניתוח | ציונים | הגדרות
   // ===========================================================================
 
   Widget _buildCommanderView() {
@@ -579,8 +833,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           labelColor: Colors.white,
           tabs: const [
             Tab(icon: Icon(Icons.map), text: 'מפה'),
-            Tab(icon: Icon(Icons.analytics), text: 'סטטיסטיקות'),
+            Tab(icon: Icon(Icons.analytics), text: 'ניתוח'),
             Tab(icon: Icon(Icons.grade), text: 'ציונים'),
+            Tab(icon: Icon(Icons.settings), text: 'הגדרות'),
           ],
         ),
         actions: [
@@ -693,8 +948,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                 ),
                               );
                             }).toList(),
-                            onChanged: (v) =>
-                                _onNavigatorChanged(v),
+                            onChanged: _onNavigatorChanged,
                           ),
                         ),
                       ],
@@ -705,38 +959,42 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                     controller: _tabController,
                     children: [
                       _buildMapTab(),
-                      _buildStatisticsTab(),
+                      _buildAnalysisTab(),
                       _buildScoresTab(),
+                      _buildSettingsTab(),
                     ],
                   ),
                 ),
               ],
             ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text('סיום', style: TextStyle(fontSize: 16)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(0, 48),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+      bottomNavigationBar: _isLoading
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('סיום',
+                        style: TextStyle(fontSize: 16)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 48),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ),
     );
   }
 
   // ===========================================================================
-  // Map Tab
+  // Map Tab (Commander)
   // ===========================================================================
 
   Widget _buildMapTab() {
@@ -755,7 +1013,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               MapCaptureWrapper(
                 captureKey: _mapCaptureKey,
                 child: MapWithTypeSelector(
-                  showTypeSelector: false,
+                  showTypeSelector: true,
                   mapController: _mapController,
                   options: MapOptions(
                     initialCenter: const LatLng(32.0853, 34.7818),
@@ -813,12 +1071,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 TextButton.icon(
-                  onPressed: () => setState(() => _showPlayback = !_showPlayback),
+                  onPressed: () =>
+                      setState(() => _showPlayback = !_showPlayback),
                   icon: Icon(
                     _showPlayback ? Icons.stop : Icons.play_arrow,
                     size: 18,
                   ),
-                  label: Text(_showPlayback ? 'סגור נגן' : 'נגן מסלול',
+                  label: Text(
+                      _showPlayback ? 'סגור נגן' : 'נגן מסלול',
                       style: const TextStyle(fontSize: 12)),
                 ),
               ],
@@ -827,6 +1087,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       ],
     );
   }
+
+  // ===========================================================================
+  // Map Layers (shared between Commander and Navigator)
+  // ===========================================================================
 
   List<Widget> _buildBoundaryLayers() {
     if (!_showGG || _navBoundaries.isEmpty) return [];
@@ -838,8 +1102,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   points: b.coordinates
                       .map((c) => LatLng(c.lat, c.lng))
                       .toList(),
-                  color: _kBoundaryColor.withValues(alpha: 0.1 * _ggOpacity),
-                  borderColor: _kBoundaryColor.withValues(alpha: _ggOpacity),
+                  color:
+                      _kBoundaryColor.withValues(alpha: 0.1 * _ggOpacity),
+                  borderColor:
+                      _kBoundaryColor.withValues(alpha: _ggOpacity),
                   borderStrokeWidth: 2.0,
                   isFilled: true,
                 ))
@@ -850,15 +1116,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
   List<Widget> _buildSafetyLayers() {
     if (!_showNB || _navSafetyPoints.isEmpty) return [];
-    final pointSafety = _navSafetyPoints
-        .where((p) => p.coordinates != null)
-        .toList();
-    final result = <Widget>[];
-    if (pointSafety.isNotEmpty) {
-      result.add(MarkerLayer(
+    final pointSafety =
+        _navSafetyPoints.where((p) => p.coordinates != null).toList();
+    if (pointSafety.isEmpty) return [];
+    return [
+      MarkerLayer(
         markers: pointSafety
             .map((p) => Marker(
-                  point: LatLng(p.coordinates!.lat, p.coordinates!.lng),
+                  point:
+                      LatLng(p.coordinates!.lat, p.coordinates!.lng),
                   width: 30,
                   height: 30,
                   child: Opacity(
@@ -868,12 +1134,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   ),
                 ))
             .toList(),
-      ));
-    }
-    return result;
+      ),
+    ];
   }
 
-  List<Widget> _buildCheckpointMarkers(List<nav.NavCheckpoint> checkpoints) {
+  List<Widget> _buildCheckpointMarkers(
+      List<nav.NavCheckpoint> checkpoints) {
     final pointCps = checkpoints
         .where((c) => !c.isPolygon && c.coordinates != null)
         .toList();
@@ -947,7 +1213,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         polylines: [
           Polyline(
             points: data.plannedRoute,
-            color: _kPlannedRouteColor.withValues(alpha: _plannedOpacity),
+            color:
+                _kPlannedRouteColor.withValues(alpha: _plannedOpacity),
             strokeWidth: 4.0,
           ),
         ],
@@ -964,7 +1231,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           polylines: [
             Polyline(
               points: actualPoints,
-              color: _kActualRouteColor.withValues(alpha: _routesOpacity),
+              color:
+                  _kActualRouteColor.withValues(alpha: _routesOpacity),
               strokeWidth: 3.0,
             ),
           ],
@@ -972,15 +1240,21 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       }
     }
 
-    // Deviation segments (RED overlay)
-    if (_showDeviations && _selectedDeviations.isNotEmpty && data.trackPoints.isNotEmpty) {
+    // Deviation segments (colored overlay)
+    if (_showDeviations &&
+        _selectedDeviations.isNotEmpty &&
+        data.trackPoints.isNotEmpty) {
       for (final dev in _selectedDeviations) {
-        final devColor = _analysisService.getDeviationColor(dev.maxDeviation);
-        final start = dev.startIndex.clamp(0, data.trackPoints.length - 1);
-        final end = (dev.endIndex + 1).clamp(0, data.trackPoints.length);
+        final devColor =
+            _analysisService.getDeviationColor(dev.maxDeviation);
+        final start =
+            dev.startIndex.clamp(0, data.trackPoints.length - 1);
+        final end =
+            (dev.endIndex + 1).clamp(0, data.trackPoints.length);
         final devPoints = data.trackPoints
             .sublist(start, end)
-            .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
+            .map(
+                (tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
             .toList();
         if (devPoints.length > 1) {
           layers.add(PolylineLayer(
@@ -999,7 +1273,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     // Punches
     if (_showPunches && data.punches.isNotEmpty) {
       layers.add(MarkerLayer(
-        markers: data.punches.map((p) => _buildPunchMarker(p)).toList(),
+        markers:
+            data.punches.map((p) => _buildPunchMarker(p)).toList(),
       ));
     }
 
@@ -1018,7 +1293,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         }
       }
       if (heatTracks.isNotEmpty) {
-        layers.add(NavigatorHeatmapLayer(navigatorTracks: heatTracks));
+        layers
+            .add(NavigatorHeatmapLayer(navigatorTracks: heatTracks));
       }
     }
 
@@ -1027,7 +1303,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
       if (_showRoutes && data.trackPoints.isNotEmpty) {
         final actualPoints = data.trackPoints
-            .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
+            .map(
+                (tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
             .toList();
         if (actualPoints.length > 1) {
           layers.add(PolylineLayer(
@@ -1086,57 +1363,97 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       }),
       layers: [
         MapLayerConfig(
-          id: 'gg', label: 'גבול גזרה', color: _kBoundaryColor,
-          visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v),
-          opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+          id: 'gg',
+          label: 'גבול גזרה',
+          color: _kBoundaryColor,
+          visible: _showGG,
+          onVisibilityChanged: (v) => setState(() => _showGG = v),
+          opacity: _ggOpacity,
+          onOpacityChanged: (v) => setState(() => _ggOpacity = v),
         ),
         MapLayerConfig(
-          id: 'nz', label: 'נקודות ציון', color: Colors.blue,
-          visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v),
-          opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+          id: 'nz',
+          label: 'נקודות ציון',
+          color: Colors.blue,
+          visible: _showNZ,
+          onVisibilityChanged: (v) => setState(() => _showNZ = v),
+          opacity: _nzOpacity,
+          onOpacityChanged: (v) => setState(() => _nzOpacity = v),
         ),
         MapLayerConfig(
-          id: 'nb', label: 'נקודות בטיחות', color: _kSafetyColor,
-          visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v),
-          opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+          id: 'nb',
+          label: 'נקודות בטיחות',
+          color: _kSafetyColor,
+          visible: _showNB,
+          onVisibilityChanged: (v) => setState(() => _showNB = v),
+          opacity: _nbOpacity,
+          onOpacityChanged: (v) => setState(() => _nbOpacity = v),
         ),
         MapLayerConfig(
-          id: 'planned', label: 'ציר מתוכנן', color: _kPlannedRouteColor,
-          visible: _showPlanned, onVisibilityChanged: (v) => setState(() => _showPlanned = v),
-          opacity: _plannedOpacity, onOpacityChanged: (v) => setState(() => _plannedOpacity = v),
+          id: 'planned',
+          label: 'ציר מתוכנן',
+          color: _kPlannedRouteColor,
+          visible: _showPlanned,
+          onVisibilityChanged: (v) =>
+              setState(() => _showPlanned = v),
+          opacity: _plannedOpacity,
+          onOpacityChanged: (v) =>
+              setState(() => _plannedOpacity = v),
         ),
         MapLayerConfig(
-          id: 'routes', label: 'מסלול בפועל', color: _kActualRouteColor,
-          visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v),
-          opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v),
+          id: 'routes',
+          label: 'מסלול בפועל',
+          color: _kActualRouteColor,
+          visible: _showRoutes,
+          onVisibilityChanged: (v) =>
+              setState(() => _showRoutes = v),
+          opacity: _routesOpacity,
+          onOpacityChanged: (v) =>
+              setState(() => _routesOpacity = v),
         ),
         if (!_allNavigatorsMode)
           MapLayerConfig(
-            id: 'punches', label: 'דקירות', color: Colors.green,
-            visible: _showPunches, onVisibilityChanged: (v) => setState(() => _showPunches = v),
-            opacity: _punchesOpacity, onOpacityChanged: (v) => setState(() => _punchesOpacity = v),
+            id: 'punches',
+            label: 'דקירות',
+            color: Colors.green,
+            visible: _showPunches,
+            onVisibilityChanged: (v) =>
+                setState(() => _showPunches = v),
+            opacity: _punchesOpacity,
+            onOpacityChanged: (v) =>
+                setState(() => _punchesOpacity = v),
           ),
         if (!_allNavigatorsMode)
           MapLayerConfig(
-            id: 'deviations', label: 'סטיות', color: Colors.red,
-            visible: _showDeviations, onVisibilityChanged: (v) => setState(() => _showDeviations = v),
-            opacity: 1.0, onOpacityChanged: (_) {},
+            id: 'deviations',
+            label: 'סטיות',
+            color: Colors.red,
+            visible: _showDeviations,
+            onVisibilityChanged: (v) =>
+                setState(() => _showDeviations = v),
+            opacity: 1.0,
+            onOpacityChanged: (_) {},
           ),
         if (_allNavigatorsMode)
           MapLayerConfig(
-            id: 'heatmap', label: 'מפת חום', color: Colors.orange,
-            visible: _showHeatmap, onVisibilityChanged: (v) => setState(() => _showHeatmap = v),
-            opacity: 1.0, onOpacityChanged: (_) {},
+            id: 'heatmap',
+            label: 'מפת חום',
+            color: Colors.orange,
+            visible: _showHeatmap,
+            onVisibilityChanged: (v) =>
+                setState(() => _showHeatmap = v),
+            opacity: 1.0,
+            onOpacityChanged: (_) {},
           ),
       ],
     );
   }
 
   // ===========================================================================
-  // Statistics Tab
+  // Analysis Tab (Commander)
   // ===========================================================================
 
-  Widget _buildStatisticsTab() {
+  Widget _buildAnalysisTab() {
     if (_navigatorDataMap.isEmpty) {
       return const Center(child: Text('אין נתוני מנווטים'));
     }
@@ -1150,7 +1467,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           const SizedBox(height: 16),
 
           // Speed profile chart for selected navigator
-          if (!_allNavigatorsMode && _selectedSpeedProfile.isNotEmpty) ...[
+          if (!_allNavigatorsMode &&
+              _selectedSpeedProfile.isNotEmpty) ...[
             SpeedProfileChart(
               segments: _selectedSpeedProfile,
               thresholdSpeedKmh: 8.0,
@@ -1159,13 +1477,15 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ],
 
           // Route analysis summary for selected navigator
-          if (!_allNavigatorsMode && _selectedNavStats != null) ...[
+          if (!_allNavigatorsMode &&
+              _selectedNavStats != null) ...[
             _buildAnalysisSummaryCard(_selectedNavStats!),
             const SizedBox(height: 16),
           ],
 
           const Text('פירוט לפי מנווט',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           _buildStatisticsTable(),
         ],
@@ -1176,28 +1496,39 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   Widget _buildSummaryCards() {
     final totalNavigators = _navigatorDataMap.length;
     final withTracks = _navigatorDataMap.values
-        .where((d) => d.trackPoints.isNotEmpty).length;
+        .where((d) => d.trackPoints.isNotEmpty)
+        .length;
     final withDistances = _navigatorDataMap.values
-        .where((d) => d.actualDistanceKm > 0).toList();
+        .where((d) => d.actualDistanceKm > 0)
+        .toList();
     final avgDistance = withDistances.isNotEmpty
-        ? withDistances.fold(0.0, (sum, d) => sum + d.actualDistanceKm) /
+        ? withDistances.fold(
+                0.0, (sum, d) => sum + d.actualDistanceKm) /
             withDistances.length
         : 0.0;
 
     return Row(
       children: [
-        Expanded(child: _summaryCard(
-            icon: Icons.people, label: 'מנווטים',
-            value: '$totalNavigators', color: Colors.blue)),
+        Expanded(
+            child: _summaryCard(
+                icon: Icons.people,
+                label: 'מנווטים',
+                value: '$totalNavigators',
+                color: Colors.blue)),
         const SizedBox(width: 8),
-        Expanded(child: _summaryCard(
-            icon: Icons.gps_fixed, label: 'עם מסלול',
-            value: '$withTracks', color: Colors.green)),
+        Expanded(
+            child: _summaryCard(
+                icon: Icons.gps_fixed,
+                label: 'עם מסלול',
+                value: '$withTracks',
+                color: Colors.green)),
         const SizedBox(width: 8),
-        Expanded(child: _summaryCard(
-            icon: Icons.route, label: 'מרחק ממוצע',
-            value: '${avgDistance.toStringAsFixed(1)} ק"מ',
-            color: Colors.orange)),
+        Expanded(
+            child: _summaryCard(
+                icon: Icons.route,
+                label: 'מרחק ממוצע',
+                value: '${avgDistance.toStringAsFixed(1)} ק"מ',
+                color: Colors.orange)),
       ],
     );
   }
@@ -1217,9 +1548,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             const SizedBox(height: 4),
             Text(value,
                 style: TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: color)),
             Text(label,
-                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                style: const TextStyle(
+                    fontSize: 11, color: Colors.grey)),
           ],
         ),
       ),
@@ -1234,44 +1568,57 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('ניתוח מסלול',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                style: TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 15)),
             const SizedBox(height: 10),
             Row(
               children: [
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'מרחק מתוכנן',
                   '${stats.plannedDistanceKm.toStringAsFixed(1)} ק"מ',
-                  Icons.route, Colors.red,
+                  Icons.route,
+                  Colors.red,
                 )),
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'מרחק בפועל',
                   '${stats.actualDistanceKm.toStringAsFixed(1)} ק"מ',
-                  Icons.timeline, Colors.blue,
+                  Icons.timeline,
+                  Colors.blue,
                 )),
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'מהירות מקסימלית',
                   '${stats.maxSpeedKmh.toStringAsFixed(1)} קמ"ש',
-                  Icons.speed, Colors.orange,
+                  Icons.speed,
+                  Colors.orange,
                 )),
               ],
             ),
             const SizedBox(height: 8),
             Row(
               children: [
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'סטיות',
                   '${stats.deviationCount}',
-                  Icons.warning, Colors.red,
+                  Icons.warning,
+                  Colors.red,
                 )),
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'סטייה מקסימלית',
                   '${stats.maxDeviation.toStringAsFixed(0)} מ\'',
-                  Icons.trending_up, Colors.deepOrange,
+                  Icons.trending_up,
+                  Colors.deepOrange,
                 )),
-                Expanded(child: _analysisStat(
+                Expanded(
+                    child: _analysisStat(
                   'נ.צ. שנדקרו',
                   '${stats.checkpointsPunched}/${stats.totalCheckpoints}',
-                  Icons.flag, Colors.green,
+                  Icons.flag,
+                  Colors.green,
                 )),
               ],
             ),
@@ -1281,14 +1628,16 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     );
   }
 
-  Widget _analysisStat(String label, String value, IconData icon, Color color) {
+  Widget _analysisStat(
+      String label, String value, IconData icon, Color color) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(height: 2),
         Text(value,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 12)),
         Text(label,
             style: TextStyle(fontSize: 9, color: Colors.grey[600]),
             textAlign: TextAlign.center),
@@ -1303,32 +1652,46 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         columnSpacing: 14,
         headingRowColor: WidgetStateProperty.all(Colors.grey[200]),
         columns: const [
-          DataColumn(label: Text('מנווט',
-              style: TextStyle(fontWeight: FontWeight.bold))),
-          DataColumn(label: Text('מרחק\nמתוכנן',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-          DataColumn(label: Text('מרחק\nבפועל',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-          DataColumn(label: Text('זמן',
-              style: TextStyle(fontWeight: FontWeight.bold))),
-          DataColumn(label: Text('מהירות\nממוצעת',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-          DataColumn(label: Text('נ.צ.\nשנדקרו',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-          DataColumn(label: Text('ציון',
-              style: TextStyle(fontWeight: FontWeight.bold))),
+          DataColumn(
+              label: Text('מנווט',
+                  style: TextStyle(fontWeight: FontWeight.bold))),
+          DataColumn(
+              label: Text('מרחק\nמתוכנן',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(
+              label: Text('מרחק\nבפועל',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(
+              label: Text('זמן',
+                  style: TextStyle(fontWeight: FontWeight.bold))),
+          DataColumn(
+              label: Text('מהירות\nממוצעת',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(
+              label: Text('נ.צ.\nשנדקרו',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(
+              label: Text('ציון',
+                  style: TextStyle(fontWeight: FontWeight.bold))),
         ],
         rows: _navigatorDataMap.entries.map((entry) {
           final navId = entry.key;
           final data = entry.value;
-          final scoreColor = data.score != null
-              ? ScoringService.getScoreColor(data.score!.totalScore)
+          final score = _scores[navId];
+          final scoreColor = score != null
+              ? ScoringService.getScoreColor(score.totalScore)
               : Colors.grey;
 
           return DataRow(cells: [
-            DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
+            DataCell(
+                Row(mainAxisSize: MainAxisSize.min, children: [
               Container(
-                width: 10, height: 10,
+                width: 10,
+                height: 10,
                 decoration: BoxDecoration(
                     color: data.color, shape: BoxShape.circle),
               ),
@@ -1336,7 +1699,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               Text(_getNavigatorDisplayName(navId),
                   style: const TextStyle(fontSize: 13)),
             ])),
-            DataCell(Text('${data.plannedDistanceKm.toStringAsFixed(1)} ק"מ')),
+            DataCell(Text(
+                '${data.plannedDistanceKm.toStringAsFixed(1)} ק"מ')),
             DataCell(Text(data.actualDistanceKm > 0
                 ? '${data.actualDistanceKm.toStringAsFixed(1)} ק"מ'
                 : '-')),
@@ -1346,9 +1710,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             DataCell(Text(data.avgSpeedKmh > 0
                 ? '${data.avgSpeedKmh.toStringAsFixed(1)} קמ"ש'
                 : '-')),
-            DataCell(
-                Text('${data.checkpointsHit}/${data.totalCheckpoints}')),
-            DataCell(data.score != null
+            DataCell(Text(
+                '${data.checkpointsHit}/${data.totalCheckpoints}')),
+            DataCell(score != null
                 ? Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 2),
@@ -1356,12 +1720,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                       color: scoreColor.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text('${data.score!.totalScore}',
+                    child: Text('${score.totalScore}',
                         style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: scoreColor)),
                   )
-                : const Text('-', style: TextStyle(color: Colors.grey))),
+                : const Text('-',
+                    style: TextStyle(color: Colors.grey))),
           ]);
         }).toList(),
       ),
@@ -1369,7 +1734,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   // ===========================================================================
-  // Scores Tab
+  // Scores Tab (Commander)
   // ===========================================================================
 
   Widget _buildScoresTab() {
@@ -1377,21 +1742,81 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       return const Center(child: Text('אין נתונים'));
     }
 
-    // Build navigator color map for comparison widget
     final navigatorColors = <String, Color>{};
     for (final entry in _navigatorDataMap.entries) {
       navigatorColors[entry.key] = entry.value.color;
     }
+
+    final publishedCount =
+        _scores.values.where((s) => s.isPublished).length;
+    final totalScores = _scores.length;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Navigator comparison cards (ranked)
+          // Actions bar
+          Card(
+            color: Colors.blue[50],
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _calculateAllScores,
+                          icon:
+                              const Icon(Icons.calculate, size: 18),
+                          label: const Text('חשב ציונים'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _scores.isNotEmpty
+                              ? _publishAllScores
+                              : null,
+                          icon: const Icon(Icons.send, size: 18),
+                          label: const Text('הפץ הכל'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (totalScores > 0) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      '$publishedCount/$totalScores ציונים הופצו',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: publishedCount == totalScores
+                            ? Colors.green[700]
+                            : Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Navigator comparison
           if (_navigatorComparisons.isNotEmpty) ...[
             const Text('השוואת מנווטים',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             SizedBox(
               height: 280,
@@ -1403,9 +1828,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             const SizedBox(height: 16),
           ],
 
-          // Detailed score cards
-          const Text('פירוט ציונים',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          // Score cards
+          const Text('ציונים',
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           ..._navigatorDataMap.entries.map((entry) =>
               _buildNavigatorScoreCard(entry.key, entry.value)),
@@ -1414,8 +1840,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     );
   }
 
-  Widget _buildNavigatorScoreCard(String navigatorId, _NavigatorData data) {
-    final score = data.score;
+  Widget _buildNavigatorScoreCard(
+      String navigatorId, _NavigatorData data) {
+    final score = _scores[navigatorId];
     final name = _getNavigatorDisplayName(navigatorId);
 
     if (score == null) {
@@ -1427,78 +1854,161 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             child: Icon(Icons.person, color: data.color),
           ),
           title: Text(name),
-          subtitle: const Text('אין ציון'),
-          trailing:
-              const Icon(Icons.remove_circle_outline, color: Colors.grey),
+          subtitle: Text(
+            'נ.צ.: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
+            'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: const Icon(Icons.remove_circle_outline,
+              color: Colors.grey),
         ),
       );
     }
 
-    final scoreColor = ScoringService.getScoreColor(score.totalScore);
+    final scoreColor =
+        ScoringService.getScoreColor(score.totalScore);
     final grade = _scoringService.getGrade(score.totalScore);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        data: Theme.of(context)
+            .copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          leading: Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: scoreColor.withOpacity(0.15),
-              border: Border.all(color: scoreColor, width: 3),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+          leading: GestureDetector(
+            onTap: () => _editScore(navigatorId),
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Text('${score.totalScore}',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: scoreColor)),
-                Text(grade,
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: scoreColor)),
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: scoreColor.withOpacity(0.15),
+                    border: Border.all(
+                      color: score.isManual
+                          ? Colors.orange
+                          : scoreColor,
+                      width: 3,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('${score.totalScore}',
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: scoreColor)),
+                      Text(grade,
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: scoreColor)),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  top: -4,
+                  left: -4,
+                  child: Icon(Icons.edit,
+                      size: 16,
+                      color: score.isManual
+                          ? Colors.orange
+                          : Colors.grey[400]),
+                ),
               ],
             ),
           ),
-          title: Text(name,
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          subtitle: Text(
-            'נ.צ. שנדקרו: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
-            'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
-            style: const TextStyle(fontSize: 12),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(name,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold)),
+              ),
+              if (score.isManual)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  margin: const EdgeInsets.only(left: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange),
+                  ),
+                  child: const Text('ידני',
+                      style: TextStyle(
+                          fontSize: 10, color: Colors.orange)),
+                ),
+              if (score.isPublished)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green),
+                  ),
+                  child: const Text('הופץ',
+                      style: TextStyle(
+                          fontSize: 10, color: Colors.green)),
+                ),
+            ],
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'נ.צ.: ${data.checkpointsHit}/${data.totalCheckpoints}  |  '
+                'מרחק: ${data.actualDistanceKm.toStringAsFixed(1)} ק"מ',
+                style: const TextStyle(fontSize: 12),
+              ),
+              if (score.isManual &&
+                  _autoScores.containsKey(navigatorId))
+                Text(
+                  'ציון אוטומטי: ${_autoScores[navigatorId]}',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic),
+                ),
+            ],
           ),
           children: [
+            // Checkpoint details
             if (score.checkpointScores.isNotEmpty)
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('פירוט לפי נקודה:',
                         style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13)),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
                     const SizedBox(height: 6),
-                    ...score.checkpointScores.entries.map((cpEntry) {
+                    ...score.checkpointScores.entries
+                        .map((cpEntry) {
                       final cpScore = cpEntry.value;
                       final matchCp = _navCheckpoints.where(
-                        (c) => c.sourceId == cpScore.checkpointId ||
+                        (c) =>
+                            c.sourceId ==
+                                cpScore.checkpointId ||
                             c.id == cpScore.checkpointId,
                       );
                       final cpName = matchCp.isNotEmpty
                           ? matchCp.first.name
                           : cpScore.checkpointId;
                       final cpScoreColor =
-                          ScoringService.getScoreColor(cpScore.score);
+                          ScoringService.getScoreColor(
+                              cpScore.score);
 
                       return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 3),
                         child: Row(
                           children: [
                             Icon(
@@ -1513,22 +2023,29 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                             const SizedBox(width: 8),
                             Expanded(
                                 child: Text(cpName,
-                                    style: const TextStyle(fontSize: 12))),
+                                    style: const TextStyle(
+                                        fontSize: 12))),
                             Text(
                                 '${cpScore.distanceMeters.toStringAsFixed(0)}מ\'',
                                 style: const TextStyle(
-                                    fontSize: 11, color: Colors.grey)),
+                                    fontSize: 11,
+                                    color: Colors.grey)),
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2),
                               decoration: BoxDecoration(
-                                color: cpScoreColor.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(8),
+                                color: cpScoreColor
+                                    .withOpacity(0.2),
+                                borderRadius:
+                                    BorderRadius.circular(8),
                               ),
                               child: Text('${cpScore.score}',
                                   style: TextStyle(
-                                      fontWeight: FontWeight.bold,
+                                      fontWeight:
+                                          FontWeight.bold,
                                       color: cpScoreColor,
                                       fontSize: 12)),
                             ),
@@ -1539,6 +2056,47 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   ],
                 ),
               ),
+            // Action buttons
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _editScore(navigatorId),
+                      icon: const Icon(Icons.edit, size: 16),
+                      label: const Text('ערוך',
+                          style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: score.isPublished
+                          ? null
+                          : () => _publishScore(navigatorId),
+                      icon: Icon(
+                        score.isPublished
+                            ? Icons.check
+                            : Icons.send,
+                        size: 16,
+                      ),
+                      label: Text(
+                        score.isPublished ? 'הופץ' : 'הפץ',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.green,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -1546,7 +2104,139 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   // ===========================================================================
-  // Navigator View
+  // Settings Tab (Commander)
+  // ===========================================================================
+
+  Widget _buildSettingsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          color: Colors.blue[50],
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.settings, color: Colors.blue[700]),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'הגדרות אישור',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  title: const Text('אישור אוטומטי'),
+                  subtitle: const Text(
+                      'חישוב ציונים לפי הגדרות הניווט'),
+                  value: _autoApprovalEnabled,
+                  onChanged: (value) {
+                    setState(() =>
+                        _autoApprovalEnabled = value ?? true);
+                  },
+                ),
+                if (_autoApprovalEnabled) ...[
+                  const Divider(),
+                  Text(
+                    'שיטה: ${widget.navigation.verificationSettings.verificationType ?? "אישור/נכשל"}',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  if (widget.navigation.verificationSettings
+                          .verificationType ==
+                      'approved_failed')
+                    Text(
+                      'מרחק אישור: ${widget.navigation.verificationSettings.approvalDistance ?? 50}m',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // סיכום מנווטים
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.people, color: Colors.blue[700]),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'רשימת מנווטים',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ..._navigatorDataMap.entries.map((entry) {
+                  final navId = entry.key;
+                  final data = entry.value;
+                  final score = _scores[navId];
+
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          data.color.withOpacity(0.2),
+                      child: Icon(Icons.person,
+                          color: data.color, size: 20),
+                    ),
+                    title: Text(
+                        _getNavigatorDisplayName(navId)),
+                    subtitle: Text(
+                      '${data.checkpointsHit}/${data.totalCheckpoints} נ.צ.  |  '
+                      '${data.trackPoints.isNotEmpty ? "יש מסלול" : "אין מסלול"}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: score != null
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: ScoringService.getScoreColor(
+                                      score.totalScore)
+                                  .withOpacity(0.2),
+                              borderRadius:
+                                  BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${score.totalScore}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color:
+                                    ScoringService.getScoreColor(
+                                        score.totalScore),
+                              ),
+                            ),
+                          )
+                        : const Text('-',
+                            style:
+                                TextStyle(color: Colors.grey)),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===========================================================================
+  // Navigator View — single scroll
   // ===========================================================================
 
   Widget _buildNavigatorView() {
@@ -1566,9 +2256,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         .toList();
     final center = pointCps.isNotEmpty
         ? LatLng(
-            pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
+            pointCps
+                    .map((c) => c.coordinates!.lat)
+                    .reduce((a, b) => a + b) /
                 pointCps.length,
-            pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
+            pointCps
+                    .map((c) => c.coordinates!.lng)
+                    .reduce((a, b) => a + b) /
                 pointCps.length,
           )
         : const LatLng(32.0853, 34.7818);
@@ -1579,7 +2273,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.navigation.name),
-            const Text('תחקור ניווט', style: TextStyle(fontSize: 14)),
+            const Text('תחקור ניווט',
+                style: TextStyle(fontSize: 14)),
           ],
         ),
         backgroundColor: Theme.of(context).primaryColor,
@@ -1598,8 +2293,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       ),
       body: Column(
         children: [
-          // Score card
-          if (_myScore != null) _buildNavigatorScoreHeader(),
+          // Score header
+          _buildNavigatorScoreSection(),
           // Stats row
           _buildNavigatorStatsRow(),
           // Map
@@ -1609,49 +2304,58 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 MapCaptureWrapper(
                   captureKey: _mapCaptureKey,
                   child: MapWithTypeSelector(
-                    showTypeSelector: false,
+                    showTypeSelector: true,
                     mapController: _mapController,
                     options: MapOptions(
                       initialCenter: center,
                       initialZoom: 14.0,
                       onTap: (tapPosition, point) {
                         if (_measureMode) {
-                          setState(() => _measurePoints.add(point));
+                          setState(
+                              () => _measurePoints.add(point));
                         }
                       },
                     ),
                     layers: [
                       ..._buildBoundaryLayers(),
                       // Planned route (RED)
-                      if (_showPlanned && _myPlannedRoute.length > 1)
+                      if (_showPlanned &&
+                          _myPlannedRoute.length > 1)
                         PolylineLayer(
                           polylines: [
                             Polyline(
                               points: _myPlannedRoute,
-                              color: _kPlannedRouteColor.withValues(
-                                  alpha: _plannedOpacity),
+                              color: _kPlannedRouteColor
+                                  .withValues(
+                                      alpha: _plannedOpacity),
                               strokeWidth: 4.0,
                             ),
                           ],
                         ),
                       // Actual route (BLUE)
-                      if (_showRoutes && _myActualRoute.length > 1)
+                      if (_showRoutes &&
+                          _myActualRoute.length > 1)
                         PolylineLayer(
                           polylines: [
                             Polyline(
                               points: _myActualRoute,
-                              color: _kActualRouteColor.withValues(
-                                  alpha: _routesOpacity),
+                              color: _kActualRouteColor
+                                  .withValues(
+                                      alpha: _routesOpacity),
                               strokeWidth: 3.0,
                             ),
                           ],
                         ),
                       // Deviation segments overlay
-                      if (_showDeviations && _selectedDeviations.isNotEmpty && _myTrackPoints.isNotEmpty)
+                      if (_showDeviations &&
+                          _selectedDeviations.isNotEmpty &&
+                          _myTrackPoints.isNotEmpty)
                         for (final dev in _selectedDeviations)
                           if (() {
-                            final start = dev.startIndex.clamp(0, _myTrackPoints.length - 1);
-                            final end = (dev.endIndex + 1).clamp(0, _myTrackPoints.length);
+                            final start = dev.startIndex.clamp(
+                                0, _myTrackPoints.length - 1);
+                            final end = (dev.endIndex + 1).clamp(
+                                0, _myTrackPoints.length);
                             return end - start > 1;
                           }())
                             PolylineLayer(
@@ -1659,29 +2363,40 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                 Polyline(
                                   points: _myTrackPoints
                                       .sublist(
-                                        dev.startIndex.clamp(0, _myTrackPoints.length - 1),
-                                        (dev.endIndex + 1).clamp(0, _myTrackPoints.length),
+                                        dev.startIndex.clamp(0,
+                                            _myTrackPoints.length - 1),
+                                        (dev.endIndex + 1).clamp(0,
+                                            _myTrackPoints.length),
                                       )
-                                      .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
+                                      .map((tp) => LatLng(
+                                          tp.coordinate.lat,
+                                          tp.coordinate.lng))
                                       .toList(),
-                                  color: _analysisService.getDeviationColor(dev.maxDeviation)
+                                  color: _analysisService
+                                      .getDeviationColor(
+                                          dev.maxDeviation)
                                       .withValues(alpha: 0.8),
                                   strokeWidth: 6.0,
                                 ),
                               ],
                             ),
                       // Checkpoints
-                      if (_showNZ) ..._buildCheckpointMarkers(_myCheckpoints),
+                      if (_showNZ)
+                        ..._buildCheckpointMarkers(
+                            _myCheckpoints),
                       // Safety
                       ..._buildSafetyLayers(),
                       // Punches
-                      if (_showPunches && _myPunches.isNotEmpty)
+                      if (_showPunches &&
+                          _myPunches.isNotEmpty)
                         MarkerLayer(
                           markers: _myPunches
-                              .map((p) => _buildPunchMarker(p))
+                              .map((p) =>
+                                  _buildPunchMarker(p))
                               .toList(),
                         ),
-                      ...MapControls.buildMeasureLayers(_measurePoints),
+                      ...MapControls.buildMeasureLayers(
+                          _measurePoints),
                     ],
                   ),
                 ),
@@ -1696,7 +2411,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               child: RoutePlaybackWidget(
                 trackPoints: _myTrackPoints,
                 onPositionChanged: (pos) {
-                  _mapController.move(pos, _mapController.camera.zoom);
+                  _mapController.move(
+                      pos, _mapController.camera.zoom);
                 },
               ),
             ),
@@ -1712,31 +2428,47 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   children: [
                     if (_myTrackPoints.length >= 2)
                       TextButton.icon(
-                        onPressed: () => setState(() => _showPlayback = !_showPlayback),
+                        onPressed: () => setState(() =>
+                            _showPlayback = !_showPlayback),
                         icon: Icon(
-                          _showPlayback ? Icons.stop : Icons.play_arrow,
+                          _showPlayback
+                              ? Icons.stop
+                              : Icons.play_arrow,
                           size: 16,
                         ),
-                        label: Text(_showPlayback ? 'סגור נגן' : 'נגן מסלול',
-                            style: const TextStyle(fontSize: 11)),
+                        label: Text(
+                            _showPlayback
+                                ? 'סגור נגן'
+                                : 'נגן מסלול',
+                            style:
+                                const TextStyle(fontSize: 11)),
                       ),
                     if (_selectedDeviations.isNotEmpty)
                       TextButton.icon(
-                        onPressed: () => setState(() => _showDeviations = !_showDeviations),
+                        onPressed: () => setState(() =>
+                            _showDeviations =
+                                !_showDeviations),
                         icon: Icon(
-                          _showDeviations ? Icons.visibility : Icons.visibility_off,
+                          _showDeviations
+                              ? Icons.visibility
+                              : Icons.visibility_off,
                           size: 16,
                           color: Colors.red,
                         ),
-                        label: Text(_showDeviations ? 'הסתר סטיות' : 'הצג סטיות',
-                            style: const TextStyle(fontSize: 11)),
+                        label: Text(
+                            _showDeviations
+                                ? 'הסתר סטיות'
+                                : 'הצג סטיות',
+                            style:
+                                const TextStyle(fontSize: 11)),
                       ),
                   ],
                 ),
                 // Speed profile chart
                 if (_selectedSpeedProfile.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
                     child: SpeedProfileChart(
                       segments: _selectedSpeedProfile,
                       thresholdSpeedKmh: 8.0,
@@ -1745,22 +2477,31 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 // Analysis summary
                 if (_selectedNavStats != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    child: _buildAnalysisSummaryCard(_selectedNavStats!),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    child: _buildAnalysisSummaryCard(
+                        _selectedNavStats!),
                   ),
                 // Legend
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceAround,
                     children: [
-                      _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
-                      _legendItem(_kActualRouteColor, 'מסלול בפועל'),
+                      _legendItem(
+                          _kPlannedRouteColor, 'ציר מתוכנן'),
+                      _legendItem(
+                          _kActualRouteColor, 'מסלול בפועל'),
                       _legendItem(_kStartColor, 'התחלה (H)'),
                       _legendItem(_kEndColor, 'סיום (S)'),
                     ],
                   ),
                 ),
+                // Score details (expandable, only after publication)
+                if (_myScore != null && _myScore!.isPublished)
+                  _buildNavigatorScoreDetails(),
               ],
             ),
           ),
@@ -1769,9 +2510,41 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     );
   }
 
+  // ===========================================================================
+  // Navigator Score Section
+  // ===========================================================================
+
+  Widget _buildNavigatorScoreSection() {
+    if (_myScore != null && _myScore!.isPublished) {
+      return _buildNavigatorScoreHeader();
+    }
+    // Scores not published yet
+    return Card(
+      margin: const EdgeInsets.all(12),
+      color: Colors.amber[50],
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.hourglass_empty,
+                color: Colors.amber[900]),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'ממתין לפרסום ציונים מהמפקד',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNavigatorScoreHeader() {
     final score = _myScore!;
-    final scoreColor = ScoringService.getScoreColor(score.totalScore);
+    final scoreColor =
+        ScoringService.getScoreColor(score.totalScore);
 
     return Card(
       margin: const EdgeInsets.all(12),
@@ -1802,7 +2575,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 children: [
                   const Text('הציון שלך',
                       style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
                     score.totalScore >= 80
@@ -1810,13 +2584,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                         : score.totalScore >= 60
                             ? 'ביצוע טוב'
                             : 'נדרש שיפור',
-                    style: TextStyle(color: scoreColor, fontSize: 13),
+                    style: TextStyle(
+                        color: scoreColor, fontSize: 13),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'נ.צ. שנדקרו: ${_myPunches.length}/${_myCheckpoints.length}',
-                    style:
-                        const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.grey),
                   ),
                 ],
               ),
@@ -1827,25 +2602,136 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     );
   }
 
+  Widget _buildNavigatorScoreDetails() {
+    final score = _myScore;
+    if (score == null || !score.isPublished) {
+      return const SizedBox.shrink();
+    }
+
+    if (score.checkpointScores.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: 16, vertical: 8),
+      child: Theme(
+        data: Theme.of(context)
+            .copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text('פירוט ציון',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 14)),
+          children: [
+            ...score.checkpointScores.entries.map((cpEntry) {
+              final cpScore = cpEntry.value;
+              final matchCp = _navCheckpoints.where(
+                (c) =>
+                    c.sourceId == cpScore.checkpointId ||
+                    c.id == cpScore.checkpointId,
+              );
+              final cpName = matchCp.isNotEmpty
+                  ? matchCp.first.name
+                  : cpScore.checkpointId;
+              final cpScoreColor =
+                  ScoringService.getScoreColor(cpScore.score);
+
+              return Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Icon(
+                      cpScore.approved
+                          ? Icons.check_circle
+                          : Icons.cancel,
+                      color: cpScore.approved
+                          ? Colors.green
+                          : Colors.red,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: Text(cpName,
+                            style: const TextStyle(
+                                fontSize: 12))),
+                    Text(
+                        '${cpScore.distanceMeters.toStringAsFixed(0)}מ\'',
+                        style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color:
+                            cpScoreColor.withOpacity(0.2),
+                        borderRadius:
+                            BorderRadius.circular(8),
+                      ),
+                      child: Text('${cpScore.score}',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: cpScoreColor,
+                              fontSize: 12)),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            if (score.notes != null &&
+                score.notes!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.note,
+                      size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      score.notes!,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                          color: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNavigatorStatsRow() {
     final actualCoords = _myActualRoute
-        .map((ll) => Coordinate(lat: ll.latitude, lng: ll.longitude, utm: ''))
+        .map((ll) => Coordinate(
+            lat: ll.latitude, lng: ll.longitude, utm: ''))
         .toList();
-    final actualDistKm = GeometryUtils.calculatePathLengthKm(actualCoords);
+    final actualDistKm =
+        GeometryUtils.calculatePathLengthKm(actualCoords);
 
-    final user = widget.navigation.routes.values.isNotEmpty
-        ? widget.navigation.routes.values.first
-        : null;
-    final plannedDistKm = user?.routeLengthKm ?? 0.0;
+    final uid = _myUserId;
+    final route = uid != null
+        ? widget.navigation.routes[uid]
+        : (widget.navigation.routes.values.isNotEmpty
+            ? widget.navigation.routes.values.first
+            : null);
+    final plannedDistKm = route?.routeLengthKm ?? 0.0;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: 12, vertical: 8),
       color: Colors.grey[50],
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _statChip(
-              Icons.route, '${plannedDistKm.toStringAsFixed(1)} ק"מ', 'מתוכנן'),
+          _statChip(Icons.route,
+              '${plannedDistKm.toStringAsFixed(1)} ק"מ', 'מתוכנן'),
           _statChip(Icons.timeline,
               '${actualDistKm.toStringAsFixed(1)} ק"מ', 'בפועל'),
           _statChip(Icons.flag,
@@ -1855,6 +2741,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     );
   }
 
+  // ===========================================================================
+  // Small Helpers
+  // ===========================================================================
+
   Widget _statChip(IconData icon, String value, String label) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1862,9 +2752,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         Icon(icon, size: 20, color: Colors.grey[600]),
         const SizedBox(height: 2),
         Text(value,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 13)),
         Text(label,
-            style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+            style:
+                TextStyle(fontSize: 10, color: Colors.grey[500])),
       ],
     );
   }
@@ -1874,8 +2766,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 14, height: 14,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+              color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 11)),

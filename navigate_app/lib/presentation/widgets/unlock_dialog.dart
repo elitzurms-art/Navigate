@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import '../../services/device_security_service.dart';
 
-/// דיאלוג לביטול נעילה עם קוד
+/// דיאלוג לביטול נעילה עם קוד — מזהיר שהניווט ייפסל
 class UnlockDialog extends StatefulWidget {
   final String correctCode;
   final SecurityLevel securityLevel;
+  final VoidCallback? onDisqualificationConfirmed;
 
   const UnlockDialog({
     super.key,
     required this.correctCode,
     required this.securityLevel,
+    this.onDisqualificationConfirmed,
   });
 
   @override
@@ -35,10 +37,49 @@ class _UnlockDialogState extends State<UnlockDialog> {
       return;
     }
 
+    // דיאלוג אישור כפול — אזהרה על פסילה
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red[700]),
+            const SizedBox(width: 12),
+            const Text('אזהרה — פסילת ניווט'),
+          ],
+        ),
+        content: const Text(
+          'ביטול הנעילה יפסול את הניווט שלך.\n'
+          'הציון שלך יהיה 0 והמפקד יקבל התראה.\n\n'
+          'האם אתה בטוח?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('חזרה'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('אני מבין, בטל נעילה'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
     setState(() {
       _isUnlocking = true;
       _errorMessage = null;
     });
+
+    // פסילה לפני ביטול נעילה
+    widget.onDisqualificationConfirmed?.call();
 
     bool success = false;
 
@@ -79,11 +120,11 @@ class _UnlockDialogState extends State<UnlockDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.lock_open, color: Colors.orange),
-          SizedBox(width: 12),
-          Text('ביטול נעילה'),
+          Icon(Icons.lock_open, color: Colors.red[700]),
+          const SizedBox(width: 12),
+          const Text('ביטול נעילה'),
         ],
       ),
       content: Column(
@@ -116,13 +157,13 @@ class _UnlockDialogState extends State<UnlockDialog> {
 
           const SizedBox(height: 16),
 
-          // הערת אזהרה
+          // הודעת אזהרה
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.red[50],
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.red[200]!),
+              border: Border.all(color: Colors.red[300]!),
             ),
             child: Row(
               children: [
@@ -130,8 +171,12 @@ class _UnlockDialogState extends State<UnlockDialog> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'ביטול נעילה יירשם כחריגת אבטחה',
-                    style: TextStyle(fontSize: 12, color: Colors.red[900]),
+                    'ביטול נעילה יפסול את הניווט שלך — ציון 0',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.red[900],
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -158,7 +203,7 @@ class _UnlockDialogState extends State<UnlockDialog> {
               : const Icon(Icons.lock_open),
           label: Text(_isUnlocking ? 'מבטל נעילה...' : 'בטל נעילה'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.orange,
+            backgroundColor: Colors.red,
             foregroundColor: Colors.white,
           ),
         ),
