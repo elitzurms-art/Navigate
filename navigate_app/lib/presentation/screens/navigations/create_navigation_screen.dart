@@ -78,20 +78,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   String _distributionMethod = 'automatic'; // automatic, manual_app, manual_full
   bool _distributeNow = false;
 
-  // הגדרות למידה
-  bool _enableLearningWithPhones = true;
-  bool _showAllCheckpoints = false;
-  bool _showNavigationDetails = true;
-  bool _showRoutes = true;
-  bool _allowRouteEditing = true;
-  bool _allowRouteNarration = true;
-  bool _autoLearningTimes = false;
-
   // הגדרות תחקיר
   bool _showScoresAfterApproval = true;
-  DateTime _learningDate = DateTime.now();
-  TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
-  TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
 
   // הגדרות ניווט
   int _gpsUpdateInterval = 30; // שניות
@@ -99,10 +87,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   String _verificationType = 'approved_failed'; // approved_failed, score_by_distance
   int _approvalDistance = 20;
   List<DistanceScoreRange> _scoreRanges = [
-    const DistanceScoreRange(maxDistance: 10, scorePercentage: 100),
-    const DistanceScoreRange(maxDistance: 20, scorePercentage: 80),
-    const DistanceScoreRange(maxDistance: 30, scorePercentage: 60),
+    const DistanceScoreRange(maxDistance: 50, scorePercentage: 100),
   ];
+  bool _addRangeToggle = false;
   bool _allowOpenMap = false;
   bool _showSelfLocation = false;
   bool _showRouteOnMap = false;
@@ -347,28 +334,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       _hoursAfterMission = nav.safetyTime!.hoursAfterMission ?? 1;
     }
 
-    // הגדרות למידה
-    _enableLearningWithPhones = nav.learningSettings.enabledWithPhones;
-    _showAllCheckpoints = nav.learningSettings.showAllCheckpoints;
-    _showNavigationDetails = nav.learningSettings.showNavigationDetails;
-    _showRoutes = nav.learningSettings.showRoutes;
-    _allowRouteEditing = nav.learningSettings.allowRouteEditing;
-    _allowRouteNarration = nav.learningSettings.allowRouteNarration;
-    _autoLearningTimes = nav.learningSettings.autoLearningTimes;
-
     // הגדרות תחקיר
     _showScoresAfterApproval = nav.reviewSettings.showScoresAfterApproval;
-    if (nav.learningSettings.learningDate != null) {
-      _learningDate = nav.learningSettings.learningDate!;
-    }
-    if (nav.learningSettings.learningStartTime != null) {
-      final parts = nav.learningSettings.learningStartTime!.split(':');
-      _learningStartTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-    }
-    if (nav.learningSettings.learningEndTime != null) {
-      final parts = nav.learningSettings.learningEndTime!.split(':');
-      _learningEndTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-    }
 
     // הגדרות GPS
     _gpsUpdateInterval = nav.gpsUpdateIntervalSeconds;
@@ -377,7 +344,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _autoVerification = nav.verificationSettings.autoVerification;
     _verificationType = nav.verificationSettings.verificationType ?? 'approved_failed';
     _approvalDistance = nav.verificationSettings.approvalDistance ?? 50;
-    _scoreRanges = nav.verificationSettings.scoreRanges ?? [];
+    final loadedRanges = nav.verificationSettings.scoreRanges ?? [];
+    _scoreRanges = loadedRanges.isNotEmpty
+        ? loadedRanges
+        : [const DistanceScoreRange(maxDistance: 50, scorePercentage: 100)];
 
     // הגדרות מפה
     _allowOpenMap = nav.allowOpenMap;
@@ -567,11 +537,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   if (!widget.alertsOnlyMode) ...[
                     _buildSectionTitle('הגדרות שטח ומשתתפים'),
                     _buildFieldAndParticipantsSettings(),
-                    const SizedBox(height: 24),
-
-                    // הגדרות למידה
-                    _buildSectionTitle('הגדרות למידה'),
-                    _buildLearningSettings(),
                     const SizedBox(height: 24),
                   ],
 
@@ -912,124 +877,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     );
   }
 
-  Widget _buildLearningSettings() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SwitchListTile(
-              title: const Text('אפשר למידה עם פלאפונים'),
-              value: _enableLearningWithPhones,
-              onChanged: (value) {
-                setState(() => _enableLearningWithPhones = value);
-              },
-            ),
-
-            if (_enableLearningWithPhones) ...[
-              SwitchListTile(
-                title: const Text('אפשר לראות את כל הנקודות של כל המנווטים'),
-                value: _showAllCheckpoints,
-                onChanged: (value) {
-                  setState(() => _showAllCheckpoints = value);
-                },
-              ),
-              SwitchListTile(
-                title: const Text('הצגת פרטי ניווט'),
-                value: _showNavigationDetails,
-                onChanged: (value) {
-                  setState(() => _showNavigationDetails = value);
-                },
-              ),
-              SwitchListTile(
-                title: const Text('הצגת צירים'),
-                value: _showRoutes,
-                onChanged: (value) {
-                  setState(() => _showRoutes = value);
-                },
-              ),
-              SwitchListTile(
-                title: const Text('אפשר עריכת צירים'),
-                value: _allowRouteEditing,
-                onChanged: (value) {
-                  setState(() => _allowRouteEditing = value);
-                },
-              ),
-              SwitchListTile(
-                title: const Text('אפשר סיפור דרך'),
-                value: _allowRouteNarration,
-                onChanged: (value) {
-                  setState(() => _allowRouteNarration = value);
-                },
-              ),
-            ],
-
-            const Divider(),
-
-            SwitchListTile(
-              title: const Text('הגדר זמני לימוד אוטומטיים'),
-              value: _autoLearningTimes,
-              onChanged: (value) {
-                setState(() => _autoLearningTimes = value);
-              },
-            ),
-
-            if (_autoLearningTimes) ...[
-              const SizedBox(height: 16),
-              ListTile(
-                title: const Text('תאריך לימוד'),
-                subtitle: Text(
-                  '${_learningDate.day}/${_learningDate.month}/${_learningDate.year}',
-                ),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final date = await showDatePicker(
-                    context: context,
-                    initialDate: _learningDate,
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(const Duration(days: 60)),
-                  );
-                  if (date != null) {
-                    setState(() => _learningDate = date);
-                  }
-                },
-              ),
-              ListTile(
-                title: const Text('שעת התחלה'),
-                subtitle: Text(_learningStartTime.format(context)),
-                trailing: const Icon(Icons.access_time),
-                onTap: () async {
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: _learningStartTime,
-                  );
-                  if (time != null) {
-                    setState(() => _learningStartTime = time);
-                  }
-                },
-              ),
-              ListTile(
-                title: const Text('שעת סיום'),
-                subtitle: Text(_learningEndTime.format(context)),
-                trailing: const Icon(Icons.access_time),
-                onTap: () async {
-                  final time = await showTimePicker(
-                    context: context,
-                    initialTime: _learningEndTime,
-                  );
-                  if (time != null) {
-                    setState(() => _learningEndTime = time);
-                  }
-                },
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildReviewSettings() {
     return Card(
       child: Padding(
@@ -1105,58 +952,150 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               ],
 
               if (_verificationType == 'score_by_distance') ...[
-                const Padding(
-                  padding: EdgeInsets.only(right: 32, top: 8),
-                  child: Text('טווחי מרחק וציון:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Padding(
+                  padding: const EdgeInsets.only(right: 32, top: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('טווחי מרחק וציון:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      // Header row
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                        child: const Row(
+                          children: [
+                            Expanded(flex: 2, child: Text('טווח (מ\')', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                            Expanded(flex: 3, child: Text('עד טווח (מ\')', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                            Expanded(flex: 3, child: Text('אחוז ציון (%)', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                            SizedBox(width: 40),
+                          ],
+                        ),
+                      ),
+                      // Data rows
+                      ...List.generate(_scoreRanges.length, (index) {
+                        final fromDistance = index == 0 ? 0 : _scoreRanges[index - 1].maxDistance;
+                        return Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(color: Colors.grey.shade300),
+                            ),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                          child: Row(
+                            children: [
+                              // From distance (read-only)
+                              Expanded(
+                                flex: 2,
+                                child: Text(
+                                  '$fromDistance',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 15, color: Colors.grey.shade700),
+                                ),
+                              ),
+                              // Max distance (editable)
+                              Expanded(
+                                flex: 3,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: TextFormField(
+                                    key: ValueKey('maxDist_${index}_${_scoreRanges.length}'),
+                                    initialValue: _scoreRanges[index].maxDistance.toString(),
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                      isDense: true,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    keyboardType: TextInputType.number,
+                                    onChanged: (value) {
+                                      final distance = int.tryParse(value);
+                                      if (distance != null) {
+                                        setState(() {
+                                          _scoreRanges[index] = DistanceScoreRange(
+                                            maxDistance: distance,
+                                            scorePercentage: _scoreRanges[index].scorePercentage,
+                                          );
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                              // Score percentage (editable)
+                              Expanded(
+                                flex: 3,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: TextFormField(
+                                    key: ValueKey('scorePct_${index}_${_scoreRanges.length}'),
+                                    initialValue: _scoreRanges[index].scorePercentage.toString(),
+                                    decoration: const InputDecoration(
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                      isDense: true,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    keyboardType: TextInputType.number,
+                                    onChanged: (value) {
+                                      final percentage = int.tryParse(value);
+                                      if (percentage != null) {
+                                        setState(() {
+                                          _scoreRanges[index] = DistanceScoreRange(
+                                            maxDistance: _scoreRanges[index].maxDistance,
+                                            scorePercentage: percentage,
+                                          );
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                              // Delete button (not for first row)
+                              SizedBox(
+                                width: 40,
+                                child: index > 0
+                                    ? IconButton(
+                                        icon: const Icon(Icons.close, size: 20),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        color: Colors.red,
+                                        onPressed: () {
+                                          setState(() {
+                                            _scoreRanges.removeAt(index);
+                                          });
+                                        },
+                                      )
+                                    : null,
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                      // Add range toggle
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('טווח נוסף'),
+                        value: _addRangeToggle,
+                        onChanged: (value) {
+                          if (value) {
+                            setState(() {
+                              final lastMax = _scoreRanges.isNotEmpty ? _scoreRanges.last.maxDistance : 0;
+                              _scoreRanges.add(DistanceScoreRange(
+                                maxDistance: lastMax + 20,
+                                scorePercentage: 0,
+                              ));
+                              _addRangeToggle = false;
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-                ...List.generate(_scoreRanges.length, (index) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 32, top: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: _scoreRanges[index].maxDistance.toString(),
-                            decoration: InputDecoration(
-                              labelText: 'טווח ${index + 1} - מרחק מקס (מ\')',
-                              border: const OutlineInputBorder(),
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (value) {
-                              final distance = int.tryParse(value) ?? _scoreRanges[index].maxDistance;
-                              setState(() {
-                                _scoreRanges[index] = DistanceScoreRange(
-                                  maxDistance: distance,
-                                  scorePercentage: _scoreRanges[index].scorePercentage,
-                                );
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: _scoreRanges[index].scorePercentage.toString(),
-                            decoration: InputDecoration(
-                              labelText: 'ציון (%)',
-                              border: const OutlineInputBorder(),
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (value) {
-                              final percentage = int.tryParse(value) ?? _scoreRanges[index].scorePercentage;
-                              setState(() {
-                                _scoreRanges[index] = DistanceScoreRange(
-                                  maxDistance: _scoreRanges[index].maxDistance,
-                                  scorePercentage: percentage,
-                                );
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
               ],
             ],
 
@@ -1527,6 +1466,33 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Validate score ranges
+    if (_autoVerification && _verificationType == 'score_by_distance') {
+      for (int i = 0; i < _scoreRanges.length; i++) {
+        // Validate percentage 0-100
+        if (_scoreRanges[i].scorePercentage < 0 || _scoreRanges[i].scorePercentage > 100) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('שורה ${i + 1}: אחוז ציון חייב להיות בין 0 ל-100'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        // Validate that maxDistance > fromDistance
+        final from = i == 0 ? 0 : _scoreRanges[i - 1].maxDistance;
+        if (_scoreRanges[i].maxDistance <= from) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('שורה ${i + 1}: "עד טווח" חייב להיות גדול מ-$from'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -1537,22 +1503,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         hoursAfterMission: _safetyTimeType == 'after_last_mission' ? _hoursAfterMission : null,
       );
 
-      final learningSettings = LearningSettings(
-        enabledWithPhones: _enableLearningWithPhones,
-        showAllCheckpoints: _showAllCheckpoints,
-        showNavigationDetails: _showNavigationDetails,
-        showRoutes: _showRoutes,
-        allowRouteEditing: _allowRouteEditing,
-        allowRouteNarration: _allowRouteNarration,
-        autoLearningTimes: _autoLearningTimes,
-        learningDate: _autoLearningTimes ? _learningDate : null,
-        learningStartTime: _autoLearningTimes
-            ? '${_learningStartTime.hour}:${_learningStartTime.minute}'
-            : null,
-        learningEndTime: _autoLearningTimes
-            ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
-            : null,
-      );
+      final learningSettings = widget.navigation?.learningSettings ?? const LearningSettings();
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,

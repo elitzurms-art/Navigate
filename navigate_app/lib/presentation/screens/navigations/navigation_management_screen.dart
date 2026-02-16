@@ -21,6 +21,10 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
+import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../services/auth_service.dart';
+import '../../../domain/entities/user.dart' as app_user;
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -100,6 +104,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   String? _oneTimeCenteredNavigatorId;
   StreamSubscription? _oneTimeGestureSubscription;
 
+  // שמות משתמשים (מנווטים + מפקדים)
+  Map<String, String> _userNames = {};
+  app_user.User? _currentUser;
+
+  // מיקום עצמי של המפקד
+  LatLng? _selfPosition;
+  Timer? _selfGpsTimer;
+
+  // מפקדים אחרים
+  Map<String, _CommanderLocation> _otherCommanders = {};
+  Timer? _commanderPublishTimer;
+  StreamSubscription? _commanderStatusListener;
+
   @override
   void initState() {
     super.initState();
@@ -135,6 +152,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _centeringTimer?.cancel();
     _mapGestureSubscription?.cancel();
     _oneTimeGestureSubscription?.cancel();
+    _selfGpsTimer?.cancel();
+    _commanderPublishTimer?.cancel();
+    _commanderStatusListener?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -216,6 +236,59 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     // טעינת סטטוסים מה-DB
     await _refreshNavigatorStatuses();
+
+    // טעינת משתמש נוכחי (מפקד)
+    _currentUser = await AuthService().getCurrentUser();
+
+    // טעינת שמות מנווטים
+    final userRepo = UserRepository();
+    for (final navigatorId in widget.navigation.routes.keys) {
+      final user = await userRepo.getUser(navigatorId);
+      if (user != null) {
+        _userNames[navigatorId] = user.fullName.isNotEmpty ? user.fullName : navigatorId;
+      }
+    }
+
+    // טעינת מפקדים מהעץ
+    final treeRepo = NavigationTreeRepository();
+    final tree = await treeRepo.getById(widget.navigation.treeId);
+    if (tree != null) {
+      for (final sf in tree.subFrameworks) {
+        if (sf.name.contains('מפקדים')) {
+          for (final uid in sf.userIds) {
+            if (uid != _currentUser?.uid) {
+              final user = await userRepo.getUser(uid);
+              _userNames[uid] = user?.fullName ?? uid;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    // מעקב GPS עצמי (כל 10 שניות)
+    final initialPos = await GpsService().getCurrentPosition();
+    if (initialPos != null && mounted) setState(() => _selfPosition = initialPos);
+    _selfGpsTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      final pos = await GpsService().getCurrentPosition();
+      if (pos != null && mounted) setState(() => _selfPosition = pos);
+    });
+
+    // פרסום מיקום עצמי (כל 15 שניות)
+    _commanderPublishTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _publishCommanderLocation(),
+    );
+
+    // האזנה למיקומי מפקדים אחרים
+    _commanderStatusListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('commander_status')
+        .snapshots()
+        .listen((snapshot) => _updateCommanderLocations(snapshot));
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _refreshNavigatorStatuses() async {
@@ -331,6 +404,52 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     } catch (e) {
       // שגיאה ברענון — ממשיכים עם הנתונים הקיימים
     }
+  }
+
+  // ===========================================================================
+  // מפקדים — פרסום מיקום עצמי + האזנה למפקדים אחרים
+  // ===========================================================================
+
+  Future<void> _publishCommanderLocation() async {
+    if (_selfPosition == null || _currentUser == null) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('commander_status')
+          .doc(_currentUser!.uid)
+          .set({
+        'userId': _currentUser!.uid,
+        'name': _currentUser!.fullName,
+        'latitude': _selfPosition!.latitude,
+        'longitude': _selfPosition!.longitude,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  void _updateCommanderLocations(QuerySnapshot snapshot) {
+    if (!mounted) return;
+    final updated = <String, _CommanderLocation>{};
+    for (final doc in snapshot.docs) {
+      final data = doc.data() as Map<String, dynamic>?;
+      if (data == null) continue;
+      final uid = data['userId'] as String? ?? doc.id;
+      if (uid == _currentUser?.uid) continue;
+      final lat = (data['latitude'] as num?)?.toDouble();
+      final lng = (data['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) continue;
+      DateTime? lastUpdate;
+      final ts = data['updatedAt'];
+      if (ts is Timestamp) lastUpdate = ts.toDate();
+      updated[uid] = _CommanderLocation(
+        userId: uid,
+        name: data['name'] as String? ?? _userNames[uid] ?? uid,
+        position: LatLng(lat, lng),
+        lastUpdate: lastUpdate ?? DateTime.now(),
+      );
+    }
+    setState(() => _otherCommanders = updated);
   }
 
   // ===========================================================================
@@ -1349,6 +1468,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               // מיקומים נוכחיים של מנווטים
               ..._buildNavigatorMarkers(),
 
+              // מיקום עצמי (מפקד)
+              ..._buildSelfMarker(),
+
+              // מפקדים אחרים
+              ..._buildCommanderMarkers(),
+
               // התראות על המפה
               if (_showAlerts) ..._buildAlertMarkers(),
               ...MapControls.buildMeasureLayers(_measurePoints),
@@ -1691,7 +1816,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
 
-      final punchMarkers = data.punches.where((p) => !p.isDeleted).map((punch) {
+      final activePunches = data.punches.where((p) => !p.isDeleted).toList();
+      final navName = _userNames[navigatorId] ?? navigatorId;
+      final punchMarkers = <Marker>[];
+      for (int i = 0; i < activePunches.length; i++) {
+        final punch = activePunches[i];
         Color color;
         if (punch.isApproved) {
           color = Colors.green;
@@ -1701,9 +1830,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           color = Colors.orange;
         }
 
-        return Marker(
+        punchMarkers.add(Marker(
           point: LatLng(punch.punchLocation.lat, punch.punchLocation.lng),
-          width: 80,
+          width: 90,
           height: 45,
           child: Opacity(
             opacity: _punchesOpacity,
@@ -1718,15 +1847,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Text(
-                    punch.id,
-                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                    '${i + 1}-$navName',
+                    style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
           ),
-        );
-      }).toList();
+        ));
+      }
 
       if (punchMarkers.isNotEmpty) {
         markers.add(MarkerLayer(markers: punchMarkers));
@@ -1734,6 +1864,86 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
 
     return markers;
+  }
+
+  // ===========================================================================
+  // סמני מפקדים על המפה
+  // ===========================================================================
+
+  /// סמן מיקום עצמי של המפקד — עיגול שקוף עם גבול כחול + שם
+  List<Widget> _buildSelfMarker() {
+    if (_selfPosition == null || _currentUser == null) return [];
+    return [
+      MarkerLayer(markers: [
+        Marker(
+          point: _selfPosition!,
+          width: 70,
+          height: 55,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  border: Border.all(color: Colors.blue, width: 2.5),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  _currentUser!.fullName,
+                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.blue),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ]),
+    ];
+  }
+
+  /// סמני מפקדים אחרים — ריבוע שקוף עם גבול כתום + שם
+  List<Widget> _buildCommanderMarkers() {
+    final markers = _otherCommanders.values.map((cmd) => Marker(
+      point: cmd.position,
+      width: 70,
+      height: 55,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(4),
+              color: Colors.orange.withValues(alpha: 0.15),
+              border: Border.all(color: Colors.orange, width: 2.5),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              cmd.name,
+              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.orange),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    )).toList();
+    return markers.isNotEmpty ? [MarkerLayer(markers: markers)] : [];
   }
 
   List<Widget> _buildNavigatorMarkers() {
@@ -1777,24 +1987,26 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       Widget markerChild = Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.person_pin_circle,
-            color: markerColor,
-            size: 38,
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(4),
+              color: markerColor.withValues(alpha: 0.15),
+              border: Border.all(color: markerColor, width: 2.5),
+            ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                color: markerColor,
-                width: 2,
-              ),
+              border: Border.all(color: markerColor, width: 1.5),
             ),
             child: Text(
-              navigatorId,
+              _userNames[navigatorId] ?? navigatorId,
               style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -2716,4 +2928,19 @@ class _NavigatorPairDistance {
     }
     return '${distanceMeters.toStringAsFixed(0)} מ\'';
   }
+}
+
+/// מיקום מפקד אחר על המפה
+class _CommanderLocation {
+  final String userId;
+  final String name;
+  LatLng position;
+  DateTime lastUpdate;
+
+  _CommanderLocation({
+    required this.userId,
+    required this.name,
+    required this.position,
+    required this.lastUpdate,
+  });
 }

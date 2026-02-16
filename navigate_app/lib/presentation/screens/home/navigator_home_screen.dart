@@ -6,7 +6,11 @@ import '../../../services/scoring_service.dart';
 import '../../../domain/entities/user.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/navigation_score.dart';
+import '../../../domain/entities/coordinate.dart';
+import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/navigation_track_repository.dart';
+import '../../../data/repositories/navigator_alert_repository.dart';
 import 'navigator_state.dart';
 import 'navigator_views/learning_view.dart';
 import 'navigator_views/system_check_view.dart';
@@ -201,10 +205,90 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   /// התנתקות
   Future<void> _logout() async {
+    // בדיקה אם יש ניווט פעיל — אזהרה + סיום מיידי
+    final isActiveNav = _state == NavigatorScreenState.active ||
+        _state == NavigatorScreenState.waiting;
+
+    if (isActiveNav && _currentNavigation != null && _currentUser != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.red[700], size: 28),
+              const SizedBox(width: 8),
+              const Text('אזהרה'),
+            ],
+          ),
+          content: const Text(
+            'התנתקות בזמן ניווט תגרור את סיום הניווט ודיווח למפקדים.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('התנתק', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      // סיום מיידי של הניווט + דיווח למפקדים
+      await _forceEndNavigationAndAlert();
+    }
+
     await _sessionService.clearSession();
     await _authService.signOut();
     if (mounted) {
       Navigator.of(context).pushReplacementNamed('/');
+    }
+  }
+
+  /// סיום מיידי של ניווט פעיל + שליחת התראה למפקדים
+  Future<void> _forceEndNavigationAndAlert() async {
+    final nav = _currentNavigation;
+    final user = _currentUser;
+    if (nav == null || user == null) return;
+
+    final trackRepo = NavigationTrackRepository();
+    final alertRepo = NavigatorAlertRepository();
+
+    try {
+      // מציאת ה-track הפעיל
+      final track = await trackRepo.getByNavigatorAndNavigation(
+        user.uid,
+        nav.id,
+      );
+
+      if (track != null && track.isActive) {
+        // סיום הניווט
+        await trackRepo.endNavigation(track.id);
+
+        // סנכרון ל-Firestore
+        final updatedTrack = await trackRepo.getById(track.id);
+        await trackRepo.syncTrackToFirestore(updatedTrack);
+      }
+
+      // שליחת התראת אבטחה למפקד
+      final alert = NavigatorAlert(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        navigationId: nav.id,
+        navigatorId: user.uid,
+        type: AlertType.securityBreach,
+        location: const Coordinate(lat: 0, lng: 0, utm: ''),
+        timestamp: DateTime.now(),
+        navigatorName: user.fullName,
+      );
+      await alertRepo.create(alert);
+    } catch (e) {
+      print('DEBUG NavigatorHome: force end error: $e');
     }
   }
 

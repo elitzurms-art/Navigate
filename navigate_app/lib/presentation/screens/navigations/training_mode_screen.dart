@@ -17,6 +17,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../domain/entities/navigation_settings.dart';
 
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
@@ -63,6 +64,18 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   bool _showRoutes = true;
   double _routesOpacity = 1.0;
 
+  // הגדרות למידה
+  bool _enableLearningWithPhones = true;
+  bool _showAllCheckpoints = false;
+  bool _showNavigationDetails = true;
+  bool _showLearningRoutes = true;
+  bool _allowRouteEditing = true;
+  bool _allowRouteNarration = true;
+  bool _autoLearningTimes = false;
+  DateTime _learningDate = DateTime.now();
+  TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
+
   // התראות מנווטים (realtime)
   StreamSubscription<List<NavigatorAlert>>? _alertSubscription;
   List<NavigatorAlert> _activeAlerts = [];
@@ -78,9 +91,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _currentNavigation = widget.navigation;
     _learningStarted = widget.navigation.status == 'learning';
+    _initLearningSettings();
     _loadData();
     _reloadNavigationFromDb();
     _startAlertListener();
@@ -100,6 +114,38 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _navigationPollTimer?.cancel();
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _initLearningSettings() {
+    final ls = _currentNavigation.learningSettings;
+    _enableLearningWithPhones = ls.enabledWithPhones;
+    _showAllCheckpoints = ls.showAllCheckpoints;
+    _showNavigationDetails = ls.showNavigationDetails;
+    _showLearningRoutes = ls.showRoutes;
+    _allowRouteEditing = ls.allowRouteEditing;
+    _allowRouteNarration = ls.allowRouteNarration;
+    _autoLearningTimes = ls.autoLearningTimes;
+    if (ls.learningDate != null) {
+      _learningDate = ls.learningDate!;
+    }
+    if (ls.learningStartTime != null) {
+      final parts = ls.learningStartTime!.split(':');
+      if (parts.length == 2) {
+        _learningStartTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 8,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
+    if (ls.learningEndTime != null) {
+      final parts = ls.learningEndTime!.split(':');
+      if (parts.length == 2) {
+        _learningEndTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 17,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
   }
 
   Future<void> _loadData() async {
@@ -161,12 +207,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _navigationListener = _navRepo.watchNavigation(widget.navigation.id).listen(
       (nav) {
         if (!mounted || nav == null) return;
-        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס, הגדרות למידה)
         if (_currentNavigation.routes != nav.routes ||
-            _currentNavigation.status != nav.status) {
+            _currentNavigation.status != nav.status ||
+            _currentNavigation.learningSettings != nav.learningSettings) {
           setState(() {
             _currentNavigation = nav;
             _learningStarted = nav.status == 'learning';
+            _initLearningSettings();
           });
         }
       },
@@ -203,12 +251,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       data['id'] = snapshot.id;
       final nav = domain.Navigation.fromMap(data);
 
-      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס, הגדרות למידה)
       if (_currentNavigation.routes != nav.routes ||
-          _currentNavigation.status != nav.status) {
+          _currentNavigation.status != nav.status ||
+          _currentNavigation.learningSettings != nav.learningSettings) {
         setState(() {
           _currentNavigation = nav;
           _learningStarted = nav.status == 'learning';
+          _initLearningSettings();
         });
         // עדכון DB מקומי כדי לשמור על סנכרון Drift
         await _navRepo.updateLocalFromFirestore(nav);
@@ -280,7 +330,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               Navigator.pop(ctx);
               // מרכז מפה על מיקום המנווט
               if (alert.location.lat != 0 && alert.location.lng != 0) {
-                _tabController.animateTo(1); // עבור לטאב מפה
+                _tabController.animateTo(2); // עבור לטאב מפה
                 try {
                   _mapController.move(
                     LatLng(alert.location.lat, alert.location.lng),
@@ -564,6 +614,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             controller: _tabController,
             labelColor: Colors.white,
             tabs: const [
+              Tab(icon: Icon(Icons.settings), text: 'הגדרות'),
               Tab(icon: Icon(Icons.table_chart), text: 'טבלה'),
               Tab(icon: Icon(Icons.map), text: 'מפה'),
             ],
@@ -580,6 +631,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   child: TabBarView(
                     controller: _tabController,
                     children: [
+                      _buildSettingsView(),
                       _buildTableView(),
                       _buildMapView(),
                     ],
@@ -636,6 +688,242 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           : null,
       ),
     );
+  }
+
+  Widget _buildSettingsView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.school, color: Colors.blue[700]),
+                  const SizedBox(width: 8),
+                  Text(
+                    'הגדרות למידה',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              SwitchListTile(
+                title: const Text('אפשר למידה עם פלאפונים'),
+                value: _enableLearningWithPhones,
+                onChanged: (value) {
+                  setState(() => _enableLearningWithPhones = value);
+                },
+              ),
+
+              if (_enableLearningWithPhones) ...[
+                SwitchListTile(
+                  title: const Text('אפשר לראות את כל הנקודות של כל המנווטים'),
+                  value: _showAllCheckpoints,
+                  onChanged: (value) {
+                    setState(() => _showAllCheckpoints = value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('הצגת פרטי ניווט'),
+                  value: _showNavigationDetails,
+                  onChanged: (value) {
+                    setState(() => _showNavigationDetails = value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('הצגת צירים'),
+                  value: _showLearningRoutes,
+                  onChanged: (value) {
+                    setState(() => _showLearningRoutes = value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('אפשר עריכת צירים'),
+                  value: _allowRouteEditing,
+                  onChanged: (value) {
+                    setState(() => _allowRouteEditing = value);
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('אפשר סיפור דרך'),
+                  value: _allowRouteNarration,
+                  onChanged: (value) {
+                    setState(() => _allowRouteNarration = value);
+                  },
+                ),
+              ],
+
+              const Divider(),
+
+              SwitchListTile(
+                title: const Text('הגדר זמני לימוד אוטומטיים'),
+                value: _autoLearningTimes,
+                onChanged: (value) {
+                  setState(() => _autoLearningTimes = value);
+                },
+              ),
+
+              if (_autoLearningTimes) ...[
+                const SizedBox(height: 16),
+                ListTile(
+                  title: const Text('תאריך לימוד'),
+                  subtitle: Text(
+                    '${_learningDate.day}/${_learningDate.month}/${_learningDate.year}',
+                  ),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate: _learningDate,
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 60)),
+                    );
+                    if (date != null) {
+                      setState(() => _learningDate = date);
+                    }
+                  },
+                ),
+                ListTile(
+                  title: const Text('שעת התחלה'),
+                  subtitle: Text(_learningStartTime.format(context)),
+                  trailing: const Icon(Icons.access_time),
+                  onTap: () async {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _learningStartTime,
+                    );
+                    if (time != null) {
+                      setState(() => _learningStartTime = time);
+                    }
+                  },
+                ),
+                ListTile(
+                  title: const Text('שעת סיום'),
+                  subtitle: Text(_learningEndTime.format(context)),
+                  trailing: const Icon(Icons.access_time),
+                  onTap: () async {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: _learningEndTime,
+                    );
+                    if (time != null) {
+                      setState(() => _learningEndTime = time);
+                    }
+                  },
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // כפתור שמירה
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _saveLearningSettings,
+                  icon: const Icon(Icons.save),
+                  label: const Text(
+                    'שמור הגדרות',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveLearningSettings() async {
+    final newSettings = LearningSettings(
+      enabledWithPhones: _enableLearningWithPhones,
+      showAllCheckpoints: _showAllCheckpoints,
+      showNavigationDetails: _showNavigationDetails,
+      showRoutes: _showLearningRoutes,
+      allowRouteEditing: _allowRouteEditing,
+      allowRouteNarration: _allowRouteNarration,
+      autoLearningTimes: _autoLearningTimes,
+      learningDate: _autoLearningTimes ? _learningDate : null,
+      learningStartTime: _autoLearningTimes
+          ? '${_learningStartTime.hour}:${_learningStartTime.minute}'
+          : null,
+      learningEndTime: _autoLearningTimes
+          ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
+          : null,
+    );
+
+    if (newSettings == _currentNavigation.learningSettings) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('אין שינויים לשמור')),
+        );
+      }
+      return;
+    }
+
+    // אזהרה אם הלמידה כבר פעילה
+    if (_learningStarted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('הלמידה כבר פעילה'),
+          content: const Text('השינויים ייכנסו לתוקף מיידי. האם להמשיך?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.orange),
+              child: const Text('שמור בכל זאת'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    try {
+      final updatedNav = _currentNavigation.copyWith(
+        learningSettings: newSettings,
+        updatedAt: DateTime.now(),
+      );
+      await _navRepo.update(updatedNav);
+      setState(() => _currentNavigation = updatedNav);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('הגדרות הלמידה נשמרו בהצלחה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בשמירה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildAlertsBanner() {
