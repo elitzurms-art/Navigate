@@ -271,6 +271,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         // סיום הניווט
         await trackRepo.endNavigation(track.id);
 
+        // פסילת הניווט — כמו פריצת אבטחה
+        await trackRepo.disqualifyNavigator(track.id);
+
         // סנכרון ל-Firestore
         final updatedTrack = await trackRepo.getById(track.id);
         await trackRepo.syncTrackToFirestore(updatedTrack);

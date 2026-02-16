@@ -12,6 +12,7 @@ import '../../../core/utils/geometry_utils.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// שלב 3 - וידוא צירים
 class RoutesVerificationScreen extends StatefulWidget {
@@ -735,6 +736,66 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                onFullscreen: () {
+                  final camera = _mapController.camera;
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => FullscreenMapScreen(
+                      title: 'אימות צירים',
+                      initialCenter: camera.center,
+                      initialZoom: camera.zoom,
+                      layers: [
+                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: _boundary!.coordinates
+                                    .map((coord) => LatLng(coord.lat, coord.lng))
+                                    .toList(),
+                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                borderStrokeWidth: _boundary!.strokeWidth,
+                                isFilled: true,
+                              ),
+                            ],
+                          ),
+                        if (_showRoutes) ..._buildRoutePolylines(),
+                        if (_showNZ)
+                          MarkerLayer(
+                            markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
+                                    ? GeometryUtils.filterPointsInPolygon(
+                                        points: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList(),
+                                        getCoordinate: (cp) => cp.coordinates!,
+                                        polygon: _boundary!.coordinates,
+                                      )
+                                    : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
+                                .map((cp) {
+                              return Marker(
+                                point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                                width: 36,
+                                height: 36,
+                                child: Opacity(
+                                  opacity: _nzOpacity,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '${cp.sequenceNumber}',
+                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                      ],
+                    ),
+                  ));
+                },
                 layers: [
                   MapLayerConfig(
                     id: 'gg', label: 'גבול גזרה', color: Colors.black,

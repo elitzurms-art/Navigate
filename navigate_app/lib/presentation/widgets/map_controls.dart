@@ -41,6 +41,7 @@ class MapControls extends StatefulWidget {
   final List<LatLng> measurePoints;
   final VoidCallback? onMeasureClear;
   final VoidCallback? onMeasureUndo;
+  final VoidCallback? onFullscreen;
   final VoidCallback? onCenterSelf;
   final CenteringMode? centeringMode;
 
@@ -53,6 +54,7 @@ class MapControls extends StatefulWidget {
     this.measurePoints = const [],
     this.onMeasureClear,
     this.onMeasureUndo,
+    this.onFullscreen,
     this.onCenterSelf,
     this.centeringMode,
   });
@@ -154,7 +156,7 @@ class _MapControlsState extends State<MapControls> {
         // פאנל שכבות (מוצג מתחת לכפתורים)
         if (_showLayersPanel)
           Positioned(
-            top: 8 + 44.0 * (widget.onCenterSelf != null ? 4 : 3) + 12,
+            top: 8 + 44.0 * (3 + (widget.onFullscreen != null ? 1 : 0) + (widget.onCenterSelf != null ? 1 : 0)) + 12,
             right: 8,
             child: _buildLayersPanel(),
           ),
@@ -171,7 +173,7 @@ class _MapControlsState extends State<MapControls> {
     );
   }
 
-  /// עמודה ימנית — 3-4 כפתורים אנכיים
+  /// עמודה ימנית — 3-5 כפתורים אנכיים
   Widget _buildRightColumn() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -181,6 +183,10 @@ class _MapControlsState extends State<MapControls> {
         _buildMeasureButton(),
         const SizedBox(height: 4),
         _buildLayersButton(),
+        if (widget.onFullscreen != null) ...[
+          const SizedBox(height: 4),
+          _buildFullscreenButton(),
+        ],
         if (widget.onCenterSelf != null) ...[
           const SizedBox(height: 4),
           _buildSelfCenterButton(),
@@ -297,6 +303,24 @@ class _MapControlsState extends State<MapControls> {
             color: _showLayersPanel ? Colors.blue[700] : Colors.grey[700],
             size: 22,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// כפתור מסך מלא
+  Widget _buildFullscreenButton() {
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: widget.onFullscreen,
+        child: const SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(Icons.fullscreen, size: 22),
         ),
       ),
     );

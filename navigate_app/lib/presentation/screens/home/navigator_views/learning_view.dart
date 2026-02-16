@@ -27,6 +27,7 @@ import '../../../../domain/entities/boundary.dart';
 import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../widgets/fullscreen_map_screen.dart';
 import 'route_editor_screen.dart';
 
 /// תצוגת למידה למנווט — לשוניות דינמיות לפי LearningSettings
@@ -553,6 +554,13 @@ class _LearningViewState extends State<LearningView>
               onMeasureUndo: () => setState(() {
                 if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
               }),
+              onFullscreen: () => _openFullscreenMap(
+                refPoints: refPoints,
+                plannedPathPoints: plannedPathPoints,
+                hasPlannedPath: hasPlannedPath,
+                markers: markers,
+                bounds: bounds,
+              ),
               layers: [
                 MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
                 MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
@@ -560,29 +568,6 @@ class _LearningViewState extends State<LearningView>
                 MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
                 MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
               ],
-            ),
-            // כפתור מסך מלא
-            Positioned(
-              top: 8,
-              left: 8,
-              child: Material(
-                color: Colors.white.withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(8),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => _openFullscreenMap(
-                    refPoints: refPoints,
-                    plannedPathPoints: plannedPathPoints,
-                    hasPlannedPath: hasPlannedPath,
-                    markers: markers,
-                    bounds: bounds,
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(Icons.fullscreen, size: 22),
-                  ),
-                ),
-              ),
             ),
           ],
         ),

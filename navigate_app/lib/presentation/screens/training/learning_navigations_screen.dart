@@ -14,6 +14,7 @@ import '../../../data/repositories/cluster_repository.dart';
 import '../navigations/create_navigation_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 import '../navigations/investigation_screen.dart';
 
 
@@ -416,6 +417,93 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
     ),
         MapControls(
           mapController: _mapController,
+          onFullscreen: () {
+            final camera = _mapController.camera;
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => FullscreenMapScreen(
+                title: 'למידת ניווטים',
+                initialCenter: camera.center,
+                initialZoom: camera.zoom,
+                layers: [
+                  if (_showNZ && _checkpoints.isNotEmpty)
+                    MarkerLayer(
+                      markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((checkpoint) {
+                        final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
+                        return Marker(
+                          point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
+                          width: 36,
+                          height: 36,
+                          child: Opacity(
+                            opacity: _nzOpacity,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: markerColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '${checkpoint.sequenceNumber}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                    MarkerLayer(
+                      markers: _safetyPoints
+                          .where((p) => p.type == 'point' && p.coordinates != null)
+                          .map((point) => Marker(
+                                point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                                width: 40,
+                                height: 50,
+                                child: Opacity(
+                                  opacity: _nbOpacity,
+                                  child: Icon(Icons.warning, color: _getSeverityColor(point.severity), size: 32),
+                                ),
+                              ))
+                          .toList(),
+                    ),
+                  if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                    PolygonLayer(
+                      polygons: _safetyPoints
+                          .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
+                          .map((point) => Polygon(
+                                points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                color: _getSeverityColor(point.severity).withValues(alpha: 0.3 * _nbOpacity),
+                                borderColor: _getSeverityColor(point.severity).withValues(alpha: _nbOpacity),
+                                borderStrokeWidth: 3,
+                                isFilled: true,
+                              ))
+                          .toList(),
+                    ),
+                  if (_showGG && _boundaries.isNotEmpty)
+                    PolygonLayer(
+                      polygons: _boundaries.map((boundary) => Polygon(
+                            points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            borderStrokeWidth: boundary.strokeWidth,
+                            isFilled: true,
+                          )).toList(),
+                    ),
+                  if (_showBA && _clusters.isNotEmpty)
+                    PolygonLayer(
+                      polygons: _clusters.map((cluster) => Polygon(
+                            points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
+                            borderColor: Colors.green.withValues(alpha: _baOpacity),
+                            borderStrokeWidth: cluster.strokeWidth,
+                            isFilled: true,
+                          )).toList(),
+                    ),
+                ],
+              ),
+            ));
+          },
           layers: [
             MapLayerConfig(
               id: 'nz',

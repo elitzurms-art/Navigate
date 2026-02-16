@@ -25,6 +25,7 @@ import '../../../domain/entities/navigation_tree.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// ייצוא נתונים
 class DataExportScreen extends StatefulWidget {
@@ -1289,6 +1290,73 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             onMeasureUndo: () => setState(() {
               if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
             }),
+            onFullscreen: () {
+              final camera = _mapController.camera;
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => FullscreenMapScreen(
+                  title: 'ייצוא נתונים',
+                  initialCenter: camera.center,
+                  initialZoom: camera.zoom,
+                  layers: [
+                    if (_showGG && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
+                      PolygonLayer(
+                        polygons: [
+                          Polygon(
+                            points: widget.boundary!.coordinates
+                                .map((coord) => LatLng(coord.lat, coord.lng))
+                                .toList(),
+                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            borderStrokeWidth: widget.boundary!.strokeWidth,
+                            isFilled: true,
+                          ),
+                        ],
+                      ),
+                    if (_showNZ && _filteredCheckpoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: _filteredCheckpoints.map((checkpoint) {
+                          return Marker(
+                            point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
+                            width: 36,
+                            height: 36,
+                            child: Opacity(
+                              opacity: _nzOpacity,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${checkpoint.sequenceNumber}',
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    if (_showNB && widget.safetyPoints.where((p) => p.type == 'point' && p.coordinates != null).isNotEmpty)
+                      MarkerLayer(
+                        markers: widget.safetyPoints
+                            .where((p) => p.type == 'point' && p.coordinates != null)
+                            .map((point) => Marker(
+                                  point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
+                                  width: 30,
+                                  height: 30,
+                                  child: Opacity(
+                                    opacity: _nbOpacity,
+                                    child: Icon(Icons.warning, color: Colors.orange, size: 28),
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                  ],
+                ),
+              ));
+            },
           ),
 
           // Layer panel (collapsible)

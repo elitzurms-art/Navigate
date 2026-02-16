@@ -24,6 +24,7 @@ import '../../widgets/route_playback_widget.dart';
 import '../../widgets/navigator_heatmap.dart';
 import '../../widgets/navigator_comparison_widget.dart';
 import '../../widgets/map_image_export.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 import '../home/navigator_views/approval_view.dart';
 
 /// צבעי מסלול
@@ -1215,6 +1216,25 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       onMeasureUndo: () => setState(() {
         if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
       }),
+      onFullscreen: () {
+        final camera = _mapController.camera;
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => FullscreenMapScreen(
+            title: 'מפת אישור',
+            initialCenter: camera.center,
+            initialZoom: camera.zoom,
+            layers: [
+              ..._buildBoundaryLayers(),
+              ..._buildSafetyLayers(),
+              if (_allNavigatorsMode)
+                ..._buildAllNavigatorsRouteLayers()
+              else
+                ..._buildSingleNavigatorRouteLayers(),
+              if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
+            ],
+          ),
+        ));
+      },
       layers: [
         MapLayerConfig(
           id: 'gg', label: 'גבול גזרה', color: _kBoundaryColor,

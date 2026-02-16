@@ -19,6 +19,7 @@ import '../../../../services/route_export_service.dart';
 import '../../../../services/route_analysis_service.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
 
@@ -587,25 +588,7 @@ class _ReviewViewState extends State<ReviewView> {
                   ...MapControls.buildMeasureLayers(_measurePoints),
                 ],
               ),
-              _buildMapControls(),
-              // כפתור מסך מלא
-              Positioned(
-                top: 8,
-                left: 8,
-                child: Material(
-                  color: Colors.white,
-                  elevation: 2,
-                  borderRadius: BorderRadius.circular(8),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () => _openFullscreenMap(center),
-                    child: const Padding(
-                      padding: EdgeInsets.all(6),
-                      child: Icon(Icons.fullscreen, size: 22),
-                    ),
-                  ),
-                ),
-              ),
+              _buildMapControls(center),
             ],
           ),
         ),
@@ -689,7 +672,7 @@ class _ReviewViewState extends State<ReviewView> {
     );
   }
 
-  Widget _buildMapControls() {
+  Widget _buildMapControls(LatLng center) {
     return MapControls(
       mapController: _mapController,
       measureMode: _measureMode,
@@ -702,6 +685,7 @@ class _ReviewViewState extends State<ReviewView> {
       onMeasureUndo: () => setState(() {
         if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
       }),
+      onFullscreen: () => _openFullscreenMap(center),
       layers: [
         MapLayerConfig(
           id: 'gg',

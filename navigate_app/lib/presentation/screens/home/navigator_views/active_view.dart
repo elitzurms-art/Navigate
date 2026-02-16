@@ -150,16 +150,20 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // Safety net: זיהוי track ישן מהפעלה קודמת ומחיקתו.
       // מקרה 1: track מראה "סיים" אבל הניווט פעיל/ממתין.
       // מקרה 2: track מראה "פעיל" אבל activeStartTime של הניווט חדש יותר — הניווט הופעל מחדש.
+      // חריג: track שנפסל (isDisqualified) — לעולם לא למחוק, להציג מסך סיכום פסילה.
       final navStatus = _nav.status;
+      final bool trackDisqualified = effectiveTrack?.isDisqualified ?? false;
       bool isStaleTrack = false;
-      if (status == NavigatorPersonalStatus.finished &&
-          (navStatus == 'active' || navStatus == 'waiting')) {
-        isStaleTrack = true;
-      }
-      if (effectiveTrack != null &&
-          _nav.activeStartTime != null &&
-          effectiveTrack.startedAt.isBefore(_nav.activeStartTime!)) {
-        isStaleTrack = true;
+      if (!trackDisqualified) {
+        if (status == NavigatorPersonalStatus.finished &&
+            (navStatus == 'active' || navStatus == 'waiting')) {
+          isStaleTrack = true;
+        }
+        if (effectiveTrack != null &&
+            _nav.activeStartTime != null &&
+            effectiveTrack.startedAt.isBefore(_nav.activeStartTime!)) {
+          isStaleTrack = true;
+        }
       }
       if (isStaleTrack) {
         if (effectiveTrack != null) {

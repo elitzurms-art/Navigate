@@ -17,6 +17,7 @@ import '../../../services/gps_service.dart';
 import 'dart:async';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// מסך בדיקת מערכות
 class SystemCheckScreen extends StatefulWidget {
@@ -1345,6 +1346,53 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                onFullscreen: () {
+                  final camera = _mapController.camera;
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => FullscreenMapScreen(
+                      title: 'בדיקת מערכת',
+                      initialCenter: camera.center,
+                      initialZoom: camera.zoom,
+                      layers: [
+                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: _boundary!.coordinates
+                                    .map((coord) => LatLng(coord.lat, coord.lng))
+                                    .toList(),
+                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                borderStrokeWidth: _boundary!.strokeWidth,
+                                isFilled: true,
+                              ),
+                            ],
+                          ),
+                        if (_showNavigators)
+                          MarkerLayer(
+                            markers: _navigatorStatuses.entries
+                                .where((e) => e.value.latitude != null)
+                                .map((entry) {
+                              final status = entry.value;
+                              return Marker(
+                                point: LatLng(status.latitude!, status.longitude!),
+                                width: 60,
+                                height: 60,
+                                child: Opacity(
+                                  opacity: _navigatorsOpacity,
+                                  child: Icon(
+                                    Icons.person_pin_circle,
+                                    color: Colors.green,
+                                    size: 40,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                      ],
+                    ),
+                  ));
+                },
                 layers: [
                   MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
                   MapLayerConfig(id: 'navigators', label: 'מנווטים', color: Colors.blue, visible: _showNavigators, onVisibilityChanged: (v) => setState(() => _showNavigators = v), opacity: _navigatorsOpacity, onOpacityChanged: (v) => setState(() => _navigatorsOpacity = v)),

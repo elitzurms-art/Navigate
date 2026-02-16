@@ -15,6 +15,8 @@ import '../../../../services/gps_tracking_service.dart';
 import '../../../../services/route_export_service.dart';
 import '../../../../services/route_analysis_service.dart';
 import '../../../widgets/map_with_selector.dart';
+import '../../../widgets/map_controls.dart';
+import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
 
@@ -49,6 +51,9 @@ class _ApprovalViewState extends State<ApprovalView> {
   final RouteExportService _exportService = RouteExportService();
   final RouteAnalysisService _analysisService = RouteAnalysisService();
   final MapController _mapController = MapController();
+
+  bool _measureMode = false;
+  final List<LatLng> _measurePoints = [];
 
   bool _isLoading = true;
 
@@ -297,14 +302,21 @@ class _ApprovalViewState extends State<ApprovalView> {
 
         // מפה
         Expanded(
-          child: MapWithTypeSelector(
-            showTypeSelector: false,
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: center,
-              initialZoom: 14.0,
-            ),
-            layers: [
+          child: Stack(
+            children: [
+              MapWithTypeSelector(
+                showTypeSelector: false,
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: center,
+                  initialZoom: 14.0,
+                  onTap: (tapPosition, point) {
+                    if (_measureMode) {
+                      setState(() => _measurePoints.add(point));
+                    }
+                  },
+                ),
+                layers: [
               // גבול גזרה
               if (_boundaries.isNotEmpty)
                 PolygonLayer(
@@ -492,8 +504,69 @@ class _ApprovalViewState extends State<ApprovalView> {
                     );
                   }).toList(),
                 ),
+
+              // שכבות מדידה
+              ...MapControls.buildMeasureLayers(_measurePoints),
             ],
           ),
+          MapControls(
+            mapController: _mapController,
+            measureMode: _measureMode,
+            onMeasureModeChanged: (v) => setState(() {
+              _measureMode = v;
+              if (!v) _measurePoints.clear();
+            }),
+            measurePoints: _measurePoints,
+            onMeasureClear: () => setState(() => _measurePoints.clear()),
+            onMeasureUndo: () => setState(() {
+              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+            }),
+            onFullscreen: () {
+              final camera = _mapController.camera;
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => FullscreenMapScreen(
+                  title: 'מפת אישרור',
+                  initialCenter: camera.center,
+                  initialZoom: camera.zoom,
+                  layers: [
+                    if (_boundaries.isNotEmpty)
+                      PolygonLayer(
+                        polygons: _boundaries
+                            .where((b) => b.coordinates.isNotEmpty)
+                            .map((b) => Polygon(
+                                  points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                  color: _kBoundaryColor.withOpacity(0.1),
+                                  borderColor: _kBoundaryColor,
+                                  borderStrokeWidth: 2.0,
+                                  isFilled: true,
+                                ))
+                            .toList(),
+                      ),
+                    if (_showPlanned && _plannedRoute.length > 1)
+                      PolylineLayer(polylines: [
+                        Polyline(points: _plannedRoute, color: _kPlannedRouteColor, strokeWidth: 4.0),
+                      ]),
+                    if (_showActual && _actualRoute.length > 1)
+                      PolylineLayer(polylines: [
+                        Polyline(points: _actualRoute, color: _kActualRouteColor, strokeWidth: 3.0),
+                      ]),
+                    if (_safetyPoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: _safetyPoints
+                            .where((p) => p.coordinates != null)
+                            .map((p) => Marker(
+                                  point: LatLng(p.coordinates!.lat, p.coordinates!.lng),
+                                  width: 30, height: 30,
+                                  child: const Icon(Icons.warning_amber, color: _kSafetyColor, size: 28),
+                                ))
+                            .toList(),
+                      ),
+                  ],
+                ),
+              ));
+            },
+          ),
+        ]),
         ),
 
         // נגן מסלול

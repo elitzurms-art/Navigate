@@ -13,6 +13,7 @@ import '../../../data/repositories/user_repository.dart';
 import '../../../services/navigation_layer_copy_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 import 'routes_verification_screen.dart';
 
 /// מסך חלוקה ידנית באפליקציה
@@ -31,6 +32,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
   final NavigationTreeRepository _treeRepo = NavigationTreeRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavigationLayerCopyService _layerCopyService = NavigationLayerCopyService();
+  final MapController _mapController = MapController();
   final UserRepository _userRepo = UserRepository();
 
   // Data
@@ -1124,16 +1126,51 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         borderRadius: const BorderRadius.vertical(
           bottom: Radius.circular(12),
         ),
-        child: MapWithTypeSelector(
-          options: MapOptions(
-            initialCameraFit: CameraFit.bounds(
-              bounds: bounds,
-              padding: const EdgeInsets.all(40),
+        child: Stack(
+          children: [
+            MapWithTypeSelector(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCameraFit: CameraFit.bounds(
+                  bounds: bounds,
+                  padding: const EdgeInsets.all(40),
+                ),
+              ),
+              layers: [
+                PolylineLayer(polylines: _buildPolylines(navigatorId: _mapNavigatorId)),
+                MarkerLayer(markers: _buildMarkers(navigatorId: _mapNavigatorId)),
+              ],
             ),
-          ),
-          layers: [
-            PolylineLayer(polylines: _buildPolylines(navigatorId: _mapNavigatorId)),
-            MarkerLayer(markers: _buildMarkers(navigatorId: _mapNavigatorId)),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.white,
+                elevation: 2,
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () {
+                    final camera = _mapController.camera;
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => FullscreenMapScreen(
+                        title: 'חלוקה ידנית',
+                        initialCenter: camera.center,
+                        initialZoom: camera.zoom,
+                        layers: [
+                          PolylineLayer(polylines: _buildPolylines(navigatorId: _mapNavigatorId)),
+                          MarkerLayer(markers: _buildMarkers(navigatorId: _mapNavigatorId)),
+                        ],
+                      ),
+                    ));
+                  },
+                  child: const SizedBox(
+                    width: 40, height: 40,
+                    child: Icon(Icons.fullscreen, size: 22),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

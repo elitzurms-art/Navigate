@@ -25,6 +25,7 @@ import '../../widgets/route_playback_widget.dart';
 import '../../widgets/navigator_heatmap.dart';
 import '../../widgets/navigator_comparison_widget.dart';
 import '../../widgets/map_image_export.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -1865,6 +1866,25 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       onMeasureUndo: () => setState(() {
         if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
       }),
+      onFullscreen: () {
+        final camera = _mapController.camera;
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => FullscreenMapScreen(
+            title: 'מפת תחקיר',
+            initialCenter: camera.center,
+            initialZoom: camera.zoom,
+            layers: [
+              ..._buildBoundaryLayers(),
+              ..._buildSafetyLayers(),
+              if (_allNavigatorsMode)
+                ..._buildAllNavigatorsRouteLayers()
+              else
+                ..._buildSingleNavigatorRouteLayers(),
+              if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
+            ],
+          ),
+        ));
+      },
       layers: [
         MapLayerConfig(
           id: 'gg',

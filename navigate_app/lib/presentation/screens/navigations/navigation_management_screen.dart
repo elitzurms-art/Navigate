@@ -27,6 +27,7 @@ import '../../../services/auth_service.dart';
 import '../../../domain/entities/user.dart' as app_user;
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// מסך ניהול ניווט פעיל (למפקד)
 class NavigationManagementScreen extends StatefulWidget {
@@ -1427,27 +1428,61 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   ],
                 ),
 
-              // נקודות ציון
+              // נקודות ציון — עם סימון התחלה/סיום/ביניים
               if (_showNZ)
                 MarkerLayer(
                   markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
+                    // זיהוי סוג נקודה: התחלה / סיום / ביניים
+                    final startIds = <String>{};
+                    final endIds = <String>{};
+                    final waypointIds = <String>{};
+                    for (final route in widget.navigation.routes.values) {
+                      if (route.startPointId != null) startIds.add(route.startPointId!);
+                      if (route.endPointId != null) endIds.add(route.endPointId!);
+                      waypointIds.addAll(route.waypointIds);
+                    }
+                    for (final wp in widget.navigation.waypointSettings.waypoints) {
+                      waypointIds.add(wp.checkpointId);
+                    }
+
+                    final isStart = startIds.contains(cp.id) || cp.isStart;
+                    final isEnd = endIds.contains(cp.id) || cp.isEnd;
+                    final isWaypoint = waypointIds.contains(cp.id);
+
+                    Color cpColor;
+                    String letter;
+                    if (isStart) {
+                      cpColor = const Color(0xFF4CAF50); // ירוק — התחלה
+                      letter = 'H';
+                    } else if (isEnd) {
+                      cpColor = const Color(0xFFF44336); // אדום — סיום
+                      letter = 'S';
+                    } else if (isWaypoint) {
+                      cpColor = const Color(0xFFFFC107); // צהוב — ביניים
+                      letter = 'B';
+                    } else {
+                      cpColor = Colors.blue;
+                      letter = '';
+                    }
+
                     return Marker(
                       point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-                      width: 40,
-                      height: 46,
+                      width: 48,
+                      height: 48,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.place,
-                            color: Colors.blue.withOpacity(_nzOpacity),
+                            color: cpColor.withValues(alpha: _nzOpacity),
                             size: 32,
                           ),
                           Text(
-                            '${cp.sequenceNumber}',
-                            style: const TextStyle(
+                            '${cp.sequenceNumber}$letter',
+                            style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
+                              color: cpColor,
                             ),
                           ),
                         ],
@@ -1538,6 +1573,55 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                onFullscreen: () {
+                  final camera = _mapController.camera;
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => FullscreenMapScreen(
+                      title: 'ניהול ניווט',
+                      initialCenter: camera.center,
+                      initialZoom: camera.zoom,
+                      layers: [
+                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: _boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
+                                color: Colors.black.withOpacity(0.2 * _ggOpacity),
+                                borderColor: Colors.black,
+                                borderStrokeWidth: 2,
+                              ),
+                            ],
+                          ),
+                        if (_showNZ)
+                          MarkerLayer(
+                            markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
+                              return Marker(
+                                point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                                width: 48,
+                                height: 48,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.place, color: Colors.blue.withValues(alpha: _nzOpacity), size: 32),
+                                    Text(
+                                      '${cp.sequenceNumber}',
+                                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        if (_showTracks) ..._buildNavigatorTracks(),
+                        if (_showPunches) ..._buildPunchMarkers(),
+                        ..._buildNavigatorMarkers(),
+                        ..._buildSelfMarker(),
+                        ..._buildCommanderMarkers(),
+                        if (_showAlerts) ..._buildAlertMarkers(),
+                      ],
+                    ),
+                  ));
+                },
                 onCenterSelf: _cycleSelfCenteringMode,
                 centeringMode: _centeredNavigatorId == null ? _centeringMode : CenteringMode.off,
               ),
