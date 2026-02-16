@@ -85,6 +85,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Alert monitoring
   AlertMonitoringService? _alertMonitoringService;
 
+  // באנר התראה למנווט
+  NavigatorAlert? _currentAlertBanner;
+  Timer? _alertBannerTimer;
+
   // טיימר זמן שחלף
   Timer? _elapsedTimer;
   Duration _elapsed = Duration.zero;
@@ -114,6 +118,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _statusReportTimer?.cancel();
     _healthCheckService?.dispose();
     _alertMonitoringService?.dispose();
+    _alertBannerTimer?.cancel();
     _gpsTracker.stopTracking();
     _gpsService.dispose();
     super.dispose();
@@ -439,6 +444,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // עדכון סוללה
       try {
         _batteryLevel = await _battery.batteryLevel;
+        // עדכון AlertMonitoringService לבדיקת סף סוללה
+        if (_batteryLevel > 0) {
+          _alertMonitoringService?.updateBatteryLevel(_batteryLevel);
+        }
       } catch (_) {
         _batteryLevel = -1;
       }
@@ -661,8 +670,29 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       areaId: _nav.areaId,
       boundaryLayerId: _nav.boundaryLayerId,
       plannedPath: route?.plannedPath ?? const [],
+      onAlert: _onNavigatorAlert,
     );
     _alertMonitoringService!.start();
+  }
+
+  /// callback מ-AlertMonitoringService — מציג באנר התראה למנווט
+  void _onNavigatorAlert(NavigatorAlert alert) {
+    // סינון — רק התראות רלוונטיות למנווט
+    const relevantTypes = {AlertType.safetyPoint, AlertType.boundary, AlertType.battery};
+    if (!relevantTypes.contains(alert.type)) return;
+
+    _alertBannerTimer?.cancel();
+    if (mounted) {
+      setState(() => _currentAlertBanner = alert);
+      HapticFeedback.heavyImpact();
+    }
+
+    // באנר נעלם אחרי 8 שניות
+    _alertBannerTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) {
+        setState(() => _currentAlertBanner = null);
+      }
+    });
   }
 
   // ===========================================================================
@@ -1121,6 +1151,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               ],
             ),
           ),
+        // Alert banner (נת"ב, ג"ג, סוללה)
+        if (_currentAlertBanner != null)
+          _buildAlertBanner(_currentAlertBanner!),
         // Status bar with elapsed timer
         _buildActiveStatusBar(),
         // Disqualification banner
@@ -1292,6 +1325,46 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ],
           const SizedBox(width: 12),
           _buildGpsChip(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlertBanner(NavigatorAlert alert) {
+    Color bgColor;
+    IconData icon;
+    switch (alert.type) {
+      case AlertType.safetyPoint:
+        bgColor = Colors.orange;
+        icon = Icons.warning_amber;
+      case AlertType.boundary:
+        bgColor = Colors.red;
+        icon = Icons.dangerous;
+      case AlertType.battery:
+        bgColor = Colors.amber.shade700;
+        icon = Icons.battery_alert;
+      default:
+        bgColor = Colors.orange;
+        icon = Icons.notifications_active;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: bgColor,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          Text(
+            alert.type.displayName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
         ],
       ),
     );

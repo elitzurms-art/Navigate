@@ -7,6 +7,7 @@ import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/nav_layer.dart' as nav;
 import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../domain/entities/navigation_score.dart';
+import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
@@ -377,6 +378,8 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     setState(() => _isLoading = true);
 
     try {
+      final criteria = _currentNavigation.reviewSettings.scoringCriteria;
+
       for (final entry in _navigatorDataMap.entries) {
         final navId = entry.key;
         final data = entry.value;
@@ -386,6 +389,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           navigatorId: navId,
           punches: data.punches,
           verificationSettings: widget.navigation.verificationSettings,
+          scoringCriteria: criteria,
           isDisqualified: data.isDisqualified,
         );
 
@@ -417,6 +421,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     final currentScore = _scores[navigatorId];
     if (currentScore == null) return;
 
+    final criteria = _currentNavigation.reviewSettings.scoringCriteria;
+    final isWeighted = criteria != null;
+
     final scoreController = TextEditingController(
       text: currentScore.totalScore.toString(),
     );
@@ -424,56 +431,111 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       text: currentScore.notes ?? '',
     );
 
+    // Custom criteria scores for editing
+    final editedCustomScores = Map<String, int>.from(
+      currentScore.customCriteriaScores,
+    );
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('עריכת ציון - ${_getNavigatorDisplayName(navigatorId)}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: scoreController,
-              decoration: InputDecoration(
-                labelText: 'ציון (0-100)',
-                border: const OutlineInputBorder(),
-                helperText: _autoScores.containsKey(navigatorId)
-                    ? 'ציון אוטומטי: ${_autoScores[navigatorId]}'
-                    : null,
-              ),
-              keyboardType: TextInputType.number,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('עריכת ציון - ${_getNavigatorDisplayName(navigatorId)}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: scoreController,
+                  decoration: InputDecoration(
+                    labelText: 'ציון (0-100)',
+                    border: const OutlineInputBorder(),
+                    helperText: _autoScores.containsKey(navigatorId)
+                        ? 'ציון אוטומטי: ${_autoScores[navigatorId]}${isWeighted ? ' (משוקלל)' : ''}'
+                        : null,
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 16),
+                // Custom criteria inputs (only when weighted)
+                if (isWeighted && criteria.customCriteria.isNotEmpty) ...[
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('קריטריונים נוספים:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                  const SizedBox(height: 8),
+                  ...criteria.customCriteria.map((criterion) {
+                    final earned = editedCustomScores[criterion.id] ?? 0;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(criterion.name,
+                              style: const TextStyle(fontSize: 13))),
+                          SizedBox(
+                            width: 56,
+                            child: TextField(
+                              controller: TextEditingController(text: earned.toString()),
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              decoration: InputDecoration(
+                                border: const OutlineInputBorder(),
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 8),
+                                suffixText: '/${criterion.weight}',
+                                suffixStyle: const TextStyle(fontSize: 10),
+                              ),
+                              onChanged: (val) {
+                                setDialogState(() {
+                                  editedCustomScores[criterion.id] =
+                                      (int.tryParse(val) ?? 0).clamp(0, criterion.weight);
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 16),
+                ],
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'הערות',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 3,
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'הערות',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: () {
+                final newScore = int.tryParse(scoreController.text) ?? currentScore.totalScore;
+                setState(() {
+                  _scores[navigatorId] = _scoringService.updateScore(
+                    currentScore,
+                    newTotalScore: newScore.clamp(0, 100),
+                    newNotes: notesController.text,
+                  ).copyWith(
+                    customCriteriaScores: editedCustomScores,
+                  );
+                });
+                Navigator.pop(dialogContext);
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.green),
+              child: const Text('שמור'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () {
-              final newScore = int.tryParse(scoreController.text) ?? currentScore.totalScore;
-              setState(() {
-                _scores[navigatorId] = _scoringService.updateScore(
-                  currentScore,
-                  newTotalScore: newScore.clamp(0, 100),
-                  newNotes: notesController.text,
-                );
-              });
-              Navigator.pop(context);
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.green),
-            child: const Text('שמור'),
-          ),
-        ],
       ),
     );
   }

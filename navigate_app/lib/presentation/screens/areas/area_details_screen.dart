@@ -158,7 +158,7 @@ class _AreaDetailsScreenState extends State<AreaDetailsScreen> with WidgetsBindi
                 // נקודות ציון
                 _buildLayerCard(
                   context: context,
-                  title: 'נ"ז - נקודות ציון',
+                  title: 'נ"צ - נקודות ציון',
                   subtitle: '$_checkpointsCount נקודות',
                   icon: Icons.place,
                   color: Colors.blue,

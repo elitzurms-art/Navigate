@@ -213,29 +213,66 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.warning_amber, color: Colors.red[700], size: 28),
-              const SizedBox(width: 8),
-              const Text('אזהרה'),
+        builder: (ctx) {
+          final controller = TextEditingController();
+          final isValid = ValueNotifier<bool>(false);
+          controller.addListener(() {
+            isValid.value = controller.text.trim() == 'התנתקות';
+          });
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.warning_amber, color: Colors.red[700], size: 28),
+                const SizedBox(width: 8),
+                const Text('אזהרה'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'התנתקות בזמן ניווט תגרור את סיום הניווט ודיווח למפקדים.',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'כדי להתנתק, הקלד "התנתקות":',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  textDirection: TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    hintText: 'התנתקות',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('ביטול'),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: isValid,
+                builder: (_, enabled, __) => ElevatedButton(
+                  onPressed: enabled ? () => Navigator.pop(ctx, true) : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    disabledBackgroundColor: Colors.grey[300],
+                  ),
+                  child: Text(
+                    'התנתק',
+                    style: TextStyle(color: enabled ? Colors.white : Colors.grey[500]),
+                  ),
+                ),
+              ),
             ],
-          ),
-          content: const Text(
-            'התנתקות בזמן ניווט תגרור את סיום הניווט ודיווח למפקדים.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('ביטול'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('התנתק', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
+          );
+        },
       );
 
       if (confirmed != true) return;

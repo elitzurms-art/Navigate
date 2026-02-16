@@ -419,36 +419,169 @@ class LearningSettings extends Equatable {
       ];
 }
 
+/// קריטריון ניקוד מותאם אישית
+class CustomCriterion extends Equatable {
+  final String id;
+  final String name;
+  final int weight; // ניקוד מקסימלי
+
+  const CustomCriterion({
+    required this.id,
+    required this.name,
+    required this.weight,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'weight': weight,
+    };
+  }
+
+  factory CustomCriterion.fromMap(Map<String, dynamic> map) {
+    return CustomCriterion(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      weight: map['weight'] as int,
+    );
+  }
+
+  CustomCriterion copyWith({
+    String? id,
+    String? name,
+    int? weight,
+  }) {
+    return CustomCriterion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      weight: weight ?? this.weight,
+    );
+  }
+
+  @override
+  List<Object?> get props => [id, name, weight];
+}
+
+/// קריטריוני ניקוד לניווט
+class ScoringCriteria extends Equatable {
+  final String mode; // 'equal' | 'custom'
+  final int? equalWeightPerCheckpoint; // משקל לכל נקודה במצב שווה
+  final Map<String, int> checkpointWeights; // cpId → weight במצב מותאם
+  final List<CustomCriterion> customCriteria;
+
+  const ScoringCriteria({
+    required this.mode,
+    this.equalWeightPerCheckpoint,
+    this.checkpointWeights = const {},
+    this.customCriteria = const [],
+  });
+
+  ScoringCriteria copyWith({
+    String? mode,
+    int? equalWeightPerCheckpoint,
+    Map<String, int>? checkpointWeights,
+    List<CustomCriterion>? customCriteria,
+  }) {
+    return ScoringCriteria(
+      mode: mode ?? this.mode,
+      equalWeightPerCheckpoint: equalWeightPerCheckpoint ?? this.equalWeightPerCheckpoint,
+      checkpointWeights: checkpointWeights ?? this.checkpointWeights,
+      customCriteria: customCriteria ?? this.customCriteria,
+    );
+  }
+
+  int get totalWeight {
+    int total = 0;
+    if (mode == 'equal') {
+      // equalWeightPerCheckpoint is per-checkpoint — actual total depends on checkpoint count
+      // so totalWeight here sums the custom criteria only (checkpoint part computed externally)
+      total = 0; // will be computed with checkpoint count
+    } else {
+      total = checkpointWeights.values.fold(0, (s, w) => s + w);
+    }
+    total += customCriteria.fold(0, (s, c) => s + c.weight);
+    return total;
+  }
+
+  int totalWeightWithCheckpoints(int checkpointCount) {
+    int total = 0;
+    if (mode == 'equal') {
+      total = (equalWeightPerCheckpoint ?? 0) * checkpointCount;
+    } else {
+      total = checkpointWeights.values.fold(0, (s, w) => s + w);
+    }
+    total += customCriteria.fold(0, (s, c) => s + c.weight);
+    return total;
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'mode': mode,
+      if (equalWeightPerCheckpoint != null) 'equalWeightPerCheckpoint': equalWeightPerCheckpoint,
+      if (checkpointWeights.isNotEmpty) 'checkpointWeights': checkpointWeights,
+      if (customCriteria.isNotEmpty)
+        'customCriteria': customCriteria.map((c) => c.toMap()).toList(),
+    };
+  }
+
+  factory ScoringCriteria.fromMap(Map<String, dynamic> map) {
+    return ScoringCriteria(
+      mode: map['mode'] as String? ?? 'equal',
+      equalWeightPerCheckpoint: map['equalWeightPerCheckpoint'] as int?,
+      checkpointWeights: map['checkpointWeights'] != null
+          ? Map<String, int>.from(map['checkpointWeights'] as Map)
+          : const {},
+      customCriteria: map['customCriteria'] != null
+          ? (map['customCriteria'] as List)
+              .map((c) => CustomCriterion.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : const [],
+    );
+  }
+
+  @override
+  List<Object?> get props => [mode, equalWeightPerCheckpoint, checkpointWeights, customCriteria];
+}
+
 /// הגדרות תחקיר
 class ReviewSettings extends Equatable {
   final bool showScoresAfterApproval; // הצג ציונים לאחר אישרור
+  final ScoringCriteria? scoringCriteria; // קריטריוני ניקוד משוקללים
 
   const ReviewSettings({
     this.showScoresAfterApproval = true,
+    this.scoringCriteria,
   });
 
   ReviewSettings copyWith({
     bool? showScoresAfterApproval,
+    ScoringCriteria? scoringCriteria,
   }) {
     return ReviewSettings(
       showScoresAfterApproval: showScoresAfterApproval ?? this.showScoresAfterApproval,
+      scoringCriteria: scoringCriteria ?? this.scoringCriteria,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'showScoresAfterApproval': showScoresAfterApproval,
+      if (scoringCriteria != null) 'scoringCriteria': scoringCriteria!.toMap(),
     };
   }
 
   factory ReviewSettings.fromMap(Map<String, dynamic> map) {
     return ReviewSettings(
       showScoresAfterApproval: map['showScoresAfterApproval'] as bool? ?? true,
+      scoringCriteria: map['scoringCriteria'] != null
+          ? ScoringCriteria.fromMap(map['scoringCriteria'] as Map<String, dynamic>)
+          : null,
     );
   }
 
   @override
-  List<Object?> get props => [showScoresAfterApproval];
+  List<Object?> get props => [showScoresAfterApproval, scoringCriteria];
 }
 
 /// הגדרות תצוגה

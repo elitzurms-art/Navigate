@@ -857,6 +857,213 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
   }
 
+  /// התחלת ניווט מחדש — מחיקת track בלבד, מנווט חוזר למסך המתנה
+  Future<void> _startNavigatorNavigation(String navigatorId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('התחלת ניווט מחדש'),
+        content: Text('להחזיר את $navigatorId למסך התחלת ניווט?\n\nהמסלול הקודם יישמר במערכת.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.green),
+            child: const Text('התחל מחדש'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // מחיקת track מ-Drift + Firestore
+      await _trackRepo.deleteByNavigator(widget.navigation.id, navigatorId);
+
+      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט)
+      try {
+        await FirebaseFirestore.instance
+            .collection('navigations')
+            .doc(widget.navigation.id)
+            .update({'updatedAt': FieldValue.serverTimestamp()});
+      } catch (_) {}
+
+      // עדכון UI מקומי
+      if (mounted) {
+        setState(() {
+          final data = _navigatorData[navigatorId];
+          if (data != null) {
+            data.personalStatus = NavigatorPersonalStatus.waiting;
+            data.trackPoints = [];
+            data.currentPosition = null;
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$navigatorId הוחזר למסך התחלת ניווט'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהתחלת ניווט מחדש: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// איפוס ניווט — מחיקת track + דקירות, מנווט חוזר למסך המתנה נקי
+  Future<void> _resetNavigatorNavigation(String navigatorId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('איפוס ניווט'),
+        content: Text(
+          'לאפס את הניווט עבור $navigatorId?\n\n'
+          '⚠️ כל הנתונים יימחקו: מסלול + דקירות.\n'
+          'לא ניתן לשחזר פעולה זו.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('אפס ניווט'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // מחיקת track מ-Drift + Firestore
+      await _trackRepo.deleteByNavigator(widget.navigation.id, navigatorId);
+
+      // מחיקת דקירות מ-SharedPreferences + Firestore
+      await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
+
+      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט)
+      try {
+        await FirebaseFirestore.instance
+            .collection('navigations')
+            .doc(widget.navigation.id)
+            .update({'updatedAt': FieldValue.serverTimestamp()});
+      } catch (_) {}
+
+      // עדכון UI מקומי
+      if (mounted) {
+        setState(() {
+          final data = _navigatorData[navigatorId];
+          if (data != null) {
+            data.personalStatus = NavigatorPersonalStatus.waiting;
+            data.trackPoints = [];
+            data.punches = [];
+            data.currentPosition = null;
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('הניווט של $navigatorId אופס — מסלול ודקירות נמחקו'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה באיפוס ניווט: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// תפריט פעולות פר-מנווט (3-dot menu)
+  Widget _buildNavigatorActionsMenu(String navigatorId, NavigatorLiveData data, {VoidCallback? onBeforeAction}) {
+    final status = data.personalStatus;
+
+    // waiting — אין תפריט
+    if (status == NavigatorPersonalStatus.waiting) {
+      return const SizedBox.shrink();
+    }
+
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 22),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      tooltip: 'פעולות',
+      onSelected: (value) {
+        onBeforeAction?.call();
+        switch (value) {
+          case 'stop':
+            _finishNavigatorNavigation(navigatorId);
+            break;
+          case 'start':
+            _startNavigatorNavigation(navigatorId);
+            break;
+          case 'reset':
+            _resetNavigatorNavigation(navigatorId);
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        // סיום ניווט — רק active/noReception
+        if (status == NavigatorPersonalStatus.active ||
+            status == NavigatorPersonalStatus.noReception)
+          const PopupMenuItem(
+            value: 'stop',
+            child: Row(
+              children: [
+                Icon(Icons.stop_circle, color: Colors.red, size: 20),
+                SizedBox(width: 8),
+                Text('סיום ניווט', style: TextStyle(color: Colors.red)),
+              ],
+            ),
+          ),
+        // התחלת ניווט — רק finished
+        if (status == NavigatorPersonalStatus.finished)
+          const PopupMenuItem(
+            value: 'start',
+            child: Row(
+              children: [
+                Icon(Icons.play_circle, color: Colors.green, size: 20),
+                SizedBox(width: 8),
+                Text('התחלת ניווט', style: TextStyle(color: Colors.green)),
+              ],
+            ),
+          ),
+        // אפס ניווט — active/finished/noReception
+        const PopupMenuItem(
+          value: 'reset',
+          child: Row(
+            children: [
+              Icon(Icons.restart_alt, color: Colors.orange, size: 20),
+              SizedBox(width: 8),
+              Text('אפס ניווט', style: TextStyle(color: Colors.orange)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _finishAllNavigation() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1770,15 +1977,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             padding: EdgeInsets.only(left: 4),
                             child: Icon(Icons.warning, color: Colors.red, size: 18),
                           ),
-                        if (data.personalStatus == NavigatorPersonalStatus.active)
-                          IconButton(
-                            icon: const Icon(Icons.stop_circle, color: Colors.red, size: 22),
-                            onPressed: () => _finishNavigatorNavigation(navigatorId),
-                            tooltip: 'עצירה מרחוק',
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
+                        _buildNavigatorActionsMenu(navigatorId, data),
                       ],
                     ),
                     // Stats row (only if active or finished with track data)
@@ -2217,15 +2416,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           ),
                           if (data.hasActiveAlert)
                             const Icon(Icons.warning, color: Colors.red, size: 22),
-                          if (data.personalStatus == NavigatorPersonalStatus.active)
-                            IconButton(
-                              icon: const Icon(Icons.stop_circle, color: Colors.red),
-                              tooltip: 'עצירה מרחוק',
-                              onPressed: () {
-                                Navigator.pop(ctx);
-                                _finishNavigatorNavigation(navigatorId);
-                              },
-                            ),
+                          _buildNavigatorActionsMenu(navigatorId, data,
+                            onBeforeAction: () => Navigator.pop(ctx),
+                          ),
                         ],
                       ),
                       const Divider(height: 20),

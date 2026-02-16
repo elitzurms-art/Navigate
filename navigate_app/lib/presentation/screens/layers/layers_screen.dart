@@ -110,7 +110,7 @@ class _LayersScreenState extends State<LayersScreen> {
                     _buildLayerCategory(
                       context,
                       layerType: 'nz',
-                      title: 'נ"ז - נקודות ציון',
+                      title: 'נ"צ - נקודות ציון',
                       description: 'נקודות כחולות וירוקות',
                       icon: Icons.place,
                       color: Colors.blue,

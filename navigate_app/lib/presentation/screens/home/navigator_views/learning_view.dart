@@ -946,6 +946,27 @@ class _LearningViewState extends State<LearningView>
         .fold<double>(0, (sum, e) => sum + e.walkingTimeMin!);
   }
 
+  /// עיצוב דקות לתצוגה עם שעות (למשל: 115 → "שעה ו-55 דקות")
+  String _formatMinutes(double minutes) {
+    final totalMin = minutes.round();
+    if (totalMin < 60) return '$totalMin דקות';
+
+    final hours = totalMin ~/ 60;
+    final remaining = totalMin % 60;
+
+    String hourStr;
+    if (hours == 1) {
+      hourStr = 'שעה';
+    } else if (hours == 2) {
+      hourStr = 'שעתיים';
+    } else {
+      hourStr = '$hours שעות';
+    }
+
+    if (remaining == 0) return hourStr;
+    return '$hourStr ו-$remaining דקות';
+  }
+
   /// עדכון מספור ומרחק מצטבר אחרי כל שינוי
   void _recalculateIndicesAndCumulative() {
     double cumulative = 0;
@@ -1418,7 +1439,7 @@ class _LearningViewState extends State<LearningView>
                   pw.Text('סיכום:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
                   pw.SizedBox(height: 4),
                   pw.Text('אורך כולל: ${totalKm.toStringAsFixed(2)} ק"מ', style: const pw.TextStyle(fontSize: 10)),
-                  pw.Text('זמן הליכה כולל (משוער): ${totalMin.toStringAsFixed(0)} דקות', style: const pw.TextStyle(fontSize: 10)),
+                  pw.Text('זמן הליכה כולל (משוער): ${_formatMinutes(totalMin)}', style: const pw.TextStyle(fontSize: 10)),
                   if (totalClimb != null)
                     pw.Text('עלייה מצטברת: ${totalClimb.toStringAsFixed(0)} מ\' | ירידה מצטברת: ${totalDescent!.toStringAsFixed(0)} מ\'', style: const pw.TextStyle(fontSize: 10)),
                 ],
@@ -1701,7 +1722,7 @@ class _LearningViewState extends State<LearningView>
                               const SizedBox(height: 8),
                               _infoCard('סה"כ נקודות', '${_narrationEntries.length}'),
                               _infoCard('אורך כולל', '${totalKm.toStringAsFixed(2)} ק"מ'),
-                              _infoCard('זמן הליכה (משוער)', '${totalMin.toStringAsFixed(0)} דקות'),
+                              _infoCard('זמן הליכה (משוער)', _formatMinutes(totalMin)),
                               if (totalClimb != null) ...[
                                 _infoCard('עלייה מצטברת', '${totalClimb.toStringAsFixed(0)} מ\''),
                                 _infoCard('ירידה מצטברת', '${totalDescent!.toStringAsFixed(0)} מ\''),

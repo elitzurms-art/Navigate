@@ -11,6 +11,7 @@ class ScoringService {
     required String navigatorId,
     required List<CheckpointPunch> punches,
     required VerificationSettings verificationSettings,
+    ScoringCriteria? scoringCriteria,
     bool isDisqualified = false,
   }) {
     print('מחשב ציון אוטומטי ל-$navigatorId');
@@ -30,7 +31,6 @@ class ScoringService {
     }
 
     Map<String, CheckpointScore> checkpointScores = {};
-    int totalScore = 0;
     int approvedCount = 0;
 
     for (final punch in punches) {
@@ -42,21 +42,28 @@ class ScoringService {
 
       // חישוב לפי שיטה
       if (verificationSettings.verificationType == 'approved_failed') {
-        // אישור/נכשל פשוט
         final threshold = verificationSettings.approvalDistance ?? 50;
         approved = distance <= threshold;
         score = approved ? 100 : 0;
       } else if (verificationSettings.verificationType == 'score_by_distance') {
-        // ציון לפי מרחק
-        approved = true; // תמיד מאושר
+        approved = true;
         score = _calculateScoreByDistance(
           distance,
           verificationSettings.scoreRanges ?? [],
         );
       } else {
-        // ברירת מחדל
         approved = distance <= 50;
         score = approved ? 100 : 0;
+      }
+
+      // משקל לנקודה (מקריטריוני ניקוד)
+      int cpWeight = 0;
+      if (scoringCriteria != null) {
+        if (scoringCriteria.mode == 'equal') {
+          cpWeight = scoringCriteria.equalWeightPerCheckpoint ?? 0;
+        } else {
+          cpWeight = scoringCriteria.checkpointWeights[punch.checkpointId] ?? 0;
+        }
       }
 
       checkpointScores[punch.checkpointId] = CheckpointScore(
@@ -64,22 +71,39 @@ class ScoringService {
         approved: approved,
         score: score,
         distanceMeters: distance,
+        weight: cpWeight,
       );
 
       if (approved) approvedCount++;
-      totalScore += score;
     }
 
-    // ציון כולל (ממוצע)
-    final avgScore = punches.isNotEmpty ? (totalScore / punches.length).round() : 0;
+    // חישוב ציון כולל
+    int totalScore;
+    if (scoringCriteria != null) {
+      // ציון משוקלל: Σ(weight × percentage / 100)
+      double weightedSum = 0;
+      for (final cpScore in checkpointScores.values) {
+        if (cpScore.weight > 0) {
+          weightedSum += cpScore.weight * cpScore.score / 100.0;
+        }
+      }
+      // קריטריונים מותאמים = 0 בחישוב אוטומטי (המפקד ימלא)
+      totalScore = weightedSum.round();
+    } else {
+      // ממוצע רגיל (backward compat)
+      final scoreSum = checkpointScores.values.fold<int>(0, (s, cs) => s + cs.score);
+      totalScore = checkpointScores.isNotEmpty
+          ? (scoreSum / checkpointScores.length).round()
+          : 0;
+    }
 
-    print('✓ ציון מחושב: $avgScore ($approvedCount/${punches.length} אושרו)');
+    print('✓ ציון מחושב: $totalScore ($approvedCount/${punches.length} אושרו)');
 
     return NavigationScore(
       id: '${navigationId}_${navigatorId}_${DateTime.now().millisecondsSinceEpoch}',
       navigationId: navigationId,
       navigatorId: navigatorId,
-      totalScore: avgScore,
+      totalScore: totalScore,
       checkpointScores: checkpointScores,
       calculatedAt: DateTime.now(),
       isManual: false,
@@ -109,6 +133,30 @@ class ScoringService {
 
     // אם עבר את כל הטווחים
     return ranges.last.scorePercentage ~/ 2; // חצי מהציון האחרון
+  }
+
+  /// חישוב ציון משוקלל כולל קריטריונים מותאמים
+  static int calculateWeightedTotal({
+    required Map<String, CheckpointScore> checkpointScores,
+    required Map<String, int> customCriteriaScores,
+  }) {
+    double total = 0;
+    for (final cpScore in checkpointScores.values) {
+      if (cpScore.weight > 0) {
+        total += cpScore.weight * cpScore.score / 100.0;
+      }
+    }
+    for (final earned in customCriteriaScores.values) {
+      total += earned;
+    }
+    return total.round();
+  }
+
+  /// חישוב ממוצע רגיל (backward compat)
+  static int calculateAverage(Map<String, CheckpointScore> cpScores) {
+    if (cpScores.isEmpty) return 0;
+    final sum = cpScores.values.fold<int>(0, (s, cs) => s + cs.score);
+    return (sum / cpScores.length).round();
   }
 
   /// יצירת ציון ידני

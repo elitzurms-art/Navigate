@@ -7,6 +7,7 @@ import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/nav_layer.dart' as nav;
 import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../domain/entities/navigation_score.dart';
+import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
@@ -130,6 +131,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   // הגדרות אישור (commander settings tab)
   bool _autoApprovalEnabled = true;
 
+  // קריטריוני ניקוד
+  String _scoringMode = 'equal'; // 'equal' | 'custom'
+  int _equalWeight = 0;
+  Map<String, int> _customWeights = {};
+  List<CustomCriterion> _customCriteria = [];
+  bool _criteriaLoaded = false;
+
   // Navigator view data
   List<nav.NavCheckpoint> _myCheckpoints = [];
   List<LatLng> _myPlannedRoute = [];
@@ -189,6 +197,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         await _loadCommanderData();
       }
 
+      // טעינת קריטריוני ניקוד
+      _loadScoringCriteria();
+
       // חישוב ניתוח
       _computeAnalysis();
 
@@ -198,6 +209,57 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       print('DEBUG InvestigationScreen: Error loading data: $e');
     }
     if (mounted) setState(() => _isLoading = false);
+  }
+
+  void _loadScoringCriteria() {
+    final criteria = _currentNavigation.reviewSettings.scoringCriteria;
+    if (criteria != null) {
+      _scoringMode = criteria.mode;
+      _equalWeight = criteria.equalWeightPerCheckpoint ?? 0;
+      _customWeights = Map.from(criteria.checkpointWeights);
+      _customCriteria = List.from(criteria.customCriteria);
+    }
+    _criteriaLoaded = true;
+  }
+
+  ScoringCriteria? _buildScoringCriteria() {
+    if (!_criteriaLoaded) return null;
+    // אם אין משקלות, אין קריטריונים
+    if (_scoringMode == 'equal' && _equalWeight == 0 && _customCriteria.isEmpty) {
+      return null;
+    }
+    if (_scoringMode == 'custom' && _customWeights.isEmpty && _customCriteria.isEmpty) {
+      return null;
+    }
+    return ScoringCriteria(
+      mode: _scoringMode,
+      equalWeightPerCheckpoint: _scoringMode == 'equal' ? _equalWeight : null,
+      checkpointWeights: _scoringMode == 'custom' ? _customWeights : const {},
+      customCriteria: _customCriteria,
+    );
+  }
+
+  Future<void> _saveScoringCriteria() async {
+    final criteria = _buildScoringCriteria();
+    final updatedReview = _currentNavigation.reviewSettings.copyWith(
+      scoringCriteria: criteria,
+    );
+    final updatedNav = _currentNavigation.copyWith(
+      reviewSettings: updatedReview,
+      updatedAt: DateTime.now(),
+    );
+    await _navRepo.update(updatedNav);
+    setState(() {
+      _currentNavigation = updatedNav;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('קריטריוני ניקוד נשמרו'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 
   Future<void> _loadNavigatorViewData() async {
@@ -516,6 +578,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     setState(() => _isLoading = true);
 
     try {
+      final criteria = _buildScoringCriteria();
+
       for (final entry in _navigatorDataMap.entries) {
         final navId = entry.key;
         final data = entry.value;
@@ -525,6 +589,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           navigatorId: navId,
           punches: data.punches,
           verificationSettings: widget.navigation.verificationSettings,
+          scoringCriteria: criteria,
         );
 
         _scores[navId] = score;
@@ -555,6 +620,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     final currentScore = _scores[navigatorId];
     if (currentScore == null) return;
 
+    final criteria = _buildScoringCriteria();
+    final isWeighted = criteria != null;
+
     // Deep copy checkpoint scores for editing
     final editedCheckpointScores = <String, CheckpointScore>{};
     for (final entry in currentScore.checkpointScores.entries) {
@@ -564,8 +632,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         score: entry.value.score,
         distanceMeters: entry.value.distanceMeters,
         rejectionReason: entry.value.rejectionReason,
+        weight: entry.value.weight,
       );
     }
+
+    // Deep copy custom criteria scores
+    final editedCustomScores = Map<String, int>.from(
+      currentScore.customCriteriaScores,
+    );
 
     final notesController = TextEditingController(
       text: currentScore.notes ?? '',
@@ -575,10 +649,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       text: currentScore.totalScore.toString(),
     );
 
-    int _calcAverage(Map<String, CheckpointScore> cpScores) {
-      if (cpScores.isEmpty) return 0;
-      final sum = cpScores.values.fold<int>(0, (s, cs) => s + cs.score);
-      return (sum / cpScores.length).round();
+    int calcTotal(Map<String, CheckpointScore> cpScores, Map<String, int> customScores) {
+      if (isWeighted) {
+        return ScoringService.calculateWeightedTotal(
+          checkpointScores: cpScores,
+          customCriteriaScores: customScores,
+        );
+      }
+      return ScoringService.calculateAverage(cpScores);
     }
 
     showModalBottomSheet(
@@ -590,7 +668,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
-            final computedTotal = _calcAverage(editedCheckpointScores);
+            final computedTotal = calcTotal(editedCheckpointScores, editedCustomScores);
             final displayTotal = totalOverride
                 ? (int.tryParse(totalController.text) ?? computedTotal)
                 : computedTotal;
@@ -601,6 +679,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               maxChildSize: 0.95,
               expand: false,
               builder: (_, scrollController) {
+                final cpItems = editedCheckpointScores.entries.toList();
+                final customItems = isWeighted ? _customCriteria : <CustomCriterion>[];
+                final totalItems = cpItems.length + customItems.length;
+
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
@@ -676,6 +758,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                 style: const TextStyle(
                                     fontSize: 12, color: Colors.grey),
                               ),
+                              if (isWeighted)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: Text('(משוקלל)',
+                                      style: TextStyle(
+                                          fontSize: 12, color: Colors.blue)),
+                                ),
                               if (totalOverride)
                                 const Padding(
                                   padding: EdgeInsets.only(right: 8),
@@ -700,23 +789,83 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                       const SizedBox(height: 8),
                       // Checkpoint list header
                       if (editedCheckpointScores.isNotEmpty)
-                        const Row(
+                        Row(
                           children: [
-                            Text('פירוט לפי נקודה:',
+                            const Text('פירוט לפי נקודה:',
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold, fontSize: 14)),
+                            if (isWeighted)
+                              Text('  (משוקלל)',
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.blue[600])),
                           ],
                         ),
                       const SizedBox(height: 4),
-                      // Checkpoint scores list
+                      // Checkpoint + custom criteria list
                       Expanded(
                         child: ListView.builder(
                           controller: scrollController,
-                          itemCount: editedCheckpointScores.length,
+                          itemCount: totalItems,
                           itemBuilder: (_, index) {
-                            final cpId = editedCheckpointScores.keys
-                                .elementAt(index);
-                            final cpScore = editedCheckpointScores[cpId]!;
+                            // Custom criteria section
+                            if (index >= cpItems.length) {
+                              final criterion = customItems[index - cpItems.length];
+                              final earned = editedCustomScores[criterion.id] ?? 0;
+                              return Card(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                color: Colors.purple[50],
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.star, color: Colors.purple, size: 20),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(criterion.name,
+                                            style: const TextStyle(fontWeight: FontWeight.w500)),
+                                      ),
+                                      Text('${criterion.weight} נק\'',
+                                          style: TextStyle(fontSize: 11, color: Colors.purple[300])),
+                                      const SizedBox(width: 8),
+                                      SizedBox(
+                                        width: 56,
+                                        height: 36,
+                                        child: TextField(
+                                          controller: TextEditingController(text: earned.toString()),
+                                          keyboardType: TextInputType.number,
+                                          textAlign: TextAlign.center,
+                                          decoration: InputDecoration(
+                                            border: const OutlineInputBorder(),
+                                            isDense: true,
+                                            contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 4, vertical: 8),
+                                            fillColor: Colors.purple.withOpacity(0.1),
+                                            filled: true,
+                                          ),
+                                          onChanged: (val) {
+                                            final newVal = (int.tryParse(val) ?? 0)
+                                                .clamp(0, criterion.weight);
+                                            setSheetState(() {
+                                              editedCustomScores[criterion.id] = newVal;
+                                              if (!totalOverride) {
+                                                totalController.text = calcTotal(
+                                                    editedCheckpointScores, editedCustomScores)
+                                                    .toString();
+                                              }
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            // Checkpoint score row
+                            final cpEntry = cpItems[index];
+                            final cpId = cpEntry.key;
+                            final cpScore = cpEntry.value;
                             final matchCp = _navCheckpoints.where(
                               (c) =>
                                   c.sourceId == cpScore.checkpointId ||
@@ -763,11 +912,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                                 rejectionReason: wasApproved
                                                     ? cpScore.rejectionReason
                                                     : null,
+                                                weight: cpScore.weight,
                                               );
                                               if (!totalOverride) {
                                                 totalController.text =
-                                                    _calcAverage(
-                                                            editedCheckpointScores)
+                                                    calcTotal(editedCheckpointScores,
+                                                        editedCustomScores)
                                                         .toString();
                                               }
                                             });
@@ -779,11 +929,22 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                           constraints: const BoxConstraints(),
                                         ),
                                         const SizedBox(width: 8),
-                                        // Checkpoint name
+                                        // Checkpoint name + weight
                                         Expanded(
-                                          child: Text(cpName,
-                                              style: const TextStyle(
-                                                  fontWeight: FontWeight.w500)),
+                                          child: Row(
+                                            children: [
+                                              Flexible(
+                                                child: Text(cpName,
+                                                    style: const TextStyle(
+                                                        fontWeight: FontWeight.w500)),
+                                              ),
+                                              if (cpScore.weight > 0)
+                                                Text(' (${cpScore.weight} נק\')',
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: Colors.blue[400])),
+                                            ],
+                                          ),
                                         ),
                                         // Distance (read-only)
                                         Text(
@@ -833,11 +994,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                                       cpScore.distanceMeters,
                                                   rejectionReason:
                                                       cpScore.rejectionReason,
+                                                  weight: cpScore.weight,
                                                 );
                                                 if (!totalOverride) {
                                                   totalController.text =
-                                                      _calcAverage(
-                                                              editedCheckpointScores)
+                                                      calcTotal(editedCheckpointScores,
+                                                          editedCustomScores)
                                                           .toString();
                                                 }
                                               });
@@ -873,6 +1035,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                                   cpScore.distanceMeters,
                                               rejectionReason:
                                                   val.isEmpty ? null : val,
+                                              weight: cpScore.weight,
                                             );
                                           },
                                         ),
@@ -902,11 +1065,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                     punches: data.punches,
                                     verificationSettings:
                                         widget.navigation.verificationSettings,
+                                    scoringCriteria: criteria,
                                   );
                                   setSheetState(() {
                                     editedCheckpointScores.clear();
                                     editedCheckpointScores.addAll(
                                         autoScore.checkpointScores);
+                                    editedCustomScores.clear();
                                     totalOverride = false;
                                     totalController.text =
                                         autoScore.totalScore.toString();
@@ -945,6 +1110,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                       newNotes: notesController.text.isEmpty
                                           ? null
                                           : notesController.text,
+                                    ).copyWith(
+                                      customCriteriaScores: editedCustomScores,
                                     );
                                   });
                                   Navigator.pop(sheetContext);
@@ -2280,6 +2447,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Scoring criteria configuration
+          _buildScoringCriteriaCard(),
+
+          const SizedBox(height: 12),
+
           // Actions bar
           Card(
             color: Colors.blue[50],
@@ -2360,6 +2532,262 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ..._navigatorDataMap.entries.map((entry) =>
               _buildNavigatorScoreCard(entry.key, entry.value)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildScoringCriteriaCard() {
+    // חישוב סה"כ משקלים
+    final cpCount = _navCheckpoints
+        .where((c) => c.type != 'start' && c.type != 'end' && !c.isPolygon)
+        .length;
+    int totalCpWeight;
+    if (_scoringMode == 'equal') {
+      totalCpWeight = _equalWeight * cpCount;
+    } else {
+      totalCpWeight = _customWeights.values.fold(0, (s, w) => s + w);
+    }
+    final customWeight = _customCriteria.fold(0, (s, c) => s + c.weight);
+    final totalWeight = totalCpWeight + customWeight;
+    final isValid = totalWeight <= 100;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.tune, color: Colors.indigo[700]),
+                const SizedBox(width: 8),
+                const Text('קריטריוני ניקוד',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Mode toggle
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'equal', label: Text('ניקוד שווה')),
+                ButtonSegment(value: 'custom', label: Text('ניקוד מותאם')),
+              ],
+              selected: {_scoringMode},
+              onSelectionChanged: (values) {
+                setState(() => _scoringMode = values.first);
+              },
+              style: SegmentedButton.styleFrom(
+                selectedBackgroundColor: Colors.indigo[100],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Equal mode
+            if (_scoringMode == 'equal') ...[
+              Row(
+                children: [
+                  const Text('משקל לכל נקודה: '),
+                  SizedBox(
+                    width: 60,
+                    height: 36,
+                    child: TextField(
+                      controller: TextEditingController(text: _equalWeight.toString()),
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                      ),
+                      onChanged: (val) {
+                        setState(() => _equalWeight = int.tryParse(val) ?? 0);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('$_equalWeight x $cpCount = $totalCpWeight נק\'',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                ],
+              ),
+            ],
+
+            // Custom mode
+            if (_scoringMode == 'custom') ...[
+              const Text('משקל לכל נקודה:',
+                  style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+              const SizedBox(height: 6),
+              ..._navCheckpoints
+                  .where((c) => c.type != 'start' && c.type != 'end' && !c.isPolygon)
+                  .map((cp) {
+                final cpId = cp.sourceId ?? cp.id;
+                final weight = _customWeights[cpId] ?? 0;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(cp.name, style: const TextStyle(fontSize: 13)),
+                      ),
+                      SizedBox(
+                        width: 56,
+                        height: 32,
+                        child: TextField(
+                          controller: TextEditingController(text: weight.toString()),
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                          ),
+                          onChanged: (val) {
+                            setState(() {
+                              _customWeights[cpId] = int.tryParse(val) ?? 0;
+                            });
+                          },
+                        ),
+                      ),
+                      const Text(' נק\'', style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                );
+              }),
+            ],
+
+            const Divider(height: 20),
+
+            // Custom criteria section
+            Row(
+              children: [
+                const Text('קריטריונים נוספים',
+                    style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _customCriteria.add(CustomCriterion(
+                        id: 'crit_${DateTime.now().millisecondsSinceEpoch}',
+                        name: '',
+                        weight: 0,
+                      ));
+                    });
+                  },
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('הוסף', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.indigo,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
+            ..._customCriteria.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final criterion = entry.value;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: TextEditingController(text: criterion.name),
+                        decoration: const InputDecoration(
+                          hintText: 'שם קריטריון',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        ),
+                        style: const TextStyle(fontSize: 13),
+                        onChanged: (val) {
+                          _customCriteria[idx] = criterion.copyWith(name: val);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 56,
+                      height: 36,
+                      child: TextField(
+                        controller: TextEditingController(text: criterion.weight.toString()),
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                        ),
+                        onChanged: (val) {
+                          setState(() {
+                            _customCriteria[idx] = criterion.copyWith(
+                              weight: int.tryParse(val) ?? 0,
+                            );
+                          });
+                        },
+                      ),
+                    ),
+                    const Text(' נק\'', style: TextStyle(fontSize: 12)),
+                    IconButton(
+                      icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () {
+                        setState(() => _customCriteria.removeAt(idx));
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+
+            const SizedBox(height: 12),
+
+            // Summary bar
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isValid ? Colors.green[50] : Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isValid ? Colors.green : Colors.red,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'סה"כ: $totalWeight/100',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isValid ? Colors.green[800] : Colors.red[800],
+                    ),
+                  ),
+                  Icon(
+                    isValid ? Icons.check_circle : Icons.error,
+                    color: isValid ? Colors.green : Colors.red,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Save button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _saveScoringCriteria,
+                icon: const Icon(Icons.save, size: 18),
+                label: const Text('שמור קריטריונים'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.indigo,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2529,6 +2957,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                       final cpScoreColor =
                           ScoringService.getScoreColor(
                               cpScore.score);
+                      final weightedPoints = cpScore.weight > 0
+                          ? (cpScore.weight * cpScore.score / 100.0).round()
+                          : null;
 
                       return Padding(
                         padding: const EdgeInsets.symmetric(
@@ -2546,9 +2977,18 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                                child: Text(cpName,
+                                child: Row(
+                              children: [
+                                Flexible(child: Text(cpName,
                                     style: const TextStyle(
                                         fontSize: 12))),
+                                if (cpScore.weight > 0)
+                                  Text(' (${cpScore.weight} נק\')',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.blue[400])),
+                              ],
+                            )),
                             Text(
                                 '${cpScore.distanceMeters.toStringAsFixed(0)}מ\'',
                                 style: const TextStyle(
@@ -2566,7 +3006,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                 borderRadius:
                                     BorderRadius.circular(8),
                               ),
-                              child: Text('${cpScore.score}',
+                              child: Text(
+                                  weightedPoints != null
+                                      ? '$weightedPoints/${cpScore.weight}'
+                                      : '${cpScore.score}',
                                   style: TextStyle(
                                       fontWeight:
                                           FontWeight.bold,
@@ -2577,6 +3020,50 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                         ),
                       );
                     }),
+                    // Custom criteria scores
+                    if (score.customCriteriaScores.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text('קריטריונים נוספים:',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13)),
+                      const SizedBox(height: 4),
+                      ...score.customCriteriaScores.entries.map((ccEntry) {
+                        final criterion = _customCriteria
+                            .where((c) => c.id == ccEntry.key)
+                            .toList();
+                        final name = criterion.isNotEmpty
+                            ? criterion.first.name
+                            : ccEntry.key;
+                        final maxWeight = criterion.isNotEmpty
+                            ? criterion.first.weight
+                            : ccEntry.value;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.star, size: 16, color: Colors.purple),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(name,
+                                  style: const TextStyle(fontSize: 12))),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.purple.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text('${ccEntry.value}/$maxWeight',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.purple,
+                                        fontSize: 12)),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
                   ],
                 ),
               ),

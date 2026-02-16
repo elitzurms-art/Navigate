@@ -50,6 +50,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Checkpoint? _startCheckpoint;
   Checkpoint? _endCheckpoint;
 
+  int? _selectedWaypointIndex; // נקודה נבחרת להזזה
+
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
@@ -165,7 +167,13 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Future<void> _addWaypoint(LatLng point) async {
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
-      _waypoints.add(point);
+      if (_selectedWaypointIndex != null) {
+        // מצב הזזה — מזיז את הנקודה הנבחרת למיקום החדש
+        _waypoints[_selectedWaypointIndex!] = point;
+        _selectedWaypointIndex = null;
+      } else {
+        _waypoints.add(point);
+      }
     });
   }
 
@@ -173,6 +181,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     if (_waypoints.isEmpty) return;
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
+      _selectedWaypointIndex = null;
       _waypoints.removeLast();
     });
   }
@@ -180,7 +189,32 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Future<void> _clearWaypoints() async {
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
+      _selectedWaypointIndex = null;
       _waypoints.clear();
+    });
+  }
+
+  /// מחיקת נקודת ציר לפי אינדקס
+  Future<void> _deleteWaypoint(int index) async {
+    if (!await _confirmEditAfterApproval()) return;
+    setState(() {
+      _waypoints.removeAt(index);
+      _selectedWaypointIndex = null;
+    });
+  }
+
+  /// הוספת נקודה באמצע — בין waypoint[index] ל-waypoint[index+1]
+  Future<void> _insertMidpoint(int afterIndex) async {
+    if (!await _confirmEditAfterApproval()) return;
+    final a = _waypoints[afterIndex];
+    final b = _waypoints[afterIndex + 1];
+    final mid = LatLng(
+      (a.latitude + b.latitude) / 2,
+      (a.longitude + b.longitude) / 2,
+    );
+    setState(() {
+      _waypoints.insert(afterIndex + 1, mid);
+      _selectedWaypointIndex = afterIndex + 1; // בוחר את הנקודה החדשה להזזה
     });
   }
 
@@ -522,31 +556,80 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       ));
     }
 
-    // markers לנקודות ציר שצייר המנווט
+    // markers לנקודות ציר שצייר המנווט — לחיצה לבחירה, לחיצה ארוכה למחיקה
     final wpMarkers = _waypoints.asMap().entries.map((entry) {
+      final isSelected = _selectedWaypointIndex == entry.key;
       return Marker(
         point: entry.value,
-        width: 24,
-        height: 24,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.orange,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-          ),
-          child: Center(
-            child: Text(
-              '${entry.key + 1}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
+        width: isSelected ? 30 : 24,
+        height: isSelected ? 30 : 24,
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              if (_selectedWaypointIndex == entry.key) {
+                _selectedWaypointIndex = null; // ביטול בחירה
+              } else {
+                _selectedWaypointIndex = entry.key; // בחירת נקודה
+              }
+            });
+          },
+          onLongPress: () => _deleteWaypoint(entry.key),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isSelected ? Colors.green : Colors.orange,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSelected ? Colors.greenAccent : Colors.white,
+                width: isSelected ? 3 : 2,
+              ),
+              boxShadow: isSelected
+                  ? [BoxShadow(color: Colors.green.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)]
+                  : null,
+            ),
+            child: Center(
+              child: Text(
+                '${entry.key + 1}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
         ),
       );
     }).toList();
+
+    // markers לנקודות אמצע — "+" בין כל שתי נקודות עוקבות להוספת נקודה חדשה
+    final midpointMarkers = <Marker>[];
+    if (_waypoints.length >= 2) {
+      for (int i = 0; i < _waypoints.length - 1; i++) {
+        final a = _waypoints[i];
+        final b = _waypoints[i + 1];
+        final midLat = (a.latitude + b.latitude) / 2;
+        final midLng = (a.longitude + b.longitude) / 2;
+        final idx = i;
+        midpointMarkers.add(Marker(
+          point: LatLng(midLat, midLng),
+          width: 22,
+          height: 22,
+          child: GestureDetector(
+            onTap: () => _insertMidpoint(idx),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: const Center(
+                child: Icon(Icons.add, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ));
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -587,16 +670,33 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.touch_app, size: 20, color: Colors.grey[700]),
+                    Icon(
+                      _selectedWaypointIndex != null ? Icons.open_with : Icons.touch_app,
+                      size: 20,
+                      color: _selectedWaypointIndex != null ? Colors.green[700] : Colors.grey[700],
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _waypoints.isEmpty
-                            ? 'לחץ על המפה לציור הציר'
-                            : 'נקודות ציר: ${_waypoints.length}',
-                        style: TextStyle(color: Colors.grey[700]),
+                        _selectedWaypointIndex != null
+                            ? 'לחץ על המפה להזיז נקודה ${_selectedWaypointIndex! + 1}'
+                            : _waypoints.isEmpty
+                                ? 'לחץ על המפה לציור הציר'
+                                : 'נקודות ציר: ${_waypoints.length}',
+                        style: TextStyle(
+                          color: _selectedWaypointIndex != null ? Colors.green[700] : Colors.grey[700],
+                          fontWeight: _selectedWaypointIndex != null ? FontWeight.bold : FontWeight.normal,
+                        ),
                       ),
                     ),
+                    if (_selectedWaypointIndex != null)
+                      IconButton(
+                        icon: Icon(Icons.close, size: 20, color: Colors.green[700]),
+                        onPressed: () => setState(() => _selectedWaypointIndex = null),
+                        tooltip: 'בטל בחירה',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
                     if (_waypoints.isNotEmpty) ...[
                       IconButton(
                         icon: const Icon(Icons.undo, size: 20),
@@ -722,6 +822,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                     // נקודות התחלה/סיום (תמיד מוצג)
                     if (startEndMarkers.isNotEmpty)
                       MarkerLayer(markers: startEndMarkers),
+                    // נקודות אמצע — כפתורי "+" להוספת נקודה חדשה
+                    if (midpointMarkers.isNotEmpty)
+                      MarkerLayer(markers: midpointMarkers),
                     // נקודות ציר של המנווט (תמיד מוצג — מטרת העריכה)
                     MarkerLayer(markers: wpMarkers),
                     ...MapControls.buildMeasureLayers(_measurePoints),

@@ -357,27 +357,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   // ===========================================================================
 
   void _startAlertListener() {
-    if (!widget.isCommander) return;
-    _alertSubscription = _alertRepo
-        .watchActiveAlerts(widget.navigation.id)
-        .listen((alerts) {
-      if (!mounted) return;
-      // בדוק אם יש התראות חדשות
-      final newAlerts = alerts.where((a) =>
-          !_activeAlerts.any((existing) => existing.id == a.id)).toList();
-
-      setState(() {
-        _activeAlerts = alerts;
-      });
-
-      // הצג popup להתראות חדשות (חירום + תקינות)
-      for (final alert in newAlerts) {
-        if (alert.type == AlertType.emergency ||
-            alert.type == AlertType.healthCheckExpired) {
-          _showAlertDialog(alert);
-        }
-      }
-    });
+    // התראות רלוונטיות רק באימון פעיל (NavigationManagementScreen), לא בלמידה.
+    // מסך זה משמש רק לסטטוס learning — אין צורך ב-listener כאן.
+    return;
   }
 
   void _showAlertDialog(NavigatorAlert alert) {

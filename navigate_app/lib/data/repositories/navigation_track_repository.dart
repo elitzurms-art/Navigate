@@ -154,6 +154,31 @@ class NavigationTrackRepository {
     }
   }
 
+  /// מחיקת tracks למנווט ספציפי בניווט ספציפי (לשימוש מפקד — התחלה/איפוס)
+  Future<void> deleteByNavigator(String navigationId, String navigatorUserId) async {
+    // מחיקה מ-Drift
+    await (_db.delete(_db.navigationTracks)
+          ..where((t) =>
+              t.navigationId.equals(navigationId) &
+              t.navigatorUserId.equals(navigatorUserId)))
+        .go();
+
+    // מחיקה מ-Firestore
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .where('navigatorUserId', isEqualTo: navigatorUserId)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
+  }
+
   /// מחיקת כל ה-tracks לניווט (איפוס לפני התחלה מחדש)
   Future<void> deleteByNavigation(String navigationId) async {
     await (_db.delete(_db.navigationTracks)

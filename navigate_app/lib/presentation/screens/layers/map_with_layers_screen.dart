@@ -124,7 +124,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
             ),
             layers: [
 
-              // שכבת נ"ז - נקודות ציון (עיגול כחול/ירוק עם מספר)
+              // שכבת נ"צ - נקודות ציון (עיגול כחול/ירוק עם מספר)
               if (_showNZ && _checkpoints.isNotEmpty)
                 MarkerLayer(
                   markers: _checkpoints.map((checkpoint) {

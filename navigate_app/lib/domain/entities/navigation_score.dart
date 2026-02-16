@@ -7,6 +7,7 @@ class NavigationScore extends Equatable {
   final String navigatorId;
   final int totalScore; // ציון כולל (0-100)
   final Map<String, CheckpointScore> checkpointScores; // ציון לכל נקודה
+  final Map<String, int> customCriteriaScores; // criterionId → ציון שניתן (0..weight)
   final DateTime calculatedAt;
   final bool isManual; // האם ציון ידני או אוטומטי
   final String? notes; // הערות מהמפקד
@@ -19,6 +20,7 @@ class NavigationScore extends Equatable {
     required this.navigatorId,
     required this.totalScore,
     required this.checkpointScores,
+    this.customCriteriaScores = const {},
     required this.calculatedAt,
     this.isManual = false,
     this.notes,
@@ -32,6 +34,7 @@ class NavigationScore extends Equatable {
     String? navigatorId,
     int? totalScore,
     Map<String, CheckpointScore>? checkpointScores,
+    Map<String, int>? customCriteriaScores,
     DateTime? calculatedAt,
     bool? isManual,
     String? notes,
@@ -44,6 +47,7 @@ class NavigationScore extends Equatable {
       navigatorId: navigatorId ?? this.navigatorId,
       totalScore: totalScore ?? this.totalScore,
       checkpointScores: checkpointScores ?? this.checkpointScores,
+      customCriteriaScores: customCriteriaScores ?? this.customCriteriaScores,
       calculatedAt: calculatedAt ?? this.calculatedAt,
       isManual: isManual ?? this.isManual,
       notes: notes ?? this.notes,
@@ -59,6 +63,7 @@ class NavigationScore extends Equatable {
       'navigatorId': navigatorId,
       'totalScore': totalScore,
       'checkpointScores': checkpointScores.map((k, v) => MapEntry(k, v.toMap())),
+      if (customCriteriaScores.isNotEmpty) 'customCriteriaScores': customCriteriaScores,
       'calculatedAt': calculatedAt.toIso8601String(),
       'isManual': isManual,
       if (notes != null) 'notes': notes,
@@ -76,6 +81,9 @@ class NavigationScore extends Equatable {
       checkpointScores: (map['checkpointScores'] as Map<String, dynamic>).map(
         (k, v) => MapEntry(k, CheckpointScore.fromMap(v as Map<String, dynamic>)),
       ),
+      customCriteriaScores: map['customCriteriaScores'] != null
+          ? Map<String, int>.from(map['customCriteriaScores'] as Map)
+          : const {},
       calculatedAt: DateTime.parse(map['calculatedAt'] as String),
       isManual: map['isManual'] as bool? ?? false,
       notes: map['notes'] as String?,
@@ -97,6 +105,7 @@ class CheckpointScore extends Equatable {
   final int score; // ציון (0-100)
   final double distanceMeters; // מרחק מהנקודה המקורית
   final String? rejectionReason; // סיבת דחייה
+  final int weight; // משקל הנקודה (0 = מצב ממוצע רגיל)
 
   const CheckpointScore({
     required this.checkpointId,
@@ -104,7 +113,26 @@ class CheckpointScore extends Equatable {
     required this.score,
     required this.distanceMeters,
     this.rejectionReason,
+    this.weight = 0,
   });
+
+  CheckpointScore copyWith({
+    String? checkpointId,
+    bool? approved,
+    int? score,
+    double? distanceMeters,
+    String? rejectionReason,
+    int? weight,
+  }) {
+    return CheckpointScore(
+      checkpointId: checkpointId ?? this.checkpointId,
+      approved: approved ?? this.approved,
+      score: score ?? this.score,
+      distanceMeters: distanceMeters ?? this.distanceMeters,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
+      weight: weight ?? this.weight,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -113,6 +141,7 @@ class CheckpointScore extends Equatable {
       'score': score,
       'distanceMeters': distanceMeters,
       if (rejectionReason != null) 'rejectionReason': rejectionReason,
+      if (weight > 0) 'weight': weight,
     };
   }
 
@@ -123,11 +152,12 @@ class CheckpointScore extends Equatable {
       score: map['score'] as int,
       distanceMeters: map['distanceMeters'] as double,
       rejectionReason: map['rejectionReason'] as String?,
+      weight: map['weight'] as int? ?? 0,
     );
   }
 
   @override
-  List<Object?> get props => [checkpointId, approved, score];
+  List<Object?> get props => [checkpointId, approved, score, weight];
 }
 
 /// שיטת חישוב ציון

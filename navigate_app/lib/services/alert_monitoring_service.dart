@@ -61,6 +61,7 @@ class AlertMonitoringService {
     AlertType.routeDeviation: Duration(minutes: 5),
     AlertType.safetyPoint: Duration(minutes: 5),
     AlertType.proximity: Duration(minutes: 5), // fallback, overridden by proximityMinTime
+    AlertType.battery: Duration(minutes: 15),
   };
 
   /// סף דיוק GPS — מעל 50 מטר, מדלגים על בדיקות (מניעת false positives)
@@ -68,6 +69,9 @@ class AlertMonitoringService {
 
   /// מרחק מינימלי (מטרים) שנחשב "תנועה משמעותית"
   static const double _movementThreshold = 10.0;
+
+  /// Callback — נקרא בכל פעם שנוצרת התראה חדשה (לתצוגה בצד המנווט)
+  final void Function(NavigatorAlert alert)? onAlert;
 
   AlertMonitoringService({
     required this.navigationId,
@@ -79,6 +83,7 @@ class AlertMonitoringService {
     this.areaId,
     this.boundaryLayerId,
     this.plannedPath = const [],
+    this.onAlert,
   });
 
   /// התחלת מוניטור — טוען נתוני גאומטריה ומאזין ל-GPS
@@ -485,13 +490,27 @@ class AlertMonitoringService {
   }
 
   // ===========================================================================
-  // Stubs: Battery, No Reception
+  // Battery Check
   // ===========================================================================
 
-  // ignore: unused_element
-  void _checkBattery() {
-    // TODO: requires battery_plus package — not in dependencies
+  /// עדכון רמת סוללה מבחוץ (מ-ActiveView) + בדיקת סף
+  void updateBatteryLevel(int level) {
+    if (!_isRunning) return;
+    if (!alertsConfig.batteryAlertEnabled) return;
+
+    final threshold = alertsConfig.batteryPercentage;
+    if (threshold == null) return;
+
+    if (level <= threshold) {
+      print('DEBUG AlertMonitoring: battery alert! $level% <= $threshold%');
+      final coord = _lastMovementCoordinate ?? Coordinate(lat: 0, lng: 0, utm: '');
+      _sendAlert(AlertType.battery, coord);
+    }
   }
+
+  // ===========================================================================
+  // Stub: No Reception
+  // ===========================================================================
 
   // ignore: unused_element
   void _checkNoReception() {
@@ -535,6 +554,9 @@ class AlertMonitoringService {
     } catch (e) {
       print('DEBUG AlertMonitoring: failed to send alert: $e');
     }
+
+    // notify callback (לתצוגת באנר בצד המנווט)
+    onAlert?.call(alert);
   }
 }
 
