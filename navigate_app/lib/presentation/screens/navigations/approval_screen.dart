@@ -981,15 +981,31 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         .toList();
     if (pointCps.isEmpty) return [];
 
+    // זיהוי סוג לפי הציר (startPointId/endPointId) — fallback ל-cp.type
+    final startIds = <String>{};
+    final endIds = <String>{};
+    for (final route in _currentNavigation.routes.values) {
+      if (route.startPointId != null) startIds.add(route.startPointId!);
+      if (route.endPointId != null) endIds.add(route.endPointId!);
+    }
+
     return [
       MarkerLayer(
         markers: pointCps.map((cp) {
           Color bgColor;
           String letter;
-          if (cp.type == 'start') {
+
+          final isStart = startIds.contains(cp.id) ||
+              startIds.contains(cp.sourceId) ||
+              cp.type == 'start';
+          final isEnd = endIds.contains(cp.id) ||
+              endIds.contains(cp.sourceId) ||
+              cp.type == 'end';
+
+          if (isStart) {
             bgColor = _kStartColor;
             letter = 'H';
-          } else if (cp.type == 'end') {
+          } else if (isEnd) {
             bgColor = _kEndColor;
             letter = 'S';
           } else {

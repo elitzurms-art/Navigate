@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:battery_plus/battery_plus.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/coordinate.dart';
@@ -20,6 +21,7 @@ import '../../../../services/gps_service.dart';
 import '../../../../services/gps_tracking_service.dart';
 import '../../../../services/health_check_service.dart';
 import '../../../../services/security_manager.dart';
+import '../../../../services/device_security_service.dart';
 import '../../../../services/alert_monitoring_service.dart';
 import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
@@ -43,7 +45,7 @@ class ActiveView extends StatefulWidget {
   State<ActiveView> createState() => _ActiveViewState();
 }
 
-class _ActiveViewState extends State<ActiveView> {
+class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   final SecurityManager _securityManager = SecurityManager();
   final GpsService _gpsService = GpsService();
   final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
@@ -74,6 +76,8 @@ class _ActiveViewState extends State<ActiveView> {
 
   // דיווח סטטוס ל-system_status (כדי שהמפקד יראה בבדיקת מערכות)
   Timer? _statusReportTimer;
+  final Battery _battery = Battery();
+  int _batteryLevel = -1; // -1 = לא זמין
 
   // Health check
   HealthCheckService? _healthCheckService;
@@ -96,11 +100,13 @@ class _ActiveViewState extends State<ActiveView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadTrackState();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopSecurity();
     _gpsCheckTimer?.cancel();
     _elapsedTimer?.cancel();
@@ -345,6 +351,46 @@ class _ActiveViewState extends State<ActiveView> {
   }
 
   // ===========================================================================
+  // Lifecycle — זיהוי יציאה מ-Lock Task
+  // ===========================================================================
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _securityActive &&
+        !_isDisqualified) {
+      _checkLockTaskIntegrity();
+    }
+  }
+
+  /// בדיקת שלמות Lock Task — אם היינו במצב נעילה ויצאנו ממנו, פסילה
+  Future<void> _checkLockTaskIntegrity() async {
+    try {
+      final deviceSecurity = DeviceSecurityService();
+      final inLockTask = await deviceSecurity.isInLockTaskMode();
+
+      // אם אבטחה פעילה אבל Lock Task כבוי — המשתמש יצא מהנעילה
+      if (!inLockTask && _securityActive && !_isDisqualified) {
+        print('🚨 ActiveView: Lock Task exit detected on resume!');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('זוהתה יציאה מנעילת אבטחה — הניווט נפסל'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+
+        await _handleDisqualification(ViolationType.exitLockTask);
+      }
+    } catch (e) {
+      print('DEBUG ActiveView: lock task integrity check error: $e');
+    }
+  }
+
+  // ===========================================================================
   // GPS Source Check
   // ===========================================================================
 
@@ -386,6 +432,13 @@ class _ActiveViewState extends State<ActiveView> {
   Future<void> _reportStatusToFirestore() async {
     final uid = widget.currentUser.uid;
     try {
+      // עדכון סוללה
+      try {
+        _batteryLevel = await _battery.batteryLevel;
+      } catch (_) {
+        _batteryLevel = -1;
+      }
+
       final docRef = FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
           .doc(_nav.id)
@@ -399,6 +452,7 @@ class _ActiveViewState extends State<ActiveView> {
       final data = <String, dynamic>{
         'navigatorId': uid,
         'isConnected': lastPoint != null || _gpsSource != PositionSource.none,
+        'batteryLevel': _batteryLevel >= 0 ? _batteryLevel : null,
         'hasGPS': _gpsSource == PositionSource.gps,
         'gpsAccuracy': lastPoint?.accuracy ?? -1,
         'receptionLevel': _estimateReceptionLevel(),
@@ -459,6 +513,10 @@ class _ActiveViewState extends State<ActiveView> {
     final points = _gpsTracker.trackPoints;
 
     try {
+      // בדיקת עצירה מרחוק BEFORE sync — כדי שלא לדרוס isActive=false של המפקד
+      final stopped = await _checkRemoteStop();
+      if (stopped) return; // הניווט נעצר — לא לסנכרן חזרה
+
       // עדכון נקודות ב-Drift (רק אם יש)
       if (points.isNotEmpty) {
         await _trackRepo.updateTrackPoints(_track!.id, points);
@@ -471,9 +529,6 @@ class _ActiveViewState extends State<ActiveView> {
       if (mounted && points.isNotEmpty) {
         setState(() => _trackPointCount = points.length);
       }
-
-      // בדיקת עצירה מרחוק (כל ~30 שניות)
-      await _checkRemoteStop();
     } catch (e) {
       print('DEBUG ActiveView: track save error: $e');
     }
@@ -493,8 +548,9 @@ class _ActiveViewState extends State<ActiveView> {
   // Remote Stop — זיהוי עצירה מרחוק ע"י מפקד
   // ===========================================================================
 
-  Future<void> _checkRemoteStop() async {
-    if (_track == null || _personalStatus != NavigatorPersonalStatus.active) return;
+  /// בדיקת עצירה מרחוק. מחזיר true אם הניווט נעצר.
+  Future<bool> _checkRemoteStop() async {
+    if (_track == null || _personalStatus != NavigatorPersonalStatus.active) return false;
 
     try {
       final doc = await FirebaseFirestore.instance
@@ -505,20 +561,22 @@ class _ActiveViewState extends State<ActiveView> {
       if (!doc.exists) {
         // המפקד מחק את ה-track (איפוס לפני הפעלה מחדש)
         await _performRemoteStop();
-        return;
+        return true;
       }
 
       final data = doc.data();
-      if (data == null) return;
+      if (data == null) return false;
 
       final isActive = data['isActive'] as bool? ?? true;
       if (!isActive) {
         // המפקד עצר את הניווט מרחוק
         await _performRemoteStop();
+        return true;
       }
     } catch (e) {
       print('DEBUG ActiveView: remote stop check error: $e');
     }
+    return false;
   }
 
   Future<void> _performRemoteStop() async {

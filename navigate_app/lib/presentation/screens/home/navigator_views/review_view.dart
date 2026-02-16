@@ -70,7 +70,7 @@ class _ReviewViewState extends State<ReviewView> {
   // שכבות מפה
   bool _showGG = true;
   bool _showNZ = true;
-  bool _showNB = false;
+  bool _showNB = true;
   bool _showPlanned = true;
   bool _showActual = true;
   bool _showPunches = true;
@@ -468,57 +468,71 @@ class _ReviewViewState extends State<ReviewView> {
 
                   // נקודות ציון
                   if (_showNZ && pointCps.isNotEmpty)
-                    MarkerLayer(
-                      markers: pointCps.map((cp) {
-                        Color bgColor;
-                        String letter;
-                        if (cp.type == 'start') {
-                          bgColor = _kStartColor;
-                          letter = 'H';
-                        } else if (cp.type == 'end') {
-                          bgColor = _kEndColor;
-                          letter = 'S';
-                        } else {
-                          bgColor = _kCheckpointColor;
-                          letter = 'B';
-                        }
-                        final label = '${cp.sequenceNumber}$letter';
+                    Builder(builder: (_) {
+                      final route = widget.navigation.routes[widget.currentUser.uid];
+                      final startId = route?.startPointId;
+                      final endId = route?.endPointId;
 
-                        return Marker(
-                          point: LatLng(
-                              cp.coordinates!.lat, cp.coordinates!.lng),
-                          width: 38,
-                          height: 38,
-                          child: Opacity(
-                            opacity: _nzOpacity,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: bgColor,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                    color: Colors.white, width: 2),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 4,
-                                  ),
-                                ],
-                              ),
-                              child: Center(
-                                child: Text(
-                                  label,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
+                      return MarkerLayer(
+                        markers: pointCps.map((cp) {
+                          Color bgColor;
+                          String letter;
+
+                          final isStart = (startId != null &&
+                                  (cp.id == startId || cp.sourceId == startId)) ||
+                              cp.type == 'start';
+                          final isEnd = (endId != null &&
+                                  (cp.id == endId || cp.sourceId == endId)) ||
+                              cp.type == 'end';
+
+                          if (isStart) {
+                            bgColor = _kStartColor;
+                            letter = 'H';
+                          } else if (isEnd) {
+                            bgColor = _kEndColor;
+                            letter = 'S';
+                          } else {
+                            bgColor = _kCheckpointColor;
+                            letter = 'B';
+                          }
+                          final label = '${cp.sequenceNumber}$letter';
+
+                          return Marker(
+                            point: LatLng(
+                                cp.coordinates!.lat, cp.coordinates!.lng),
+                            width: 38,
+                            height: 38,
+                            child: Opacity(
+                              opacity: _nzOpacity,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: bgColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: Colors.white, width: 2),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    label,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                          );
+                        }).toList(),
+                      );
+                    }),
 
                   // דקירות
                   if (_showPunches && _punches.isNotEmpty)
@@ -916,17 +930,22 @@ class _ReviewViewState extends State<ReviewView> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => _FullscreenReviewMap(
-          center: center,
-          checkpoints: _checkpoints,
-          safetyPoints: _safetyPoints,
-          boundaries: _boundaries,
-          plannedRoute: _plannedRoute,
-          actualRoute: _actualRoute,
-          trackPoints: _trackPoints,
-          punches: _punches,
-          deviations: _deviations,
-        ),
+        builder: (_) {
+          final route = widget.navigation.routes[widget.currentUser.uid];
+          return _FullscreenReviewMap(
+            center: center,
+            checkpoints: _checkpoints,
+            safetyPoints: _safetyPoints,
+            boundaries: _boundaries,
+            plannedRoute: _plannedRoute,
+            actualRoute: _actualRoute,
+            trackPoints: _trackPoints,
+            punches: _punches,
+            deviations: _deviations,
+            startPointId: route?.startPointId,
+            endPointId: route?.endPointId,
+          );
+        },
       ),
     );
   }
@@ -943,6 +962,8 @@ class _FullscreenReviewMap extends StatefulWidget {
   final List<TrackPoint> trackPoints;
   final List<CheckpointPunch> punches;
   final List<DeviationSegment> deviations;
+  final String? startPointId;
+  final String? endPointId;
 
   const _FullscreenReviewMap({
     required this.center,
@@ -954,6 +975,8 @@ class _FullscreenReviewMap extends StatefulWidget {
     required this.trackPoints,
     required this.punches,
     required this.deviations,
+    this.startPointId,
+    this.endPointId,
   });
 
   @override
@@ -968,7 +991,7 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
 
   bool _showGG = true;
   bool _showNZ = true;
-  bool _showNB = false;
+  bool _showNB = true;
   bool _showPlanned = true;
   bool _showActual = true;
   bool _showPunches = true;
@@ -1105,56 +1128,69 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
 
               // נקודות ציון
               if (_showNZ && pointCps.isNotEmpty)
-                MarkerLayer(
-                  markers: pointCps.map((cp) {
-                    Color bgColor;
-                    String letter;
-                    if (cp.type == 'start') {
-                      bgColor = _kStartColor;
-                      letter = 'H';
-                    } else if (cp.type == 'end') {
-                      bgColor = _kEndColor;
-                      letter = 'S';
-                    } else {
-                      bgColor = _kCheckpointColor;
-                      letter = 'B';
-                    }
-                    final label = '${cp.sequenceNumber}$letter';
-                    return Marker(
-                      point: LatLng(
-                          cp.coordinates!.lat, cp.coordinates!.lng),
-                      width: 38,
-                      height: 38,
-                      child: Opacity(
-                        opacity: _nzOpacity,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: bgColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: Colors.white, width: 2),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                          child: Center(
-                            child: Text(
-                              label,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                Builder(builder: (_) {
+                  final startId = widget.startPointId;
+                  final endId = widget.endPointId;
+
+                  return MarkerLayer(
+                    markers: pointCps.map((cp) {
+                      Color bgColor;
+                      String letter;
+
+                      final isStart = (startId != null &&
+                              (cp.id == startId || cp.sourceId == startId)) ||
+                          cp.type == 'start';
+                      final isEnd = (endId != null &&
+                              (cp.id == endId || cp.sourceId == endId)) ||
+                          cp.type == 'end';
+
+                      if (isStart) {
+                        bgColor = _kStartColor;
+                        letter = 'H';
+                      } else if (isEnd) {
+                        bgColor = _kEndColor;
+                        letter = 'S';
+                      } else {
+                        bgColor = _kCheckpointColor;
+                        letter = 'B';
+                      }
+                      final label = '${cp.sequenceNumber}$letter';
+                      return Marker(
+                        point: LatLng(
+                            cp.coordinates!.lat, cp.coordinates!.lng),
+                        width: 38,
+                        height: 38,
+                        child: Opacity(
+                          opacity: _nzOpacity,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: bgColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.white, width: 2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 4,
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                label,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
+                      );
+                    }).toList(),
+                  );
+                }),
 
               // דקירות
               if (_showPunches && widget.punches.isNotEmpty)

@@ -387,54 +387,69 @@ class _ApprovalViewState extends State<ApprovalView> {
 
               // נקודות ציון
               if (_showCheckpoints && pointCps.isNotEmpty)
-                MarkerLayer(
-                  markers: pointCps.map((cp) {
-                    Color bgColor;
-                    String letter;
-                    if (cp.type == 'start') {
-                      bgColor = _kStartColor;
-                      letter = 'H';
-                    } else if (cp.type == 'end') {
-                      bgColor = _kEndColor;
-                      letter = 'S';
-                    } else {
-                      bgColor = _kCheckpointColor;
-                      letter = 'B';
-                    }
-                    final label = '${cp.sequenceNumber}$letter';
+                Builder(builder: (_) {
+                  // זיהוי סוג לפי הציר — fallback ל-cp.type
+                  final route = widget.navigation.routes[widget.currentUser.uid];
+                  final startId = route?.startPointId;
+                  final endId = route?.endPointId;
 
-                    return Marker(
-                      point:
-                          LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-                      width: 38,
-                      height: 38,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: Colors.white, width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            label,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                  return MarkerLayer(
+                    markers: pointCps.map((cp) {
+                      Color bgColor;
+                      String letter;
+
+                      final isStart = (startId != null &&
+                              (cp.id == startId || cp.sourceId == startId)) ||
+                          cp.type == 'start';
+                      final isEnd = (endId != null &&
+                              (cp.id == endId || cp.sourceId == endId)) ||
+                          cp.type == 'end';
+
+                      if (isStart) {
+                        bgColor = _kStartColor;
+                        letter = 'H';
+                      } else if (isEnd) {
+                        bgColor = _kEndColor;
+                        letter = 'S';
+                      } else {
+                        bgColor = _kCheckpointColor;
+                        letter = 'B';
+                      }
+                      final label = '${cp.sequenceNumber}$letter';
+
+                      return Marker(
+                        point:
+                            LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                        width: 38,
+                        height: 38,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: bgColor,
+                            shape: BoxShape.circle,
+                            border:
+                                Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Text(
+                              label,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
+                      );
+                    }).toList(),
+                  );
+                }),
 
               // דקירות
               if (_punches.isNotEmpty)

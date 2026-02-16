@@ -872,7 +872,22 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('החזרה להכנה'),
-        content: const Text('האם להחזיר את הניווט למצב "הכנה"?'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('האם להחזיר את הניווט למצב "הכנה"?'),
+            SizedBox(height: 12),
+            Text(
+              'פעולה זו תמחק את כל הנתונים מהקלטת הניווט! אנא וודא קודם שייצאת את הניווט לקובץ ושמרת אותו כראוי.',
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),

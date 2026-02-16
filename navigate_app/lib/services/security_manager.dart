@@ -20,6 +20,12 @@ class SecurityManager {
   SecuritySettings? _currentSettings;
   StreamController<SecurityViolation>? _violationStream;
 
+  /// Debounce: זמן אחרון שכל סוג חריגה נרשם
+  final Map<ViolationType, DateTime> _lastViolationTime = {};
+
+  /// Cooldown: זמן אחרון ששלחנו alert למפקד
+  DateTime? _lastAlertSentTime;
+
   /// callback לפסילת מנווט כשמתרחשת חריגה קריטית
   Function(ViolationType)? onCriticalViolation;
 
@@ -115,6 +121,8 @@ class SecurityManager {
     _currentNavigatorName = null;
     _currentSettings = null;
     onCriticalViolation = null;
+    _lastViolationTime.clear();
+    _lastAlertSentTime = null;
     await _violationStream?.close();
     _violationStream = null;
 
@@ -126,6 +134,20 @@ class SecurityManager {
     print('🚨 זוהתה חריגה: ${type.displayName}');
 
     if (!isMonitoring) return;
+
+    // סינון לפי הגדרות — אם ההגדרה כבויה, לא מתעדים כלל
+    if (_currentSettings != null) {
+      if ((type == ViolationType.screenOff || type == ViolationType.screenOn) &&
+          !_currentSettings!.alertOnScreenOff) {
+        print('🔇 דילוג על חריגת מסך (alertOnScreenOff=false)');
+        return;
+      }
+      if (type == ViolationType.appBackgrounded &&
+          !_currentSettings!.alertOnBackground) {
+        print('🔇 דילוג על מעבר לרקע (alertOnBackground=false)');
+        return;
+      }
+    }
 
     // קביעת חומרה
     ViolationSeverity severity;
@@ -148,11 +170,40 @@ class SecurityManager {
         break;
     }
 
+    // Debounce — חריגות קריטיות תמיד מיידיות, אחרות לפי cooldown
+    if (severity != ViolationSeverity.critical) {
+      final lastTime = _lastViolationTime[type];
+      if (lastTime != null) {
+        final debounceSeconds = _getDebounceSeconds(type);
+        if (DateTime.now().difference(lastTime).inSeconds < debounceSeconds) {
+          print('🔇 debounce: דילוג על ${type.displayName} (< ${debounceSeconds}s)');
+          return;
+        }
+      }
+    }
+    _lastViolationTime[type] = DateTime.now();
+
     await _logViolation(type, severity, type.displayName);
 
     // חריגות קריטיות — פסילת מנווט
     if (severity == ViolationSeverity.critical) {
       onCriticalViolation?.call(type);
+    }
+  }
+
+  /// זמן debounce בשניות לפי סוג חריגה
+  int _getDebounceSeconds(ViolationType type) {
+    switch (type) {
+      case ViolationType.screenOff:
+      case ViolationType.screenOn:
+        return 300; // 5 דקות
+      case ViolationType.appBackgrounded:
+        return 60; // דקה
+      case ViolationType.gpsDisabled:
+      case ViolationType.internetDisconnected:
+        return 180; // 3 דקות
+      default:
+        return 0; // קריטי — ללא debounce
     }
   }
 
@@ -189,9 +240,19 @@ class SecurityManager {
 
     if (_currentSettings != null &&
         count >= _currentSettings!.maxViolationsBeforeAlert) {
-      print('🚨 התראה: $count חריגות - חרג מהמותר!');
-      // שליחת התראה למפקד
-      await _sendSecurityAlert(description);
+      // Cooldown — חריגות קריטיות עוקפות, אחרות ב-cooldown של 5 דקות
+      final isCritical = severity == ViolationSeverity.critical;
+      final shouldSend = isCritical ||
+          _lastAlertSentTime == null ||
+          DateTime.now().difference(_lastAlertSentTime!).inMinutes >= 5;
+
+      if (shouldSend) {
+        print('🚨 התראה: $count חריגות - חרג מהמותר!');
+        await _sendSecurityAlert(description);
+        _lastAlertSentTime = DateTime.now();
+      } else {
+        print('🔇 cooldown: דילוג על alert למפקד (< 5 דקות)');
+      }
     }
   }
 

@@ -1121,7 +1121,22 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('חזרה להכנה'),
-        content: const Text('האם להחזיר את הניווט למצב הכנה?'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('האם להחזיר את הניווט למצב הכנה?'),
+            SizedBox(height: 12),
+            Text(
+              'פעולה זו תמחק את כל הנתונים מהקלטת הניווט! אנא וודא קודם שייצאת את הניווט לקובץ ושמרת אותו כראוי.',
+              style: TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1581,6 +1596,23 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     ];
   }
 
+  /// איסוף כל מזהי נקודות התחלה/סיום מהצירים
+  Set<String> _collectStartPointIds() {
+    final ids = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      if (route.startPointId != null) ids.add(route.startPointId!);
+    }
+    return ids;
+  }
+
+  Set<String> _collectEndPointIds() {
+    final ids = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      if (route.endPointId != null) ids.add(route.endPointId!);
+    }
+    return ids;
+  }
+
   List<Widget> _buildCheckpointMarkers(
       List<nav.NavCheckpoint> checkpoints) {
     final pointCps = checkpoints
@@ -1588,15 +1620,28 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         .toList();
     if (pointCps.isEmpty) return [];
 
+    // זיהוי סוג לפי הציר (startPointId/endPointId) — fallback ל-cp.type
+    final startIds = _collectStartPointIds();
+    final endIds = _collectEndPointIds();
+
     return [
       MarkerLayer(
         markers: pointCps.map((cp) {
           Color bgColor;
           String letter;
-          if (cp.type == 'start') {
+
+          // בדיקה לפי מזהה ציר (id או sourceId) — מקור אמין יותר מ-cp.type
+          final isStart = startIds.contains(cp.id) ||
+              startIds.contains(cp.sourceId) ||
+              cp.type == 'start';
+          final isEnd = endIds.contains(cp.id) ||
+              endIds.contains(cp.sourceId) ||
+              cp.type == 'end';
+
+          if (isStart) {
             bgColor = _kStartColor;
             letter = 'H';
-          } else if (cp.type == 'end') {
+          } else if (isEnd) {
             bgColor = _kEndColor;
             letter = 'S';
           } else {

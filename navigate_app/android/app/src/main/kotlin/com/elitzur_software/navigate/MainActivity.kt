@@ -23,6 +23,9 @@ class MainActivity: FlutterActivity() {
     private var devicePolicyManager: DevicePolicyManager? = null
     private var adminComponentName: ComponentName? = null
 
+    // מעקב מצב Lock Task לזיהוי יציאה
+    private var wasInLockTaskMode = false
+
     // BroadcastReceiver לזיהוי אירועי מערכת
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -99,6 +102,16 @@ class MainActivity: FlutterActivity() {
         unregisterReceiver(screenReceiver)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // זיהוי יציאה מ-Lock Task Mode
+        val currentlyInLockTask = isInLockTaskMode()
+        if (wasInLockTaskMode && !currentlyInLockTask) {
+            methodChannel?.invokeMethod("onLockTaskExit", null)
+        }
+        wasInLockTaskMode = currentlyInLockTask
+    }
+
     override fun onPause() {
         super.onPause()
         // דיווח על מעבר לרקע
@@ -113,6 +126,7 @@ class MainActivity: FlutterActivity() {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 startLockTask()
+                wasInLockTaskMode = true
                 true
             } else {
                 false
@@ -163,6 +177,7 @@ class MainActivity: FlutterActivity() {
                     arrayOf(packageName)
                 )
                 startLockTask()
+                wasInLockTaskMode = true
                 true
             } else {
                 false

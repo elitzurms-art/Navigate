@@ -932,14 +932,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     if (pos == null || !mounted) return;
 
-    final currentZoom = _mapController.camera.zoom;
-    switch (_centeringMode) {
-      case CenteringMode.northLocked:
-        _mapController.moveAndRotate(pos, currentZoom, 0);
-      case CenteringMode.rotationByHeading:
-        _mapController.moveAndRotate(pos, currentZoom, -heading);
-      case CenteringMode.off:
-        break;
+    try {
+      final currentZoom = _mapController.camera.zoom;
+      switch (_centeringMode) {
+        case CenteringMode.northLocked:
+          _mapController.moveAndRotate(pos, currentZoom, 0);
+        case CenteringMode.rotationByHeading:
+          _mapController.moveAndRotate(pos, currentZoom, -heading);
+        case CenteringMode.off:
+          break;
+      }
+    } catch (_) {
+      _stopCentering();
     }
   }
 
@@ -1771,14 +1775,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           || _oneTimeCenteredNavigatorId == navigatorId;
 
       Widget markerChild = Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             Icons.person_pin_circle,
             color: markerColor,
-            size: 40,
+            size: 38,
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(4),

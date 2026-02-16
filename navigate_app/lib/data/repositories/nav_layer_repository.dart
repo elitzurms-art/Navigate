@@ -7,6 +7,27 @@ import '../../domain/entities/coordinate.dart';
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
 
+/// המרת Firestore Timestamps ל-ISO strings (רקורסיבי)
+Map<String, dynamic> _sanitizeFirestoreData(Map<String, dynamic> data) {
+  return data.map((key, value) {
+    if (value is Timestamp) {
+      return MapEntry(key, value.toDate().toIso8601String());
+    } else if (value is DateTime) {
+      return MapEntry(key, value.toIso8601String());
+    } else if (value is Map<String, dynamic>) {
+      return MapEntry(key, _sanitizeFirestoreData(value));
+    } else if (value is List) {
+      return MapEntry(key, value.map((item) {
+        if (item is Map<String, dynamic>) return _sanitizeFirestoreData(item);
+        if (item is Timestamp) return item.toDate().toIso8601String();
+        if (item is DateTime) return item.toIso8601String();
+        return item;
+      }).toList());
+    }
+    return MapEntry(key, value);
+  });
+}
+
 /// Per-navigation layer repository (local DB + Firestore subcollection sync)
 ///
 /// Firestore subcollections under /navigations/{navId}/:
@@ -717,23 +738,49 @@ class NavLayerRepository {
   Future<void> syncAllLayersFromFirestore(String navigationId) async {
     print('DEBUG: Syncing all nav layers for navigation $navigationId');
 
-    // NZ
+    // NZ — sanitize Timestamps, use insertOnConflictUpdate (לא addCheckpoint שמסנכרן חזרה)
     final nzDocs = await fetchCheckpointsFromFirestore(navigationId);
-    for (final data in nzDocs) {
+    for (final rawData in nzDocs) {
       try {
+        final data = _sanitizeFirestoreData(rawData);
         final checkpoint = domain.NavCheckpoint.fromMap(data);
-        await addCheckpoint(checkpoint);
+        await _db.into(_db.navCheckpoints).insertOnConflictUpdate(
+          NavCheckpointsCompanion.insert(
+            id: checkpoint.id,
+            navigationId: checkpoint.navigationId,
+            sourceId: checkpoint.sourceId,
+            areaId: checkpoint.areaId,
+            name: checkpoint.name,
+            description: checkpoint.description,
+            type: checkpoint.type,
+            color: checkpoint.color,
+            geometryType: Value(checkpoint.geometryType),
+            lat: checkpoint.coordinates?.lat ?? 0.0,
+            lng: checkpoint.coordinates?.lng ?? 0.0,
+            utm: checkpoint.coordinates?.utm ?? '',
+            coordinatesJson: Value(
+              checkpoint.polygonCoordinates != null
+                  ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
+                  : null,
+            ),
+            sequenceNumber: checkpoint.sequenceNumber,
+            labelsJson: Value(jsonEncode(checkpoint.labels)),
+            createdBy: checkpoint.createdBy,
+            createdAt: checkpoint.createdAt,
+            updatedAt: checkpoint.updatedAt,
+          ),
+        );
       } catch (e) {
         print('DEBUG: Error upserting NZ layer from Firestore: $e');
       }
     }
 
-    // NB
+    // NB — sanitize Timestamps
     final nbDocs = await fetchSafetyPointsFromFirestore(navigationId);
-    for (final data in nbDocs) {
+    for (final rawData in nbDocs) {
       try {
+        final data = _sanitizeFirestoreData(rawData);
         final point = domain.NavSafetyPoint.fromMap(data);
-        // Use batch insert would be better, but for simplicity:
         await _db.into(_db.navSafetyPoints).insertOnConflictUpdate(
           NavSafetyPointsCompanion.insert(
             id: point.id,
@@ -764,21 +811,41 @@ class NavLayerRepository {
       }
     }
 
-    // GG
+    // GG — sanitize Timestamps, use insertOnConflictUpdate (לא addBoundary שמסנכרן חזרה)
     final ggDocs = await fetchBoundariesFromFirestore(navigationId);
-    for (final data in ggDocs) {
+    for (final rawData in ggDocs) {
       try {
+        final data = _sanitizeFirestoreData(rawData);
         final boundary = domain.NavBoundary.fromMap(data);
-        await addBoundary(boundary);
+        final coordinatesJson = jsonEncode(
+          boundary.coordinates.map((c) => c.toMap()).toList(),
+        );
+        await _db.into(_db.navBoundaries).insertOnConflictUpdate(
+          NavBoundariesCompanion.insert(
+            id: boundary.id,
+            navigationId: boundary.navigationId,
+            sourceId: boundary.sourceId,
+            areaId: boundary.areaId,
+            name: boundary.name,
+            description: boundary.description,
+            coordinatesJson: coordinatesJson,
+            color: boundary.color,
+            strokeWidth: boundary.strokeWidth,
+            createdBy: boundary.createdBy,
+            createdAt: boundary.createdAt,
+            updatedAt: boundary.updatedAt,
+          ),
+        );
       } catch (e) {
         print('DEBUG: Error upserting GG layer from Firestore: $e');
       }
     }
 
-    // BA
+    // BA — sanitize Timestamps
     final baDocs = await fetchClustersFromFirestore(navigationId);
-    for (final data in baDocs) {
+    for (final rawData in baDocs) {
       try {
+        final data = _sanitizeFirestoreData(rawData);
         final cluster = domain.NavCluster.fromMap(data);
         final coordinatesJson = jsonEncode(
           cluster.coordinates.map((c) => c.toMap()).toList(),
