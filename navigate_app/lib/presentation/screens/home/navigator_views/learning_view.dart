@@ -852,17 +852,6 @@ class _LearningViewState extends State<LearningView>
           ),
           const SizedBox(height: 16),
 
-          // נקודות הציר — אותה תצוגה כמו בטאב "הציר שלי"
-          Text(
-            'נקודות הציר',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          _buildCheckpointList(),
-          const SizedBox(height: 16),
-
           // כפתור פסילה — כאשר הציר נפסל
           if (approvalStatus == 'rejected') ...[
             SizedBox(

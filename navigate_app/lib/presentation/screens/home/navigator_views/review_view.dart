@@ -126,10 +126,16 @@ class _ReviewViewState extends State<ReviewView> {
         } catch (_) {}
       }
 
-      // סינון נקודות לציר הזה
+      // סינון נקודות לציר הזה — כולל התחלה/סיום/ביניים
       if (route != null && route.checkpointIds.isNotEmpty) {
+        final routeRelatedIds = <String>{
+          ...route.checkpointIds,
+          if (route.startPointId != null) route.startPointId!,
+          if (route.endPointId != null) route.endPointId!,
+          ...route.waypointIds,
+        };
         final routeCps = <nav.NavCheckpoint>[];
-        for (final cpId in route.checkpointIds) {
+        for (final cpId in routeRelatedIds) {
           final matches = _checkpoints
               .where((c) => c.id == cpId || c.sourceId == cpId)
               .toList();

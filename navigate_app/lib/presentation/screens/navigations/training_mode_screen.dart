@@ -6,11 +6,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
-import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
-import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
@@ -40,7 +38,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
@@ -77,10 +74,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
 
-  // התראות מנווטים (realtime)
-  StreamSubscription<List<NavigatorAlert>>? _alertSubscription;
-  List<NavigatorAlert> _activeAlerts = [];
-
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
   // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
@@ -103,7 +96,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _scheduleAutoLearning();
     _loadData();
     _reloadNavigationFromDb();
-    _startAlertListener();
     _startNavigationListener();
     _startNavigationPolling();
 
@@ -115,7 +107,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   @override
   void dispose() {
-    _alertSubscription?.cancel();
     _navigationListener?.cancel();
     _navigationPollTimer?.cancel();
     _autoStartTimer?.cancel();
@@ -352,108 +343,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
   }
 
-  // ===========================================================================
-  // Alert listener — realtime alerts from navigators
-  // ===========================================================================
-
-  void _startAlertListener() {
-    // התראות רלוונטיות רק באימון פעיל (NavigationManagementScreen), לא בלמידה.
-    // מסך זה משמש רק לסטטוס learning — אין צורך ב-listener כאן.
-    return;
-  }
-
-  void _showAlertDialog(NavigatorAlert alert) {
-    final isEmergency = alert.type == AlertType.emergency;
-    final title = isEmergency
-        ? 'התראת חירום!'
-        : 'התראת תקינות';
-    final icon = isEmergency ? Icons.emergency : Icons.timer_off;
-    final color = isEmergency ? Colors.red : Colors.orange;
-
-    String message;
-    if (isEmergency) {
-      message = 'מנווט ${alert.navigatorName ?? alert.navigatorId} שלח התראת חירום!';
-    } else {
-      final overdue = alert.minutesOverdue ?? 0;
-      message = 'מנווט ${alert.navigatorName ?? alert.navigatorId} לא דיווח תקינות.\nחלפו $overdue דקות מעבר לזמן שהוגדר.';
-    }
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(width: 8),
-            Text(title, style: TextStyle(color: color)),
-          ],
-        ),
-        content: Text(message),
-        actions: [
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              // מרכז מפה על מיקום המנווט
-              if (alert.location.lat != 0 && alert.location.lng != 0) {
-                _tabController.animateTo(2); // עבור לטאב מפה
-                try {
-                  _mapController.move(
-                    LatLng(alert.location.lat, alert.location.lng),
-                    15.0,
-                  );
-                } catch (_) {}
-              }
-            },
-            icon: const Icon(Icons.map),
-            label: const Text('מיקום המנווט'),
-          ),
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              // הזכר שוב עוד 5 דקות
-              Future.delayed(const Duration(minutes: 5), () {
-                if (mounted) {
-                  // בדוק אם ההתראה עדיין פעילה
-                  if (_activeAlerts.any((a) => a.id == alert.id)) {
-                    _showAlertDialog(alert);
-                  }
-                }
-              });
-            },
-            icon: const Icon(Icons.snooze),
-            label: const Text('הזכר עוד 5 דק\''),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              // resolve
-              await _alertRepo.resolve(
-                alert.navigationId,
-                alert.id,
-                'commander',
-              );
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('ההתראה טופלה'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            },
-            icon: const Icon(Icons.check_circle),
-            label: const Text('בדקתי, תקין'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _approveRoute(String navigatorId) async {
     final route = _currentNavigation.routes[navigatorId];
     if (route == null || route.approvalStatus != 'pending_approval') return;
@@ -688,21 +577,12 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : TabBarView(
+              controller: _tabController,
               children: [
-                // באנר התראות פעילות
-                if (_activeAlerts.isNotEmpty)
-                  _buildAlertsBanner(),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildSettingsView(),
-                      _buildTableView(),
-                      _buildMapView(),
-                    ],
-                  ),
-                ),
+                _buildSettingsView(),
+                _buildTableView(),
+                _buildMapView(),
               ],
             ),
       bottomNavigationBar: widget.isCommander
@@ -1058,48 +938,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         );
       }
     }
-  }
-
-  Widget _buildAlertsBanner() {
-    final emergencyCount = _activeAlerts.where((a) => a.type == AlertType.emergency).length;
-    final healthCount = _activeAlerts.where((a) => a.type == AlertType.healthCheckExpired).length;
-
-    return GestureDetector(
-      onTap: () {
-        // הצג את ההתראה הראשונה שלא טופלה
-        if (_activeAlerts.isNotEmpty) {
-          _showAlertDialog(_activeAlerts.first);
-        }
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        color: emergencyCount > 0 ? Colors.red : Colors.orange,
-        child: Row(
-          children: [
-            Icon(
-              emergencyCount > 0 ? Icons.emergency : Icons.timer_off,
-              color: Colors.white,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                [
-                  if (emergencyCount > 0) '$emergencyCount חירום',
-                  if (healthCount > 0) '$healthCount תקינות',
-                ].join(' | '),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const Icon(Icons.chevron_left, color: Colors.white),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildTableView() {

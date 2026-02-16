@@ -467,7 +467,7 @@ class CustomCriterion extends Equatable {
 class ScoringCriteria extends Equatable {
   final String mode; // 'equal' | 'custom'
   final int? equalWeightPerCheckpoint; // משקל לכל נקודה במצב שווה
-  final Map<String, int> checkpointWeights; // cpId → weight במצב מותאם
+  final Map<String, int> checkpointWeights; // position index → weight במצב מותאם
   final List<CustomCriterion> customCriteria;
 
   const ScoringCriteria({

@@ -20,8 +20,6 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
-import '../../../data/repositories/navigation_tree_repository.dart';
-import '../../../domain/entities/navigation_tree.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
@@ -50,6 +48,44 @@ class _DataExportScreenState extends State<DataExportScreen> {
   List<Cluster> _clusters = [];
   Boundary? _boundary;
   bool _isLoading = false;
+
+  String _formatUtm(Checkpoint cp) {
+    if (cp.coordinates == null) return '';
+    final raw = cp.coordinates!.utm.isNotEmpty
+        ? cp.coordinates!.utm
+        : UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng);
+    // Stored UTM is 12-digit "EEEEEENNNNNN" — format with space
+    if (RegExp(r'^\d{12}$').hasMatch(raw)) {
+      return '${raw.substring(0, 6)} ${raw.substring(6)}';
+    }
+    // Calculated UTM is "36R EEEEEE NNNNNN" — strip zone prefix
+    final parts = raw.split(' ');
+    if (parts.length == 3) return '${parts[1]} ${parts[2]}';
+    return raw;
+  }
+
+  Future<String?> _showFormatPicker() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('בחר פורמט'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.table_chart, color: Colors.green),
+            title: const Text('CSV'),
+            subtitle: const Text('טבלת נתונים לפתיחה ב-Excel'),
+            onTap: () => Navigator.pop(ctx, 'csv'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
+            title: const Text('PDF'),
+            subtitle: const Text('מסמך PDF מעוצב'),
+            onTap: () => Navigator.pop(ctx, 'pdf'),
+          ),
+        ]),
+      ),
+    );
+  }
 
   // הגדרות ייצוא מפה - כל שכבה עם בהירות משלה
   bool _showNZ = true;
@@ -134,78 +170,65 @@ class _DataExportScreenState extends State<DataExportScreen> {
   }
 
   Future<void> _exportRoutesTable() async {
-    try {
-      // טעינת עץ מבנה לקבלת שמות מנווטים
-      final treeRepo = NavigationTreeRepository();
-      final tree = await treeRepo.getById(widget.navigation.treeId);
+    final format = await _showFormatPicker();
+    if (format == null) return;
 
-      // בניית נתוני הטבלה
+    if (format == 'pdf') {
+      await _exportRoutesTablePdf();
+      return;
+    }
+
+    try {
       List<List<dynamic>> rows = [];
 
-      // כותרת
       List<dynamic> header = ['שם מנווט'];
       int maxCheckpoints = 0;
 
-      // מציאת המספר המקסימלי של נקודות
       for (final route in widget.navigation.routes.values) {
         if (route.sequence.length > maxCheckpoints) {
           maxCheckpoints = route.sequence.length;
         }
       }
 
-      // הוספת כותרות נקודות + UTM
+      // 3 columns per checkpoint: name, description, UTM
       for (int i = 1; i <= maxCheckpoints; i++) {
         header.add('נ.צ $i');
+        header.add('תיאור $i');
         header.add('UTM $i');
       }
       header.add('אורך ציר (ק"מ)');
-      rows.add(header);
+      rows.add(header.reversed.toList());
 
-      // שורות נתונים
       for (final entry in widget.navigation.routes.entries) {
         final navigatorId = entry.key;
         final route = entry.value;
 
         List<dynamic> row = [navigatorId];
 
-        // נקודות הציון + UTM
         for (final checkpointId in route.sequence) {
           final checkpoint = _checkpoints.firstWhere(
             (cp) => cp.id == checkpointId,
             orElse: () => _checkpoints.first,
           );
 
-          // שם הנקודה
           row.add('${checkpoint.name} (${checkpoint.sequenceNumber})');
-
-          // UTM
-          final utm = (checkpoint.coordinates != null && checkpoint.coordinates!.utm.isNotEmpty)
-              ? checkpoint.coordinates!.utm
-              : checkpoint.coordinates != null
-                  ? UTMConverter.convertToUTM(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng)
-                  : '';
-          row.add(utm);
+          row.add(checkpoint.description);
+          row.add(_formatUtm(checkpoint));
         }
 
-        // מילוי תאים ריקים אם צריך (שם + UTM לכל נקודה חסרה)
-        while (row.length < (maxCheckpoints * 2) + 1) {
+        // Pad empty cells: 3 cols per missing checkpoint + 1 for name
+        while (row.length < (maxCheckpoints * 3) + 1) {
           row.add('');
         }
 
-        // אורך ציר
         row.add(route.routeLengthKm.toStringAsFixed(2));
-
-        rows.add(row);
+        rows.add(row.reversed.toList());
       }
 
-      // המרה ל-CSV
       final csv = const ListToCsvConverter().convert(rows);
-
-      // הוספת BOM של UTF-8 לתמיכה בעברית ב-Excel
       final utf8Bom = '\uFEFF';
       final csvWithBom = utf8Bom + csv;
 
-      // בחירת מיקום שמירה
       final fileName = 'טבלת_צירים_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
       final result = await saveFileWithBytes(
@@ -216,72 +239,185 @@ class _DataExportScreenState extends State<DataExportScreen> {
         allowedExtensions: ['csv'],
       );
 
-      if (result != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('טבלת הצירים נשמרה ב-\n$result'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('טבלת הצירים נשמרה ב-\n$result'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בייצוא: $e'),
-            backgroundColor: Colors.red,
+          SnackBar(content: Text('שגיאה בייצוא: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportRoutesTablePdf() async {
+    try {
+      final regularFont = await PdfGoogleFonts.rubikRegular();
+      final boldFont = await PdfGoogleFonts.rubikBold();
+
+      int maxCheckpoints = 0;
+      for (final route in widget.navigation.routes.values) {
+        if (route.sequence.length > maxCheckpoints) {
+          maxCheckpoints = route.sequence.length;
+        }
+      }
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
+      );
+
+      // Build header row
+      final headerCells = <pw.Widget>[_pdfCell('שם מנווט', bold: true, fontSize: 7)];
+      for (int i = 1; i <= maxCheckpoints; i++) {
+        headerCells.add(_pdfCell('נ.צ $i', bold: true, fontSize: 7));
+        headerCells.add(_pdfCell('תיאור $i', bold: true, fontSize: 7));
+        headerCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
+      }
+      headerCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
+
+      // Build column widths
+      final colWidths = <int, pw.TableColumnWidth>{
+        0: const pw.FlexColumnWidth(0.8),
+      };
+      for (int i = 0; i < maxCheckpoints; i++) {
+        colWidths[1 + i * 3] = const pw.FlexColumnWidth(1.5);
+        colWidths[2 + i * 3] = const pw.FlexColumnWidth(1.2);
+        colWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
+      }
+      colWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
+
+      // Build data rows
+      final dataRows = <pw.TableRow>[];
+      for (final entry in widget.navigation.routes.entries) {
+        final navigatorId = entry.key;
+        final route = entry.value;
+        final cells = <pw.Widget>[_pdfCell(navigatorId, fontSize: 7)];
+
+        for (final checkpointId in route.sequence) {
+          final checkpoint = _checkpoints.firstWhere(
+            (cp) => cp.id == checkpointId,
+            orElse: () => _checkpoints.first,
+          );
+          cells.add(_pdfCell('${checkpoint.name} (${checkpoint.sequenceNumber})', fontSize: 7));
+          cells.add(_pdfCell(checkpoint.description, fontSize: 7));
+          cells.add(_pdfCell(_formatUtm(checkpoint), fontSize: 7));
+        }
+
+        // Pad empty cells
+        while (cells.length < (maxCheckpoints * 3) + 1) {
+          cells.add(_pdfCell('', fontSize: 7));
+        }
+        cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
+        dataRows.add(pw.TableRow(children: cells.reversed.toList()));
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          textDirection: pw.TextDirection.rtl,
+          margin: const pw.EdgeInsets.all(16),
+          header: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                '${widget.navigation.name} — טבלת צירים',
+                style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 6),
+            ],
           ),
+          build: (context) => [
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400),
+                columnWidths: colWidths,
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                    children: headerCells.reversed.toList(),
+                  ),
+                  ...dataRows,
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final pdfBytes = Uint8List.fromList(await pdf.save());
+      final fileName = 'טבלת_צירים_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final result = await saveFileWithBytes(
+        dialogTitle: 'שמור טבלת צירים',
+        fileName: fileName,
+        bytes: pdfBytes,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('טבלת הצירים נשמרה ב-\n$result'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בייצוא: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
   Future<void> _exportCheckpointsLayer() async {
+    final format = await _showFormatPicker();
+    if (format == null) return;
+
+    if (format == 'pdf') {
+      await _exportCheckpointsLayerPdf();
+      return;
+    }
+
     try {
-      // סינון נקודות לפי גבול ומסנן חלוקה
       List<Checkpoint> checkpointsToExport = _filteredCheckpoints;
 
-      // בניית טבלה
       List<List<dynamic>> rows = [];
 
-      // כותרת
       rows.add([
-        'מספר סידורי',
-        'שם',
-        'תיאור',
-        'סוג',
-        'צבע',
         'UTM',
+        'צבע',
+        'סוג',
+        'תיאור',
+        'שם',
+        'מספר סידורי',
       ]);
 
-      // נתונים - רק UTM (לא lat/lng)
       for (final cp in checkpointsToExport) {
-        // חישוב UTM אם ריק
-        final utm = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
-            ? cp.coordinates!.utm
-            : cp.coordinates != null
-                ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
-                : '';
-
         rows.add([
-          cp.sequenceNumber,
-          cp.name,
-          cp.description,
-          cp.type,
+          _formatUtm(cp),
           cp.color,
-          utm,
+          cp.type,
+          cp.description,
+          cp.name,
+          cp.sequenceNumber,
         ]);
       }
 
-      // המרה ל-CSV עם BOM
       final csv = const ListToCsvConverter().convert(rows);
       final utf8Bom = '\uFEFF';
       final csvWithBom = utf8Bom + csv;
 
-      // שמירה
       final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
       final result = await saveFileWithBytes(
@@ -313,6 +449,114 @@ class _DataExportScreenState extends State<DataExportScreen> {
         );
       }
     }
+  }
+
+  Future<void> _exportCheckpointsLayerPdf() async {
+    try {
+      final checkpointsToExport = _filteredCheckpoints;
+      final regularFont = await PdfGoogleFonts.rubikRegular();
+      final boldFont = await PdfGoogleFonts.rubikBold();
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
+      );
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          textDirection: pw.TextDirection.rtl,
+          margin: const pw.EdgeInsets.all(20),
+          header: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                '${widget.navigation.name} — שכבת נ.צ. (${checkpointsToExport.length})',
+                style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 8),
+            ],
+          ),
+          build: (context) => [
+            pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(2),
+                  1: const pw.FlexColumnWidth(1),
+                  2: const pw.FlexColumnWidth(1.2),
+                  3: const pw.FlexColumnWidth(2),
+                  4: const pw.FlexColumnWidth(2),
+                  5: const pw.FixedColumnWidth(35),
+                },
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                    children: [
+                      _pdfCell('UTM', bold: true),
+                      _pdfCell('צבע', bold: true),
+                      _pdfCell('סוג', bold: true),
+                      _pdfCell('תיאור', bold: true),
+                      _pdfCell('שם', bold: true),
+                      _pdfCell('#', bold: true),
+                    ],
+                  ),
+                  ...checkpointsToExport.map((cp) => pw.TableRow(
+                    children: [
+                      _pdfCell(_formatUtm(cp)),
+                      _pdfCell(cp.color),
+                      _pdfCell(cp.type),
+                      _pdfCell(cp.description),
+                      _pdfCell(cp.name),
+                      _pdfCell('${cp.sequenceNumber}'),
+                    ],
+                  )),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final pdfBytes = Uint8List.fromList(await pdf.save());
+      final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final result = await saveFileWithBytes(
+        dialogTitle: 'שמור שכבת נ.צ.',
+        fileName: fileName,
+        bytes: pdfBytes,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שכבת נ.צ. נשמרה (${checkpointsToExport.length} נקודות)\n$result'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בייצוא: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  pw.Widget _pdfCell(String text, {bool bold = false, double fontSize = 9}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: fontSize,
+          fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+      ),
+    );
   }
 
   Future<void> _exportMap() async {
@@ -613,10 +857,35 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
   late bool _showDistributedOnly;
 
   bool _isExporting = false;
-  bool _showLayerPanel = true;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  String _formatUtm(Checkpoint cp) {
+    if (cp.coordinates == null) return '';
+    final raw = cp.coordinates!.utm.isNotEmpty
+        ? cp.coordinates!.utm
+        : UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng);
+    if (RegExp(r'^\d{12}$').hasMatch(raw)) {
+      return '${raw.substring(0, 6)} ${raw.substring(6)}';
+    }
+    final parts = raw.split(' ');
+    if (parts.length == 3) return '${parts[1]} ${parts[2]}';
+    return raw;
+  }
+
+  pw.Widget _pdfCell(String text, {bool bold = false, double fontSize = 9}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: fontSize,
+          fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+      ),
+    );
+  }
 
   late LatLng _initialCenter;
   late double _initialZoom;
@@ -1020,86 +1289,143 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
         ),
       );
 
-      // Page 2: Checkpoints table (if NZ layer is shown)
+      // Page 2+: Routes pivot table OR simple checkpoint list
       if (_showNZ && filteredCps.isNotEmpty) {
-        pdf.addPage(
-          pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            textDirection: pw.TextDirection.rtl,
-            margin: const pw.EdgeInsets.all(20),
-            build: (context) => pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  '${widget.navigation.name} - NZ (${filteredCps.length})',
-                  style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+        if (widget.navigation.routes.isNotEmpty) {
+          // Pivot table: routes × checkpoints
+          int maxCheckpoints = 0;
+          for (final route in widget.navigation.routes.values) {
+            if (route.sequence.length > maxCheckpoints) {
+              maxCheckpoints = route.sequence.length;
+            }
+          }
+
+          final pivotHeaderCells = <pw.Widget>[_pdfCell('שם מנווט', bold: true, fontSize: 7)];
+          for (int i = 1; i <= maxCheckpoints; i++) {
+            pivotHeaderCells.add(_pdfCell('נ.צ $i', bold: true, fontSize: 7));
+            pivotHeaderCells.add(_pdfCell('תיאור $i', bold: true, fontSize: 7));
+            pivotHeaderCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
+          }
+          pivotHeaderCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
+
+          final pivotColWidths = <int, pw.TableColumnWidth>{
+            0: const pw.FlexColumnWidth(0.8),
+          };
+          for (int i = 0; i < maxCheckpoints; i++) {
+            pivotColWidths[1 + i * 3] = const pw.FlexColumnWidth(1.5);
+            pivotColWidths[2 + i * 3] = const pw.FlexColumnWidth(1.2);
+            pivotColWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
+          }
+          pivotColWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
+
+          final pivotDataRows = <pw.TableRow>[];
+          for (final entry in widget.navigation.routes.entries) {
+            final navigatorId = entry.key;
+            final route = entry.value;
+            final cells = <pw.Widget>[_pdfCell(navigatorId, fontSize: 7)];
+
+            for (final checkpointId in route.sequence) {
+              final checkpoint = widget.checkpoints.firstWhere(
+                (cp) => cp.id == checkpointId,
+                orElse: () => widget.checkpoints.first,
+              );
+              cells.add(_pdfCell('${checkpoint.name} (${checkpoint.sequenceNumber})', fontSize: 7));
+              cells.add(_pdfCell(checkpoint.description, fontSize: 7));
+              cells.add(_pdfCell(_formatUtm(checkpoint), fontSize: 7));
+            }
+
+            while (cells.length < (maxCheckpoints * 3) + 1) {
+              cells.add(_pdfCell('', fontSize: 7));
+            }
+            cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
+            pivotDataRows.add(pw.TableRow(children: cells.reversed.toList()));
+          }
+
+          pdf.addPage(
+            pw.MultiPage(
+              pageFormat: PdfPageFormat.a4.landscape,
+              textDirection: pw.TextDirection.rtl,
+              margin: const pw.EdgeInsets.all(16),
+              header: (context) => pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    '${widget.navigation.name} — טבלת צירים',
+                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 6),
+                ],
+              ),
+              build: (context) => [
+                pw.Directionality(
+                  textDirection: pw.TextDirection.rtl,
+                  child: pw.Table(
+                    border: pw.TableBorder.all(color: PdfColors.grey400),
+                    columnWidths: pivotColWidths,
+                    children: [
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                        children: pivotHeaderCells.reversed.toList(),
+                      ),
+                      ...pivotDataRows,
+                    ],
+                  ),
                 ),
-                pw.SizedBox(height: 12),
+              ],
+            ),
+          );
+        } else {
+          // Fallback: simple checkpoint list when no routes
+          pdf.addPage(
+            pw.MultiPage(
+              pageFormat: PdfPageFormat.a4,
+              textDirection: pw.TextDirection.rtl,
+              margin: const pw.EdgeInsets.all(20),
+              header: (context) => pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    '${widget.navigation.name} — נ.צ (${filteredCps.length})',
+                    style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 12),
+                ],
+              ),
+              build: (context) => [
                 pw.Directionality(
                   textDirection: pw.TextDirection.rtl,
                   child: pw.Table(
                     border: pw.TableBorder.all(color: PdfColors.grey400),
                     columnWidths: {
-                      0: const pw.FlexColumnWidth(3),
+                      0: const pw.FixedColumnWidth(40),
                       1: const pw.FlexColumnWidth(2),
-                      2: const pw.FixedColumnWidth(40),
+                      2: const pw.FlexColumnWidth(3),
                     },
                     children: [
                       pw.TableRow(
                         decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                         children: [
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text('UTM', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text('שם', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(4),
-                            child: pw.Text('#', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                          ),
+                          _pdfCell('#', bold: true, fontSize: 10),
+                          _pdfCell('שם', bold: true, fontSize: 10),
+                          _pdfCell('UTM', bold: true, fontSize: 10),
                         ],
                       ),
-                      ...filteredCps.take(40).map((cp) {
-                        final utm = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
-                            ? cp.coordinates!.utm
-                            : cp.coordinates != null
-                                ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
-                                : '';
+                      ...filteredCps.map((cp) {
                         return pw.TableRow(
                           children: [
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(4),
-                              child: pw.Text(utm, style: const pw.TextStyle(fontSize: 9)),
-                            ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(4),
-                              child: pw.Text(cp.name, style: const pw.TextStyle(fontSize: 9)),
-                            ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(4),
-                              child: pw.Text('${cp.sequenceNumber}', style: const pw.TextStyle(fontSize: 9)),
-                            ),
+                            _pdfCell('${cp.sequenceNumber}'),
+                            _pdfCell(cp.name),
+                            _pdfCell(_formatUtm(cp)),
                           ],
                         );
                       }),
                     ],
                   ),
                 ),
-                if (filteredCps.length > 40)
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.only(top: 8),
-                    child: pw.Text(
-                      '... +${filteredCps.length - 40}',
-                      style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey),
-                    ),
-                  ),
               ],
             ),
-          ),
-        );
+          );
+        }
       }
 
       // Save
@@ -1142,114 +1468,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     }
   }
 
-  Widget _buildLayerPanel() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('שכבות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            IconButton(
-              icon: const Icon(Icons.close, size: 20),
-              onPressed: () => setState(() => _showLayerPanel = false),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ],
-        ),
-        const Divider(),
-        // Checkpoint filter toggle
-        if (widget.navigation.routes.isNotEmpty) ...[
-          SwitchListTile(
-            title: const Text('רק נ.צ מחולקות', style: TextStyle(fontSize: 13)),
-            subtitle: Text(
-              _showDistributedOnly
-                  ? '${_filteredCheckpoints.length} נ.צ (כולל התחלה/סיום)'
-                  : 'כל הנ.צ בג.ג (${_filteredCheckpoints.length})',
-              style: const TextStyle(fontSize: 11),
-            ),
-            value: _showDistributedOnly,
-            dense: true,
-            onChanged: (v) => setState(() => _showDistributedOnly = v),
-          ),
-          const Divider(),
-        ],
-        // Layer controls
-        _buildCompactLayerControl('נ.צ', _showNZ, _nzOpacity, Colors.blue,
-          (v) => setState(() => _showNZ = v),
-          (v) => setState(() => _nzOpacity = v),
-        ),
-        _buildCompactLayerControl('נ.ב', _showNB, _nbOpacity, Colors.red,
-          (v) => setState(() => _showNB = v),
-          (v) => setState(() => _nbOpacity = v),
-        ),
-        _buildCompactLayerControl('ג.ג', _showGG, _ggOpacity, Colors.black,
-          (v) => setState(() => _showGG = v),
-          (v) => setState(() => _ggOpacity = v),
-        ),
-        _buildCompactLayerControl('ב.א', _showBA, _baOpacity, Colors.green,
-          (v) => setState(() => _showBA = v),
-          (v) => setState(() => _baOpacity = v),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCompactLayerControl(
-    String label,
-    bool enabled,
-    double opacity,
-    Color color,
-    ValueChanged<bool> onEnabledChanged,
-    ValueChanged<double> onOpacityChanged,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: Checkbox(
-              value: enabled,
-              onChanged: (v) => onEnabledChanged(v ?? false),
-              activeColor: color,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: enabled ? color : Colors.grey,
-          )),
-          if (enabled) ...[
-            Expanded(
-              child: Slider(
-                value: opacity,
-                min: 0.0,
-                max: 1.0,
-                divisions: 10,
-                activeColor: color,
-                onChanged: onOpacityChanged,
-              ),
-            ),
-            SizedBox(
-              width: 36,
-              child: Text(
-                '${(opacity * 100).toInt()}%',
-                style: TextStyle(fontSize: 11, color: color),
-              ),
-            ),
-          ] else
-            const Spacer(),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1261,13 +1479,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          IconButton(
-            icon: Icon(_showLayerPanel ? Icons.layers : Icons.layers_outlined),
-            onPressed: () => setState(() => _showLayerPanel = !_showLayerPanel),
-            tooltip: 'שכבות',
-          ),
-        ],
       ),
       body: Stack(
         children: [
@@ -1290,6 +1501,32 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             onMeasureUndo: () => setState(() {
               if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
             }),
+            layers: [
+              MapLayerConfig(
+                id: 'nz', label: 'נ.צ', color: Colors.blue,
+                visible: _showNZ, opacity: _nzOpacity,
+                onVisibilityChanged: (v) => setState(() => _showNZ = v),
+                onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'nb', label: 'נ.ב', color: Colors.red,
+                visible: _showNB, opacity: _nbOpacity,
+                onVisibilityChanged: (v) => setState(() => _showNB = v),
+                onOpacityChanged: (v) => setState(() => _nbOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'gg', label: 'ג.ג', color: Colors.black,
+                visible: _showGG, opacity: _ggOpacity,
+                onVisibilityChanged: (v) => setState(() => _showGG = v),
+                onOpacityChanged: (v) => setState(() => _ggOpacity = v),
+              ),
+              MapLayerConfig(
+                id: 'ba', label: 'ב.א', color: Colors.green,
+                visible: _showBA, opacity: _baOpacity,
+                onVisibilityChanged: (v) => setState(() => _showBA = v),
+                onOpacityChanged: (v) => setState(() => _baOpacity = v),
+              ),
+            ],
             onFullscreen: () {
               final camera = _mapController.camera;
               Navigator.push(context, MaterialPageRoute(
@@ -1359,17 +1596,41 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             },
           ),
 
-          // Layer panel (collapsible)
-          if (_showLayerPanel)
+          // Distributed-only toggle chip
+          if (widget.navigation.routes.isNotEmpty)
             Positioned(
-              top: 8,
-              right: 8,
-              width: 280,
+              bottom: 80,
+              left: 16,
               child: Card(
-                elevation: 4,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(8),
-                  child: _buildLayerPanel(),
+                elevation: 3,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => setState(() => _showDistributedOnly = !_showDistributedOnly),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _showDistributedOnly ? Icons.filter_alt : Icons.filter_alt_off,
+                          size: 18,
+                          color: _showDistributedOnly ? Colors.blue : Colors.grey,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _showDistributedOnly
+                              ? 'נ.צ מחולקות (${_filteredCheckpoints.length})'
+                              : 'כל הנ.צ (${_filteredCheckpoints.length})',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _showDistributedOnly ? Colors.blue : Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),

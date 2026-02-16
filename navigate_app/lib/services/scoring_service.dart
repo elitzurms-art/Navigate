@@ -13,6 +13,7 @@ class ScoringService {
     required VerificationSettings verificationSettings,
     ScoringCriteria? scoringCriteria,
     bool isDisqualified = false,
+    List<String>? routeCheckpointIds,
   }) {
     print('מחשב ציון אוטומטי ל-$navigatorId');
 
@@ -61,7 +62,14 @@ class ScoringService {
       if (scoringCriteria != null) {
         if (scoringCriteria.mode == 'equal') {
           cpWeight = scoringCriteria.equalWeightPerCheckpoint ?? 0;
+        } else if (routeCheckpointIds != null) {
+          // חיפוש לפי מיקום בציר (position-based)
+          final idx = routeCheckpointIds.indexOf(punch.checkpointId);
+          if (idx >= 0) {
+            cpWeight = scoringCriteria.checkpointWeights[idx.toString()] ?? 0;
+          }
         } else {
+          // fallback — lookup לפי checkpoint ID (תאימות אחורה)
           cpWeight = scoringCriteria.checkpointWeights[punch.checkpointId] ?? 0;
         }
       }

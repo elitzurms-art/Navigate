@@ -50,8 +50,6 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
 
   // UI state
   String? _expandedNavigatorId;
-  bool _showMap = false;
-  String? _mapNavigatorId; // null = show all
   bool _isLoading = true;
   bool _isSaving = false;
 
@@ -245,13 +243,13 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     return 'optimal';
   }
 
-  /// בדיקה אם נקודה כבר מוקצית למנווט אחר
-  String? _getAssignedTo(String checkpointId, {String? excludeNavigator}) {
-    for (final entry in _navigatorCheckpoints.entries) {
-      if (entry.key == excludeNavigator) continue;
-      if (entry.value.contains(checkpointId)) return entry.key;
+  /// ספירת כמה מנווטים קיבלו נקודה מסוימת
+  int _getCheckpointAssignmentCount(String checkpointId) {
+    int count = 0;
+    for (final cps in _navigatorCheckpoints.values) {
+      if (cps.contains(checkpointId)) count++;
     }
-    return null;
+    return count;
   }
 
   // ===================== BOTTOM SHEET — בחירת נקודות למנווט =====================
@@ -333,10 +331,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                         itemBuilder: (_, index) {
                           final cp = availableCheckpoints[index];
                           final isSelected = selected.contains(cp.id);
-                          final assignedTo = _getAssignedTo(
-                            cp.id,
-                            excludeNavigator: navigatorId,
-                          );
+                          final assignCount = _getCheckpointAssignmentCount(cp.id);
 
                           return CheckboxListTile(
                             value: isSelected,
@@ -357,9 +352,9 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                                     : FontWeight.normal,
                               ),
                             ),
-                            subtitle: assignedTo != null
+                            subtitle: assignCount > 0
                                 ? Text(
-                                    'משובץ גם ל: ${_getNavigatorName(assignedTo)}',
+                                    '$assignCount מנווטים קיבלו',
                                     style: TextStyle(
                                       color: Colors.orange[700],
                                       fontSize: 12,
@@ -372,8 +367,19 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                                         overflow: TextOverflow.ellipsis,
                                       )
                                     : null,
-                            secondary: assignedTo != null
-                                ? Icon(Icons.people, color: Colors.orange[700], size: 20)
+                            secondary: assignCount > 0
+                                ? CircleAvatar(
+                                    radius: 14,
+                                    backgroundColor: Colors.orange[100],
+                                    child: Text(
+                                      '$assignCount',
+                                      style: TextStyle(
+                                        color: Colors.orange[800],
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  )
                                 : null,
                           );
                         },
@@ -405,41 +411,51 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
       final isIntermediate = _intermediatePointIds.contains(cp.id);
       final isInSequence = sequenceSet?.contains(cp.id) ?? false;
 
-      Color color;
-      double size;
+      // סטנדרט H/S/B כמו בשאר האפליקציה
+      Color bgColor;
+      String letter;
       if (isStart) {
-        color = Colors.green;
-        size = 14;
+        bgColor = const Color(0xFF4CAF50); // ירוק — התחלה
+        letter = 'H';
       } else if (isEnd) {
-        color = Colors.red;
-        size = 14;
+        bgColor = const Color(0xFFF44336); // אדום — סיום
+        letter = 'S';
       } else if (isIntermediate) {
-        color = Colors.purple;
-        size = 12;
+        bgColor = const Color(0xFFFFC107); // צהוב — ביניים
+        letter = 'B';
       } else if (navigatorId == null || isInSequence) {
-        color = Colors.blue;
-        size = 10;
+        bgColor = Colors.blue;
+        letter = '';
       } else {
-        color = Colors.grey;
-        size = 8;
+        bgColor = Colors.grey;
+        letter = '';
       }
+      final label = letter.isNotEmpty
+          ? '${cp.sequenceNumber}$letter'
+          : '${cp.sequenceNumber}';
 
       markers.add(Marker(
         point: cp.coordinates!.toLatLng(),
-        width: size * 3,
-        height: size * 3,
+        width: 38,
+        height: 38,
         child: Container(
           decoration: BoxDecoration(
-            color: color,
+            color: bgColor,
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha:0.3),
+                blurRadius: 4,
+              ),
+            ],
           ),
           child: Center(
             child: Text(
-              '${cp.sequenceNumber}',
-              style: TextStyle(
+              label,
+              style: const TextStyle(
                 color: Colors.white,
-                fontSize: size * 0.7,
+                fontSize: 11,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -450,57 +466,48 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     return markers;
   }
 
-  List<Polyline> _buildPolylines({String? navigatorId}) {
-    if (navigatorId == null) {
-      // Show all navigators' routes
-      final polylines = <Polyline>[];
-      final colors = [
-        Colors.blue, Colors.red, Colors.green, Colors.purple,
-        Colors.orange, Colors.teal, Colors.pink, Colors.indigo,
-      ];
-      int colorIdx = 0;
-      for (final uid in _navigatorIds) {
-        final cps = _navigatorCheckpoints[uid] ?? [];
-        if (cps.isEmpty) continue;
-        final seq = _buildFullSequence(cps);
-        final points = <LatLng>[];
-        for (final cpId in seq) {
-          final cp = _getCheckpoint(cpId);
-          if (cp?.coordinates != null) {
-            points.add(cp!.coordinates!.toLatLng());
-          }
-        }
-        if (points.length >= 2) {
-          polylines.add(Polyline(
-            points: points,
-            color: colors[colorIdx % colors.length].withOpacity(0.7),
-            strokeWidth: 3,
-          ));
-        }
-        colorIdx++;
-      }
-      return polylines;
-    }
+  // צבעים לצירים — ללא אדום (אדום שמור למנווט הנבחר)
+  static const _nonRedRouteColors = [
+    Color(0xFF2196F3), // כחול
+    Color(0xFF4CAF50), // ירוק
+    Color(0xFF9C27B0), // סגול
+    Color(0xFFFF9800), // כתום
+    Color(0xFF00BCD4), // תכלת
+    Color(0xFF795548), // חום
+    Color(0xFF3F51B5), // אינדיגו
+    Color(0xFF009688), // טורקיז
+    Color(0xFF8BC34A), // ירוק בהיר
+    Color(0xFFE91E63), // ורוד
+  ];
 
-    // Show single navigator's route
-    final cps = _navigatorCheckpoints[navigatorId] ?? [];
-    if (cps.isEmpty) return [];
-    final seq = _buildFullSequence(cps);
-    final points = <LatLng>[];
-    for (final cpId in seq) {
-      final cp = _getCheckpoint(cpId);
-      if (cp?.coordinates != null) {
-        points.add(cp!.coordinates!.toLatLng());
+  List<Polyline> _buildPolylines({String? selectedNavigatorId}) {
+    final polylines = <Polyline>[];
+    int colorIdx = 0;
+
+    for (final uid in _navigatorIds) {
+      final cps = _navigatorCheckpoints[uid] ?? [];
+      if (cps.isEmpty) continue;
+      final seq = _buildFullSequence(cps);
+      final points = <LatLng>[];
+      for (final cpId in seq) {
+        final cp = _getCheckpoint(cpId);
+        if (cp?.coordinates != null) {
+          points.add(cp!.coordinates!.toLatLng());
+        }
       }
-    }
-    if (points.length < 2) return [];
-    return [
-      Polyline(
+      if (points.length < 2) continue;
+
+      final isSelected = uid == selectedNavigatorId;
+      polylines.add(Polyline(
         points: points,
-        color: Colors.blue,
-        strokeWidth: 3,
-      ),
-    ];
+        color: isSelected
+            ? Colors.red
+            : _nonRedRouteColors[colorIdx % _nonRedRouteColors.length].withValues(alpha:0.6),
+        strokeWidth: isSelected ? 4.0 : 2.5,
+      ));
+      if (!isSelected) colorIdx++;
+    }
+    return polylines;
   }
 
   LatLngBounds? _getMapBounds() {
@@ -642,8 +649,6 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                       _buildSharedPointsSection(),
                       const SizedBox(height: 16),
                       _buildNavigatorsSection(),
-                      const SizedBox(height: 16),
-                      _buildMapSection(),
                       const SizedBox(height: 80),
                     ],
                   ),
@@ -899,7 +904,11 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            ..._navigatorIds.map((uid) => _buildNavigatorTile(uid)),
+            for (final uid in _navigatorIds) ...[
+              _buildNavigatorTile(uid),
+              if (_expandedNavigatorId == uid)
+                _buildInlineMap(uid),
+            ],
           ],
         ),
       ),
@@ -968,18 +977,6 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                     tooltip: 'בחר נקודות',
                     onPressed: () => _showCheckpointSelector(uid),
                   ),
-                  // כפתור הצג על מפה
-                  if (cps.isNotEmpty)
-                    IconButton(
-                      icon: const Icon(Icons.map, size: 20),
-                      tooltip: 'הצג על מפה',
-                      onPressed: () {
-                        setState(() {
-                          _showMap = true;
-                          _mapNavigatorId = uid;
-                        });
-                      },
-                    ),
                   Icon(
                     isExpanded ? Icons.expand_less : Icons.expand_more,
                     color: Colors.grey,
@@ -1052,126 +1049,99 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     );
   }
 
-  // ===================== SECTION 3: מפה =====================
+  // ===================== INLINE MAP — מפה בתוך רשימת המנווטים =====================
 
-  Widget _buildMapSection() {
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () => setState(() => _showMap = !_showMap),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Icon(Icons.map, color: Colors.orange[700]),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'תצוגת מפה',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  if (_showMap && _navigatorIds.length > 1)
-                    DropdownButton<String?>(
-                      value: _mapNavigatorId,
-                      underline: const SizedBox(),
-                      isDense: true,
-                      items: [
-                        const DropdownMenuItem(
-                          value: null,
-                          child: Text('כל המנווטים'),
-                        ),
-                        ..._navigatorIds.map((uid) => DropdownMenuItem(
-                              value: uid,
-                              child: Text(
-                                _usersCache[uid]?.fullName ?? uid,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            )),
-                      ],
-                      onChanged: (val) {
-                        setState(() => _mapNavigatorId = val);
-                      },
-                    ),
-                  const SizedBox(width: 8),
-                  Icon(_showMap ? Icons.expand_less : Icons.expand_more),
-                ],
-              ),
-            ),
-          ),
-          if (_showMap) _buildMapContent(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMapContent() {
+  Widget _buildInlineMap(String navigatorId) {
     final bounds = _getMapBounds();
     if (bounds == null) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('אין נקודות עם קואורדינטות'),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'אין נקודות עם קואורדינטות',
+          style: TextStyle(color: Colors.grey[500], fontSize: 13),
+          textAlign: TextAlign.center,
+        ),
       );
     }
 
-    return SizedBox(
-      height: 350,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.orange.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: ClipRRect(
-        borderRadius: const BorderRadius.vertical(
-          bottom: Radius.circular(12),
-        ),
-        child: Stack(
-          children: [
-            MapWithTypeSelector(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCameraFit: CameraFit.bounds(
-                  bounds: bounds,
-                  padding: const EdgeInsets.all(40),
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          height: 300,
+          child: Stack(
+            children: [
+              MapWithTypeSelector(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCameraFit: CameraFit.bounds(
+                    bounds: bounds,
+                    padding: const EdgeInsets.all(40),
+                  ),
                 ),
+                layers: [
+                  PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
+                  MarkerLayer(markers: _buildMarkers(navigatorId: navigatorId)),
+                ],
               ),
-              layers: [
-                PolylineLayer(polylines: _buildPolylines(navigatorId: _mapNavigatorId)),
-                MarkerLayer(markers: _buildMarkers(navigatorId: _mapNavigatorId)),
-              ],
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Material(
-                color: Colors.white,
-                elevation: 2,
-                borderRadius: BorderRadius.circular(8),
-                child: InkWell(
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Material(
+                  color: Colors.white,
+                  elevation: 2,
                   borderRadius: BorderRadius.circular(8),
-                  onTap: () {
-                    final camera = _mapController.camera;
-                    Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => FullscreenMapScreen(
-                        title: 'חלוקה ידנית',
-                        initialCenter: camera.center,
-                        initialZoom: camera.zoom,
-                        layers: [
-                          PolylineLayer(polylines: _buildPolylines(navigatorId: _mapNavigatorId)),
-                          MarkerLayer(markers: _buildMarkers(navigatorId: _mapNavigatorId)),
-                        ],
-                      ),
-                    ));
-                  },
-                  child: const SizedBox(
-                    width: 40, height: 40,
-                    child: Icon(Icons.fullscreen, size: 22),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () {
+                      final camera = _mapController.camera;
+                      Navigator.push(context, MaterialPageRoute(
+                        builder: (_) => FullscreenMapScreen(
+                          title: 'חלוקה ידנית',
+                          initialCenter: camera.center,
+                          initialZoom: camera.zoom,
+                          layers: [
+                            PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
+                            MarkerLayer(markers: _buildMarkers(navigatorId: navigatorId)),
+                          ],
+                        ),
+                      ));
+                    },
+                    child: const SizedBox(
+                      width: 40, height: 40,
+                      child: Icon(Icons.fullscreen, size: 22),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              // מקרא צבעים
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha:0.9),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(width: 12, height: 3, color: Colors.red),
+                      const SizedBox(width: 4),
+                      Text(_usersCache[navigatorId]?.fullName ?? navigatorId,
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

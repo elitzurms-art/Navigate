@@ -561,7 +561,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .listen(
       (alerts) {
         if (!mounted) return;
-        final hadAlerts = _activeAlerts.length;
+        // זיהוי התראות חדשות לפני עדכון הרשימה
+        final oldIds = _activeAlerts.map((a) => a.id).toSet();
+        final newAlerts = alerts.where((a) => !oldIds.contains(a.id)).toList();
+
         setState(() {
           _activeAlerts = alerts;
           // עדכון hasActiveAlert בנתוני מנווטים
@@ -574,8 +577,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           }
         });
         // ויברציה כשמגיעה התראה חדשה
-        if (alerts.length > hadAlerts) {
+        if (newAlerts.isNotEmpty) {
           HapticFeedback.heavyImpact();
+        }
+        // חלון קופץ להתראות חירום ותקינות חדשות
+        for (final alert in newAlerts) {
+          if (alert.type == AlertType.emergency ||
+              alert.type == AlertType.healthCheckExpired) {
+            _showAlertDialog(alert);
+          }
         }
       },
       onError: (e) {
@@ -684,6 +694,94 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         );
       }
     }
+  }
+
+  // ===========================================================================
+  // Alert Popup Dialog — חלון קופץ להתראות חירום ותקינות
+  // ===========================================================================
+
+  void _showAlertDialog(NavigatorAlert alert) {
+    final isEmergency = alert.type == AlertType.emergency;
+    final title = isEmergency ? 'התראת חירום!' : 'התראת תקינות';
+    final icon = isEmergency ? Icons.emergency : Icons.timer_off;
+    final color = isEmergency ? Colors.red : Colors.orange;
+
+    String message;
+    if (isEmergency) {
+      message = 'מנווט ${alert.navigatorName ?? alert.navigatorId} שלח התראת חירום!';
+    } else {
+      final overdue = alert.minutesOverdue ?? 0;
+      message = 'מנווט ${alert.navigatorName ?? alert.navigatorId} לא דיווח תקינות.\nחלפו $overdue דקות מעבר לזמן שהוגדר.';
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 8),
+            Text(title, style: TextStyle(color: color)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // מרכז מפה על מיקום המנווט
+              if (alert.location.lat != 0 && alert.location.lng != 0) {
+                _tabController.animateTo(0); // טאב מפה
+                try {
+                  _mapController.move(
+                    LatLng(alert.location.lat, alert.location.lng),
+                    15.0,
+                  );
+                } catch (_) {}
+              }
+            },
+            icon: const Icon(Icons.map),
+            label: const Text('מיקום המנווט'),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // הזכר שוב עוד 5 דקות
+              Future.delayed(const Duration(minutes: 5), () {
+                if (mounted) {
+                  if (_activeAlerts.any((a) => a.id == alert.id)) {
+                    _showAlertDialog(alert);
+                  }
+                }
+              });
+            },
+            icon: const Icon(Icons.snooze),
+            label: const Text('הזכר עוד 5 דק\''),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _resolveAlert(alert);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('ההתראה טופלה'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.check_circle),
+            label: const Text('בדקתי, תקין'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _updateNavigatorDataFromFirestore(QuerySnapshot snapshot) {
@@ -1525,13 +1623,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
+          : Column(
               children: [
-                _buildMapView(),
-                _buildStatusView(),
-                _buildAlertsView(),
-                _buildDashboardView(),
+                // באנר התראות חירום/תקינות
+                if (_activeAlerts.any((a) =>
+                    a.type == AlertType.emergency ||
+                    a.type == AlertType.healthCheckExpired))
+                  _buildAlertsBanner(),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildMapView(),
+                      _buildStatusView(),
+                      _buildAlertsView(),
+                      _buildDashboardView(),
+                    ],
+                  ),
+                ),
               ],
             ),
     );
@@ -2960,6 +3069,51 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     final enabled = overrides[alert.type];
     if (enabled == null) return true; // אין דריסה לסוג הזה — מציגים
     return enabled;
+  }
+
+  Widget _buildAlertsBanner() {
+    final emergencyCount = _activeAlerts.where((a) => a.type == AlertType.emergency).length;
+    final healthCount = _activeAlerts.where((a) => a.type == AlertType.healthCheckExpired).length;
+
+    return GestureDetector(
+      onTap: () {
+        // הצג את ההתראה הראשונה שלא טופלה
+        final urgent = _activeAlerts.where(
+          (a) => a.type == AlertType.emergency || a.type == AlertType.healthCheckExpired,
+        ).toList();
+        if (urgent.isNotEmpty) {
+          _showAlertDialog(urgent.first);
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: emergencyCount > 0 ? Colors.red : Colors.orange,
+        child: Row(
+          children: [
+            Icon(
+              emergencyCount > 0 ? Icons.emergency : Icons.timer_off,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                [
+                  if (emergencyCount > 0) '$emergencyCount חירום',
+                  if (healthCount > 0) '$healthCount תקינות',
+                ].join(' | '),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_left, color: Colors.white),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildAlertsView() {

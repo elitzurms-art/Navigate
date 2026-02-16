@@ -384,6 +384,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         final navId = entry.key;
         final data = entry.value;
 
+        final route = _currentNavigation.routes[navId];
         final score = _scoringService.calculateAutomaticScore(
           navigationId: widget.navigation.id,
           navigatorId: navId,
@@ -391,6 +392,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           verificationSettings: widget.navigation.verificationSettings,
           scoringCriteria: criteria,
           isDisqualified: data.isDisqualified,
+          routeCheckpointIds: route?.checkpointIds,
         );
 
         _scores[navId] = score;

@@ -584,12 +584,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         final navId = entry.key;
         final data = entry.value;
 
+        final route = _currentNavigation.routes[navId];
         final score = _scoringService.calculateAutomaticScore(
           navigationId: widget.navigation.id,
           navigatorId: navId,
           punches: data.punches,
           verificationSettings: widget.navigation.verificationSettings,
           scoringCriteria: criteria,
+          routeCheckpointIds: route?.checkpointIds,
         );
 
         _scores[navId] = score;
@@ -2537,10 +2539,16 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   Widget _buildScoringCriteriaCard() {
-    // חישוב סה"כ משקלים
-    final cpCount = _navCheckpoints
-        .where((c) => c.type != 'start' && c.type != 'end' && !c.isPolygon)
-        .length;
+    // חישוב סה"כ משקלים — נקודות למנווט (לא כלל הנקודות)
+    int cpCount = _currentNavigation.checkpointsPerNavigator ?? 0;
+    if (cpCount == 0 && _navigatorDataMap.isNotEmpty) {
+      cpCount = _navigatorDataMap.values.first.totalCheckpoints;
+    }
+    if (cpCount == 0) {
+      cpCount = _navCheckpoints
+          .where((c) => c.type != 'start' && c.type != 'end' && !c.isPolygon)
+          .length;
+    }
     int totalCpWeight;
     if (_scoringMode == 'equal') {
       totalCpWeight = _equalWeight * cpCount;
@@ -2606,28 +2614,26 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text('$_equalWeight x $cpCount = $totalCpWeight נק\'',
+                  Text('$_equalWeight × $cpCount נק\' למנווט = $totalCpWeight',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 ],
               ),
             ],
 
-            // Custom mode
+            // Custom mode — לפי מיקום בציר (position-based)
             if (_scoringMode == 'custom') ...[
               const Text('משקל לכל נקודה:',
                   style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
               const SizedBox(height: 6),
-              ..._navCheckpoints
-                  .where((c) => c.type != 'start' && c.type != 'end' && !c.isPolygon)
-                  .map((cp) {
-                final cpId = cp.sourceId ?? cp.id;
-                final weight = _customWeights[cpId] ?? 0;
+              ...List.generate(cpCount, (i) {
+                final key = i.toString();
+                final weight = _customWeights[key] ?? 0;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(cp.name, style: const TextStyle(fontSize: 13)),
+                        child: Text('נ.צ. ${i + 1}', style: const TextStyle(fontSize: 13)),
                       ),
                       SizedBox(
                         width: 56,
@@ -2643,7 +2649,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                           ),
                           onChanged: (val) {
                             setState(() {
-                              _customWeights[cpId] = int.tryParse(val) ?? 0;
+                              _customWeights[key] = int.tryParse(val) ?? 0;
                             });
                           },
                         ),
