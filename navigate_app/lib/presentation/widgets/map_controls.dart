@@ -8,6 +8,9 @@ import '../../core/map_config.dart';
 import '../../core/utils/geometry_utils.dart';
 import '../../domain/entities/coordinate.dart';
 
+/// מצב מרכוז מפה
+enum CenteringMode { off, northLocked, rotationByHeading }
+
 /// הגדרת שכבה בודדת עבור פאנל השכבות
 class MapLayerConfig {
   final String id;
@@ -38,6 +41,8 @@ class MapControls extends StatefulWidget {
   final List<LatLng> measurePoints;
   final VoidCallback? onMeasureClear;
   final VoidCallback? onMeasureUndo;
+  final VoidCallback? onCenterSelf;
+  final CenteringMode? centeringMode;
 
   const MapControls({
     required this.mapController,
@@ -48,6 +53,8 @@ class MapControls extends StatefulWidget {
     this.measurePoints = const [],
     this.onMeasureClear,
     this.onMeasureUndo,
+    this.onCenterSelf,
+    this.centeringMode,
   });
 
   @override
@@ -147,7 +154,7 @@ class _MapControlsState extends State<MapControls> {
         // פאנל שכבות (מוצג מתחת לכפתורים)
         if (_showLayersPanel)
           Positioned(
-            top: 8 + 44.0 * 3 + 12, // מתחת ל-3 כפתורים + רווח
+            top: 8 + 44.0 * (widget.onCenterSelf != null ? 4 : 3) + 12,
             right: 8,
             child: _buildLayersPanel(),
           ),
@@ -164,7 +171,7 @@ class _MapControlsState extends State<MapControls> {
     );
   }
 
-  /// עמודה ימנית — 3 כפתורים אנכיים
+  /// עמודה ימנית — 3-4 כפתורים אנכיים
   Widget _buildRightColumn() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -174,6 +181,10 @@ class _MapControlsState extends State<MapControls> {
         _buildMeasureButton(),
         const SizedBox(height: 4),
         _buildLayersButton(),
+        if (widget.onCenterSelf != null) ...[
+          const SizedBox(height: 4),
+          _buildSelfCenterButton(),
+        ],
       ],
     );
   }
@@ -286,6 +297,44 @@ class _MapControlsState extends State<MapControls> {
             color: _showLayersPanel ? Colors.blue[700] : Colors.grey[700],
             size: 22,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// כפתור מרכוז עצמי — מחזור 3 מצבים
+  Widget _buildSelfCenterButton() {
+    final mode = widget.centeringMode ?? CenteringMode.off;
+    IconData icon;
+    Color iconColor;
+    Color bgColor;
+
+    switch (mode) {
+      case CenteringMode.off:
+        icon = Icons.my_location;
+        iconColor = Colors.grey[700]!;
+        bgColor = Colors.white;
+      case CenteringMode.northLocked:
+        icon = Icons.my_location;
+        iconColor = Colors.blue;
+        bgColor = Colors.blue[50]!;
+      case CenteringMode.rotationByHeading:
+        icon = Icons.explore;
+        iconColor = Colors.blue[800]!;
+        bgColor = Colors.blue[100]!;
+    }
+
+    return Material(
+      color: bgColor,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: widget.onCenterSelf,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(icon, color: iconColor, size: 22),
         ),
       ),
     );

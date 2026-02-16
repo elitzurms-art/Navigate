@@ -19,6 +19,7 @@ import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
@@ -83,6 +84,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
+  // פר-מנווט: הצגת מסלול בפועל / ציר מתוכנן
+  final Map<String, bool> _showNavigatorTrack = {};
+  final Map<String, bool> _showPlannedAxis = {};
+  // דריסות התראות פר-מנווט: navigatorId -> { AlertType -> enabled }
+  final Map<String, Map<AlertType, bool>> _navigatorAlertOverrides = {};
+
+  // מרכוז מפה
+  CenteringMode _centeringMode = CenteringMode.off;
+  String? _centeredNavigatorId; // null = מרכוז עצמי
+  Timer? _centeringTimer;
+  StreamSubscription? _mapGestureSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -115,6 +128,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _systemStatusListener?.cancel();
     _alertsListener?.cancel();
     _punchesListener?.cancel();
+    _centeringTimer?.cancel();
+    _mapGestureSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -146,6 +161,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _initializeNavigators() async {
     // אתחול ראשוני
+    final alerts = widget.navigation.alerts;
     for (final navigatorId in widget.navigation.routes.keys) {
       _selectedNavigators[navigatorId] = true;
       _navigatorData[navigatorId] = NavigatorLiveData(
@@ -157,6 +173,40 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         punches: [],
         lastUpdate: null,
       );
+      _showNavigatorTrack[navigatorId] = false;
+      _showPlannedAxis[navigatorId] = false;
+
+      // ברירת מחדל טוגלי התראות — נגזר מהגדרות הניווט
+      _navigatorAlertOverrides[navigatorId] = {};
+      if (alerts.enabled) {
+        if (alerts.speedAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.speed] = true;
+        }
+        if (alerts.noMovementAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.noMovement] = true;
+        }
+        if (alerts.ggAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.boundary] = true;
+        }
+        if (alerts.routesAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.routeDeviation] = true;
+        }
+        if (alerts.nbAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.safetyPoint] = true;
+        }
+        if (alerts.navigatorProximityAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.proximity] = true;
+        }
+        if (alerts.batteryAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.battery] = true;
+        }
+        if (alerts.noReceptionAlertEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.noReception] = true;
+        }
+        if (alerts.healthCheckEnabled) {
+          _navigatorAlertOverrides[navigatorId]![AlertType.healthCheckExpired] = true;
+        }
+      }
     }
 
     // טעינת סטטוסים מה-DB
@@ -745,6 +795,134 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   // ===========================================================================
+  // מרכוז מפה — Centering Logic
+  // ===========================================================================
+
+  void _cycleNavigatorCenteringMode(String navigatorId) {
+    setState(() {
+      if (_centeredNavigatorId == navigatorId) {
+        // מחזור: northLocked → rotationByHeading → off
+        switch (_centeringMode) {
+          case CenteringMode.off:
+            _centeringMode = CenteringMode.northLocked;
+          case CenteringMode.northLocked:
+            _centeringMode = CenteringMode.rotationByHeading;
+          case CenteringMode.rotationByHeading:
+            _stopCentering();
+            return;
+        }
+      } else {
+        // מתחיל מרכוז על מנווט חדש
+        _centeredNavigatorId = navigatorId;
+        _centeringMode = CenteringMode.northLocked;
+      }
+    });
+    _startCentering();
+  }
+
+  void _cycleSelfCenteringMode() {
+    setState(() {
+      if (_centeredNavigatorId != null) {
+        // עובר ממרכוז מנווט למרכוז עצמי
+        _centeredNavigatorId = null;
+        _centeringMode = CenteringMode.northLocked;
+      } else {
+        switch (_centeringMode) {
+          case CenteringMode.off:
+            _centeringMode = CenteringMode.northLocked;
+          case CenteringMode.northLocked:
+            _centeringMode = CenteringMode.rotationByHeading;
+          case CenteringMode.rotationByHeading:
+            _stopCentering();
+            return;
+        }
+      }
+    });
+    _startCentering();
+  }
+
+  void _startCentering() {
+    _centeringTimer?.cancel();
+    _mapGestureSubscription?.cancel();
+
+    // ביצוע ראשוני מיידי
+    _performCentering();
+
+    // רענון כל 2 שניות
+    _centeringTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _performCentering(),
+    );
+
+    // האזנה למגע ידני על המפה — מבטל מרכוז
+    _setupGestureDetection();
+  }
+
+  void _performCentering() async {
+    if (_centeringMode == CenteringMode.off) return;
+    if (!mounted) return;
+
+    LatLng? pos;
+    double heading = 0;
+
+    if (_centeredNavigatorId != null) {
+      // מרכוז על מנווט
+      final data = _navigatorData[_centeredNavigatorId];
+      if (data == null || data.currentPosition == null) return;
+      pos = data.currentPosition;
+
+      // heading מנקודת GPS אחרונה
+      if (data.trackPoints.length >= 2) {
+        final prev = data.trackPoints[data.trackPoints.length - 2];
+        final last = data.trackPoints.last;
+        heading = GeometryUtils.bearingBetween(
+          prev.coordinate,
+          last.coordinate,
+        );
+      }
+    } else {
+      // מרכוז עצמי — מיקום GPS של המפקד
+      pos = await GpsService().getCurrentPosition();
+      // אין heading למפקד (לא זזים) — נשאר 0
+    }
+
+    if (pos == null || !mounted) return;
+
+    final currentZoom = _mapController.camera.zoom;
+    switch (_centeringMode) {
+      case CenteringMode.northLocked:
+        _mapController.moveAndRotate(pos, currentZoom, 0);
+      case CenteringMode.rotationByHeading:
+        _mapController.moveAndRotate(pos, currentZoom, -heading);
+      case CenteringMode.off:
+        break;
+    }
+  }
+
+  void _setupGestureDetection() {
+    _mapGestureSubscription?.cancel();
+    _mapGestureSubscription = _mapController.mapEventStream.listen((event) {
+      if (event.source != MapEventSource.mapController &&
+          event.source != MapEventSource.nonRotatedSizeChange) {
+        _stopCentering();
+      }
+    });
+  }
+
+  void _stopCentering() {
+    _centeringTimer?.cancel();
+    _centeringTimer = null;
+    _mapGestureSubscription?.cancel();
+    _mapGestureSubscription = null;
+    if (mounted) {
+      setState(() {
+        _centeringMode = CenteringMode.off;
+        _centeredNavigatorId = null;
+      });
+    }
+  }
+
+  // ===========================================================================
   // Helper methods — חישובים ופורמט
   // ===========================================================================
 
@@ -1095,8 +1273,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   }).toList(),
                 ),
 
-              // מסלולים של מנווטים
-              if (_showTracks) ..._buildNavigatorTracks(),
+              // מסלולים של מנווטים (גלובלי + פר-מנווט)
+              ..._buildNavigatorTracks(),
+
+              // צירים מתוכננים (פר-מנווט)
+              ..._buildPlannedAxisLayers(),
 
               // דקירות
               if (_showPunches) ..._buildPunchMarkers(),
@@ -1168,6 +1349,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 onMeasureUndo: () => setState(() {
                   if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
                 }),
+                onCenterSelf: _cycleSelfCenteringMode,
+                centeringMode: _centeredNavigatorId == null ? _centeringMode : CenteringMode.off,
               ),
             ],
           ),
@@ -1380,6 +1563,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (data.trackPoints.isEmpty) continue;
 
+      // מנווט מוצג אם _showTracks (גלובלי) או _showNavigatorTrack (פר-מנווט) דלוקים
+      final showGlobal = _showTracks;
+      final showPerNavigator = _showNavigatorTrack[navigatorId] ?? false;
+      if (!showGlobal && !showPerNavigator) continue;
+
       final points = data.trackPoints
           .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
           .toList();
@@ -1398,6 +1586,36 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
 
     return tracks;
+  }
+
+  List<Widget> _buildPlannedAxisLayers() {
+    List<Widget> layers = [];
+
+    for (final entry in _navigatorData.entries) {
+      final navigatorId = entry.key;
+      if (!(_showPlannedAxis[navigatorId] ?? false)) continue;
+
+      final route = widget.navigation.routes[navigatorId];
+      if (route == null || route.plannedPath.isEmpty) continue;
+
+      final points = route.plannedPath
+          .map((c) => LatLng(c.lat, c.lng))
+          .toList();
+
+      layers.add(
+        PolylineLayer(
+          polylines: [
+            Polyline(
+              points: points,
+              strokeWidth: 2.5,
+              color: Colors.purple.withValues(alpha: 0.7),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return layers;
   }
 
   List<Widget> _buildPunchMarkers() {
@@ -1421,14 +1639,26 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
         return Marker(
           point: LatLng(punch.punchLocation.lat, punch.punchLocation.lng),
-          width: 30,
-          height: 30,
+          width: 80,
+          height: 45,
           child: Opacity(
             opacity: _punchesOpacity,
-            child: Icon(
-              Icons.flag,
-              color: color,
-              size: 30,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.flag, color: color, size: 22),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(
+                    punch.id,
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -1477,7 +1707,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
 
-      final markerChild = Column(
+      final isCentered = _centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off;
+
+      Widget markerChild = Column(
         children: [
           Icon(
             Icons.person_pin_circle,
@@ -1502,11 +1734,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ],
       );
 
+      // טבעת כחולה זוהרת למנווט נעקב
+      if (isCentered) {
+        markerChild = Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.blue, width: 3),
+            color: Colors.blue.withValues(alpha: 0.1),
+          ),
+          padding: const EdgeInsets.all(2),
+          child: markerChild,
+        );
+      }
+
       markers.add(
         Marker(
           point: data.currentPosition!,
-          width: 60,
-          height: 60,
+          width: isCentered ? 68 : 60,
+          height: isCentered ? 68 : 60,
           child: markerOpacity < 1.0
               ? Opacity(opacity: markerOpacity, child: markerChild)
               : markerChild,
@@ -1558,88 +1803,240 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
     final route = widget.navigation.routes[navigatorId];
     final arrivals = _getCheckpointArrivals(data);
+    final alerts = widget.navigation.alerts;
+    final hasPlannedPath = route != null && route.plannedPath.isNotEmpty;
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(_getStatusIcon(data), color: _getNavigatorStatusColor(data), size: 28),
-            const SizedBox(width: 8),
-            Text(navigatorId),
-          ],
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'סטטוס: ${data.personalStatus.displayName}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                if (data.hasActiveAlert)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: Text(
-                      'התראה פעילה!',
-                      style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                    ),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return DraggableScrollableSheet(
+              initialChildSize: 0.65,
+              minChildSize: 0.3,
+              maxChildSize: 0.9,
+              expand: false,
+              builder: (_, scrollController) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ListView(
+                    controller: scrollController,
+                    children: [
+                      // ידית גרירה
+                      Center(
+                        child: Container(
+                          margin: const EdgeInsets.only(top: 8, bottom: 12),
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+
+                      // 1. כותרת
+                      Row(
+                        children: [
+                          Icon(_getStatusIcon(data), color: _getNavigatorStatusColor(data), size: 28),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(navigatorId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                Text(data.personalStatus.displayName, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                              ],
+                            ),
+                          ),
+                          if (data.hasActiveAlert)
+                            const Icon(Icons.warning, color: Colors.red, size: 22),
+                          if (data.personalStatus == NavigatorPersonalStatus.active)
+                            IconButton(
+                              icon: const Icon(Icons.stop_circle, color: Colors.red),
+                              tooltip: 'עצירה מרחוק',
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _finishNavigatorNavigation(navigatorId);
+                              },
+                            ),
+                        ],
+                      ),
+                      const Divider(height: 20),
+
+                      // 2. סטטוס מכשיר
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          _deviceChip(
+                            icon: data.isGpsPlusFix ? Icons.cell_tower : Icons.gps_fixed,
+                            label: data.isGpsPlusFix ? 'GPS Plus' : 'GPS',
+                            color: data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green,
+                          ),
+                          _deviceChip(
+                            icon: data.personalStatus == NavigatorPersonalStatus.noReception
+                                ? Icons.signal_wifi_off
+                                : Icons.signal_cellular_alt,
+                            label: data.personalStatus == NavigatorPersonalStatus.noReception ? 'אין קליטה' : 'קליטה',
+                            color: data.personalStatus == NavigatorPersonalStatus.noReception ? Colors.red : Colors.green,
+                          ),
+                          _deviceChip(
+                            icon: Icons.battery_unknown,
+                            label: 'N/A',
+                            color: Colors.grey,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // 3. מרכוז מפה
+                      if (data.currentPosition != null) ...[
+                        const Text('מרכוז מפה', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: Icon(
+                                  _centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off
+                                      ? Icons.gps_fixed : Icons.gps_not_fixed,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  _centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off
+                                      ? 'עוקב (${_centeringMode == CenteringMode.northLocked ? 'צפון' : 'כיוון'})'
+                                      : 'עקוב',
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _cycleNavigatorCenteringMode(navigatorId);
+                                  _tabController.animateTo(0);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.center_focus_strong, size: 18),
+                                label: const Text('מרכז פעם אחת'),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _tabController.animateTo(0);
+                                  _mapController.move(data.currentPosition!, 16.0);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 20),
+                      ],
+
+                      // 4. תצוגה על המפה
+                      const Text('תצוגה על המפה', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      SwitchListTile(
+                        title: const Text('הצג מסלול בפועל', style: TextStyle(fontSize: 14)),
+                        value: _showNavigatorTrack[navigatorId] ?? false,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (v) {
+                          setState(() => _showNavigatorTrack[navigatorId] = v);
+                          setSheetState(() {});
+                        },
+                      ),
+                      if (hasPlannedPath)
+                        SwitchListTile(
+                          title: const Text('הצג ציר מתוכנן', style: TextStyle(fontSize: 14)),
+                          value: _showPlannedAxis[navigatorId] ?? false,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (v) {
+                            setState(() => _showPlannedAxis[navigatorId] = v);
+                            setSheetState(() {});
+                          },
+                        ),
+
+                      // 5. התראות פר-מנווט
+                      if (alerts.enabled) ...[
+                        const Divider(height: 16),
+                        const Text('התראות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(height: 4),
+                        ...(_navigatorAlertOverrides[navigatorId]?.entries ?? <MapEntry<AlertType, bool>>[]).map((entry) {
+                          return SwitchListTile(
+                            title: Text(
+                              '${entry.key.emoji} ${entry.key.displayName}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            value: entry.value,
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            onChanged: (v) {
+                              setState(() {
+                                _navigatorAlertOverrides[navigatorId]![entry.key] = v;
+                              });
+                              setSheetState(() {});
+                            },
+                          );
+                        }),
+                      ],
+
+                      // 6. נתונים חיים
+                      const Divider(height: 20),
+                      const Text('נתונים חיים', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 6),
+                      _detailRow('מהירות נוכחית', '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                      _detailRow('מהירות ממוצעת', '${data.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                      _detailRow('מרחק שנעבר', '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
+                      _detailRow('זמן ניווט', _formatDuration(data.elapsedTime)),
+                      _detailRow('נקודות GPS', '${data.trackPoints.length}'),
+                      if (data.lastUpdate != null)
+                        _detailRow('עדכון אחרון', '${_formatTimeSince(data.timeSinceLastUpdate)} לפני'),
+                      if (route != null)
+                        _detailRow('אורך ציר מתוכנן', '${route.routeLengthKm.toStringAsFixed(1)} ק"מ'),
+
+                      // 7. נקודות ציון
+                      if (arrivals.isNotEmpty) ...[
+                        const Divider(height: 20),
+                        const Text('נקודות ציון', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(height: 6),
+                        ...arrivals.map(_buildCheckpointRow),
+                      ],
+
+                      const SizedBox(height: 24),
+                    ],
                   ),
-                const Divider(height: 20),
-                // נתונים חיים
-                const Text('נתונים חיים', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                const SizedBox(height: 6),
-                _detailRow('מהירות נוכחית', '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש'),
-                _detailRow('מהירות ממוצעת', '${data.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
-                _detailRow('מרחק שנעבר', '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
-                _detailRow('זמן ניווט', _formatDuration(data.elapsedTime)),
-                _detailRow('נקודות GPS', '${data.trackPoints.length}'),
-                if (data.lastUpdate != null)
-                  _detailRow('עדכון אחרון', '${_formatTimeSince(data.timeSinceLastUpdate)} לפני'),
-                if (route != null) ...[
-                  const Divider(height: 16),
-                  _detailRow('אורך ציר מתוכנן', '${route.routeLengthKm.toStringAsFixed(1)} ק"מ'),
-                ],
-                // נקודות ציון
-                if (arrivals.isNotEmpty) ...[
-                  const Divider(height: 20),
-                  const Text('נקודות ציון', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(height: 6),
-                  ...arrivals.map(_buildCheckpointRow),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          // הצג על המפה
-          if (data.currentPosition != null)
-            TextButton.icon(
-              icon: const Icon(Icons.map, size: 18),
-              label: const Text('הצג על המפה'),
-              onPressed: () {
-                Navigator.pop(ctx);
-                _tabController.animateTo(0);
-                _mapController.move(data.currentPosition!, 16.0);
+                );
               },
-            ),
-          // עצירה מרחוק
-          if (data.personalStatus == NavigatorPersonalStatus.active)
-            TextButton.icon(
-              icon: const Icon(Icons.stop_circle, size: 18, color: Colors.red),
-              label: const Text('עצירה מרחוק', style: TextStyle(color: Colors.red)),
-              onPressed: () {
-                Navigator.pop(ctx);
-                _finishNavigatorNavigation(navigatorId);
-              },
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('סגור'),
-          ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _deviceChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
         ],
       ),
     );
@@ -1982,8 +2379,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // Alerts Tab
   // ===========================================================================
 
+  /// בדיקה אם התראה צריכה להיות מוצגת לפי דריסות פר-מנווט
+  bool _isAlertVisibleByOverride(NavigatorAlert alert) {
+    final overrides = _navigatorAlertOverrides[alert.navigatorId];
+    if (overrides == null) return true; // אין דריסות — מציגים
+    final enabled = overrides[alert.type];
+    if (enabled == null) return true; // אין דריסה לסוג הזה — מציגים
+    return enabled;
+  }
+
   Widget _buildAlertsView() {
-    if (_activeAlerts.isEmpty) {
+    final filteredAlerts = _activeAlerts.where(_isAlertVisibleByOverride).toList();
+
+    if (filteredAlerts.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2001,9 +2409,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _activeAlerts.length,
+      itemCount: filteredAlerts.length,
       itemBuilder: (context, index) {
-        final alert = _activeAlerts[index];
+        final alert = filteredAlerts[index];
         final alertColor = _getAlertColor(alert.type);
         final elapsed = DateTime.now().difference(alert.timestamp);
         final elapsedText = elapsed.inMinutes < 60
@@ -2071,6 +2479,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (_activeAlerts.isEmpty) return [];
 
     final markers = _activeAlerts
+        .where(_isAlertVisibleByOverride)
         .where((a) => a.location.lat != 0 && a.location.lng != 0)
         .map((alert) {
       final color = _getAlertColor(alert.type);

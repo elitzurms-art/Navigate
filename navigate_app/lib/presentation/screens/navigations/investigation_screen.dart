@@ -12,6 +12,7 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/checkpoint_punch_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/user_repository.dart';
 import '../../../services/gps_tracking_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/auth_service.dart';
@@ -503,66 +504,419 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     final currentScore = _scores[navigatorId];
     if (currentScore == null) return;
 
-    final scoreController = TextEditingController(
-      text: currentScore.totalScore.toString(),
-    );
+    // Deep copy checkpoint scores for editing
+    final editedCheckpointScores = <String, CheckpointScore>{};
+    for (final entry in currentScore.checkpointScores.entries) {
+      editedCheckpointScores[entry.key] = CheckpointScore(
+        checkpointId: entry.value.checkpointId,
+        approved: entry.value.approved,
+        score: entry.value.score,
+        distanceMeters: entry.value.distanceMeters,
+        rejectionReason: entry.value.rejectionReason,
+      );
+    }
+
     final notesController = TextEditingController(
       text: currentScore.notes ?? '',
     );
+    bool totalOverride = false;
+    final totalController = TextEditingController(
+      text: currentScore.totalScore.toString(),
+    );
 
-    showDialog(
+    int _calcAverage(Map<String, CheckpointScore> cpScores) {
+      if (cpScores.isEmpty) return 0;
+      final sum = cpScores.values.fold<int>(0, (s, cs) => s + cs.score);
+      return (sum / cpScores.length).round();
+    }
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title:
-            Text('עריכת ציון - ${_getNavigatorDisplayName(navigatorId)}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: scoreController,
-              decoration: InputDecoration(
-                labelText: 'ציון (0-100)',
-                border: const OutlineInputBorder(),
-                helperText: _autoScores.containsKey(navigatorId)
-                    ? 'ציון אוטומטי: ${_autoScores[navigatorId]}'
-                    : null,
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'הערות',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () {
-              final newScore = int.tryParse(scoreController.text) ??
-                  currentScore.totalScore;
-              setState(() {
-                _scores[navigatorId] = _scoringService.updateScore(
-                  currentScore,
-                  newTotalScore: newScore.clamp(0, 100),
-                  newNotes: notesController.text,
-                );
-              });
-              Navigator.pop(context);
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.green),
-            child: const Text('שמור'),
-          ),
-        ],
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final computedTotal = _calcAverage(editedCheckpointScores);
+            final displayTotal = totalOverride
+                ? (int.tryParse(totalController.text) ?? computedTotal)
+                : computedTotal;
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.85,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              expand: false,
+              builder: (_, scrollController) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
+                      // Drag handle
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      // Header
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'עריכת ציון - ${_getNavigatorDisplayName(navigatorId)}',
+                              style: const TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          // Total score circle
+                          GestureDetector(
+                            onTap: () {
+                              setSheetState(() => totalOverride = !totalOverride);
+                              if (!totalOverride) {
+                                totalController.text = computedTotal.toString();
+                              }
+                            },
+                            child: CircleAvatar(
+                              radius: 24,
+                              backgroundColor: ScoringService.getScoreColor(displayTotal),
+                              child: totalOverride
+                                  ? SizedBox(
+                                      width: 36,
+                                      child: TextField(
+                                        controller: totalController,
+                                        keyboardType: TextInputType.number,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14),
+                                        decoration: const InputDecoration(
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                        onChanged: (_) => setSheetState(() {}),
+                                      ),
+                                    )
+                                  : Text(
+                                      '$displayTotal',
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16),
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_autoScores.containsKey(navigatorId))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              Text(
+                                'ציון אוטומטי: ${_autoScores[navigatorId]}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.grey),
+                              ),
+                              if (totalOverride)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: Text('(ציון ידני)',
+                                      style: TextStyle(
+                                          fontSize: 12, color: Colors.orange)),
+                                ),
+                            ],
+                          ),
+                        ),
+                      const Divider(height: 16),
+                      // Notes field
+                      TextField(
+                        controller: notesController,
+                        decoration: const InputDecoration(
+                          labelText: 'הערות',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 8),
+                      // Checkpoint list header
+                      if (editedCheckpointScores.isNotEmpty)
+                        const Row(
+                          children: [
+                            Text('פירוט לפי נקודה:',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 14)),
+                          ],
+                        ),
+                      const SizedBox(height: 4),
+                      // Checkpoint scores list
+                      Expanded(
+                        child: ListView.builder(
+                          controller: scrollController,
+                          itemCount: editedCheckpointScores.length,
+                          itemBuilder: (_, index) {
+                            final cpId = editedCheckpointScores.keys
+                                .elementAt(index);
+                            final cpScore = editedCheckpointScores[cpId]!;
+                            final matchCp = _navCheckpoints.where(
+                              (c) =>
+                                  c.sourceId == cpScore.checkpointId ||
+                                  c.id == cpScore.checkpointId,
+                            );
+                            final cpName = matchCp.isNotEmpty
+                                ? matchCp.first.name
+                                : cpScore.checkpointId;
+
+                            return Card(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              child: Padding(
+                                padding: const EdgeInsets.all(10),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        // Approved toggle
+                                        IconButton(
+                                          icon: Icon(
+                                            cpScore.approved
+                                                ? Icons.check_circle
+                                                : Icons.cancel,
+                                            color: cpScore.approved
+                                                ? Colors.green
+                                                : Colors.red,
+                                          ),
+                                          onPressed: () {
+                                            setSheetState(() {
+                                              final wasApproved = cpScore.approved;
+                                              editedCheckpointScores[cpId] =
+                                                  CheckpointScore(
+                                                checkpointId:
+                                                    cpScore.checkpointId,
+                                                approved: !wasApproved,
+                                                score: !wasApproved
+                                                    ? (cpScore.score > 0
+                                                        ? cpScore.score
+                                                        : 100)
+                                                    : 0,
+                                                distanceMeters:
+                                                    cpScore.distanceMeters,
+                                                rejectionReason: wasApproved
+                                                    ? cpScore.rejectionReason
+                                                    : null,
+                                              );
+                                              if (!totalOverride) {
+                                                totalController.text =
+                                                    _calcAverage(
+                                                            editedCheckpointScores)
+                                                        .toString();
+                                              }
+                                            });
+                                          },
+                                          tooltip: cpScore.approved
+                                              ? 'סמן כנכשל'
+                                              : 'סמן כמאושר',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // Checkpoint name
+                                        Expanded(
+                                          child: Text(cpName,
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.w500)),
+                                        ),
+                                        // Distance (read-only)
+                                        Text(
+                                          '${cpScore.distanceMeters.toStringAsFixed(0)}מ\'',
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // Score input
+                                        SizedBox(
+                                          width: 56,
+                                          height: 36,
+                                          child: TextField(
+                                            controller: TextEditingController(
+                                                text:
+                                                    cpScore.score.toString()),
+                                            keyboardType:
+                                                TextInputType.number,
+                                            textAlign: TextAlign.center,
+                                            decoration: InputDecoration(
+                                              border:
+                                                  const OutlineInputBorder(),
+                                              isDense: true,
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                      vertical: 8),
+                                              fillColor: ScoringService
+                                                      .getScoreColor(
+                                                          cpScore.score)
+                                                  .withOpacity(0.15),
+                                              filled: true,
+                                            ),
+                                            onChanged: (val) {
+                                              final newVal =
+                                                  (int.tryParse(val) ?? 0)
+                                                      .clamp(0, 100);
+                                              setSheetState(() {
+                                                editedCheckpointScores[cpId] =
+                                                    CheckpointScore(
+                                                  checkpointId:
+                                                      cpScore.checkpointId,
+                                                  approved: newVal > 0,
+                                                  score: newVal,
+                                                  distanceMeters:
+                                                      cpScore.distanceMeters,
+                                                  rejectionReason:
+                                                      cpScore.rejectionReason,
+                                                );
+                                                if (!totalOverride) {
+                                                  totalController.text =
+                                                      _calcAverage(
+                                                              editedCheckpointScores)
+                                                          .toString();
+                                                }
+                                              });
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    // Rejection reason (only when rejected)
+                                    if (!cpScore.approved)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 6),
+                                        child: TextField(
+                                          controller: TextEditingController(
+                                              text:
+                                                  cpScore.rejectionReason ?? ''),
+                                          decoration: const InputDecoration(
+                                            labelText: 'סיבת דחייה',
+                                            border: OutlineInputBorder(),
+                                            isDense: true,
+                                            contentPadding: EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 8),
+                                          ),
+                                          style: const TextStyle(fontSize: 13),
+                                          onChanged: (val) {
+                                            editedCheckpointScores[cpId] =
+                                                CheckpointScore(
+                                              checkpointId:
+                                                  cpScore.checkpointId,
+                                              approved: cpScore.approved,
+                                              score: cpScore.score,
+                                              distanceMeters:
+                                                  cpScore.distanceMeters,
+                                              rejectionReason:
+                                                  val.isEmpty ? null : val,
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      // Footer buttons
+                      SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            children: [
+                              // Reset to auto
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  final data = _navigatorDataMap[navigatorId];
+                                  if (data == null) return;
+                                  final autoScore =
+                                      _scoringService.calculateAutomaticScore(
+                                    navigationId: widget.navigation.id,
+                                    navigatorId: navigatorId,
+                                    punches: data.punches,
+                                    verificationSettings:
+                                        widget.navigation.verificationSettings,
+                                  );
+                                  setSheetState(() {
+                                    editedCheckpointScores.clear();
+                                    editedCheckpointScores.addAll(
+                                        autoScore.checkpointScores);
+                                    totalOverride = false;
+                                    totalController.text =
+                                        autoScore.totalScore.toString();
+                                    notesController.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.refresh, size: 18),
+                                label: const Text('איפוס לאוטומטי',
+                                    style: TextStyle(fontSize: 13)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.orange,
+                                ),
+                              ),
+                              const Spacer(),
+                              // Cancel
+                              TextButton(
+                                onPressed: () => Navigator.pop(sheetContext),
+                                child: const Text('ביטול'),
+                              ),
+                              const SizedBox(width: 8),
+                              // Save
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  final finalTotal = totalOverride
+                                      ? (int.tryParse(totalController.text) ??
+                                              computedTotal)
+                                          .clamp(0, 100)
+                                      : computedTotal;
+                                  setState(() {
+                                    _scores[navigatorId] =
+                                        _scoringService.updateScore(
+                                      currentScore,
+                                      newTotalScore: finalTotal,
+                                      newCheckpointScores:
+                                          editedCheckpointScores,
+                                      newNotes: notesController.text.isEmpty
+                                          ? null
+                                          : notesController.text,
+                                    );
+                                  });
+                                  Navigator.pop(sheetContext);
+                                },
+                                icon: const Icon(Icons.save, size: 18),
+                                label: const Text('שמור'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 
@@ -662,6 +1016,47 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  // ===========================================================================
+  // Save Full Navigation
+  // ===========================================================================
+
+  Future<void> _saveFullNavigation() async {
+    try {
+      // Build navigatorNames map
+      final userRepo = UserRepository();
+      final navigatorNames = <String, String>{};
+      for (final navId in _currentNavigation.routes.keys) {
+        final user = await userRepo.getUser(navId);
+        if (user != null) {
+          navigatorNames[navId] = user.fullName;
+        } else {
+          navigatorNames[navId] = _getNavigatorDisplayName(navId);
+        }
+      }
+
+      final result = await _exportService.exportFullNavigation(
+        navigation: _currentNavigation,
+        navigatorNames: navigatorNames,
+      );
+
+      if (!mounted) return;
+      if (result != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('ניווט נשמר בהצלחה: $result'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בשמירה: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -866,9 +1261,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   _returnToPreparation();
                   break;
                 case 'save_navigation':
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('בפיתוח')),
-                  );
+                  _saveFullNavigation();
                   break;
                 case 'delete_navigation':
                   _deleteNavigation();
@@ -1339,11 +1732,27 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
     return Marker(
       point: LatLng(punch.punchLocation.lat, punch.punchLocation.lng),
-      width: 28,
-      height: 28,
+      width: 80,
+      height: 45,
       child: Opacity(
         opacity: _punchesOpacity,
-        child: Icon(icon, color: color, size: 26),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 22),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.85),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(
+                punch.id,
+                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

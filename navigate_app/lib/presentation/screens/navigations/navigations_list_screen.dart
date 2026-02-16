@@ -223,6 +223,44 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     }
   }
 
+  // ======== ייבוא ניווט ========
+
+  Future<void> _importNavigation() async {
+    try {
+      final exportService = RouteExportService();
+      final imported = await exportService.importFullNavigation();
+      if (imported == null) return; // User cancelled
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('ניווט "${imported.name}" יובא בהצלחה'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      _loadNavigations();
+
+      // Auto-open investigation screen for imported navigation
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => InvestigationScreen(navigation: imported),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בייבוא: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   // ======== דיאלוגים ========
 
   Future<void> _showSpinner(String message) async {
@@ -1603,6 +1641,11 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload),
+            tooltip: 'ייבוא ניווט',
+            onPressed: _importNavigation,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadNavigations,

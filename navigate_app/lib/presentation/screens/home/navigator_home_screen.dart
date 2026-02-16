@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
+import '../../../services/scoring_service.dart';
 import '../../../domain/entities/user.dart';
 import '../../../domain/entities/navigation.dart' as domain;
+import '../../../domain/entities/navigation_score.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import 'navigator_state.dart';
 import 'navigator_views/learning_view.dart';
@@ -25,10 +27,13 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   final SessionService _sessionService = SessionService();
   final NavigationRepository _navigationRepo = NavigationRepository();
 
+  final ScoringService _scoringService = ScoringService();
+
   NavigatorScreenState _state = NavigatorScreenState.loading;
   domain.Navigation? _currentNavigation;
   User? _currentUser;
   String? _error;
+  NavigationScore? _navigatorScore;
 
   Timer? _pollTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
@@ -72,6 +77,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             _currentNavigation = nav;
             _state = statusToScreenState(nav.status);
           });
+          _loadNavigatorScore();
         }
       },
       onError: (e) {
@@ -150,6 +156,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         _currentNavigation = bestNav;
         _state = statusToScreenState(bestNav!.status);
       });
+
+      // טעינת ציון אם בשלב תחקור/אישור
+      _loadNavigatorScore();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -157,6 +166,36 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           _error = e.toString();
         });
       }
+    }
+  }
+
+  /// טעינת ציון מנווט מ-Firestore (אם בשלב תחקור/אישור)
+  Future<void> _loadNavigatorScore() async {
+    final nav = _currentNavigation;
+    final user = _currentUser;
+    if (nav == null || user == null) return;
+
+    final status = nav.status;
+    if (status != 'approval' && status != 'review') {
+      if (_navigatorScore != null) {
+        setState(() => _navigatorScore = null);
+      }
+      return;
+    }
+
+    try {
+      final scores = await _navigationRepo.fetchScoresFromFirestore(nav.id);
+      final myScores =
+          scores.where((s) => s['navigatorId'] == user.uid).toList();
+      if (!mounted) return;
+      if (myScores.isNotEmpty) {
+        final score = NavigationScore.fromMap(myScores.first);
+        setState(() => _navigatorScore = score);
+      } else {
+        setState(() => _navigatorScore = null);
+      }
+    } catch (_) {
+      // שקט — לא חוסם
     }
   }
 
@@ -247,13 +286,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           if (_state != NavigatorScreenState.notAssigned) ...[
             const Divider(),
 
-            // ציונים — בפיתוח
-            ListTile(
-              leading: const Icon(Icons.assessment, color: Colors.grey),
-              title: const Text('ציונים'),
-              subtitle: const Text('בפיתוח'),
-              enabled: false,
-            ),
+            // ציונים
+            _buildScoresDrawerItem(),
 
             // היסטוריית ניווטים — בפיתוח
             ListTile(
@@ -303,6 +337,235 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  // ==========================================================================
+  // Scores Drawer Item
+  // ==========================================================================
+
+  Widget _buildScoresDrawerItem() {
+    final nav = _currentNavigation;
+    final inReviewPhase = nav != null &&
+        (nav.status == 'approval' || nav.status == 'review');
+
+    // לא בשלב תחקור — אפור
+    if (!inReviewPhase) {
+      return const ListTile(
+        leading: Icon(Icons.assessment, color: Colors.grey),
+        title: Text('ציונים'),
+        enabled: false,
+      );
+    }
+
+    // בשלב תחקור אבל אין ציון / ציון לא פורסם
+    if (_navigatorScore == null || !_navigatorScore!.isPublished) {
+      return ListTile(
+        leading: const Icon(Icons.assessment, color: Colors.orange),
+        title: const Text('ציונים'),
+        subtitle: const Text('ממתין לאישור מפקד'),
+        enabled: false,
+      );
+    }
+
+    // ציון פורסם
+    final score = _navigatorScore!;
+    final color = ScoringService.getScoreColor(score.totalScore);
+    return ListTile(
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        child: Center(
+          child: Text(
+            '${score.totalScore}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+      title: const Text('ציונים'),
+      subtitle: Text(
+        _scoringService.getGrade(score.totalScore),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold),
+      ),
+      onTap: () {
+        Navigator.pop(context);
+        _showScoreBottomSheet();
+      },
+    );
+  }
+
+  void _showScoreBottomSheet() {
+    final score = _navigatorScore;
+    if (score == null) return;
+
+    final color = ScoringService.getScoreColor(score.totalScore);
+    final grade = _scoringService.getGrade(score.totalScore);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.3,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (_, scrollController) {
+            return ListView(
+              controller: scrollController,
+              padding: const EdgeInsets.all(20),
+              children: [
+                // ידית גרירה
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // כותרת + עיגול ציון
+                Row(
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('${score.totalScore}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold)),
+                          Text(grade,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('הציון שלך',
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Text(
+                            score.totalScore >= 80
+                                ? 'כל הכבוד! ביצוע מעולה'
+                                : score.totalScore >= 60
+                                    ? 'ביצוע טוב'
+                                    : 'נדרש שיפור',
+                            style: TextStyle(color: color, fontSize: 14),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                // הערות מפקד
+                if (score.notes != null && score.notes!.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[200]!),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.comment, size: 18, color: Colors.grey[600]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(score.notes!,
+                              style: const TextStyle(fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                // פירוט לפי נקודה
+                if (score.checkpointScores.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  const Text('פירוט לפי נקודה:',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  ...score.checkpointScores.entries.map((entry) {
+                    final cpScore = entry.value;
+                    final cpColor =
+                        ScoringService.getScoreColor(cpScore.score);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          Icon(
+                            cpScore.approved
+                                ? Icons.check_circle
+                                : Icons.cancel,
+                            color: cpScore.approved
+                                ? Colors.green
+                                : Colors.red,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(cpScore.checkpointId,
+                                style: const TextStyle(fontSize: 13)),
+                          ),
+                          Text(
+                              '${cpScore.distanceMeters.toStringAsFixed(0)}מ\'',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey)),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: cpColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text('${cpScore.score}',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: cpColor,
+                                    fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

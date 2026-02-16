@@ -690,6 +690,7 @@ class RouteExportService {
   /// ייצוא ניווט מלא לקובץ JSON — כולל כל הנתונים
   Future<String?> exportFullNavigation({
     required domain.Navigation navigation,
+    Map<String, String>? navigatorNames,
   }) async {
     final navLayerRepo = NavLayerRepository();
     final trackRepo = NavigationTrackRepository();
@@ -739,9 +740,11 @@ class RouteExportService {
 
     // בניית JSON
     final exportData = {
-      'version': 1,
+      'version': 2,
       'exportedAt': DateTime.now().toIso8601String(),
       'navigation': navigation.toMap(),
+      if (navigatorNames != null && navigatorNames.isNotEmpty)
+        'navigatorNames': navigatorNames,
       'routes': navigation.routes.map((k, v) => MapEntry(k, v.toMap())),
       'tracks': tracks,
       'punches': punches.map((p) => p.toMap()).toList(),
@@ -784,6 +787,192 @@ class RouteExportService {
       bytes: Uint8List.fromList(utf8.encode(content)),
       allowedExtensions: ['json'],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full Navigation Import (.nav.json)
+  // ---------------------------------------------------------------------------
+
+  /// ייבוא ניווט מלא מקובץ JSON
+  Future<domain.Navigation?> importFullNavigation() async {
+    final content = await pickAndReadFile(
+      dialogTitle: 'ייבוא ניווט',
+      allowedExtensions: ['json'],
+    );
+
+    if (content == null) return null;
+
+    final Map<String, dynamic> data;
+    try {
+      data = jsonDecode(content) as Map<String, dynamic>;
+    } catch (e) {
+      throw Exception('הקובץ אינו JSON תקין');
+    }
+
+    // Validate version
+    final version = data['version'] as int? ?? 0;
+    if (version < 1 || version > 2) {
+      throw Exception('גרסת קובץ לא נתמכת: $version');
+    }
+
+    // Validate required fields
+    if (data['navigation'] == null) {
+      throw Exception('הקובץ חסר נתוני ניווט');
+    }
+
+    // Reconstruct Navigation
+    final navMap = data['navigation'] as Map<String, dynamic>;
+    final navigation = domain.Navigation.fromMap(navMap);
+
+    final navRepo = NavigationRepository();
+    final navLayerRepo = NavLayerRepository();
+    final trackRepo = NavigationTrackRepository();
+    final punchRepo = CheckpointPunchRepository();
+
+    // Check if navigation already exists — update or create
+    final existing = await navRepo.getById(navigation.id);
+    if (existing != null) {
+      await navRepo.updateLocalFromFirestore(navigation);
+    } else {
+      try {
+        await navRepo.create(navigation);
+      } catch (_) {
+        // If create fails (e.g. unique constraint), try update
+        await navRepo.updateLocalFromFirestore(navigation);
+      }
+    }
+
+    // Import checkpoints
+    if (data['checkpoints'] != null) {
+      final checkpointsList = (data['checkpoints'] as List)
+          .map((m) {
+            final cpMap = Map<String, dynamic>.from(m as Map);
+            cpMap['navigationId'] = navigation.id;
+            return cpMap;
+          })
+          .toList();
+
+      // Delete existing layers first, then re-add
+      try {
+        await navLayerRepo.deleteAllLayersForNavigation(navigation.id);
+      } catch (_) {}
+
+      final checkpoints = <NavCheckpoint>[];
+      for (final cpMap in checkpointsList) {
+        try {
+          checkpoints.add(NavCheckpoint.fromMap(cpMap));
+        } catch (e) {
+          print('DEBUG import: Skipping checkpoint: $e');
+        }
+      }
+      if (checkpoints.isNotEmpty) {
+        await navLayerRepo.addCheckpointsBatch(checkpoints);
+      }
+    }
+
+    // Import safety points
+    if (data['safetyPoints'] != null) {
+      final spList = (data['safetyPoints'] as List)
+          .map((m) {
+            final spMap = Map<String, dynamic>.from(m as Map);
+            spMap['navigationId'] = navigation.id;
+            return spMap;
+          })
+          .toList();
+      final safetyPoints = <NavSafetyPoint>[];
+      for (final spMap in spList) {
+        try {
+          safetyPoints.add(NavSafetyPoint.fromMap(spMap));
+        } catch (e) {
+          print('DEBUG import: Skipping safety point: $e');
+        }
+      }
+      if (safetyPoints.isNotEmpty) {
+        await navLayerRepo.addSafetyPointsBatch(safetyPoints);
+      }
+    }
+
+    // Import boundaries
+    if (data['boundaries'] != null) {
+      final bList = (data['boundaries'] as List)
+          .map((m) {
+            final bMap = Map<String, dynamic>.from(m as Map);
+            bMap['navigationId'] = navigation.id;
+            return bMap;
+          })
+          .toList();
+      for (final bMap in bList) {
+        try {
+          await navLayerRepo.addBoundary(NavBoundary.fromMap(bMap));
+        } catch (e) {
+          print('DEBUG import: Skipping boundary: $e');
+        }
+      }
+    }
+
+    // Import tracks
+    if (data['tracks'] != null) {
+      final tracksMap = data['tracks'] as Map<String, dynamic>;
+      for (final entry in tracksMap.entries) {
+        final navigatorId = entry.key;
+        try {
+          // Check if track exists
+          final existingTrack = await trackRepo.getByNavigatorAndNavigation(
+              navigatorId, navigation.id);
+          if (existingTrack != null) {
+            final trackPoints = (entry.value as List)
+                .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
+                .toList();
+            await trackRepo.updateTrackPoints(existingTrack.id, trackPoints);
+          } else {
+            // Create new track
+            final track = await trackRepo.startNavigation(
+              navigatorUserId: navigatorId,
+              navigationId: navigation.id,
+            );
+            final trackPoints = (entry.value as List)
+                .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
+                .toList();
+            await trackRepo.updateTrackPoints(track.id, trackPoints);
+            await trackRepo.endNavigation(track.id);
+          }
+        } catch (e) {
+          print('DEBUG import: Error importing track for $navigatorId: $e');
+        }
+      }
+    }
+
+    // Import punches
+    if (data['punches'] != null) {
+      final punchesList = data['punches'] as List;
+      for (final pMap in punchesList) {
+        try {
+          final punch = CheckpointPunch.fromMap(
+              Map<String, dynamic>.from(pMap as Map));
+          await punchRepo.create(punch);
+        } catch (e) {
+          print('DEBUG import: Skipping punch: $e');
+        }
+      }
+    }
+
+    // Import scores
+    if (data['scores'] != null) {
+      final scoresMap = data['scores'] as Map<String, dynamic>;
+      for (final entry in scoresMap.entries) {
+        try {
+          await navRepo.pushScore(
+            navigationId: navigation.id,
+            navigatorId: entry.key,
+            scoreData: Map<String, dynamic>.from(entry.value as Map),
+          );
+        } catch (e) {
+          print('DEBUG import: Error importing score for ${entry.key}: $e');
+        }
+      }
+    }
+
+    return navigation;
   }
 
   // ---------------------------------------------------------------------------

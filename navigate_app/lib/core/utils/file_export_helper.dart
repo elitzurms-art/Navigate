@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, Uint8List;
@@ -28,4 +29,33 @@ Future<String?> saveFileWithBytes({
   }
 
   return savePath;
+}
+
+/// Cross-platform file read — opens file picker and returns decoded UTF-8 string.
+Future<String?> pickAndReadFile({
+  String dialogTitle = 'בחר קובץ',
+  List<String>? allowedExtensions,
+}) async {
+  final result = await FilePicker.platform.pickFiles(
+    dialogTitle: dialogTitle,
+    type: allowedExtensions != null ? FileType.custom : FileType.any,
+    allowedExtensions: allowedExtensions,
+    withData: true,
+  );
+
+  if (result == null || result.files.isEmpty) return null;
+
+  final file = result.files.first;
+
+  // If bytes are available (mobile/web), decode directly.
+  if (file.bytes != null) {
+    return utf8.decode(file.bytes!);
+  }
+
+  // Otherwise read from path (desktop).
+  if (file.path != null) {
+    return File(file.path!).readAsString(encoding: utf8);
+  }
+
+  return null;
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -680,9 +681,6 @@ class _ActiveViewState extends State<ActiveView> {
 
     setState(() => _isLoading = true);
     try {
-      // שמירת מרחק בפועל לפני עצירת tracking
-      _actualDistanceKm = _gpsTracker.getTotalDistance();
-
       // עצירת GPS tracking + שמירה סופית
       await _stopGpsTracking();
 
@@ -690,6 +688,21 @@ class _ActiveViewState extends State<ActiveView> {
 
       // סנכרון סופי אחרי סיום
       final finalTrack = await _trackRepo.getById(_track!.id);
+
+      // חישוב מרחק בפועל מנקודות שנשמרו ב-DB (אמין יותר מהזיכרון)
+      try {
+        if (finalTrack.trackPointsJson.isNotEmpty) {
+          final points = (jsonDecode(finalTrack.trackPointsJson) as List)
+              .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
+              .toList();
+          final coords = points
+              .map((tp) => Coordinate(lat: tp.coordinate.lat, lng: tp.coordinate.lng, utm: ''))
+              .toList();
+          _actualDistanceKm = GeometryUtils.calculatePathLengthKm(coords);
+        }
+      } catch (_) {
+        _actualDistanceKm = _gpsTracker.getTotalDistance(); // fallback
+      }
       await _trackRepo.syncTrackToFirestore(finalTrack);
 
       // עצירת שירותים
@@ -1299,13 +1312,6 @@ class _ActiveViewState extends State<ActiveView> {
                 icon: Icons.straighten,
                 label: 'מסלול בפועל',
                 value: '${_actualDistanceKm.toStringAsFixed(1)} ק"מ',
-              ),
-              const Divider(),
-              _summaryRow(
-                icon: Icons.gpp_maybe,
-                label: 'חריגות אמינות',
-                value: 'בפיתוח',
-                valueColor: Colors.grey,
               ),
               const Divider(),
               const SizedBox(height: 16),

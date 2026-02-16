@@ -426,9 +426,25 @@ class _ApprovalViewState extends State<ApprovalView> {
                     return Marker(
                       point: LatLng(
                           p.punchLocation.lat, p.punchLocation.lng),
-                      width: 28,
-                      height: 28,
-                      child: Icon(icon, color: color, size: 26),
+                      width: 80,
+                      height: 45,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon, color: color, size: 22),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.85),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              p.id,
+                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
                     );
                   }).toList(),
                 ),
