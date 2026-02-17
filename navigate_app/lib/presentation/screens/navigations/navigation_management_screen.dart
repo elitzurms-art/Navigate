@@ -1119,11 +1119,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Widget _buildNavigatorActionsMenu(String navigatorId, NavigatorLiveData data, {VoidCallback? onBeforeAction}) {
     final status = data.personalStatus;
 
-    // waiting — אין תפריט
-    if (status == NavigatorPersonalStatus.waiting) {
-      return const SizedBox.shrink();
-    }
-
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, size: 22),
       padding: EdgeInsets.zero,
@@ -1160,8 +1155,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
-        // התחלת ניווט — רק finished
-        if (status == NavigatorPersonalStatus.finished)
+        // התחלת ניווט — waiting או finished
+        if (status == NavigatorPersonalStatus.waiting ||
+            status == NavigatorPersonalStatus.finished)
           const PopupMenuItem(
             value: 'start',
             child: Row(

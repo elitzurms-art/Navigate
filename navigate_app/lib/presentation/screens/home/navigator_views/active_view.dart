@@ -159,10 +159,27 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // Safety net: זיהוי track ישן מהפעלה קודמת ומחיקתו.
       // מקרה 1: track מראה "סיים" אבל הניווט פעיל/ממתין.
       // מקרה 2: track מראה "פעיל" אבל activeStartTime של הניווט חדש יותר — הניווט הופעל מחדש.
-      // חריג: track שנפסל (isDisqualified) — לעולם לא למחוק, להציג מסך סיכום פסילה.
+      // מקרה 3: track שנפסל — אם המפקד מחק אותו מ-Firestore (איפוס), לנקות מקומית.
       final navStatus = _nav.status;
       final bool trackDisqualified = effectiveTrack?.isDisqualified ?? false;
       bool isStaleTrack = false;
+
+      // track שנפסל — בדיקת Firestore: אם המפקד איפס (מחק את ה-track), לנקות מקומית
+      if (trackDisqualified && effectiveTrack != null) {
+        try {
+          final firestoreDoc = await FirebaseFirestore.instance
+              .collection(AppConstants.navigationTracksCollection)
+              .doc(effectiveTrack.id)
+              .get();
+          if (!firestoreDoc.exists) {
+            // המפקד מחק — איפוס מקומי
+            isStaleTrack = true;
+          }
+        } catch (_) {
+          // אין רשת — נשאיר את המצב הנוכחי
+        }
+      }
+
       if (!trackDisqualified) {
         if (status == NavigatorPersonalStatus.finished &&
             (navStatus == 'active' || navStatus == 'waiting')) {
@@ -577,13 +594,16 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         .doc(_track!.id)
         .snapshots()
         .listen((snapshot) {
-      if (!mounted || _personalStatus != NavigatorPersonalStatus.active) return;
+      if (!mounted) return;
 
       if (!snapshot.exists) {
-        // המפקד מחק את ה-track — איפוס
+        // המפקד מחק את ה-track — איפוס (תמיד, גם אחרי סיום)
         _performRemoteReset();
         return;
       }
+
+      // שאר הלוגיקה רלוונטית רק במצב פעיל
+      if (_personalStatus != NavigatorPersonalStatus.active) return;
 
       final data = snapshot.data();
       if (data == null) return;
@@ -672,9 +692,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _performRemoteStop() async {
-    // עצירת listener מיידית — למנוע קריאות כפולות
-    _stopTrackDocListener();
-
     // עצירת GPS tracking
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;
@@ -913,39 +930,33 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
     setState(() => _isLoading = true);
     try {
-      _stopTrackDocListener();
-
       // עצירת GPS tracking + שמירה סופית
       await _stopGpsTracking();
 
       await _trackRepo.endNavigation(_track!.id);
 
-      // סנכרון סופי אחרי סיום
-      final finalTrack = await _trackRepo.getById(_track!.id);
-
-      // חישוב מרחק בפועל מנקודות שנשמרו ב-DB (אמין יותר מהזיכרון)
+      // סנכרון סופי אחרי סיום (לא חוסם שחרור נעילה)
       try {
-        if (finalTrack.trackPointsJson.isNotEmpty) {
-          final points = (jsonDecode(finalTrack.trackPointsJson) as List)
-              .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
-              .toList();
-          final coords = points
-              .map((tp) => Coordinate(lat: tp.coordinate.lat, lng: tp.coordinate.lng, utm: ''))
-              .toList();
-          _actualDistanceKm = GeometryUtils.calculatePathLengthKm(coords);
-        }
-      } catch (_) {
-        _actualDistanceKm = _gpsTracker.getTotalDistance(); // fallback
-      }
-      await _trackRepo.syncTrackToFirestore(finalTrack);
+        final finalTrack = await _trackRepo.getById(_track!.id);
 
-      // עצירת שירותים
-      _alertMonitoringService?.stop();
-      _gpsCheckTimer?.cancel();
-      _statusReportTimer?.cancel();
-      _elapsedTimer?.cancel();
-      _healthCheckService?.dispose();
-      await _stopSecurity();
+        // חישוב מרחק בפועל מנקודות שנשמרו ב-DB (אמין יותר מהזיכרון)
+        try {
+          if (finalTrack.trackPointsJson.isNotEmpty) {
+            final points = (jsonDecode(finalTrack.trackPointsJson) as List)
+                .map((m) => TrackPoint.fromMap(m as Map<String, dynamic>))
+                .toList();
+            final coords = points
+                .map((tp) => Coordinate(lat: tp.coordinate.lat, lng: tp.coordinate.lng, utm: ''))
+                .toList();
+            _actualDistanceKm = GeometryUtils.calculatePathLengthKm(coords);
+          }
+        } catch (_) {
+          _actualDistanceKm = _gpsTracker.getTotalDistance(); // fallback
+        }
+        await _trackRepo.syncTrackToFirestore(finalTrack);
+      } catch (e) {
+        print('DEBUG ActiveView: sync on end failed (non-critical): $e');
+      }
 
       final endTime = DateTime.now();
       _elapsed = endTime.difference(_startTime ?? endTime);
@@ -969,6 +980,14 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ),
         );
       }
+    } finally {
+      // שחרור נעילה + עצירת שירותים — תמיד, גם אם הסנכרון נכשל
+      _alertMonitoringService?.stop();
+      _gpsCheckTimer?.cancel();
+      _statusReportTimer?.cancel();
+      _elapsedTimer?.cancel();
+      _healthCheckService?.dispose();
+      await _stopSecurity();
     }
   }
 
