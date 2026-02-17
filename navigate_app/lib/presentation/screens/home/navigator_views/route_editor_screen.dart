@@ -54,6 +54,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   final ElevationService _elevationService = ElevationService();
   int _routeAscent = 0;
   int _routeDescent = 0;
+  final Map<int, int?> _waypointElevations = {};
 
   int? _selectedWaypointIndex; // נקודה נבחרת להזזה
 
@@ -142,7 +143,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   /// חישוב עליות/ירידות מצטברות מנקודות הציר
   void _computeRouteElevation() {
     if (_waypoints.length < 2) {
-      setState(() { _routeAscent = 0; _routeDescent = 0; });
+      setState(() { _routeAscent = 0; _routeDescent = 0; _waypointElevations.clear(); });
       return;
     }
     Future.wait(
@@ -151,7 +152,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       if (!mounted) return;
       int ascent = 0, descent = 0;
       int? prev;
-      for (final e in elevations) {
+      for (int i = 0; i < elevations.length; i++) {
+        final e = elevations[i];
+        _waypointElevations[i] = e;
         if (e == null) { prev = null; continue; }
         if (prev != null) {
           final diff = e - prev;
@@ -458,7 +461,17 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
           Icon(Icons.straighten, size: 16, color: Colors.orange[700]),
           const SizedBox(width: 6),
           Text(
-            'מקטע: ${segmentBearing.round()}° / ${segmentDistance.round()}מ\'',
+            () {
+              var s = 'מקטע: ${segmentBearing.round()}° / ${segmentDistance.round()}מ\'';
+              final fromElev = _waypointElevations[_waypoints.length - 2];
+              final toElev = _waypointElevations[_waypoints.length - 1];
+              if (fromElev != null && toElev != null) {
+                final diff = toElev - fromElev;
+                final sign = diff >= 0 ? '+' : '';
+                s += ' ${sign}${diff}מ\'';
+              }
+              return s;
+            }(),
             style: TextStyle(fontSize: 12, color: Colors.orange[800], fontWeight: FontWeight.w500),
             textDirection: TextDirection.rtl,
           ),

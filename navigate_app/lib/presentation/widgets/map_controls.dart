@@ -125,6 +125,7 @@ class _MapControlsState extends State<MapControls> {
 
   // גובה מדידה — cache לכל נקודה
   final Map<int, int?> _measureElevations = {};
+  int _lastMeasureCount = 0;
 
   @override
   void initState() {
@@ -153,22 +154,22 @@ class _MapControlsState extends State<MapControls> {
     } catch (_) {}
   }
 
-  @override
-  void didUpdateWidget(covariant MapControls oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // עדכון cache מדידה כשנקודות משתנות
-    if (widget.measurePoints.length > oldWidget.measurePoints.length) {
+  /// בדיקת שינוי נקודות מדידה — נקרא מ-build כי measurePoints הוא אותו List instance
+  void _checkMeasurePointsChanged() {
+    final count = widget.measurePoints.length;
+    if (count > _lastMeasureCount) {
       // נוספה נקודה חדשה
-      final idx = widget.measurePoints.length - 1;
+      final idx = count - 1;
       _queryMeasureElevation(idx, widget.measurePoints[idx]);
-    } else if (widget.measurePoints.length < oldWidget.measurePoints.length) {
+    } else if (count < _lastMeasureCount) {
       // undo/clear — ניקוי cache
-      if (widget.measurePoints.isEmpty) {
+      if (count == 0) {
         _measureElevations.clear();
       } else {
-        _measureElevations.removeWhere((k, _) => k >= widget.measurePoints.length);
+        _measureElevations.removeWhere((k, _) => k >= count);
       }
     }
+    _lastMeasureCount = count;
   }
 
   void _debouncedElevation(LatLng center) {
@@ -207,6 +208,7 @@ class _MapControlsState extends State<MapControls> {
 
   @override
   Widget build(BuildContext context) {
+    _checkMeasurePointsChanged();
     return Stack(
       children: [
         // צלב שחור במרכז המפה
@@ -717,16 +719,13 @@ class _MapControlsState extends State<MapControls> {
       lastSegmentText =
           '${bearing.round()}° / ${distance.round()}מ\'';
 
-      // הפרש גובה במקטע אחרון
+      // הפרש גובה במקטע אחרון (עלייה מינוס ירידה)
       final fromElev = _measureElevations[points.length - 2];
       final toElev = _measureElevations[points.length - 1];
       if (fromElev != null && toElev != null) {
         final diff = toElev - fromElev;
-        if (diff >= 0) {
-          lastSegmentText += ' ↑${diff}מ\'';
-        } else {
-          lastSegmentText += ' ↓${diff.abs()}מ\'';
-        }
+        final sign = diff >= 0 ? '+' : '';
+        lastSegmentText += ' ${sign}${diff}מ\'';
       }
     } else {
       lastSegmentText = 'נקודה ראשונה סומנה';
