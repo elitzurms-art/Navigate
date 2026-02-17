@@ -190,6 +190,23 @@ class NavigationTrackRepository {
     }
   }
 
+  /// עדכון דריסות הגדרות מפה ב-Drift בלבד (לשימוש מנווט — ללא כתיבה ל-Firestore)
+  /// מונע מ-_saveTrackPoints לדרוס את ההגדרות שהמפקד שלח
+  Future<void> updateMapOverridesLocal(
+    String trackId, {
+    required bool allowOpenMap,
+    required bool showSelfLocation,
+    required bool showRouteOnMap,
+  }) async {
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideAllowOpenMap: Value(allowOpenMap),
+      overrideShowSelfLocation: Value(showSelfLocation),
+      overrideShowRouteOnMap: Value(showRouteOnMap),
+    ));
+  }
+
   /// עדכון דריסות הגדרות מפה פר-מנווט (Drift + Firestore)
   Future<void> updateMapOverrides(
     String trackId, {
@@ -219,6 +236,14 @@ class NavigationTrackRepository {
     } catch (_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
     }
+  }
+
+  /// עדכון דריסת מיקום ידני ב-Drift בלבד (לשימוש מנווט — ללא כתיבה ל-Firestore)
+  Future<void> updateManualPositionOverrideLocal(String trackId, {required bool allowManualPosition}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideAllowManualPosition: Value(allowManualPosition),
+    ));
   }
 
   /// עדכון דריסת הגדרת דקירת מיקום ידני פר-מנווט (Drift + Firestore)

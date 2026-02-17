@@ -21,6 +21,7 @@ import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
+import '../../../widgets/elevation_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
 
 /// צבעי מסלול
@@ -90,6 +91,9 @@ class _ReviewViewState extends State<ReviewView> {
 
   // ניתוח
   List<SpeedSegment> _speedProfile = [];
+  List<ElevationSegment> _elevationProfile = [];
+  double _totalAscent = 0;
+  double _totalDescent = 0;
   List<DeviationSegment> _deviations = [];
   bool _showDeviations = true;
   bool _showPlayback = false;
@@ -243,6 +247,9 @@ class _ReviewViewState extends State<ReviewView> {
       plannedRoute: _plannedRoute.length >= 2 ? _plannedRoute : null,
     );
     _speedProfile = stats.speedProfile;
+    _elevationProfile = stats.elevationProfile;
+    _totalAscent = stats.totalAscent;
+    _totalDescent = stats.totalDescent;
 
     if (_plannedRoute.length >= 2) {
       _deviations = _analysisService.analyzeDeviations(
@@ -368,6 +375,14 @@ class _ReviewViewState extends State<ReviewView> {
                     _statChip(Icons.flag,
                         '${_punches.where((p) => !p.isDeleted).length}/${_checkpoints.length}',
                         'נ.צ.'),
+                    if (_totalAscent > 0)
+                      _statChip(Icons.arrow_upward,
+                          '${_totalAscent.round()}מ\'', 'עלייה',
+                          color: Colors.green[700]),
+                    if (_totalDescent > 0)
+                      _statChip(Icons.arrow_downward,
+                          '${_totalDescent.round()}מ\'', 'ירידה',
+                          color: Colors.red[700]),
                   ],
                 ),
               ),
@@ -672,6 +687,17 @@ class _ReviewViewState extends State<ReviewView> {
                   ),
                 ),
 
+              // פרופיל גובה
+              if (_elevationProfile.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  child: ElevationProfileChart(
+                    segments: _elevationProfile,
+                    totalAscent: _totalAscent,
+                    totalDescent: _totalDescent,
+                  ),
+                ),
+
               // מקרא
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -903,15 +929,14 @@ class _ReviewViewState extends State<ReviewView> {
     );
   }
 
-  Widget _statChip(IconData icon, String value, String label) {
+  Widget _statChip(IconData icon, String value, String label, {Color? color}) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 20, color: Colors.grey[600]),
+        Icon(icon, size: 20, color: color ?? Colors.grey[600]),
         const SizedBox(height: 2),
         Text(value,
-            style:
-                const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color)),
         Text(label,
             style: TextStyle(fontSize: 10, color: Colors.grey[500])),
       ],

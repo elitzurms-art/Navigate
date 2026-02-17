@@ -15,6 +15,7 @@ import '../../../../domain/entities/boundary.dart';
 import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../../services/elevation_service.dart';
 
 /// מסך עריכת ציר על המפה — ציור polyline בין נקודות ציון
 class RouteEditorScreen extends StatefulWidget {
@@ -49,6 +50,10 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   bool _approvalWarningShown = false;
   Checkpoint? _startCheckpoint;
   Checkpoint? _endCheckpoint;
+
+  final ElevationService _elevationService = ElevationService();
+  int _routeAscent = 0;
+  int _routeDescent = 0;
 
   int? _selectedWaypointIndex; // נקודה נבחרת להזזה
 
@@ -87,6 +92,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     }
     _loadStartEndCheckpoints();
     _loadMapLayers();
+    if (_waypoints.length >= 2) _computeRouteElevation();
   }
 
   /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב
@@ -133,6 +139,31 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     if (mounted) setState(() {});
   }
 
+  /// חישוב עליות/ירידות מצטברות מנקודות הציר
+  void _computeRouteElevation() {
+    if (_waypoints.length < 2) {
+      setState(() { _routeAscent = 0; _routeDescent = 0; });
+      return;
+    }
+    Future.wait(
+      _waypoints.map((p) => _elevationService.getElevation(p.latitude, p.longitude)),
+    ).then((elevations) {
+      if (!mounted) return;
+      int ascent = 0, descent = 0;
+      int? prev;
+      for (final e in elevations) {
+        if (e == null) { prev = null; continue; }
+        if (prev != null) {
+          final diff = e - prev;
+          if (diff > 0) ascent += diff;
+          else descent += -diff;
+        }
+        prev = e;
+      }
+      setState(() { _routeAscent = ascent; _routeDescent = descent; });
+    }).catchError((_) {});
+  }
+
   Future<bool> _confirmEditAfterApproval() async {
     if (!_wasApproved || _approvalWarningShown) return true;
 
@@ -175,6 +206,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         _waypoints.add(point);
       }
     });
+    _computeRouteElevation();
   }
 
   Future<void> _undoLastWaypoint() async {
@@ -184,6 +216,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       _selectedWaypointIndex = null;
       _waypoints.removeLast();
     });
+    _computeRouteElevation();
   }
 
   Future<void> _clearWaypoints() async {
@@ -191,6 +224,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     setState(() {
       _selectedWaypointIndex = null;
       _waypoints.clear();
+      _routeAscent = 0;
+      _routeDescent = 0;
     });
   }
 
@@ -201,6 +236,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       _waypoints.removeAt(index);
       _selectedWaypointIndex = null;
     });
+    _computeRouteElevation();
   }
 
   /// הוספת נקודה באמצע — בין waypoint[index] ל-waypoint[index+1]
@@ -216,6 +252,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       _waypoints.insert(afterIndex + 1, mid);
       _selectedWaypointIndex = afterIndex + 1; // בוחר את הנקודה החדשה להזזה
     });
+    _computeRouteElevation();
   }
 
   /// ולידציה: התחלה/סיום + מעבר בכל נקודות הציון
@@ -431,6 +468,16 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
             style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500),
             textDirection: TextDirection.rtl,
           ),
+          if (_routeAscent > 0 || _routeDescent > 0) ...[
+            const SizedBox(width: 12),
+            Icon(Icons.arrow_upward, size: 13, color: Colors.green[700]),
+            Text('${_routeAscent}מ\'',
+                style: TextStyle(fontSize: 11, color: Colors.green[700], fontWeight: FontWeight.w600)),
+            const SizedBox(width: 4),
+            Icon(Icons.arrow_downward, size: 13, color: Colors.red[700]),
+            Text('${_routeDescent}מ\'',
+                style: TextStyle(fontSize: 11, color: Colors.red[700], fontWeight: FontWeight.w600)),
+          ],
         ],
       ),
     );

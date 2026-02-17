@@ -22,6 +22,7 @@ import '../../../services/route_analysis_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/speed_profile_chart.dart';
+import '../../widgets/elevation_profile_chart.dart';
 import '../../widgets/route_playback_widget.dart';
 import '../../widgets/navigator_heatmap.dart';
 import '../../widgets/navigator_comparison_widget.dart';
@@ -437,6 +438,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
       final activePunches = punches.where((p) => !p.isDeleted).toList();
 
+      // חישוב פרופיל גובה
+      final elevData = _analysisService.calculateElevationProfile(trackPoints: trackPoints);
+
       _navigatorDataMap[navId] = _NavigatorData(
         navigatorId: navId,
         trackPoints: trackPoints,
@@ -452,6 +456,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
         color: color,
+        totalAscent: elevData.ascent,
+        totalDescent: elevData.descent,
+        elevationProfile: elevData.profile,
       );
     }
 
@@ -2214,6 +2221,18 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             const SizedBox(height: 16),
           ],
 
+          // Elevation profile chart for selected navigator
+          if (!_allNavigatorsMode &&
+              _selectedNavigatorId != null &&
+              _navigatorDataMap[_selectedNavigatorId]?.elevationProfile.isNotEmpty == true) ...[
+            ElevationProfileChart(
+              segments: _navigatorDataMap[_selectedNavigatorId]!.elevationProfile,
+              totalAscent: _navigatorDataMap[_selectedNavigatorId]!.totalAscent,
+              totalDescent: _navigatorDataMap[_selectedNavigatorId]!.totalDescent,
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // Route analysis summary for selected navigator
           if (!_allNavigatorsMode &&
               _selectedNavStats != null) ...[
@@ -2435,6 +2454,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   style: TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 12))),
           DataColumn(
+              label: Text('↑↓',
+                  style: TextStyle(fontWeight: FontWeight.bold))),
+          DataColumn(
               label: Text('ציון',
                   style: TextStyle(fontWeight: FontWeight.bold))),
         ],
@@ -2472,6 +2494,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 : '-')),
             DataCell(Text(
                 '${data.checkpointsHit}/${data.totalCheckpoints}')),
+            DataCell(data.totalAscent > 0 || data.totalDescent > 0
+                ? Text('↑${data.totalAscent.round()} ↓${data.totalDescent.round()}',
+                    style: const TextStyle(fontSize: 11))
+                : const Text('-', style: TextStyle(color: Colors.grey))),
             DataCell(score != null
                 ? Container(
                     padding: const EdgeInsets.symmetric(
@@ -3538,6 +3564,18 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                       thresholdSpeedKmh: 8.0,
                     ),
                   ),
+                // Elevation profile chart
+                if (_selectedNavigatorId != null &&
+                    _navigatorDataMap[_selectedNavigatorId]?.elevationProfile.isNotEmpty == true)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    child: ElevationProfileChart(
+                      segments: _navigatorDataMap[_selectedNavigatorId]!.elevationProfile,
+                      totalAscent: _navigatorDataMap[_selectedNavigatorId]!.totalAscent,
+                      totalDescent: _navigatorDataMap[_selectedNavigatorId]!.totalDescent,
+                    ),
+                  ),
                 // Analysis summary
                 if (_selectedNavStats != null)
                   Padding(
@@ -3867,6 +3905,9 @@ class _NavigatorData {
   final int checkpointsHit;
   final int totalCheckpoints;
   final Color color;
+  final double totalAscent;
+  final double totalDescent;
+  final List<ElevationSegment> elevationProfile;
 
   _NavigatorData({
     required this.navigatorId,
@@ -3882,5 +3923,8 @@ class _NavigatorData {
     required this.checkpointsHit,
     required this.totalCheckpoints,
     required this.color,
+    this.totalAscent = 0,
+    this.totalDescent = 0,
+    this.elevationProfile = const [],
   });
 }

@@ -3173,59 +3173,42 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         }),
                       ],
 
-                      // 6. הגדרות מפה פר-מנווט
+                      // 6. הגדרות מפה פר-מנווט (2 אפשרויות: מפה פתוחה / מפה + מיקום עצמי)
                       const Divider(height: 16),
                       const Text('הגדרות מפה למנווט', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 4),
                       SwitchListTile(
-                        title: const Text('אפשר ניווט עם מפה פתוחה', style: TextStyle(fontSize: 13)),
+                        title: const Text('מפה פתוחה (שכבות + ציר)', style: TextStyle(fontSize: 13)),
                         value: _navigatorOverrideAllowOpenMap[navigatorId] ?? false,
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         onChanged: (v) {
                           setState(() {
                             _navigatorOverrideAllowOpenMap[navigatorId] = v;
+                            // מפה פתוחה תמיד כוללת ציר ניווט
+                            _navigatorOverrideShowRouteOnMap[navigatorId] = v;
                             if (!v) {
                               _navigatorOverrideShowSelfLocation[navigatorId] = false;
-                              _navigatorOverrideShowRouteOnMap[navigatorId] = false;
                             }
                           });
                           setSheetState(() {});
                           _updateNavigatorMapOverrides(navigatorId);
                         },
                       ),
-                      if (_navigatorOverrideAllowOpenMap[navigatorId] ?? false) ...[
+                      if (_navigatorOverrideAllowOpenMap[navigatorId] ?? false)
                         SwitchListTile(
-                          title: const Text('אפשר הצגת מיקום עצמי למנווט', style: TextStyle(fontSize: 13)),
+                          title: const Text('מיקום עצמי', style: TextStyle(fontSize: 13)),
                           value: _navigatorOverrideShowSelfLocation[navigatorId] ?? false,
                           dense: true,
                           contentPadding: const EdgeInsets.only(right: 16),
                           onChanged: (v) {
                             setState(() {
                               _navigatorOverrideShowSelfLocation[navigatorId] = v;
-                              if (!v) {
-                                _navigatorOverrideShowRouteOnMap[navigatorId] = false;
-                              }
                             });
                             setSheetState(() {});
                             _updateNavigatorMapOverrides(navigatorId);
                           },
                         ),
-                        if (_navigatorOverrideShowSelfLocation[navigatorId] ?? false)
-                          SwitchListTile(
-                            title: const Text('הצג ציר ניווט על המפה', style: TextStyle(fontSize: 13)),
-                            value: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
-                            dense: true,
-                            contentPadding: const EdgeInsets.only(right: 32),
-                            onChanged: (v) {
-                              setState(() {
-                                _navigatorOverrideShowRouteOnMap[navigatorId] = v;
-                              });
-                              setSheetState(() {});
-                              _updateNavigatorMapOverrides(navigatorId);
-                            },
-                          ),
-                      ],
 
                       // 7. נתונים חיים
                       const Divider(height: 20),

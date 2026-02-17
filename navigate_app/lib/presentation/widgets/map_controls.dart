@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/map_config.dart';
 import '../../core/utils/geometry_utils.dart';
+import '../../core/utils/utm_converter.dart';
 import '../../domain/entities/coordinate.dart';
 import '../../services/elevation_service.dart';
 
@@ -45,9 +46,6 @@ class MapControls extends StatefulWidget {
   final VoidCallback? onFullscreen;
   final VoidCallback? onCenterSelf;
   final CenteringMode? centeringMode;
-  final bool elevationEnabled;
-  final LatLng? mapCenter;
-
   const MapControls({
     required this.mapController,
     required this.onMeasureModeChanged,
@@ -60,8 +58,6 @@ class MapControls extends StatefulWidget {
     this.onFullscreen,
     this.onCenterSelf,
     this.centeringMode,
-    this.elevationEnabled = false,
-    this.mapCenter,
   });
 
   @override
@@ -120,34 +116,58 @@ class _MapControlsState extends State<MapControls> {
   double _currentRotation = 0.0;
   StreamSubscription? _mapEventSubscription;
 
-  // גובה
+  // גובה + UTM — עוקב אוטונומית אחרי מרכז המפה
+  LatLng? _mapCenter;
   int? _currentElevation;
+  String? _currentUtm;
   Timer? _elevationDebounce;
   final ElevationService _elevationService = ElevationService();
+
+  // גובה מדידה — cache לכל נקודה
+  final Map<int, int?> _measureElevations = {};
 
   @override
   void initState() {
     super.initState();
-    // האזנה לאירועי מפה לעדכון סיבוב חץ הצפון
+    // האזנה לאירועי מפה — סיבוב + מעקב אחרי מרכז
     _mapEventSubscription = widget.mapController.mapEventStream.listen((event) {
-      final rotation = widget.mapController.camera.rotation;
+      final camera = widget.mapController.camera;
+      final rotation = camera.rotation;
       if (rotation != _currentRotation) {
         setState(() {
           _currentRotation = rotation;
         });
       }
+      // עדכון מרכז מפה לגובה + UTM
+      final center = camera.center;
+      if (center != _mapCenter) {
+        _mapCenter = center;
+        _debouncedElevation(center);
+      }
     });
-    // שאילתת גובה ראשונית
-    if (widget.elevationEnabled && widget.mapCenter != null) {
-      _queryElevation(widget.mapCenter!);
-    }
+    // שאילתת גובה ראשונית — camera עלול להיות לא מוכן עדיין
+    try {
+      final center = widget.mapController.camera.center;
+      _mapCenter = center;
+      _queryElevation(center);
+    } catch (_) {}
   }
 
   @override
   void didUpdateWidget(covariant MapControls oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.elevationEnabled && widget.mapCenter != oldWidget.mapCenter && widget.mapCenter != null) {
-      _debouncedElevation(widget.mapCenter!);
+    // עדכון cache מדידה כשנקודות משתנות
+    if (widget.measurePoints.length > oldWidget.measurePoints.length) {
+      // נוספה נקודה חדשה
+      final idx = widget.measurePoints.length - 1;
+      _queryMeasureElevation(idx, widget.measurePoints[idx]);
+    } else if (widget.measurePoints.length < oldWidget.measurePoints.length) {
+      // undo/clear — ניקוי cache
+      if (widget.measurePoints.isEmpty) {
+        _measureElevations.clear();
+      } else {
+        _measureElevations.removeWhere((k, _) => k >= widget.measurePoints.length);
+      }
     }
   }
 
@@ -161,8 +181,19 @@ class _MapControlsState extends State<MapControls> {
   Future<void> _queryElevation(LatLng point) async {
     final elev = await _elevationService.getElevation(point.latitude, point.longitude);
     if (mounted) {
+      final utm = UtmConverter.latLngToUtm(LatLng(point.latitude, point.longitude));
       setState(() {
         _currentElevation = elev;
+        _currentUtm = utm;
+      });
+    }
+  }
+
+  Future<void> _queryMeasureElevation(int index, LatLng point) async {
+    final elev = await _elevationService.getElevation(point.latitude, point.longitude);
+    if (mounted) {
+      setState(() {
+        _measureElevations[index] = elev;
       });
     }
   }
@@ -178,6 +209,18 @@ class _MapControlsState extends State<MapControls> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
+        // צלב שחור במרכז המפה
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Center(
+              child: CustomPaint(
+                size: const Size(20, 20),
+                painter: _CrosshairPainter(),
+              ),
+            ),
+          ),
+        ),
+
         // עמודה ימנית עליונה — סוג מפה, מדידה, שכבות
         Positioned(
           top: 8,
@@ -185,7 +228,7 @@ class _MapControlsState extends State<MapControls> {
           child: _buildRightColumn(),
         ),
 
-        // חץ צפון + גובה — שמאלית עליונה
+        // חץ צפון + גובה + UTM — שמאלית עליונה
         Positioned(
           top: 8,
           left: 8,
@@ -193,10 +236,10 @@ class _MapControlsState extends State<MapControls> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildNorthArrow(),
-              if (widget.elevationEnabled) ...[
-                const SizedBox(height: 4),
-                _buildElevationBadge(),
-              ],
+              const SizedBox(height: 4),
+              _buildElevationBadge(),
+              const SizedBox(height: 4),
+              _buildUtmBadge(),
             ],
           ),
         ),
@@ -484,6 +527,48 @@ class _MapControlsState extends State<MapControls> {
     );
   }
 
+  /// תיבת UTM — מתחת לגובה
+  Widget _buildUtmBadge() {
+    if (_currentUtm == null || _currentUtm!.length < 12) {
+      return const SizedBox.shrink();
+    }
+    final easting = _currentUtm!.substring(0, 6);
+    final northing = _currentUtm!.substring(6, 12);
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              easting,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800],
+                fontFamily: 'monospace',
+                height: 1.2,
+              ),
+            ),
+            Text(
+              northing,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800],
+                fontFamily: 'monospace',
+                height: 1.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// פאנל שכבות — toggles + opacity sliders
   Widget _buildLayersPanel() {
     if (widget.layers.isEmpty) {
@@ -609,7 +694,7 @@ class _MapControlsState extends State<MapControls> {
     );
   }
 
-  /// סרגל מדידה תחתון — מקטע אחרון + כולל
+  /// סרגל מדידה תחתון — מקטע אחרון + כולל + גובה
   Widget _buildMeasurementBar() {
     final points = widget.measurePoints;
     if (points.isEmpty) return const SizedBox.shrink();
@@ -630,12 +715,24 @@ class _MapControlsState extends State<MapControls> {
       final distance = GeometryUtils.distanceBetweenMeters(from, to);
       final bearing = GeometryUtils.bearingBetween(from, to);
       lastSegmentText =
-          'מקטע אחרון: ${bearing.round()}° / ${distance.round()}מ\'';
+          '${bearing.round()}° / ${distance.round()}מ\'';
+
+      // הפרש גובה במקטע אחרון
+      final fromElev = _measureElevations[points.length - 2];
+      final toElev = _measureElevations[points.length - 1];
+      if (fromElev != null && toElev != null) {
+        final diff = toElev - fromElev;
+        if (diff >= 0) {
+          lastSegmentText += ' ↑${diff}מ\'';
+        } else {
+          lastSegmentText += ' ↓${diff.abs()}מ\'';
+        }
+      }
     } else {
       lastSegmentText = 'נקודה ראשונה סומנה';
     }
 
-    // חישוב אורך כולל
+    // חישוב אורך כולל + סה"כ עליות/ירידות
     String totalText = '';
     if (points.length >= 2) {
       final coords = points
@@ -643,7 +740,26 @@ class _MapControlsState extends State<MapControls> {
           .toList();
       final totalKm = GeometryUtils.calculatePathLengthKm(coords);
       final totalMeters = (totalKm * 1000).round();
-      totalText = ' | כולל: ${totalMeters}מ\'';
+
+      int totalAscent = 0;
+      int totalDescent = 0;
+      for (int i = 1; i < points.length; i++) {
+        final prevElev = _measureElevations[i - 1];
+        final currElev = _measureElevations[i];
+        if (prevElev != null && currElev != null) {
+          final diff = currElev - prevElev;
+          if (diff > 0) {
+            totalAscent += diff;
+          } else {
+            totalDescent += diff.abs();
+          }
+        }
+      }
+
+      totalText = ' | ${totalMeters}מ\'';
+      if (totalAscent > 0 || totalDescent > 0) {
+        totalText += ' ↑${totalAscent}מ\' ↓${totalDescent}מ\'';
+      }
     }
 
     return Material(
@@ -660,7 +776,7 @@ class _MapControlsState extends State<MapControls> {
               child: Text(
                 '$lastSegmentText$totalText',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   color: Colors.grey[800],
                   fontWeight: FontWeight.w500,
                 ),
@@ -693,4 +809,24 @@ class _MapControlsState extends State<MapControls> {
       ),
     );
   }
+}
+
+/// צלב שחור במרכז המפה
+class _CrosshairPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.black87
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    // קו אופקי
+    canvas.drawLine(Offset(0, cy), Offset(size.width, cy), paint);
+    // קו אנכי
+    canvas.drawLine(Offset(cx, 0), Offset(cx, size.height), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

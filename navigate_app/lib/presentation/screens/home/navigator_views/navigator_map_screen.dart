@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -44,9 +43,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
 
   LatLng? _currentPosition;
-  StreamSubscription? _positionSubscription;
-  LatLng? _mapCenter;
-  StreamSubscription? _mapEventSub;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -79,11 +75,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       _startLocationTracking();
     }
     _loadMapLayers();
-    _mapCenter = _initialCenter();
-    _mapEventSub = _mapController.mapEventStream.listen((event) {
-      final center = _mapController.camera.center;
-      if (mounted) setState(() => _mapCenter = center);
-    });
   }
 
   /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב, נ"צ
@@ -114,8 +105,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   @override
   void dispose() {
-    _positionSubscription?.cancel();
-    _mapEventSub?.cancel();
     super.dispose();
   }
 
@@ -352,8 +341,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
           ),
           MapControls(
             mapController: _mapController,
-            elevationEnabled: true,
-            mapCenter: _mapCenter,
             measureMode: _measureMode,
             onMeasureModeChanged: (v) => setState(() {
               _measureMode = v;

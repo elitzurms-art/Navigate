@@ -7,7 +7,9 @@ import 'package:drift/drift.dart' hide Query;
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 
 import '../../core/constants/app_constants.dart';
+import '../../services/auto_map_download_service.dart';
 import '../datasources/local/app_database.dart';
+import '../repositories/navigation_repository.dart';
 
 /// כיוון סנכרון לפי סוג נתונים
 enum SyncDirection {
@@ -833,6 +835,13 @@ class SyncManager {
           break;
         case AppConstants.navigationsCollection:
           await _upsertNavigation(documentId, serverData);
+          // הורדת מפות אוטומטית כשניווט עובר למצב למידה
+          if (serverData['status'] == 'learning') {
+            final nav = await NavigationRepository().getById(documentId);
+            if (nav != null) {
+              AutoMapDownloadService().triggerDownload(nav);
+            }
+          }
           break;
         default:
           print('SyncManager: No local upsert handler for collection $collection');

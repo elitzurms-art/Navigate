@@ -47,6 +47,17 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   int _failedTiles = 0;
   StreamSubscription<DownloadProgress>? _downloadSubscription;
 
+  // הורדת מפות ישראל
+  int _israelMinZoom = 8;
+  int _israelMaxZoom = 16;
+  bool _israelDownloading = false;
+  String _israelCurrentType = '';
+  int _israelDownloadedTiles = 0;
+  int _israelTotalTiles = 0;
+  int _israelFailedTiles = 0;
+  int _israelTypesCompleted = 0;
+  StreamSubscription<DownloadProgress>? _israelDownloadSubscription;
+
   // נתוני גובה — הורדות חו"ל בלבד
   int _elevTileCount = 0;
   double _elevSizeMB = 0.0;
@@ -65,6 +76,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   @override
   void dispose() {
     _downloadSubscription?.cancel();
+    _israelDownloadSubscription?.cancel();
     super.dispose();
   }
 
@@ -106,6 +118,110 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
 
   double get _estimatedSizeMB {
     return _estimatedTiles * _mapConfig.estimatedTileSizeKB(_selectedMapType) / 1024;
+  }
+
+  // — הורדת מפות ישראל —
+
+  int _israelTilesForType(MapType type) {
+    const b = MapConfig.israelBounds;
+    final maxZ = _israelMaxZoom.clamp(0, _mapConfig.maxZoom(type).toInt());
+    return _tileCacheService.countTiles(
+      bounds: LatLngBounds(
+        LatLng(b.minLat, b.minLng),
+        LatLng(b.maxLat, b.maxLng),
+      ),
+      minZoom: _israelMinZoom,
+      maxZoom: maxZ,
+    );
+  }
+
+  int get _israelEstimatedTiles {
+    return MapType.values.fold(0, (sum, t) => sum + _israelTilesForType(t));
+  }
+
+  double _israelSizeForType(MapType type) {
+    return _israelTilesForType(type) * _mapConfig.estimatedTileSizeKB(type) / 1024;
+  }
+
+  double get _israelEstimatedSizeMB {
+    return MapType.values.fold(0.0, (sum, t) => sum + _israelSizeForType(t));
+  }
+
+  String _formatSize(double mb) {
+    if (mb >= 1024) return '${(mb / 1024).toStringAsFixed(1)} GB';
+    if (mb >= 1) return '${mb.toStringAsFixed(0)} MB';
+    return '${(mb * 1024).toStringAsFixed(0)} KB';
+  }
+
+  Future<void> _startIsraelDownload() async {
+    const types = MapType.values;
+    const b = MapConfig.israelBounds;
+    final bounds = LatLngBounds(
+      LatLng(b.minLat, b.minLng),
+      LatLng(b.maxLat, b.maxLng),
+    );
+
+    setState(() {
+      _israelDownloading = true;
+      _israelDownloadedTiles = 0;
+      _israelTotalTiles = _israelEstimatedTiles;
+      _israelFailedTiles = 0;
+      _israelTypesCompleted = 0;
+    });
+
+    int cumulativeDownloaded = 0;
+    int cumulativeFailed = 0;
+
+    for (final type in types) {
+      if (!_israelDownloading) break;
+
+      final maxZ = _israelMaxZoom.clamp(0, _mapConfig.maxZoom(type).toInt());
+      setState(() {
+        _israelCurrentType = _mapConfig.label(type);
+      });
+
+      final completer = Completer<void>();
+      _israelDownloadSubscription = _tileCacheService.downloadRegion(
+        bounds: bounds,
+        mapType: type,
+        minZoom: _israelMinZoom,
+        maxZoom: maxZ,
+      ).listen(
+        (progress) {
+          if (!mounted) return;
+          setState(() {
+            _israelDownloadedTiles = cumulativeDownloaded +
+                progress.cachedTiles + progress.skippedTiles;
+            _israelFailedTiles = cumulativeFailed + progress.failedTiles;
+            if (progress.isComplete && !completer.isCompleted) {
+              cumulativeDownloaded += progress.cachedTiles + progress.skippedTiles;
+              cumulativeFailed += progress.failedTiles;
+              _israelTypesCompleted++;
+              completer.complete();
+            }
+          });
+        },
+        onError: (error) {
+          if (!completer.isCompleted) completer.complete();
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+
+      await completer.future;
+    }
+
+    if (mounted) {
+      setState(() => _israelDownloading = false);
+      _loadStats();
+    }
+  }
+
+  void _cancelIsraelDownload() {
+    _israelDownloadSubscription?.cancel();
+    _israelDownloadSubscription = null;
+    setState(() => _israelDownloading = false);
   }
 
   Future<void> _startDownload() async {
@@ -286,6 +402,8 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
         children: [
           _buildStatsSection(),
           const SizedBox(height: 24),
+          _buildIsraelDownloadSection(),
+          const SizedBox(height: 24),
           if (_isDownloading)
             _buildProgressSection()
           else
@@ -364,7 +482,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
               const Icon(Icons.download, color: Colors.green),
               const SizedBox(width: 8),
               Text(
-                'הורדת מפה',
+                'הורדת מפה לפי אזור',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -484,6 +602,122 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: _cancelDownload,
+              icon: const Icon(Icons.cancel, color: Colors.red),
+              label: const Text('ביטול', style: TextStyle(color: Colors.red)),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildIsraelDownloadSection() {
+    if (_israelDownloading) {
+      return _buildIsraelProgressSection();
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(
+            children: [
+              const Icon(Icons.map, color: Colors.blue),
+              const SizedBox(width: 8),
+              Text(
+                'הורדת מפות ישראל',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'הורדת שלושת סוגי המפה לכל שטח ישראל',
+            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 16),
+
+          // טווח זום
+          Text('טווח זום: $_israelMinZoom – $_israelMaxZoom'),
+          RangeSlider(
+            values: RangeValues(_israelMinZoom.toDouble(), _israelMaxZoom.toDouble()),
+            min: 5,
+            max: 18,
+            divisions: 13,
+            labels: RangeLabels('$_israelMinZoom', '$_israelMaxZoom'),
+            onChanged: (values) {
+              setState(() {
+                _israelMinZoom = values.start.round();
+                _israelMaxZoom = values.end.round();
+              });
+            },
+          ),
+
+          const Divider(),
+
+          // טבלת הערכות גודל
+          _buildStatRow('רגילה', '~${_formatSize(_israelSizeForType(MapType.standard))}'),
+          _buildStatRow('טופוגרפית', '~${_formatSize(_israelSizeForType(MapType.topographic))}'),
+          _buildStatRow('לוויין', '~${_formatSize(_israelSizeForType(MapType.satellite))}'),
+          const Divider(),
+          _buildStatRow('סה"כ משוער', '~${_formatSize(_israelEstimatedSizeMB)}'),
+          _buildStatRow('אריחים', '~${_israelEstimatedTiles}'),
+          const SizedBox(height: 12),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _startIsraelDownload,
+              icon: const Icon(Icons.download),
+              label: const Text('הורד הכל'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildIsraelProgressSection() {
+    final progress = _israelTotalTiles > 0
+        ? _israelDownloadedTiles / _israelTotalTiles
+        : 0.0;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(
+            children: [
+              const Icon(Icons.downloading, color: Colors.orange),
+              const SizedBox(width: 8),
+              Text(
+                'מוריד מפות ישראל...',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          LinearProgressIndicator(value: progress),
+          const SizedBox(height: 8),
+          _buildStatRow('סוג נוכחי', '$_israelCurrentType ($_israelTypesCompleted/3)'),
+          _buildStatRow('הורדו', '$_israelDownloadedTiles / $_israelTotalTiles'),
+          if (_israelFailedTiles > 0)
+            _buildStatRow('נכשלו', '$_israelFailedTiles'),
+          _buildStatRow('אחוז', '${(progress * 100).toStringAsFixed(1)}%'),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _cancelIsraelDownload,
               icon: const Icon(Icons.cancel, color: Colors.red),
               label: const Text('ביטול', style: TextStyle(color: Colors.red)),
             ),

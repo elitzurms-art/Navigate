@@ -9,6 +9,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../services/elevation_service.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
@@ -28,7 +29,11 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
+  final ElevationService _elevationService = ElevationService();
   final MapController _mapController = MapController();
+
+  // גובה לכל ציר: navigatorId → (ascent, descent)
+  final Map<String, (int, int)> _routeElevations = {};
 
   late TabController _tabController;
   List<Checkpoint> _checkpoints = [];
@@ -76,6 +81,37 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         .where((e) => e.value > 1)
         .map((e) => e.key)
         .toSet();
+  }
+
+  Future<void> _computeRouteElevations() async {
+    for (final entry in widget.navigation.routes.entries) {
+      final navId = entry.key;
+      final route = entry.value;
+      if (route.plannedPath.isEmpty) continue;
+
+      int ascent = 0;
+      int descent = 0;
+      int? prevElev;
+
+      for (final coord in route.plannedPath) {
+        final elev = await _elevationService.getElevation(coord.lat, coord.lng);
+        if (elev != null && prevElev != null) {
+          final diff = elev - prevElev;
+          if (diff > 0) {
+            ascent += diff;
+          } else {
+            descent += diff.abs();
+          }
+        }
+        prevElev = elev;
+      }
+
+      if (mounted) {
+        setState(() {
+          _routeElevations[navId] = (ascent, descent);
+        });
+      }
+    }
   }
 
   @override
@@ -133,6 +169,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         _boundary = boundary;
         _isLoading = false;
       });
+
+      // חישוב גובה לכל ציר (ברקע)
+      _computeRouteElevations();
 
       // התמקד במרכז הגבול אם קיים (עטוף ב-try כי המפה עשויה לא להיות מוכנה)
       try {
@@ -457,7 +496,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         0: FlexColumnWidth(2),
         1: FlexColumnWidth(1),
         2: FlexColumnWidth(1),
-        3: FlexColumnWidth(1),
+        3: FlexColumnWidth(1.2),
+        4: FlexColumnWidth(1),
       },
       children: [
         // כותרות
@@ -475,6 +515,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
             Padding(
               padding: EdgeInsets.all(8),
               child: Text('אורך (ק"מ)', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            Padding(
+              padding: EdgeInsets.all(8),
+              child: Text('↑↓', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             Padding(
               padding: EdgeInsets.all(8),
@@ -522,6 +566,15 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     Text(route.routeLengthKm.toStringAsFixed(2)),
                   ],
                 ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: _routeElevations.containsKey(navigatorId)
+                    ? Text(
+                        '↑${_routeElevations[navigatorId]!.$1} ↓${_routeElevations[navigatorId]!.$2}',
+                        style: const TextStyle(fontSize: 11),
+                      )
+                    : const Text('-', style: TextStyle(color: Colors.grey, fontSize: 11)),
               ),
               Padding(
                 padding: const EdgeInsets.all(8),

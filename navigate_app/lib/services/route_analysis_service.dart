@@ -79,6 +79,9 @@ class RouteStatistics {
   final double totalDeviationDistance;
   final Duration totalDeviationTime;
   final List<SpeedSegment> speedProfile;
+  final double totalAscent;
+  final double totalDescent;
+  final List<ElevationSegment> elevationProfile;
 
   const RouteStatistics({
     required this.plannedDistanceKm,
@@ -100,6 +103,22 @@ class RouteStatistics {
     required this.totalDeviationDistance,
     required this.totalDeviationTime,
     required this.speedProfile,
+    this.totalAscent = 0,
+    this.totalDescent = 0,
+    this.elevationProfile = const [],
+  });
+}
+
+/// קטע גובה (לתרשים פרופיל גובה)
+class ElevationSegment {
+  final double distanceFromStartKm;
+  final double elevationMeters;
+  final LatLng position;
+
+  const ElevationSegment({
+    required this.distanceFromStartKm,
+    required this.elevationMeters,
+    required this.position,
   });
 }
 
@@ -406,6 +425,8 @@ class RouteAnalysisService {
       totalDevTime += seg.duration;
     }
 
+    final elevData = calculateElevationProfile(trackPoints: trackPoints);
+
     return RouteStatistics(
       plannedDistanceKm: plannedDistKm,
       actualDistanceKm: actualDistKm,
@@ -426,6 +447,9 @@ class RouteAnalysisService {
       totalDeviationDistance: totalDevDistKm,
       totalDeviationTime: totalDevTime,
       speedProfile: speedProfile,
+      totalAscent: elevData.ascent,
+      totalDescent: elevData.descent,
+      elevationProfile: elevData.profile,
     );
   }
 
@@ -493,6 +517,48 @@ class RouteAnalysisService {
     }
 
     return smoothed;
+  }
+
+  // ----------------------------------------------------------
+  // Elevation profile
+  // ----------------------------------------------------------
+
+  /// חישוב פרופיל גובה מנקודות מסלול
+  ({double ascent, double descent, List<ElevationSegment> profile})
+      calculateElevationProfile({required List<TrackPoint> trackPoints}) {
+    double ascent = 0;
+    double descent = 0;
+    final profile = <ElevationSegment>[];
+    double cumulativeDist = 0;
+
+    for (int i = 0; i < trackPoints.length; i++) {
+      final tp = trackPoints[i];
+      if (tp.altitude == null) continue;
+
+      if (i > 0) {
+        cumulativeDist += _distanceBetween(
+          LatLng(trackPoints[i - 1].coordinate.lat, trackPoints[i - 1].coordinate.lng),
+          LatLng(tp.coordinate.lat, tp.coordinate.lng),
+        );
+      }
+
+      profile.add(ElevationSegment(
+        distanceFromStartKm: cumulativeDist / 1000.0,
+        elevationMeters: tp.altitude!,
+        position: LatLng(tp.coordinate.lat, tp.coordinate.lng),
+      ));
+
+      if (profile.length >= 2) {
+        final diff = tp.altitude! - profile[profile.length - 2].elevationMeters;
+        if (diff > 0) {
+          ascent += diff;
+        } else {
+          descent += diff.abs();
+        }
+      }
+    }
+
+    return (ascent: ascent, descent: descent, profile: profile);
   }
 
   // ----------------------------------------------------------

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../domain/entities/coordinate.dart';
+import 'elevation_service.dart';
 import 'gps_service.dart';
 
 /// שירות מעקב GPS
@@ -11,6 +12,7 @@ class GPSTrackingService {
   StreamSubscription<Position>? _geolocatorStreamSub;
   List<TrackPoint> _trackPoints = [];
   final GpsService _gpsService = GpsService();
+  final ElevationService _elevationService = ElevationService();
 
   bool _isTracking = false;
   bool get isTracking => _isTracking;
@@ -505,6 +507,9 @@ class GPSTrackingService {
 
     _trackPoints.add(point);
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
+
+    // שאילתת גובה DEM ברקע — מדויק יותר מ-GPS altitude
+    _enrichWithDemElevation(_trackPoints.length - 1, position.latitude, position.longitude);
   }
 
   /// רישום נקודה מ-LatLng (GPS Plus fallback)
@@ -527,6 +532,27 @@ class GPSTrackingService {
 
     _trackPoints.add(point);
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
+
+    // שאילתת גובה DEM ברקע
+    _enrichWithDemElevation(_trackPoints.length - 1, lat, lng);
+  }
+
+  /// העשרת נקודה בגובה DEM — fire-and-forget
+  void _enrichWithDemElevation(int index, double lat, double lng) {
+    _elevationService.getElevation(lat, lng).then((elev) {
+      if (elev != null && index < _trackPoints.length) {
+        final old = _trackPoints[index];
+        _trackPoints[index] = TrackPoint(
+          coordinate: old.coordinate,
+          timestamp: old.timestamp,
+          accuracy: old.accuracy,
+          altitude: elev.toDouble(),
+          speed: old.speed,
+          heading: old.heading,
+          positionSource: old.positionSource,
+        );
+      }
+    }).catchError((_) {});
   }
 
   /// רישום מיקום ידני (דקירה במפה)

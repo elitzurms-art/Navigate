@@ -11,6 +11,7 @@ import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
+import '../../../services/auto_map_download_service.dart';
 import 'navigator_state.dart';
 import 'navigator_views/learning_view.dart';
 import 'navigator_views/system_check_view.dart';
@@ -80,6 +81,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         }
         // עדכון local DB בלי sync חזרה
         _navigationRepo.updateLocalFromFirestore(nav);
+        // הורדת מפות אוטומטית כשעוברים למצב למידה
+        if (nav.status == 'learning' &&
+            (_currentNavigation == null || _currentNavigation!.status != 'learning')) {
+          AutoMapDownloadService().triggerDownload(nav);
+        }
         // עדכון UI אם הסטטוס או הנתונים השתנו
         if (_currentNavigation == null ||
             _currentNavigation!.status != nav.status ||
@@ -453,38 +459,24 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             // מפה פתוחה — רק במצב active + (allowOpenMap ברמת ניווט או דריסה פר-מנווט)
             if (isActive && nav != null && (nav.allowOpenMap || _perNavigatorAllowOpenMap)) ...[
               const Divider(),
+              // אפשרות 1: מפה פתוחה (שכבות + ציר, ללא מיקום עצמי)
               ListTile(
                 leading: const Icon(Icons.map, color: Colors.blue),
                 title: const Text('מפה פתוחה'),
                 onTap: () {
                   Navigator.pop(context);
-                  _openMapScreen();
+                  _openMapScreen(showRoute: true);
                 },
               ),
 
-              // ניווט עם מיקום — רק אם showSelfLocation (ברמת ניווט או דריסה)
+              // אפשרות 2: מפה + מיקום עצמי (רק אם showSelfLocation ברמת ניווט או דריסה)
               if (nav.showSelfLocation || _perNavigatorShowSelfLocation)
                 ListTile(
                   leading: const Icon(Icons.my_location, color: Colors.green),
-                  title: const Text('ניווט עם מיקום'),
+                  title: const Text('מפה + מיקום עצמי'),
                   onTap: () {
                     Navigator.pop(context);
-                    _openMapScreen(showSelfLocation: true);
-                  },
-                ),
-
-              // ציר ניווט — רק אם showSelfLocation + showRouteOnMap (ברמת ניווט או דריסה)
-              if ((nav.showSelfLocation || _perNavigatorShowSelfLocation) &&
-                  (nav.showRouteOnMap || _perNavigatorShowRouteOnMap))
-                ListTile(
-                  leading: const Icon(Icons.route, color: Colors.orange),
-                  title: const Text('ציר ניווט'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openMapScreen(
-                      showSelfLocation: nav.showSelfLocation || _perNavigatorShowSelfLocation,
-                      showRoute: true,
-                    );
+                    _openMapScreen(showSelfLocation: true, showRoute: true);
                   },
                 ),
             ],

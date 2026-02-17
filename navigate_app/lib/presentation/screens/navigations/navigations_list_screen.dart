@@ -17,6 +17,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import '../../../services/route_export_service.dart';
+import '../../../services/auto_map_download_service.dart';
 import 'create_navigation_screen.dart';
 import 'training_mode_screen.dart';
 import 'system_check_screen.dart';
@@ -665,6 +666,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
+    AutoMapDownloadService().triggerDownload(updatedNavigation);
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner

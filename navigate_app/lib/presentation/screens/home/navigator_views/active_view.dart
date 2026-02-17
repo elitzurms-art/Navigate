@@ -608,22 +608,20 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ===========================================================================
 
   /// בדיקה והפעלת דקירת מיקום ידני
-  Future<void> _checkAndTriggerManualPin() async {
+  /// [force] = true כשהמנווט לוחץ ידנית על הרנאב — דלג על בדיקת מיקום אחרון
+  Future<void> _checkAndTriggerManualPin({bool force = false}) async {
     if (_manualPositionUsed || !_allowManualPosition || _manualPinPending) return;
     if (_personalStatus != NavigatorPersonalStatus.active) return;
 
-    // שלב א — בדיקה אם יש מיקום אחרון טוב
-    final points = _gpsTracker.trackPoints;
-    if (points.isNotEmpty) {
-      final lastPoint = points.last;
-      final age = DateTime.now().difference(lastPoint.timestamp);
-      if (age.inMinutes < 5 && lastPoint.accuracy >= 0 && lastPoint.accuracy < 100) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('ממשיך מהמקום האחרון'), backgroundColor: Colors.green),
-          );
+    // שלב א — בדיקה אם יש מיקום אחרון טוב (רק באוטומטי, לא בלחיצה ידנית)
+    if (!force) {
+      final points = _gpsTracker.trackPoints;
+      if (points.isNotEmpty) {
+        final lastPoint = points.last;
+        final age = DateTime.now().difference(lastPoint.timestamp);
+        if (age.inMinutes < 5 && lastPoint.accuracy >= 0 && lastPoint.accuracy < 100) {
+          return;
         }
-        return;
       }
     }
 
@@ -700,14 +698,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       if (mounted && points.isNotEmpty) {
         setState(() => _trackPointCount = points.length);
-      }
-
-      // בדיקת דקירת מיקום ידני תקופתית
-      if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
-        final pts = _gpsTracker.trackPoints;
-        if (pts.isEmpty || DateTime.now().difference(pts.last.timestamp).inMinutes > 5) {
-          _checkAndTriggerManualPin();
-        }
       }
     } catch (e) {
       print('DEBUG ActiveView: track save error: $e');
@@ -809,6 +799,17 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         _overrideAllowOpenMap = newAllowOpenMap;
         _overrideShowSelfLocation = newShowSelfLocation;
         _overrideShowRouteOnMap = newShowRouteOnMap;
+        // עדכון Drift מקומי — מונע מ-_saveTrackPoints לדרוס את ההגדרות
+        if (_track != null) {
+          try {
+            await _trackRepo.updateMapOverridesLocal(
+              _track!.id,
+              allowOpenMap: newAllowOpenMap,
+              showSelfLocation: newShowSelfLocation,
+              showRouteOnMap: newShowRouteOnMap,
+            );
+          } catch (_) {}
+        }
         widget.onMapPermissionsChanged?.call(
           newAllowOpenMap, newShowSelfLocation, newShowRouteOnMap,
         );
@@ -816,13 +817,24 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       // קריאת דריסת דקירת מיקום ידני
       final newAllowManual = data['overrideAllowManualPosition'] as bool? ?? false;
+      // עדכון Drift מקומי — מונע דריסה ב-_saveTrackPoints
+      if (_track != null && newAllowManual != (_track!.overrideAllowManualPosition)) {
+        try {
+          await _trackRepo.updateManualPositionOverrideLocal(
+            _track!.id,
+            allowManualPosition: newAllowManual,
+          );
+        } catch (_) {}
+      }
       final globalAllow = widget.navigation.allowManualPosition;
       final effectiveAllow = globalAllow || newAllowManual;
-      if (effectiveAllow && !_allowManualPosition) {
+      final wasDisabled = !_allowManualPosition;
+      if (effectiveAllow && wasDisabled) {
         _manualPositionUsed = false;
       }
       _allowManualPosition = effectiveAllow;
-      if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
+      // הפעלת בדיקה רק במעבר מכבוי לדלוק — לא בכל snapshot
+      if (effectiveAllow && wasDisabled && !_manualPositionUsed && !_manualPinPending) {
         _checkAndTriggerManualPin();
       }
     }, onError: (e) {
@@ -1580,6 +1592,44 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                       decoration: TextDecoration.underline,
                     ),
                   ),
+                ),
+              ],
+            ),
+          ),
+        // באנר דקירת מיקום ידני
+        if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending)
+          GestureDetector(
+            onTap: () => _checkAndTriggerManualPin(force: true),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.deepPurple.withValues(alpha: 0.15),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.push_pin, size: 16, color: Colors.deepPurple),
+                  SizedBox(width: 8),
+                  Text(
+                    'לחץ לדקירת מיקום עצמי',
+                    style: TextStyle(fontSize: 13, color: Colors.deepPurple, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (_manualPositionUsed)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            color: Colors.deepPurple.withValues(alpha: 0.1),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.push_pin, size: 14, color: Colors.deepPurple),
+                SizedBox(width: 6),
+                Text(
+                  'מיקום ידני נרשם',
+                  style: TextStyle(fontSize: 12, color: Colors.deepPurple),
                 ),
               ],
             ),

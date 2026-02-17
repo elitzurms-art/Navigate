@@ -10,6 +10,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/elevation_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -32,8 +33,12 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
   final NavigationRepository _navRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final AuthService _authService = AuthService();
+  final ElevationService _elevationService = ElevationService();
   final MapController _mapController = MapController();
   late TabController _tabController;
+
+  // גובה לכל נקודה: checkpoint id → elevation
+  final Map<String, int?> _checkpointElevations = {};
 
   List<Checkpoint> _myCheckpoints = [];
   List<String> _routeSequence = [];
@@ -155,6 +160,9 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
         _safetyPoints = safetyPoints;
         _isLoading = false;
       });
+
+      // שאילתת גובה לכל נקודה (ברקע)
+      _queryCheckpointElevations();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -162,6 +170,19 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
         );
       }
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _queryCheckpointElevations() async {
+    for (final cp in _myCheckpoints) {
+      if (cp.isPolygon || cp.coordinates == null) continue;
+      final elev = await _elevationService.getElevation(
+          cp.coordinates!.lat, cp.coordinates!.lng);
+      if (mounted) {
+        setState(() {
+          _checkpointElevations[cp.id] = elev;
+        });
+      }
     }
   }
 
@@ -276,6 +297,7 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                     0: FlexColumnWidth(1),
                     1: FlexColumnWidth(2),
                     2: FlexColumnWidth(2),
+                    3: FlexColumnWidth(1.2),
                   },
                   children: [
                     TableRow(
@@ -293,6 +315,10 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                           padding: EdgeInsets.all(8.0),
                           child: Text('Y (UTM)', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                         ),
+                        Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text('גובה', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                        ),
                       ],
                     ),
                     ..._myCheckpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList().asMap().entries.map((entry) {
@@ -300,12 +326,18 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
                       final checkpoint = entry.value;
                       final utmX = _getUtmX(checkpoint.coordinates!.utm);
                       final utmY = _getUtmY(checkpoint.coordinates!.utm);
+                      final elev = _checkpointElevations[checkpoint.id];
 
                       return TableRow(
                         children: [
                           Padding(padding: const EdgeInsets.all(8.0), child: Text('$index', textAlign: TextAlign.center)),
                           Padding(padding: const EdgeInsets.all(8.0), child: Text(utmX, textAlign: TextAlign.center)),
                           Padding(padding: const EdgeInsets.all(8.0), child: Text(utmY, textAlign: TextAlign.center)),
+                          Padding(padding: const EdgeInsets.all(8.0), child: Text(
+                            elev != null ? '${elev}מ\'' : '-',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12),
+                          )),
                         ],
                       );
                     }),

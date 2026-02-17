@@ -17,6 +17,7 @@ import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
+import '../../../services/auto_map_download_service.dart';
 
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
@@ -450,6 +451,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
     await _navRepo.update(updatedNav);
     _currentNavigation = updatedNav;
+    AutoMapDownloadService().triggerDownload(updatedNav);
 
     if (mounted) {
       setState(() => _learningStarted = true);

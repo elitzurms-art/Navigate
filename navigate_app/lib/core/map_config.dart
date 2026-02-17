@@ -17,6 +17,12 @@ class MapConfig {
   static const _prefsKey = 'map_tile_type';
   static const userAgentPackageName = 'com.elitzur_software.navigate';
 
+  /// גבולות ישראל (bounding box)
+  static const israelBounds = (
+    minLat: 29.3, maxLat: 33.4,
+    minLng: 34.2, maxLng: 35.9,
+  );
+
   /// notifier שכל המפות מאזינות לו
   final ValueNotifier<MapType> typeNotifier =
       ValueNotifier<MapType>(MapType.standard);
