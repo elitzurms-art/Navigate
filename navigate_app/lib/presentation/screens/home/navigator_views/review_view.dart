@@ -36,11 +36,13 @@ const _kSafetyColor = Color(0xFFFF9800); // כתום
 class ReviewView extends StatefulWidget {
   final domain.Navigation navigation;
   final User currentUser;
+  final NavigationScore? initialScore;
 
   const ReviewView({
     super.key,
     required this.navigation,
     required this.currentUser,
+    this.initialScore,
   });
 
   @override
@@ -96,6 +98,15 @@ class _ReviewViewState extends State<ReviewView> {
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void didUpdateWidget(covariant ReviewView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialScore != null &&
+        widget.initialScore != oldWidget.initialScore) {
+      setState(() => _score = widget.initialScore);
+    }
   }
 
   Future<void> _loadData() async {
@@ -200,8 +211,14 @@ class _ReviewViewState extends State<ReviewView> {
             scores.where((s) => s['navigatorId'] == userId).toList();
         if (myScoreMap.isNotEmpty) {
           _score = NavigationScore.fromMap(myScoreMap.first);
+        } else if (widget.initialScore != null) {
+          _score = widget.initialScore;
         }
-      } catch (_) {}
+      } catch (_) {
+        if (widget.initialScore != null) {
+          _score = widget.initialScore;
+        }
+      }
 
       // ניתוח מסלול
       _computeAnalysis();

@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -12,18 +14,26 @@ class TowerDatabase {
   bool get isInitialized => _db != null;
 
   /// Opens (or creates) the tower database.
+  /// If the DB file doesn't exist on disk, copies it from the bundled asset.
   Future<void> initialize() async {
     if (_db != null) return;
 
     final dir = await getApplicationSupportDirectory();
     final path = '${dir.path}/gps_plus_towers.db';
 
+    // Copy bundled asset if DB file doesn't exist on disk
+    final dbFile = File(path);
+    if (!await dbFile.exists()) {
+      await _copyFromAsset(dbFile);
+    }
+
     _db = await openDatabase(
       path,
       version: 1,
       onCreate: (db, version) async {
+        // Fallback: create schema if asset copy failed or DB is empty
         await db.execute('''
-          CREATE TABLE towers (
+          CREATE TABLE IF NOT EXISTS towers (
             mcc INTEGER NOT NULL,
             mnc INTEGER NOT NULL,
             lac INTEGER NOT NULL,
@@ -36,10 +46,23 @@ class TowerDatabase {
           )
         ''');
         await db.execute('''
-          CREATE INDEX idx_towers_lookup ON towers (mcc, mnc, lac, cid)
+          CREATE INDEX IF NOT EXISTS idx_towers_lookup ON towers (mcc, mnc, lac, cid)
         ''');
       },
     );
+  }
+
+  /// Copies the bundled tower database asset to the given file path.
+  Future<void> _copyFromAsset(File targetFile) async {
+    try {
+      final data = await rootBundle.load('packages/gps_plus/assets/gps_plus_towers.db');
+      final bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      await targetFile.parent.create(recursive: true);
+      await targetFile.writeAsBytes(bytes, flush: true);
+      print('DEBUG TowerDatabase: copied bundled asset to ${targetFile.path}');
+    } catch (e) {
+      print('DEBUG TowerDatabase: asset copy failed: $e (will create empty DB)');
+    }
   }
 
   /// Looks up a tower's known location by its identity.

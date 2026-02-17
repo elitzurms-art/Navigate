@@ -40,6 +40,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   NavigationScore? _navigatorScore;
 
   Timer? _pollTimer;
+  Timer? _scorePollTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
 
   @override
@@ -55,6 +56,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _scorePollTimer?.cancel();
     _navigationListener?.cancel();
     super.dispose();
   }
@@ -181,6 +183,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
     final status = nav.status;
     if (status != 'approval' && status != 'review') {
+      _scorePollTimer?.cancel();
+      _scorePollTimer = null;
       if (_navigatorScore != null) {
         setState(() => _navigatorScore = null);
       }
@@ -195,12 +199,30 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       if (myScores.isNotEmpty) {
         final score = NavigationScore.fromMap(myScores.first);
         setState(() => _navigatorScore = score);
+        // ציון הגיע — ביטול טיימר סקירה מהירה
+        _scorePollTimer?.cancel();
+        _scorePollTimer = null;
       } else {
         setState(() => _navigatorScore = null);
+        // ציון עדיין לא הגיע — התחלת סקירה מהירה כל 15 שניות
+        _startScorePollIfNeeded();
       }
     } catch (_) {
       // שקט — לא חוסם
+      _startScorePollIfNeeded();
     }
+  }
+
+  /// התחלת טיימר סקירת ציון מהירה (כל 15 שניות) אם בשלב תחקור וציון לא הגיע
+  void _startScorePollIfNeeded() {
+    if (_scorePollTimer != null) return; // כבר רץ
+    final status = _currentNavigation?.status;
+    if (status != 'approval' && status != 'review') return;
+    if (_navigatorScore != null) return;
+
+    _scorePollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _loadNavigatorScore();
+    });
   }
 
   /// התנתקות
@@ -733,6 +755,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         return ReviewView(
           navigation: _currentNavigation!,
           currentUser: _currentUser!,
+          initialScore: _navigatorScore,
         );
     }
   }

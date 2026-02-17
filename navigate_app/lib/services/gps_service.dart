@@ -34,7 +34,7 @@ class GpsService {
       _cellService = CellLocationService();
       await _cellService!.initialize();
       _cellInitialized = true;
-      // Try to download tower data if needed (non-blocking)
+      // Verify tower data is available (bundled asset should already be copied)
       ensureTowerData();
     } catch (e) {
       print('DEBUG GpsService: cell service init failed: $e');
@@ -42,7 +42,7 @@ class GpsService {
     }
   }
 
-  /// בדיקה שיש נתוני אנטנות — מוריד MCC 425 (ישראל) אם חסר
+  /// בדיקה שיש נתוני אנטנות — asset מובנה צריך להספיק, מציג אזהרה אם חסר
   Future<void> ensureTowerData() async {
     try {
       await _ensureCellServiceInitialized();
@@ -51,18 +51,9 @@ class GpsService {
       final count = await _cellService!.towerCount(mcc: 425);
       if (count > 0) {
         print('DEBUG GpsService: tower data exists ($count towers for MCC 425)');
-        return;
+      } else {
+        print('WARNING GpsService: no tower data for MCC 425 — bundled asset may have failed to copy');
       }
-
-      print('DEBUG GpsService: no tower data — downloading MCC 425...');
-      final downloaded = await _cellService!.downloadTowerData(
-        apiKey: _openCellIdApiKey,
-        mcc: 425,
-        onProgress: (downloaded, total) {
-          print('DEBUG GpsService: tower download progress: $downloaded/$total');
-        },
-      );
-      print('DEBUG GpsService: downloaded $downloaded towers for MCC 425');
     } catch (e) {
       print('DEBUG GpsService: ensureTowerData failed: $e');
     }
@@ -96,14 +87,32 @@ class GpsService {
   }
 
   /// קבלת מיקום נוכחי — עם fallback לאנטנות
+  ///
+  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד, 'gps' = GPS בלבד
   Future<LatLng?> getCurrentPosition({
     bool highAccuracy = true,
     LatLng? boundaryCenter,
+    String forceSource = 'auto',
   }) async {
+    // כפיית אנטנות — דלג על GPS לחלוטין
+    if (forceSource == 'cellTower') {
+      final cellResult = await _getCellPosition();
+      if (cellResult != null) {
+        _lastPositionSource = PositionSource.cellTower;
+        return cellResult.latLng;
+      }
+      _lastPositionSource = PositionSource.none;
+      return null;
+    }
+
     try {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
-        // אין הרשאות GPS — נסה אנטנות
+        // אין הרשאות GPS — נסה אנטנות (אלא אם כפוי GPS בלבד)
+        if (forceSource == 'gps') {
+          _lastPositionSource = PositionSource.none;
+          return null;
+        }
         print('DEBUG GpsService: no GPS permission, trying cell fallback');
         final cellResult = await _getCellPosition();
         if (cellResult != null) {
@@ -123,6 +132,12 @@ class GpsService {
       print('DEBUG GpsService: GPS position: ${position.latitude}, ${position.longitude} accuracy=${position.accuracy.toStringAsFixed(0)}m');
 
       final gpsLatLng = LatLng(position.latitude, position.longitude);
+
+      // כפיית GPS — אין fallback
+      if (forceSource == 'gps') {
+        _lastPositionSource = PositionSource.gps;
+        return gpsLatLng;
+      }
 
       // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
       if (boundaryCenter != null) {
@@ -161,7 +176,11 @@ class GpsService {
       _lastPositionSource = PositionSource.gps;
       return gpsLatLng;
     } catch (e) {
-      // GPS נכשל לחלוטין — נסה אנטנות
+      // GPS נכשל לחלוטין — נסה אנטנות (אלא אם כפוי GPS בלבד)
+      if (forceSource == 'gps') {
+        _lastPositionSource = PositionSource.none;
+        return null;
+      }
       print('DEBUG GpsService: GPS failed ($e), trying cell fallback');
       final cellResult = await _getCellPosition();
       if (cellResult != null) {
@@ -174,13 +193,26 @@ class GpsService {
   }
 
   /// קבלת מיקום עם פרטי דיוק מלאים
+  ///
+  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד, 'gps' = GPS בלבד
   Future<({LatLng position, double accuracy, PositionSource source})?> getCurrentPositionWithAccuracy({
     bool highAccuracy = true,
     LatLng? boundaryCenter,
+    String forceSource = 'auto',
   }) async {
+    // כפיית אנטנות
+    if (forceSource == 'cellTower') {
+      final cellResult = await _getCellPosition();
+      if (cellResult != null) {
+        return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+      }
+      return null;
+    }
+
     try {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
+        if (forceSource == 'gps') return null;
         final cellResult = await _getCellPosition();
         if (cellResult != null) {
           return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
@@ -193,6 +225,11 @@ class GpsService {
       );
 
       final gpsLatLng = LatLng(gpsPosition.latitude, gpsPosition.longitude);
+
+      // כפיית GPS — אין fallback
+      if (forceSource == 'gps') {
+        return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
+      }
 
       // בדיקת GPS חסום/מזויף
       if (boundaryCenter != null) {
@@ -219,6 +256,7 @@ class GpsService {
 
       return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
     } catch (e) {
+      if (forceSource == 'gps') return null;
       final cellResult = await _getCellPosition();
       if (cellResult != null) {
         return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
@@ -401,7 +439,7 @@ class GpsService {
     }
   }
 
-  /// הורדת נתוני אנטנות לפי MCC (קוד מדינה)
+  /// הורדת נתוני אנטנות לפי MCC (קוד מדינה) — לרענון ידני
   Future<int> downloadCellTowerData({
     required String apiKey,
     required int mcc,

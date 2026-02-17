@@ -95,6 +95,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // דריסות התראות פר-מנווט: navigatorId -> { AlertType -> enabled }
   final Map<String, Map<AlertType, bool>> _navigatorAlertOverrides = {};
 
+  // כפיית מקור מיקום גלובלי
+  String _globalForcePositionSource = 'auto';
+
   // מרכוז מפה
   CenteringMode _centeringMode = CenteringMode.off;
   String? _centeredNavigatorId; // null = מרכוז עצמי
@@ -180,6 +183,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
         _mapController.move(LatLng(center.lat, center.lng), 13.0);
       }
+
+      // קריאת forcePositionSource גלובלי מ-Firestore
+      try {
+        final navDoc = await FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(widget.navigation.id)
+            .get();
+        final navData = navDoc.data();
+        if (navData != null && navData['forcePositionSource'] is String) {
+          setState(() {
+            _globalForcePositionSource = navData['forcePositionSource'] as String;
+          });
+        }
+      } catch (_) {}
     } catch (e) {
       setState(() => _isLoading = false);
     }
@@ -857,6 +874,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           isActive: isActive,
           endedAt: endedAt,
         );
+
+        // קריאת forcePositionSource מה-track doc
+        final trackForceSource = data['forcePositionSource'] as String?;
+        liveData.isForceCell = (trackForceSource == 'cellTower') ||
+            (trackForceSource == null && _globalForcePositionSource == 'cellTower');
       }
     });
   }
@@ -1119,6 +1141,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           case 'reset':
             _resetNavigatorNavigation(navigatorId);
             break;
+          case 'force_cell':
+            _toggleNavigatorForceCell(navigatorId);
+            break;
         }
       },
       itemBuilder: (context) => [
@@ -1147,6 +1172,28 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
+        // כפיית אנטנות — active/noReception
+        if (status == NavigatorPersonalStatus.active ||
+            status == NavigatorPersonalStatus.noReception)
+          PopupMenuItem(
+            value: 'force_cell',
+            child: Row(
+              children: [
+                Icon(
+                  data.isForceCell ? Icons.gps_fixed : Icons.cell_tower,
+                  color: data.isForceCell ? Colors.green : Colors.orange,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  data.isForceCell ? 'ביטול כפיית אנטנות' : 'כפה אנטנות',
+                  style: TextStyle(
+                    color: data.isForceCell ? Colors.green : Colors.orange,
+                  ),
+                ),
+              ],
+            ),
+          ),
         // אפס ניווט — active/finished/noReception
         const PopupMenuItem(
           value: 'reset',
@@ -1160,6 +1207,117 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ),
       ],
     );
+  }
+
+  // ===========================================================================
+  // Force Position Source — כפיית מקור מיקום
+  // ===========================================================================
+
+  Future<void> _toggleGlobalForcePositionSource() async {
+    final newSource = _globalForcePositionSource == 'cellTower' ? 'auto' : 'cellTower';
+
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .update({'forcePositionSource': newSource});
+
+      setState(() => _globalForcePositionSource = newSource);
+
+      // עדכון כל המנווטים הפעילים
+      if (newSource == 'cellTower') {
+        for (final entry in _navigatorData.entries) {
+          if (entry.value.personalStatus == NavigatorPersonalStatus.active ||
+              entry.value.personalStatus == NavigatorPersonalStatus.noReception) {
+            entry.value.isForceCell = true;
+          }
+        }
+      } else {
+        // חזרה ל-auto — רק מי שאין לו override אישי
+        for (final entry in _navigatorData.entries) {
+          entry.value.isForceCell = false;
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newSource == 'cellTower'
+                ? 'כפיית מיקום אנטנות הופעלה לכל המנווטים'
+                : 'מיקום אנטנות כפוי בוטל — חזרה לאוטומטי'),
+            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בעדכון מצב מיקום: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleNavigatorForceCell(String navigatorId) async {
+    final data = _navigatorData[navigatorId];
+    if (data == null) return;
+
+    final newSource = data.isForceCell ? 'auto' : 'cellTower';
+
+    try {
+      // מציאת track פעיל של המנווט
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: widget.navigation.id)
+          .where('navigatorUserId', isEqualTo: navigatorId)
+          .where('isActive', isEqualTo: true)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('לא נמצא track פעיל למנווט'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      await snapshot.docs.first.reference.update({
+        'forcePositionSource': newSource,
+      });
+
+      setState(() {
+        data.isForceCell = newSource == 'cellTower';
+      });
+
+      if (mounted) {
+        final name = _userNames[navigatorId] ?? navigatorId;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newSource == 'cellTower'
+                ? 'כפיית אנטנות הופעלה ל-$name'
+                : 'כפיית אנטנות בוטלה ל-$name'),
+            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בעדכון מצב מיקום: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _finishAllNavigation() async {
@@ -1615,6 +1773,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ),
         actions: [
           IconButton(
+            icon: Icon(
+              _globalForcePositionSource == 'cellTower'
+                  ? Icons.cell_tower
+                  : Icons.gps_fixed,
+              color: _globalForcePositionSource == 'cellTower'
+                  ? Colors.orange
+                  : Colors.white,
+            ),
+            tooltip: _globalForcePositionSource == 'cellTower'
+                ? 'מצב אנטנות כפוי — לחץ לביטול'
+                : 'כפה מיקום אנטנות לכל המנווטים',
+            onPressed: _toggleGlobalForcePositionSource,
+          ),
+          IconButton(
             icon: const Icon(Icons.stop_circle),
             tooltip: 'סיום ניווט כללי',
             onPressed: _finishAllNavigation,
@@ -1667,6 +1839,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     _mapLegendItem('סיים', Colors.blue),
                     _mapLegendItem('ללא קליטה', Colors.orange),
                     _mapLegendItem('התרעה', Colors.red),
+                    if (_globalForcePositionSource == 'cellTower')
+                      _mapLegendItem('אנטנות כפוי', Colors.orange),
                   ],
                 ),
               ),
@@ -2081,6 +2255,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                           ),
                         ),
+                        if (data.isForceCell)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Icon(Icons.cell_tower, color: Colors.orange, size: 18),
+                          ),
                         if (data.hasActiveAlert)
                           const Padding(
                             padding: EdgeInsets.only(left: 4),
@@ -2434,6 +2613,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Color _getNavigatorStatusColor(NavigatorLiveData data) {
     if (data.hasActiveAlert) return Colors.red;
+    if (data.isForceCell) return Colors.orange;
     switch (data.personalStatus) {
       case NavigatorPersonalStatus.active:
         return data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green;
@@ -3268,6 +3448,7 @@ class NavigatorLiveData {
   NavigatorPersonalStatus personalStatus;
   bool hasActiveAlert;
   bool isGpsPlusFix;
+  bool isForceCell; // כפיית מקור מיקום אנטנות ע"י מפקד
   LatLng? currentPosition;
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
@@ -3279,6 +3460,7 @@ class NavigatorLiveData {
     required this.personalStatus,
     this.hasActiveAlert = false,
     this.isGpsPlusFix = false,
+    this.isForceCell = false,
     this.currentPosition,
     required this.trackPoints,
     required this.punches,

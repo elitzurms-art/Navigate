@@ -561,7 +561,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Remote Stop — זיהוי עצירה מרחוק ע"י מפקד
   // ===========================================================================
 
-  /// בדיקת עצירה מרחוק. מחזיר true אם הניווט נעצר.
+  /// בדיקת עצירה מרחוק + קריאת forcePositionSource. מחזיר true אם הניווט נעצר.
   Future<bool> _checkRemoteStop() async {
     if (_track == null || _personalStatus != NavigatorPersonalStatus.active) return false;
 
@@ -585,6 +585,34 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         // המפקד עצר את הניווט מרחוק
         await _performRemoteStop();
         return true;
+      }
+
+      // קריאת forcePositionSource — individual (track) > global (navigation)
+      String effectiveSource = 'auto';
+      final trackSource = data['forcePositionSource'] as String?;
+      if (trackSource != null && trackSource != 'auto') {
+        effectiveSource = trackSource;
+      } else {
+        // נסה לקרוא מהניווט (global)
+        try {
+          final navDoc = await FirebaseFirestore.instance
+              .collection(AppConstants.navigationsCollection)
+              .doc(_nav.id)
+              .get();
+          final navData = navDoc.data();
+          if (navData != null) {
+            final globalSource = navData['forcePositionSource'] as String?;
+            if (globalSource != null && globalSource != 'auto') {
+              effectiveSource = globalSource;
+            }
+          }
+        } catch (_) {}
+      }
+
+      // החלת מקור מיקום כפוי על ה-tracker
+      if (_gpsTracker.forcePositionSource != effectiveSource) {
+        _gpsTracker.forcePositionSource = effectiveSource;
+        print('DEBUG ActiveView: forcePositionSource changed to: $effectiveSource');
       }
     } catch (e) {
       print('DEBUG ActiveView: remote stop check error: $e');

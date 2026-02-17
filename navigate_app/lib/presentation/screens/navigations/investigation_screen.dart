@@ -2181,6 +2181,24 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           _buildStatisticsTable(),
+
+          // השוואת מנווטים
+          if (_navigatorComparisons.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text('השוואת מנווטים',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 280,
+              child: NavigatorComparisonWidget(
+                comparisons: _navigatorComparisons,
+                navigatorColors: {
+                  for (final entry in _navigatorDataMap.entries)
+                    entry.key: entry.value.color,
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2341,7 +2359,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   Widget _buildStatisticsTable() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: DataTable(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: MediaQuery.of(context).size.width - 24,
+        ),
+        child: DataTable(
         columnSpacing: 14,
         headingRowColor: WidgetStateProperty.all(Colors.grey[200]),
         columns: const [
@@ -2423,6 +2445,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ]);
         }).toList(),
       ),
+      ),
     );
   }
 
@@ -2433,11 +2456,6 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   Widget _buildScoresTab() {
     if (_navigatorDataMap.isEmpty) {
       return const Center(child: Text('אין נתונים'));
-    }
-
-    final navigatorColors = <String, Color>{};
-    for (final entry in _navigatorDataMap.entries) {
-      navigatorColors[entry.key] = entry.value.color;
     }
 
     final publishedCount =
@@ -2509,22 +2527,6 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ),
 
           const SizedBox(height: 16),
-
-          // Navigator comparison
-          if (_navigatorComparisons.isNotEmpty) ...[
-            const Text('השוואת מנווטים',
-                style: TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 280,
-              child: NavigatorComparisonWidget(
-                comparisons: _navigatorComparisons,
-                navigatorColors: navigatorColors,
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
 
           // Score cards
           const Text('ציונים',

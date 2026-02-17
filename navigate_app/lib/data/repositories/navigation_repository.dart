@@ -596,6 +596,7 @@ class NavigationRepository {
         documentId: navigatorId,
         operation: 'create',
         data: scoreData,
+        priority: SyncPriority.high,
       );
       print('DEBUG: Score for navigator $navigatorId queued');
     } catch (e) {

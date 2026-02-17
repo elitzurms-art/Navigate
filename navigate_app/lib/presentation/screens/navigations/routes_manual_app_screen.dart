@@ -244,11 +244,16 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
   }
 
   /// ספירת כמה מנווטים קיבלו נקודה מסוימת
-  int _getCheckpointAssignmentCount(String checkpointId) {
+  /// [currentNavigatorId] — המנווט שנמצא כרגע ב-bottom sheet (מדלגים על הרשומה הישנה שלו)
+  /// [currentSelected] — הבחירות הנוכחיות של אותו מנווט ב-bottom sheet
+  int _getCheckpointAssignmentCount(String checkpointId, {String? currentNavigatorId, Set<String>? currentSelected}) {
     int count = 0;
-    for (final cps in _navigatorCheckpoints.values) {
-      if (cps.contains(checkpointId)) count++;
+    for (final entry in _navigatorCheckpoints.entries) {
+      if (entry.key == currentNavigatorId) continue; // דילוג על הנתון הישן
+      if (entry.value.contains(checkpointId)) count++;
     }
+    // הוספת הבחירה הנוכחית של המנווט הפעיל
+    if (currentSelected != null && currentSelected.contains(checkpointId)) count++;
     return count;
   }
 
@@ -331,7 +336,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                         itemBuilder: (_, index) {
                           final cp = availableCheckpoints[index];
                           final isSelected = selected.contains(cp.id);
-                          final assignCount = _getCheckpointAssignmentCount(cp.id);
+                          final assignCount = _getCheckpointAssignmentCount(cp.id, currentNavigatorId: navigatorId, currentSelected: selected);
 
                           return CheckboxListTile(
                             value: isSelected,
