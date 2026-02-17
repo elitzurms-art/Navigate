@@ -39,6 +39,7 @@ dependencies:
   # Networking & Connectivity
   connectivity_plus: ^5.0.2
   http: ^1.2.0
+  archive: ^3.6.1
 
   # SMS (Android) - זמנית מושבת, דורש מכשיר אמיתי (לא עובד על אמולטור)
   # sms_advanced: ^1.0.1
@@ -78,9 +79,8 @@ flutter:
   generate: true
 
   # Assets
-  # assets:
-  #   - assets/images/
-  #   - assets/icons/
+  assets:
+    - assets/elevation/
 
   # Fonts (if needed for Hebrew)
   # fonts:

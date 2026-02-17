@@ -7,6 +7,7 @@ import '../../../core/map_config.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../domain/entities/boundary.dart';
+import '../../../services/elevation_service.dart';
 import '../../../services/tile_cache_service.dart';
 
 /// מסך ניהול מפות אופליין — הורדת אריחים, סטטיסטיקות, ניקוי
@@ -19,6 +20,7 @@ class OfflineMapsScreen extends StatefulWidget {
 
 class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   final _tileCacheService = TileCacheService();
+  final _elevationService = ElevationService();
   final _boundaryRepo = BoundaryRepository();
   final _mapConfig = MapConfig();
 
@@ -45,11 +47,19 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   int _failedTiles = 0;
   StreamSubscription<DownloadProgress>? _downloadSubscription;
 
+  // נתוני גובה — הורדות חו"ל בלבד
+  int _elevTileCount = 0;
+  double _elevSizeMB = 0.0;
+  bool _isElevDownloading = false;
+  int _elevDone = 0;
+  int _elevTotal = 0;
+
   @override
   void initState() {
     super.initState();
     _loadStats();
     _loadBoundaries();
+    _loadElevationStats();
   }
 
   @override
@@ -184,6 +194,85 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
     );
   }
 
+  Future<void> _loadElevationStats() async {
+    final stats = await _elevationService.getDownloadedStats();
+    if (!mounted) return;
+    setState(() {
+      _elevTileCount = stats.tileCount;
+      _elevSizeMB = stats.sizeMB;
+    });
+  }
+
+  Future<void> _startElevationDownload() async {
+    if (_selectedBoundary == null) return;
+
+    final bbox = GeometryUtils.getBoundingBox(_selectedBoundary!.coordinates);
+    final tileCount = _elevationService.countDownloadableTiles(
+      bbox.minLat - 0.01, bbox.minLng - 0.01,
+      bbox.maxLat + 0.01, bbox.maxLng + 0.01,
+    );
+
+    if (tileCount == 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('כל הקבצים לאזור זה כבר קיימים (מוטמעים או הורדו)')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isElevDownloading = true;
+      _elevDone = 0;
+      _elevTotal = tileCount;
+    });
+
+    final stream = _elevationService.downloadRegion(
+      bbox.minLat - 0.01, bbox.minLng - 0.01,
+      bbox.maxLat + 0.01, bbox.maxLng + 0.01,
+    );
+
+    await for (final progress in stream) {
+      if (!mounted) break;
+      setState(() {
+        _elevDone = progress.done;
+        _elevTotal = progress.total;
+      });
+    }
+
+    if (mounted) {
+      setState(() => _isElevDownloading = false);
+      _loadElevationStats();
+    }
+  }
+
+  Future<void> _clearElevationDownloads() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ניקוי נתוני גובה שהורדו'),
+        content: const Text('קבצי גובה שהורדו לחו"ל יימחקו.\nנתוני ישראל המוטמעים לא יושפעו.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('מחיקה', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await _elevationService.clearDownloaded();
+    await _loadElevationStats();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('נתוני הגובה שהורדו נמחקו')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -201,6 +290,8 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
             _buildProgressSection()
           else
             _buildDownloadSection(),
+          const SizedBox(height: 24),
+          _buildElevationSection(),
         ],
       ),
     );
@@ -397,6 +488,121 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
               label: const Text('ביטול', style: TextStyle(color: Colors.red)),
             ),
           ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildElevationSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(
+            children: [
+              Icon(Icons.landscape, color: Colors.brown[400]),
+              const SizedBox(width: 8),
+              Text(
+                'נתוני גובה',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // מידע על נתונים מוטמעים
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green[700], size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'ישראל — נתוני גובה מוטמעים (10 קבצים, ~28MB)',
+                    style: TextStyle(fontSize: 13, color: Colors.green[800], fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // הורדת חו"ל
+          Text(
+            'הורדת נתוני גובה — חו"ל בלבד',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[700],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'לאזורים מחוץ לישראל, ניתן להוריד נתוני גובה לפי גבול גזרה.',
+            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 12),
+
+          if (_elevTileCount > 0) ...[
+            _buildStatRow('קבצים שהורדו', '$_elevTileCount'),
+            _buildStatRow(
+              'גודל',
+              _elevSizeMB < 1
+                  ? '${(_elevSizeMB * 1024).toStringAsFixed(0)} KB'
+                  : '${_elevSizeMB.toStringAsFixed(1)} MB',
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          if (_isElevDownloading) ...[
+            LinearProgressIndicator(
+              value: _elevTotal > 0 ? _elevDone / _elevTotal : null,
+            ),
+            const SizedBox(height: 8),
+            _buildStatRow('הורדו', '$_elevDone / $_elevTotal'),
+          ] else ...[
+            if (_selectedBoundary != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _startElevationDownload,
+                  icon: const Icon(Icons.download),
+                  label: Text(
+                    'הורדת גובה ל-${_selectedBoundary!.name}',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.brown[400],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ] else
+              Text(
+                'בחר גבול גזרה למעלה כדי להוריד',
+                style: TextStyle(color: Colors.grey[500], fontSize: 13),
+              ),
+            if (_elevTileCount > 0) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _clearElevationDownloads,
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  label: const Text('ניקוי נתוני גובה שהורדו',
+                      style: TextStyle(color: Colors.red)),
+                ),
+              ),
+            ],
+          ],
         ]),
       ),
     );

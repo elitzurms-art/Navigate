@@ -1141,6 +1141,7 @@ class SyncManager {
         distributeNow: Value(data['distributeNow'] as bool? ?? false),
         enabledPositionSourcesJson: Value(data['enabledPositionSourcesJson'] as String? ??
             (data['enabledPositionSources'] != null ? jsonEncode(data['enabledPositionSources']) : '["gps","cellTower","pdr","pdrCellHybrid"]')),
+        allowManualPosition: Value(data['allowManualPosition'] as bool? ?? false),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),

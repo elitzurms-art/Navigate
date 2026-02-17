@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/map_config.dart';
 import '../../core/utils/geometry_utils.dart';
 import '../../domain/entities/coordinate.dart';
+import '../../services/elevation_service.dart';
 
 /// מצב מרכוז מפה
 enum CenteringMode { off, northLocked, rotationByHeading }
@@ -44,6 +45,8 @@ class MapControls extends StatefulWidget {
   final VoidCallback? onFullscreen;
   final VoidCallback? onCenterSelf;
   final CenteringMode? centeringMode;
+  final bool elevationEnabled;
+  final LatLng? mapCenter;
 
   const MapControls({
     required this.mapController,
@@ -57,6 +60,8 @@ class MapControls extends StatefulWidget {
     this.onFullscreen,
     this.onCenterSelf,
     this.centeringMode,
+    this.elevationEnabled = false,
+    this.mapCenter,
   });
 
   @override
@@ -115,6 +120,11 @@ class _MapControlsState extends State<MapControls> {
   double _currentRotation = 0.0;
   StreamSubscription? _mapEventSubscription;
 
+  // גובה
+  int? _currentElevation;
+  Timer? _elevationDebounce;
+  final ElevationService _elevationService = ElevationService();
+
   @override
   void initState() {
     super.initState();
@@ -127,11 +137,40 @@ class _MapControlsState extends State<MapControls> {
         });
       }
     });
+    // שאילתת גובה ראשונית
+    if (widget.elevationEnabled && widget.mapCenter != null) {
+      _queryElevation(widget.mapCenter!);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant MapControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.elevationEnabled && widget.mapCenter != oldWidget.mapCenter && widget.mapCenter != null) {
+      _debouncedElevation(widget.mapCenter!);
+    }
+  }
+
+  void _debouncedElevation(LatLng center) {
+    _elevationDebounce?.cancel();
+    _elevationDebounce = Timer(const Duration(milliseconds: 300), () {
+      _queryElevation(center);
+    });
+  }
+
+  Future<void> _queryElevation(LatLng point) async {
+    final elev = await _elevationService.getElevation(point.latitude, point.longitude);
+    if (mounted) {
+      setState(() {
+        _currentElevation = elev;
+      });
+    }
   }
 
   @override
   void dispose() {
     _mapEventSubscription?.cancel();
+    _elevationDebounce?.cancel();
     super.dispose();
   }
 
@@ -146,11 +185,20 @@ class _MapControlsState extends State<MapControls> {
           child: _buildRightColumn(),
         ),
 
-        // חץ צפון — שמאלית עליונה
+        // חץ צפון + גובה — שמאלית עליונה
         Positioned(
           top: 8,
           left: 8,
-          child: _buildNorthArrow(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildNorthArrow(),
+              if (widget.elevationEnabled) ...[
+                const SizedBox(height: 4),
+                _buildElevationBadge(),
+              ],
+            ],
+          ),
         ),
 
         // פאנל שכבות (מוצג מתחת לכפתורים)
@@ -403,6 +451,34 @@ class _MapControlsState extends State<MapControls> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// תיבת גובה — מתחת לחץ צפון
+  Widget _buildElevationBadge() {
+    final text = _currentElevation != null ? '${_currentElevation}מ\'' : '---';
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.landscape, size: 14, color: Colors.brown[400]),
+            const SizedBox(width: 3),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[800],
+              ),
+            ),
+          ],
         ),
       ),
     );

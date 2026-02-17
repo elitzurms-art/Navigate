@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -35,6 +36,8 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
   final List<LatLng> _measurePoints = [];
   final Map<String, bool> _visibility = {};
   final Map<String, double> _opacity = {};
+  LatLng? _mapCenter;
+  StreamSubscription? _mapEventSub;
 
   @override
   void initState() {
@@ -45,6 +48,17 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
         _opacity[config.id] = config.opacity!;
       }
     }
+    _mapCenter = widget.initialCenter;
+    _mapEventSub = _mapController.mapEventStream.listen((event) {
+      final center = _mapController.camera.center;
+      if (mounted) setState(() => _mapCenter = center);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mapEventSub?.cancel();
+    super.dispose();
   }
 
   List<MapLayerConfig> _buildInternalConfigs() {
@@ -95,6 +109,8 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
           ),
           MapControls(
             mapController: _mapController,
+            elevationEnabled: true,
+            mapCenter: _mapCenter,
             layers: _buildInternalConfigs(),
             measureMode: _measureMode,
             onMeasureModeChanged: (v) => setState(() {

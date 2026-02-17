@@ -27,6 +27,7 @@ import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
+import 'manual_position_pin_screen.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -70,6 +71,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _overrideAllowOpenMap = false;
   bool _overrideShowSelfLocation = false;
   bool _overrideShowRouteOnMap = false;
+
+  // דקירת מיקום ידני
+  bool _allowManualPosition = false;
+  bool _manualPositionUsed = false;
+  bool _manualPinPending = false;
 
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
@@ -601,6 +607,51 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // GPS Tracking — שמירה תקופתית ל-DB + סנכרון
   // ===========================================================================
 
+  /// בדיקה והפעלת דקירת מיקום ידני
+  Future<void> _checkAndTriggerManualPin() async {
+    if (_manualPositionUsed || !_allowManualPosition || _manualPinPending) return;
+    if (_personalStatus != NavigatorPersonalStatus.active) return;
+
+    // שלב א — בדיקה אם יש מיקום אחרון טוב
+    final points = _gpsTracker.trackPoints;
+    if (points.isNotEmpty) {
+      final lastPoint = points.last;
+      final age = DateTime.now().difference(lastPoint.timestamp);
+      if (age.inMinutes < 5 && lastPoint.accuracy >= 0 && lastPoint.accuracy < 100) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ממשיך מהמקום האחרון'), backgroundColor: Colors.green),
+          );
+        }
+        return;
+      }
+    }
+
+    // שלב ב — פתיחת מפת דקירה
+    _manualPinPending = true;
+    if (mounted) setState(() {});
+
+    final LatLng? pinnedLocation = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(builder: (_) => const ManualPositionPinScreen()),
+    );
+
+    _manualPinPending = false;
+
+    if (pinnedLocation != null && mounted) {
+      _gpsTracker.recordManualPosition(pinnedLocation.latitude, pinnedLocation.longitude);
+      _manualPositionUsed = true;
+      if (_track != null) {
+        await _trackRepo.markManualPositionUsed(_track!.id);
+      }
+      await _saveTrackPoints();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('מיקום ידני נרשם בהצלחה'), backgroundColor: Colors.deepPurple),
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _startGpsTracking() async {
     final interval = _nav.gpsUpdateIntervalSeconds;
     final started = await _gpsTracker.startTracking(
@@ -649,6 +700,14 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       if (mounted && points.isNotEmpty) {
         setState(() => _trackPointCount = points.length);
+      }
+
+      // בדיקת דקירת מיקום ידני תקופתית
+      if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
+        final pts = _gpsTracker.trackPoints;
+        if (pts.isEmpty || DateTime.now().difference(pts.last.timestamp).inMinutes > 5) {
+          _checkAndTriggerManualPin();
+        }
       }
     } catch (e) {
       print('DEBUG ActiveView: track save error: $e');
@@ -753,6 +812,18 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         widget.onMapPermissionsChanged?.call(
           newAllowOpenMap, newShowSelfLocation, newShowRouteOnMap,
         );
+      }
+
+      // קריאת דריסת דקירת מיקום ידני
+      final newAllowManual = data['overrideAllowManualPosition'] as bool? ?? false;
+      final globalAllow = widget.navigation.allowManualPosition;
+      final effectiveAllow = globalAllow || newAllowManual;
+      if (effectiveAllow && !_allowManualPosition) {
+        _manualPositionUsed = false;
+      }
+      _allowManualPosition = effectiveAllow;
+      if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
+        _checkAndTriggerManualPin();
       }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');
@@ -1016,6 +1087,15 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _startHealthCheck();
       _startAlertMonitoring();
       _startTrackDocListener();
+
+      // דקירת מיקום ידני — בדיקה אחרי 3 שניות
+      if (widget.navigation.allowManualPosition || _allowManualPosition) {
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && _gpsTracker.trackPoints.isEmpty) {
+            _checkAndTriggerManualPin();
+          }
+        });
+      }
 
       setState(() {
         _track = track;

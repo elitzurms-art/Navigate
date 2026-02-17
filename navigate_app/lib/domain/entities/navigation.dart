@@ -322,6 +322,9 @@ class Navigation extends Equatable {
   // Location sources
   final List<String> enabledPositionSources;
 
+  // Manual position
+  final bool allowManualPosition;
+
   // Permissions
   final NavigationPermissions permissions;
 
@@ -370,6 +373,7 @@ class Navigation extends Equatable {
     this.activeStartTime,
     required this.gpsUpdateIntervalSeconds,
     this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+    this.allowManualPosition = false,
     required this.permissions,
     required this.createdAt,
     required this.updatedAt,
@@ -427,6 +431,7 @@ class Navigation extends Equatable {
     DateTime? activeStartTime,
     int? gpsUpdateIntervalSeconds,
     List<String>? enabledPositionSources,
+    bool? allowManualPosition,
     NavigationPermissions? permissions,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -473,6 +478,7 @@ class Navigation extends Equatable {
       activeStartTime: activeStartTime ?? this.activeStartTime,
       gpsUpdateIntervalSeconds: gpsUpdateIntervalSeconds ?? this.gpsUpdateIntervalSeconds,
       enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
+      allowManualPosition: allowManualPosition ?? this.allowManualPosition,
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -526,6 +532,7 @@ class Navigation extends Equatable {
         'activeStartTime': activeStartTime!.toIso8601String(),
       'gpsUpdateIntervalSeconds': gpsUpdateIntervalSeconds,
       'enabledPositionSources': enabledPositionSources,
+      'allowManualPosition': allowManualPosition,
       'permissions': permissions.toMap(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -599,6 +606,7 @@ class Navigation extends Equatable {
       activeStartTime: _parseDateTimeOrNull(map['activeStartTime']),
       gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 30,
       enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+      allowManualPosition: map['allowManualPosition'] as bool? ?? false,
       permissions: NavigationPermissions.fromMap(
         map['permissions'] as Map<String, dynamic>,
       ),
@@ -650,6 +658,7 @@ class Navigation extends Equatable {
     activeStartTime,
     gpsUpdateIntervalSeconds,
     enabledPositionSources,
+    allowManualPosition,
     permissions,
     createdAt,
     updatedAt,

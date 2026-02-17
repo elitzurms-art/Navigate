@@ -529,6 +529,11 @@ class GPSTrackingService {
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
   }
 
+  /// רישום מיקום ידני (דקירה במפה)
+  void recordManualPosition(double lat, double lng) {
+    _recordPointFromLatLng(lat, lng, -1, positionSource: 'manual');
+  }
+
   /// המרה ל-UTM (פשוט)
   String _convertToUTM(double lat, double lng) {
     const zone = 36;

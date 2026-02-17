@@ -101,6 +101,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _allowOpenMap = false;
   bool _showSelfLocation = false;
   bool _showRouteOnMap = false;
+  bool _allowManualPosition = false;
 
   // הגדרות תצוגה
   String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
@@ -369,6 +370,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _allowOpenMap = nav.allowOpenMap;
     _showSelfLocation = nav.showSelfLocation;
     _showRouteOnMap = nav.showRouteOnMap;
+    _allowManualPosition = nav.allowManualPosition;
 
     // הגדרות תצוגה
     _defaultMapType = nav.displaySettings.defaultMap ?? 'topographic';
@@ -990,6 +992,14 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 },
               ),
             ],
+            const Divider(),
+            SwitchListTile(
+              secondary: const Icon(Icons.push_pin, color: Colors.deepPurple),
+              title: const Text('אפשר דקירת מיקום עצמי'),
+              subtitle: const Text('כאשר אין GPS ואמצעים חלופיים'),
+              value: _allowManualPosition,
+              onChanged: (value) => setState(() => _allowManualPosition = value),
+            ),
           ],
         ),
       ),
@@ -1717,6 +1727,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         activeStartTime: widget.navigation?.activeStartTime,
         gpsUpdateIntervalSeconds: _gpsUpdateInterval,
         enabledPositionSources: _buildEnabledPositionSources(),
+        allowManualPosition: _allowManualPosition,
         permissions: widget.navigation?.permissions ?? domain.NavigationPermissions(
           managers: [currentUser.uid],
           viewers: [],

@@ -190,6 +190,7 @@ class Navigations extends Table {
   BoolColumn get routesDistributed => boolean().withDefault(const Constant(false))(); // האם חולקו צירים
   IntColumn get gpsUpdateIntervalSeconds => integer()();
   TextColumn get enabledPositionSourcesJson => text().withDefault(const Constant('["gps","cellTower","pdr","pdrCellHybrid"]'))();
+  BoolColumn get allowManualPosition => boolean().withDefault(const Constant(false))();
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
@@ -216,6 +217,9 @@ class NavigationTracks extends Table {
   BoolColumn get overrideAllowOpenMap => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideShowSelfLocation => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideShowRouteOnMap => boolean().withDefault(const Constant(false))();
+  BoolColumn get overrideAllowManualPosition => boolean().withDefault(const Constant(false))();
+  BoolColumn get manualPositionUsed => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get manualPositionUsedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -383,7 +387,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration {
@@ -550,6 +554,12 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 21 && to >= 22) {
           await m.addColumn(navigations, navigations.enabledPositionSourcesJson);
+        }
+        if (from <= 22 && to >= 23) {
+          await m.addColumn(navigations, navigations.allowManualPosition);
+          await m.addColumn(navigationTracks, navigationTracks.overrideAllowManualPosition);
+          await m.addColumn(navigationTracks, navigationTracks.manualPositionUsed);
+          await m.addColumn(navigationTracks, navigationTracks.manualPositionUsedAt);
         }
       },
     );

@@ -22,9 +22,15 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/session_service.dart';
+import '../../../domain/entities/navigation_tree.dart';
+import '../../../domain/entities/hat_type.dart';
+import '../../../domain/entities/unit.dart' as domain_unit;
 import '../../../domain/entities/user.dart' as app_user;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
@@ -98,6 +104,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideAllowOpenMap = {};
   final Map<String, bool> _navigatorOverrideShowSelfLocation = {};
   final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
+  final Map<String, bool> _navigatorOverrideAllowManualPosition = {};
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
   bool _isUpdatingOverrides = false; // מניעת דריסה ע"י listener בזמן עדכון
 
@@ -114,6 +121,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // שמות משתמשים (מנווטים + מפקדים)
   Map<String, String> _userNames = {};
   app_user.User? _currentUser;
+
+  // קיבוץ מנווטים לפי תת-מסגרות
+  NavigationTree? _navigationTree;
+  HatInfo? _currentHat;
+  Map<String, domain_unit.Unit> _unitCache = {};
+  Set<String> _visibleUnitIds = {};
+  Set<String> _lockedSubFrameworks = {};
 
   // מיקום עצמי של המפקד
   LatLng? _selfPosition;
@@ -260,10 +274,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       }
     }
 
-    // טעינת מפקדים מהעץ
+    // טעינת מפקדים מהעץ + קיבוץ תת-מסגרות
     final treeRepo = NavigationTreeRepository();
     final tree = await treeRepo.getById(widget.navigation.treeId);
     if (tree != null) {
+      _navigationTree = tree;
       for (final sf in tree.subFrameworks) {
         if (sf.name.contains('מפקדים')) {
           for (final uid in sf.userIds) {
@@ -274,6 +289,35 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           }
           break;
         }
+      }
+
+      // טעינת כובע נוכחי + חישוב יחידות גלויות
+      final unitRepo = UnitRepository();
+      _currentHat = await SessionService().getSavedSession();
+      if (_currentHat != null &&
+          _currentHat!.type != HatType.admin) {
+        final hatUnitId = _currentHat!.unitId;
+        final descendants = await unitRepo.getDescendantIds(hatUnitId);
+        _visibleUnitIds = {hatUnitId, ...descendants};
+      }
+
+      // טעינת פרטי יחידות לכל ה-SF unitIds
+      final unitIds = tree.subFrameworks
+          .map((sf) => sf.unitId)
+          .whereType<String>()
+          .toSet();
+      for (final uid in unitIds) {
+        if (!_unitCache.containsKey(uid)) {
+          final unit = await unitRepo.getById(uid);
+          if (unit != null) _unitCache[uid] = unit;
+        }
+      }
+
+      // טעינת SF נעולים מ-SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final lockedList = prefs.getStringList('locked_sfs_${widget.navigation.id}');
+      if (lockedList != null) {
+        _lockedSubFrameworks = lockedList.toSet();
       }
     }
 
@@ -876,6 +920,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
         // קריאת isDisqualified מה-track doc
         liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
+        liveData.manualPositionUsed = data['manualPositionUsed'] as bool? ?? false;
 
         // cache trackId + קריאת דריסות מפה (רק אם לא באמצע עדכון מקומי)
         _navigatorTrackIds[navigatorId] = doc.id;
@@ -883,6 +928,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
           _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
           _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
+          _navigatorOverrideAllowManualPosition[navigatorId] = data['overrideAllowManualPosition'] as bool? ?? false;
         }
 
         // קריאת forcePositionSource מה-track doc
@@ -2251,103 +2297,288 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
           ),
 
-        // כרטיסי מנווטים
-        ..._navigatorData.entries.map((entry) {
-          final navigatorId = entry.key;
-          final data = entry.value;
-          final statusColor = _getNavigatorStatusColor(data);
-          final arrivals = _getCheckpointArrivals(data);
-          final reachedCount = arrivals.where((a) => a.reached).length;
-          final totalCheckpoints = arrivals.length;
+        // כרטיסי מנווטים — מקובצים לפי תת-מסגרת
+        ..._buildGroupedNavigatorCards(),
+      ],
+    );
+  }
 
-          return Card(
-            margin: const EdgeInsets.only(bottom: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-              side: data.hasActiveAlert
-                  ? const BorderSide(color: Colors.red, width: 2)
-                  : BorderSide.none,
+  /// בניית כרטיסי מנווטים מקובצים לפי יחידה → תת-מסגרת
+  List<Widget> _buildGroupedNavigatorCards() {
+    if (_navigationTree == null) {
+      // fallback — רשימה שטוחה אם אין עץ
+      return _navigatorData.entries.map((e) => _buildNavigatorCard(e.key, e.value)).toList();
+    }
+
+    // 1. תתי-מסגרות שנבחרו לניווט
+    final selectedSFs = _navigationTree!.subFrameworks
+        .where((sf) => widget.navigation.selectedSubFrameworkIds.contains(sf.id))
+        .toList();
+
+    // 2. סינון לפי הרשאות — יחידות גלויות
+    final visibleSFs = _visibleUnitIds.isEmpty
+        ? selectedSFs
+        : selectedSFs.where((sf) => sf.unitId == null || _visibleUnitIds.contains(sf.unitId)).toList();
+
+    // 3. קיבוץ לפי unitId
+    final grouped = <String, List<SubFramework>>{};
+    for (final sf in visibleSFs) {
+      final key = sf.unitId ?? 'unknown';
+      grouped.putIfAbsent(key, () => []).add(sf);
+    }
+
+    // 4. מיון יחידות — רמה נמוכה (הורה) לפני גבוהה (ילד)
+    final orderedUnitIds = grouped.keys.toList()
+      ..sort((a, b) => (_unitCache[a]?.level ?? 0).compareTo(_unitCache[b]?.level ?? 0));
+
+    // 5. איסוף מנווטים ששייכים לתת-מסגרת כלשהי
+    final assignedNavigatorIds = <String>{};
+    for (final sf in visibleSFs) {
+      for (final uid in sf.userIds) {
+        if (_navigatorData.containsKey(uid)) {
+          assignedNavigatorIds.add(uid);
+        }
+      }
+    }
+
+    // 6. בניית widgets
+    final widgets = <Widget>[];
+
+    for (final unitId in orderedUnitIds) {
+      final unit = _unitCache[unitId];
+      // כותרת יחידה
+      widgets.add(_buildUnitGroupHeader(unitId, unit));
+
+      for (final sf in grouped[unitId]!) {
+        final sfNavigators = _navigatorData.entries
+            .where((e) => sf.userIds.contains(e.key))
+            .toList();
+        if (sfNavigators.isEmpty) continue;
+        widgets.add(_buildSubFrameworkSection(sf, sfNavigators));
+      }
+    }
+
+    // 7. מנווטים שלא שייכים לתת-מסגרת — "אחר"
+    final unassigned = _navigatorData.entries
+        .where((e) => !assignedNavigatorIds.contains(e.key))
+        .toList();
+    if (unassigned.isNotEmpty) {
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4, right: 4),
+        child: Row(
+          children: [
+            Icon(Icons.people_outline, size: 18, color: Colors.grey[600]),
+            const SizedBox(width: 6),
+            Text('אחר', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey[700])),
+            const SizedBox(width: 6),
+            Text('(${unassigned.length})', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+          ],
+        ),
+      ));
+      for (final entry in unassigned) {
+        widgets.add(_buildNavigatorCard(entry.key, entry.value));
+      }
+    }
+
+    return widgets;
+  }
+
+  /// כותרת קבוצת יחידה
+  Widget _buildUnitGroupHeader(String unitId, domain_unit.Unit? unit) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 2, right: 4),
+      child: Row(
+        children: [
+          Icon(
+            unit?.getIcon() ?? Icons.business,
+            size: 18,
+            color: Theme.of(context).primaryColor,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              unit?.name ?? unitId,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).primaryColor,
+              ),
             ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => _showEnhancedNavigatorDetails(navigatorId, data),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header: icon + name + stop button
-                    Row(
-                      children: [
-                        Icon(_getStatusIcon(data), color: statusColor, size: 28),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            navigatorId,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        if (data.isDisqualified)
-                          Container(
-                            margin: const EdgeInsets.only(left: 4),
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text('נפסל',
-                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                          ),
-                        if (data.hasActiveAlert)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.warning, color: Colors.red, size: 18),
-                          ),
-                        _buildNavigatorActionsMenu(navigatorId, data),
-                      ],
-                    ),
-                    // Stats row (only if active or finished with track data)
-                    if (data.trackPoints.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 4,
-                        children: [
-                          _statChip(
-                            Icons.speed,
-                            '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש',
-                          ),
-                          _statChip(
-                            Icons.route,
-                            '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ',
-                          ),
-                          _statChip(
-                            Icons.timer,
-                            _formatDuration(data.elapsedTime),
-                          ),
-                          if (totalCheckpoints > 0)
-                            _statChip(
-                              Icons.flag,
-                              '$reachedCount/$totalCheckpoints נ"צ',
-                            ),
-                        ],
-                      ),
-                    ],
-                    // Last update
-                    if (data.lastUpdate != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'עדכון לפני ${_formatTimeSince(data.timeSinceLastUpdate)}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                      ),
-                    ],
-                  ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// קטע תת-מסגרת עם ExpansionTile + נעילה
+  Widget _buildSubFrameworkSection(
+    SubFramework sf,
+    List<MapEntry<String, NavigatorLiveData>> navigators,
+  ) {
+    final isLocked = _lockedSubFrameworks.contains(sf.id);
+    final activeInSf = navigators.where((e) =>
+        e.value.personalStatus == NavigatorPersonalStatus.active).length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 4, right: 8),
+      child: ExpansionTile(
+        key: isLocked ? ValueKey('locked_${sf.id}') : ValueKey(sf.id),
+        initiallyExpanded: isLocked,
+        maintainState: true,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                sf.name,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: activeInSf > 0
+                    ? Colors.green.withValues(alpha: 0.15)
+                    : Colors.grey.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$activeInSf/${navigators.length}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: activeInSf > 0 ? Colors.green[700] : Colors.grey[600],
                 ),
               ),
             ),
-          );
-        }),
-      ],
+          ],
+        ),
+        trailing: IconButton(
+          icon: Icon(
+            isLocked ? Icons.lock : Icons.lock_open,
+            size: 18,
+            color: isLocked ? Theme.of(context).primaryColor : Colors.grey,
+          ),
+          onPressed: () => _toggleSubFrameworkLock(sf.id),
+          tooltip: isLocked ? 'שחרר נעילה' : 'נעל פתוח',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        ),
+        children: navigators.map((entry) {
+          return _buildNavigatorCard(entry.key, entry.value);
+        }).toList(),
+      ),
+    );
+  }
+
+  /// טוגל נעילת תת-מסגרת
+  Future<void> _toggleSubFrameworkLock(String sfId) async {
+    setState(() {
+      if (_lockedSubFrameworks.contains(sfId)) {
+        _lockedSubFrameworks.remove(sfId);
+      } else {
+        _lockedSubFrameworks.add(sfId);
+      }
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'locked_sfs_${widget.navigation.id}',
+      _lockedSubFrameworks.toList(),
+    );
+  }
+
+  /// כרטיס מנווט בודד
+  Widget _buildNavigatorCard(String navigatorId, NavigatorLiveData data) {
+    final statusColor = _getNavigatorStatusColor(data);
+    final arrivals = _getCheckpointArrivals(data);
+    final reachedCount = arrivals.where((a) => a.reached).length;
+    final totalCheckpoints = arrivals.length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: data.hasActiveAlert
+            ? const BorderSide(color: Colors.red, width: 2)
+            : BorderSide.none,
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _showEnhancedNavigatorDetails(navigatorId, data),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header: icon + name + stop button
+              Row(
+                children: [
+                  Icon(_getStatusIcon(data), color: statusColor, size: 28),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _userNames[navigatorId] ?? navigatorId,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  if (data.isDisqualified)
+                    Container(
+                      margin: const EdgeInsets.only(left: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('נפסל',
+                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ),
+                  if (data.hasActiveAlert)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4),
+                      child: Icon(Icons.warning, color: Colors.red, size: 18),
+                    ),
+                  _buildNavigatorActionsMenu(navigatorId, data),
+                ],
+              ),
+              // Stats row (only if active or finished with track data)
+              if (data.trackPoints.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  children: [
+                    _statChip(
+                      Icons.speed,
+                      '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש',
+                    ),
+                    _statChip(
+                      Icons.route,
+                      '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ',
+                    ),
+                    _statChip(
+                      Icons.timer,
+                      _formatDuration(data.elapsedTime),
+                    ),
+                    if (totalCheckpoints > 0)
+                      _statChip(
+                        Icons.flag,
+                        '$reachedCount/$totalCheckpoints נ"צ',
+                      ),
+                  ],
+                ),
+              ],
+              // Last update
+              if (data.lastUpdate != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'עדכון לפני ${_formatTimeSince(data.timeSinceLastUpdate)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -2593,6 +2824,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       final isCentered = (_centeredNavigatorId == navigatorId && _centeringMode != CenteringMode.off)
           || _oneTimeCenteredNavigatorId == navigatorId;
 
+      final isManualPin = data.trackPoints.isNotEmpty && data.trackPoints.last.positionSource == 'manual';
+
       Widget markerChild = Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2620,6 +2853,29 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ),
         ],
       );
+
+      // סימון דקירה ידנית
+      if (isManualPin) {
+        markerChild = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.push_pin, color: Colors.deepPurple, size: 24),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.shade50,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.deepPurple, width: 1.5),
+              ),
+              child: Text(
+                _userNames[navigatorId] ?? navigatorId,
+                style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+      }
 
       // טבעת כחולה זוהרת למנווט נעקב
       if (isCentered) {
@@ -2872,6 +3128,27 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           },
                         ),
 
+                      // 7. דקירת מיקום ידני
+                      const Divider(height: 16),
+                      const Text('מיקום', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      SwitchListTile(
+                        title: const Text('אפשר דקירת מיקום עצמי', style: TextStyle(fontSize: 13)),
+                        subtitle: Text(
+                          (data.manualPositionUsed) ? 'נעשה שימוש — הפעלה מחדש תאפס' : 'לא נעשה שימוש',
+                          style: TextStyle(fontSize: 11, color: data.manualPositionUsed ? Colors.orange : Colors.grey),
+                        ),
+                        secondary: const Icon(Icons.push_pin, color: Colors.deepPurple, size: 20),
+                        value: _navigatorOverrideAllowManualPosition[navigatorId] ?? false,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (v) {
+                          setState(() => _navigatorOverrideAllowManualPosition[navigatorId] = v);
+                          setSheetState(() {});
+                          _updateNavigatorManualPositionOverride(navigatorId);
+                        },
+                      ),
+
                       // 5. התראות פר-מנווט
                       if (alerts.enabled) ...[
                         const Divider(height: 16),
@@ -3036,6 +3313,31 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       await Future.delayed(const Duration(milliseconds: 500));
       _isUpdatingOverrides = false;
     }
+  }
+
+  Future<void> _updateNavigatorManualPositionOverride(String navigatorId) async {
+    String? trackId = _navigatorTrackIds[navigatorId];
+    if (trackId == null) {
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: widget.navigation.id)
+            .where('navigatorUserId', isEqualTo: navigatorId)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          trackId = snapshot.docs.first.id;
+          _navigatorTrackIds[navigatorId] = trackId;
+        }
+      } catch (_) {}
+    }
+    if (trackId == null) return;
+    try {
+      await _trackRepo.updateManualPositionOverride(
+        trackId,
+        allowManualPosition: _navigatorOverrideAllowManualPosition[navigatorId] ?? false,
+      );
+    } catch (_) {}
   }
 
   String _positionSourceLabel(String source) {
@@ -3636,6 +3938,7 @@ class NavigatorLiveData {
   bool isGpsPlusFix;
   bool isForceCell; // כפיית מקור מיקום אנטנות ע"י מפקד
   bool isDisqualified; // מנווט נפסל (פריצת אבטחה)
+  bool manualPositionUsed;
   LatLng? currentPosition;
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
@@ -3649,6 +3952,7 @@ class NavigatorLiveData {
     this.isGpsPlusFix = false,
     this.isForceCell = false,
     this.isDisqualified = false,
+    this.manualPositionUsed = false,
     this.currentPosition,
     required this.trackPoints,
     required this.punches,

@@ -61,6 +61,13 @@ class NavigationTrackRepository {
         overrideAllowOpenMap: data['overrideAllowOpenMap'] as bool? ?? false,
         overrideShowSelfLocation: data['overrideShowSelfLocation'] as bool? ?? false,
         overrideShowRouteOnMap: data['overrideShowRouteOnMap'] as bool? ?? false,
+        overrideAllowManualPosition: data['overrideAllowManualPosition'] as bool? ?? false,
+        manualPositionUsed: data['manualPositionUsed'] as bool? ?? false,
+        manualPositionUsedAt: data['manualPositionUsedAt'] != null
+            ? (data['manualPositionUsedAt'] is Timestamp
+                ? (data['manualPositionUsedAt'] as Timestamp).toDate()
+                : DateTime.tryParse(data['manualPositionUsedAt'].toString()))
+            : null,
       );
     }).toList();
   }
@@ -135,6 +142,9 @@ class NavigationTrackRepository {
         'overrideAllowOpenMap': track.overrideAllowOpenMap,
         'overrideShowSelfLocation': track.overrideShowSelfLocation,
         'overrideShowRouteOnMap': track.overrideShowRouteOnMap,
+        'overrideAllowManualPosition': track.overrideAllowManualPosition,
+        'manualPositionUsed': track.manualPositionUsed,
+        'manualPositionUsedAt': track.manualPositionUsedAt?.toIso8601String(),
       },
       priority: SyncPriority.high,
     );
@@ -209,6 +219,42 @@ class NavigationTrackRepository {
     } catch (_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
     }
+  }
+
+  /// עדכון דריסת הגדרת דקירת מיקום ידני פר-מנווט (Drift + Firestore)
+  Future<void> updateManualPositionOverride(String trackId, {required bool allowManualPosition}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideAllowManualPosition: Value(allowManualPosition),
+      manualPositionUsed: const Value(false),
+      manualPositionUsedAt: const Value(null),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({
+        'overrideAllowManualPosition': allowManualPosition,
+        'manualPositionUsed': false,
+        'manualPositionUsedAt': null,
+      });
+    } catch (_) {}
+  }
+
+  /// סימון שנעשה שימוש בדקירת מיקום ידני (Drift + Firestore)
+  Future<void> markManualPositionUsed(String trackId) async {
+    final now = DateTime.now();
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      manualPositionUsed: const Value(true),
+      manualPositionUsedAt: Value(now),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'manualPositionUsed': true, 'manualPositionUsedAt': now.toIso8601String()});
+    } catch (_) {}
   }
 
   /// מחיקת tracks למנווט ספציפי בניווט ספציפי (לשימוש מפקד — התחלה/איפוס)

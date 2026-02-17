@@ -103,6 +103,7 @@ class NavigationRepository {
               activeStartTime: Value(navigation.activeStartTime),
               gpsUpdateIntervalSeconds: navigation.gpsUpdateIntervalSeconds,
               enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
+              allowManualPosition: Value(navigation.allowManualPosition),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -173,6 +174,7 @@ class NavigationRepository {
           activeStartTime: Value(navigation.activeStartTime),
           gpsUpdateIntervalSeconds: Value(navigation.gpsUpdateIntervalSeconds),
           enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
+          allowManualPosition: Value(navigation.allowManualPosition),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -316,6 +318,7 @@ class NavigationRepository {
       enabledPositionSources: data.enabledPositionSourcesJson.isNotEmpty
           ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
           : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+      allowManualPosition: data.allowManualPosition,
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)
           : const domain.NavigationPermissions(managers: [], viewers: []),
@@ -737,6 +740,7 @@ class NavigationRepository {
           activeStartTime: Value(nav.activeStartTime),
           gpsUpdateIntervalSeconds: Value(nav.gpsUpdateIntervalSeconds),
           enabledPositionSourcesJson: Value(jsonEncode(nav.enabledPositionSources)),
+          allowManualPosition: Value(nav.allowManualPosition),
           permissionsJson: Value(jsonEncode(nav.permissions.toMap())),
           updatedAt: Value(nav.updatedAt),
         ),
