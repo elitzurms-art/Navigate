@@ -438,11 +438,12 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           if (_state != NavigatorScreenState.notAssigned) ...[
             const Divider(),
 
-            // ציונים
-            _buildScoresDrawerItem(),
+            // ציונים — לא מוצג במצב ניווט פעיל
+            if (!isActive)
+              _buildScoresDrawerItem(),
 
-            // היסטוריית ניווטים — בפיתוח
-            ListTile(
+            // היסטוריית ניווטים — לא מוצג במצב ניווט פעיל
+            if (!isActive) ListTile(
               leading: const Icon(Icons.history, color: Colors.grey),
               title: const Text('היסטוריית ניווטים'),
               subtitle: const Text('בפיתוח'),
@@ -472,8 +473,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                   },
                 ),
 
-              // ציר ניווט — רק אם showRouteOnMap (ברמת ניווט או דריסה)
-              if (nav.showRouteOnMap || _perNavigatorShowRouteOnMap)
+              // ציר ניווט — רק אם showSelfLocation + showRouteOnMap (ברמת ניווט או דריסה)
+              if ((nav.showSelfLocation || _perNavigatorShowSelfLocation) &&
+                  (nav.showRouteOnMap || _perNavigatorShowRouteOnMap))
                 ListTile(
                   leading: const Icon(Icons.route, color: Colors.orange),
                   title: const Text('ציר ניווט'),

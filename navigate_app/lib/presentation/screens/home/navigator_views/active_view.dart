@@ -1504,54 +1504,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               ],
             ),
           ),
-        // כפתור בקשת הארכה (בפיתוח)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.timer),
-              label: const Text(
-                'בקשת הארכה — בפיתוח',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purple,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: Colors.purple.withOpacity(0.5),
-                disabledForegroundColor: Colors.white70,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ),
-        // כפתור סיום ניווט
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _endNavigation,
-              icon: const Icon(Icons.stop),
-              label: const Text(
-                'סיום ניווט',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ),
         // 2×2 grid
         Expanded(
           child: Padding(
@@ -1589,6 +1541,55 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             ),
           ),
         ),
+        // כפתור בקשת הארכה (בפיתוח)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.timer),
+              label: const Text(
+                'בקשת הארכה — בפיתוח',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.purple.withOpacity(0.5),
+                disabledForegroundColor: Colors.white70,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // כפתור סיום ניווט — 1.5 ס"מ לפחות מעל קצה העמוד
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _endNavigation,
+              icon: const Icon(Icons.stop),
+              label: const Text(
+                'סיום ניווט',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 95),
       ],
     );
   }
@@ -1633,9 +1634,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   Widget _buildActiveStatusBar() {
     final route = _route;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(12, 12, 16, 12),
       color: Theme.of(context).primaryColor.withOpacity(0.1),
-      child: Row(
+      child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(
         children: [
           // שעון זמן שחלף
           Container(
@@ -1683,7 +1684,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           const SizedBox(width: 12),
           _buildGpsChip(),
         ],
-      ),
+      )),
     );
   }
 
