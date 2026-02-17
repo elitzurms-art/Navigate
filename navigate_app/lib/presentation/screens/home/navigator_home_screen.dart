@@ -39,6 +39,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   String? _error;
   NavigationScore? _navigatorScore;
 
+  // דריסות מפה פר-מנווט (מהמפקד)
+  bool _perNavigatorAllowOpenMap = false;
+  bool _perNavigatorShowSelfLocation = false;
+  bool _perNavigatorShowRouteOnMap = false;
+
   Timer? _pollTimer;
   Timer? _scorePollTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
@@ -360,6 +365,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       MaterialPageRoute(
         builder: (context) => NavigatorMapScreen(
           navigation: _currentNavigation!,
+          currentUser: _currentUser!,
           showSelfLocation: showSelfLocation,
           showRoute: showRoute,
         ),
@@ -443,8 +449,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
               enabled: false,
             ),
 
-            // מפה פתוחה — רק במצב active + allowOpenMap
-            if (isActive && nav != null && nav.allowOpenMap) ...[
+            // מפה פתוחה — רק במצב active + (allowOpenMap ברמת ניווט או דריסה פר-מנווט)
+            if (isActive && nav != null && (nav.allowOpenMap || _perNavigatorAllowOpenMap)) ...[
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.map, color: Colors.blue),
@@ -455,8 +461,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                 },
               ),
 
-              // ניווט עם מיקום — רק אם showSelfLocation
-              if (nav.showSelfLocation)
+              // ניווט עם מיקום — רק אם showSelfLocation (ברמת ניווט או דריסה)
+              if (nav.showSelfLocation || _perNavigatorShowSelfLocation)
                 ListTile(
                   leading: const Icon(Icons.my_location, color: Colors.green),
                   title: const Text('ניווט עם מיקום'),
@@ -466,15 +472,15 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                   },
                 ),
 
-              // ציר ניווט — רק אם showRouteOnMap
-              if (nav.showRouteOnMap)
+              // ציר ניווט — רק אם showRouteOnMap (ברמת ניווט או דריסה)
+              if (nav.showRouteOnMap || _perNavigatorShowRouteOnMap)
                 ListTile(
                   leading: const Icon(Icons.route, color: Colors.orange),
                   title: const Text('ציר ניווט'),
                   onTap: () {
                     Navigator.pop(context);
                     _openMapScreen(
-                      showSelfLocation: nav.showSelfLocation,
+                      showSelfLocation: nav.showSelfLocation || _perNavigatorShowSelfLocation,
                       showRoute: true,
                     );
                   },
@@ -746,10 +752,19 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         );
       case NavigatorScreenState.active:
         return ActiveView(
-          key: ValueKey('active_${_currentNavigation!.id}_${_currentNavigation!.updatedAt}'),
+          key: ValueKey('active_${_currentNavigation!.id}'),
           navigation: _currentNavigation!,
           currentUser: _currentUser!,
           onNavigationUpdated: _onNavigationUpdated,
+          onMapPermissionsChanged: (allowOpenMap, showSelfLocation, showRouteOnMap) {
+            if (mounted) {
+              setState(() {
+                _perNavigatorAllowOpenMap = allowOpenMap;
+                _perNavigatorShowSelfLocation = showSelfLocation;
+                _perNavigatorShowRouteOnMap = showRouteOnMap;
+              });
+            }
+          },
         );
       case NavigatorScreenState.review:
         return ReviewView(

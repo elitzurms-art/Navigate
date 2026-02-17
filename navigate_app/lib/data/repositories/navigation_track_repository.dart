@@ -58,6 +58,9 @@ class NavigationTrackRepository {
             : null,
         isActive: data['isActive'] as bool? ?? false,
         isDisqualified: data['isDisqualified'] as bool? ?? false,
+        overrideAllowOpenMap: data['overrideAllowOpenMap'] as bool? ?? false,
+        overrideShowSelfLocation: data['overrideShowSelfLocation'] as bool? ?? false,
+        overrideShowRouteOnMap: data['overrideShowRouteOnMap'] as bool? ?? false,
       );
     }).toList();
   }
@@ -129,6 +132,9 @@ class NavigationTrackRepository {
         'endedAt': track.endedAt?.toIso8601String(),
         'isActive': track.isActive,
         'isDisqualified': track.isDisqualified,
+        'overrideAllowOpenMap': track.overrideAllowOpenMap,
+        'overrideShowSelfLocation': track.overrideShowSelfLocation,
+        'overrideShowRouteOnMap': track.overrideShowRouteOnMap,
       },
       priority: SyncPriority.high,
     );
@@ -149,6 +155,57 @@ class NavigationTrackRepository {
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
           .update({'isDisqualified': true});
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
+  }
+
+  /// ביטול פסילת מנווט — סימון isDisqualified=false ב-Drift + Firestore
+  Future<void> undoDisqualification(String trackId) async {
+    // עדכון ב-Drift
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(const NavigationTracksCompanion(
+      isDisqualified: Value(false),
+    ));
+
+    // עדכון ישיר ב-Firestore
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'isDisqualified': false});
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
+  }
+
+  /// עדכון דריסות הגדרות מפה פר-מנווט (Drift + Firestore)
+  Future<void> updateMapOverrides(
+    String trackId, {
+    required bool allowOpenMap,
+    required bool showSelfLocation,
+    required bool showRouteOnMap,
+  }) async {
+    // עדכון ב-Drift
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideAllowOpenMap: Value(allowOpenMap),
+      overrideShowSelfLocation: Value(showSelfLocation),
+      overrideShowRouteOnMap: Value(showRouteOnMap),
+    ));
+
+    // עדכון ישיר ב-Firestore
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({
+        'overrideAllowOpenMap': allowOpenMap,
+        'overrideShowSelfLocation': showSelfLocation,
+        'overrideShowRouteOnMap': showRouteOnMap,
+      });
     } catch (_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
     }

@@ -94,6 +94,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _showPlannedAxis = {};
   // דריסות התראות פר-מנווט: navigatorId -> { AlertType -> enabled }
   final Map<String, Map<AlertType, bool>> _navigatorAlertOverrides = {};
+  // דריסות הגדרות מפה פר-מנווט
+  final Map<String, bool> _navigatorOverrideAllowOpenMap = {};
+  final Map<String, bool> _navigatorOverrideShowSelfLocation = {};
+  final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
+  final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
 
   // כפיית מקור מיקום גלובלי
   String _globalForcePositionSource = 'auto';
@@ -218,6 +223,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       );
       _showNavigatorTrack[navigatorId] = false;
       _showPlannedAxis[navigatorId] = false;
+      _navigatorOverrideAllowOpenMap[navigatorId] = false;
+      _navigatorOverrideShowSelfLocation[navigatorId] = false;
+      _navigatorOverrideShowRouteOnMap[navigatorId] = false;
 
       // ברירת מחדל טוגלי התראות — נגזר מהגדרות הניווט
       _navigatorAlertOverrides[navigatorId] = {};
@@ -348,10 +356,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             // מנווט שסיים — לא לדרוס סטטוס finished
             if (data.personalStatus == NavigatorPersonalStatus.finished) {
               data.hasActiveAlert = hasAlert;
-              // עדכון דקירות בלבד
+              // עדכון דקירות + isDisqualified בלבד
               final localPunches = punchMap[navigatorId] ?? [];
               if (localPunches.isNotEmpty) {
                 data.punches = localPunches;
+              }
+              // קריאת isDisqualified מ-track מקומי (אם קיים)
+              final finishedTrack = trackMap[navigatorId];
+              if (finishedTrack != null) {
+                data.isDisqualified = finishedTrack.isDisqualified;
               }
               continue;
             }
@@ -825,7 +838,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
         // מנווט שסיים ידנית — לא לדרוס סטטוס finished
         if (liveData.personalStatus == NavigatorPersonalStatus.finished) {
-          // עדכון נקודות מסלול בלבד (לא סטטוס)
+          // עדכון נקודות מסלול + isDisqualified (לא סטטוס)
           final trackPointsRaw = data['trackPointsJson'];
           if (trackPointsRaw != null && trackPointsRaw is String && trackPointsRaw.isNotEmpty) {
             try {
@@ -835,6 +848,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                   .toList();
             } catch (_) {}
           }
+          liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
           continue;
         }
 
@@ -874,6 +888,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           isActive: isActive,
           endedAt: endedAt,
         );
+
+        // קריאת isDisqualified מה-track doc
+        liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
+
+        // cache trackId + קריאת דריסות מפה
+        _navigatorTrackIds[navigatorId] = doc.id;
+        _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
+        _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
+        _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
 
         // קריאת forcePositionSource מה-track doc
         final trackForceSource = data['forcePositionSource'] as String?;
@@ -1115,6 +1138,82 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
   }
 
+  /// ביטול פסילה — שמירת נתונים, מנווט מקבל ציון רגיל
+  Future<void> _undoDisqualification(String navigatorId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ביטול פסילה'),
+        content: Text(
+          'לבטל את פסילת $navigatorId?\n\n'
+          'הנתונים יישמרו והמנווט יקבל ציון רגיל.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.green),
+            child: const Text('בטל פסילה'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // מציאת track ID מ-Firestore
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: widget.navigation.id)
+          .where('navigatorUserId', isEqualTo: navigatorId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('לא נמצא track למנווט'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final trackId = snapshot.docs.first.id;
+      await _trackRepo.undoDisqualification(trackId);
+
+      if (mounted) {
+        setState(() {
+          final data = _navigatorData[navigatorId];
+          if (data != null) {
+            data.isDisqualified = false;
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('הפסילה של $navigatorId בוטלה'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בביטול פסילה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// תפריט פעולות פר-מנווט (3-dot menu)
   Widget _buildNavigatorActionsMenu(String navigatorId, NavigatorLiveData data, {VoidCallback? onBeforeAction}) {
     final status = data.personalStatus;
@@ -1138,6 +1237,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             break;
           case 'force_cell':
             _toggleNavigatorForceCell(navigatorId);
+            break;
+          case 'undo_disqualify':
+            _undoDisqualification(navigatorId);
             break;
         }
       },
@@ -1201,6 +1303,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ],
           ),
         ),
+        // ביטול פסילה — רק למנווט שנפסל
+        if (data.isDisqualified)
+          const PopupMenuItem(
+            value: 'undo_disqualify',
+            child: Row(
+              children: [
+                Icon(Icons.undo, color: Colors.green, size: 20),
+                SizedBox(width: 8),
+                Text('בטל פסילה', style: TextStyle(color: Colors.green)),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -2081,6 +2195,39 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         if (_showNZ)
                           MarkerLayer(
                             markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
+                              // זיהוי סוג נקודה: התחלה / סיום / ביניים
+                              final startIds = <String>{};
+                              final endIds = <String>{};
+                              final waypointIds = <String>{};
+                              for (final route in widget.navigation.routes.values) {
+                                if (route.startPointId != null) startIds.add(route.startPointId!);
+                                if (route.endPointId != null) endIds.add(route.endPointId!);
+                                waypointIds.addAll(route.waypointIds);
+                              }
+                              for (final wp in widget.navigation.waypointSettings.waypoints) {
+                                waypointIds.add(wp.checkpointId);
+                              }
+
+                              final isStart = startIds.contains(cp.id) || cp.isStart;
+                              final isEnd = endIds.contains(cp.id) || cp.isEnd;
+                              final isWaypoint = waypointIds.contains(cp.id);
+
+                              Color cpColor;
+                              String letter;
+                              if (isStart) {
+                                cpColor = const Color(0xFF4CAF50); // ירוק — התחלה
+                                letter = 'H';
+                              } else if (isEnd) {
+                                cpColor = const Color(0xFFF44336); // אדום — סיום
+                                letter = 'S';
+                              } else if (isWaypoint) {
+                                cpColor = const Color(0xFFFFC107); // צהוב — ביניים
+                                letter = 'B';
+                              } else {
+                                cpColor = Colors.blue;
+                                letter = '';
+                              }
+
                               return Marker(
                                 point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                                 width: 48,
@@ -2088,10 +2235,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.place, color: Colors.blue.withValues(alpha: _nzOpacity), size: 32),
+                                    Icon(
+                                      Icons.place,
+                                      color: cpColor.withValues(alpha: _nzOpacity),
+                                      size: 32,
+                                    ),
                                     Text(
-                                      '${cp.sequenceNumber}',
-                                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue),
+                                      '${cp.sequenceNumber}$letter',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: cpColor,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -2251,6 +2406,17 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                           ),
                         ),
+                        if (data.isDisqualified)
+                          Container(
+                            margin: const EdgeInsets.only(left: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('נפסל',
+                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
                         if (data.isForceCell)
                           const Padding(
                             padding: EdgeInsets.only(left: 4),
@@ -2844,7 +3010,61 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         }),
                       ],
 
-                      // 6. נתונים חיים
+                      // 6. הגדרות מפה פר-מנווט
+                      const Divider(height: 16),
+                      const Text('הגדרות מפה למנווט', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      SwitchListTile(
+                        title: const Text('אפשר ניווט עם מפה פתוחה', style: TextStyle(fontSize: 13)),
+                        value: _navigatorOverrideAllowOpenMap[navigatorId] ?? false,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (v) {
+                          setState(() {
+                            _navigatorOverrideAllowOpenMap[navigatorId] = v;
+                            if (!v) {
+                              _navigatorOverrideShowSelfLocation[navigatorId] = false;
+                              _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+                            }
+                          });
+                          setSheetState(() {});
+                          _updateNavigatorMapOverrides(navigatorId);
+                        },
+                      ),
+                      if (_navigatorOverrideAllowOpenMap[navigatorId] ?? false) ...[
+                        SwitchListTile(
+                          title: const Text('אפשר הצגת מיקום עצמי למנווט', style: TextStyle(fontSize: 13)),
+                          value: _navigatorOverrideShowSelfLocation[navigatorId] ?? false,
+                          dense: true,
+                          contentPadding: const EdgeInsets.only(right: 16),
+                          onChanged: (v) {
+                            setState(() {
+                              _navigatorOverrideShowSelfLocation[navigatorId] = v;
+                              if (!v) {
+                                _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+                              }
+                            });
+                            setSheetState(() {});
+                            _updateNavigatorMapOverrides(navigatorId);
+                          },
+                        ),
+                        if (_navigatorOverrideShowSelfLocation[navigatorId] ?? false)
+                          SwitchListTile(
+                            title: const Text('הצג ציר ניווט על המפה', style: TextStyle(fontSize: 13)),
+                            value: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
+                            dense: true,
+                            contentPadding: const EdgeInsets.only(right: 32),
+                            onChanged: (v) {
+                              setState(() {
+                                _navigatorOverrideShowRouteOnMap[navigatorId] = v;
+                              });
+                              setSheetState(() {});
+                              _updateNavigatorMapOverrides(navigatorId);
+                            },
+                          ),
+                      ],
+
+                      // 7. נתונים חיים
                       const Divider(height: 20),
                       const Text('נתונים חיים', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 6),
@@ -2875,6 +3095,35 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           },
         );
       },
+    );
+  }
+
+  Future<void> _updateNavigatorMapOverrides(String navigatorId) async {
+    String? trackId = _navigatorTrackIds[navigatorId];
+
+    // fallback: חיפוש track ב-Firestore אם אין cache
+    if (trackId == null) {
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: widget.navigation.id)
+            .where('navigatorUserId', isEqualTo: navigatorId)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          trackId = snapshot.docs.first.id;
+          _navigatorTrackIds[navigatorId] = trackId;
+        }
+      } catch (_) {}
+    }
+
+    if (trackId == null) return;
+
+    await _trackRepo.updateMapOverrides(
+      trackId,
+      allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? false,
+      showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? false,
+      showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
     );
   }
 
@@ -3445,6 +3694,7 @@ class NavigatorLiveData {
   bool hasActiveAlert;
   bool isGpsPlusFix;
   bool isForceCell; // כפיית מקור מיקום אנטנות ע"י מפקד
+  bool isDisqualified; // מנווט נפסל (פריצת אבטחה)
   LatLng? currentPosition;
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
@@ -3457,6 +3707,7 @@ class NavigatorLiveData {
     this.hasActiveAlert = false,
     this.isGpsPlusFix = false,
     this.isForceCell = false,
+    this.isDisqualified = false,
     this.currentPosition,
     required this.trackPoints,
     required this.punches,

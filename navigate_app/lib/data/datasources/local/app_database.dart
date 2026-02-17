@@ -212,6 +212,9 @@ class NavigationTracks extends Table {
   DateTimeColumn get endedAt => dateTime().nullable()();
   BoolColumn get isActive => boolean()();
   BoolColumn get isDisqualified => boolean()();
+  BoolColumn get overrideAllowOpenMap => boolean().withDefault(const Constant(false))();
+  BoolColumn get overrideShowSelfLocation => boolean().withDefault(const Constant(false))();
+  BoolColumn get overrideShowRouteOnMap => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -379,7 +382,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration {
@@ -538,6 +541,11 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 19 && to >= 20) {
           await m.addColumn(users, users.fcmToken);
+        }
+        if (from <= 20 && to >= 21) {
+          await m.addColumn(navigationTracks, navigationTracks.overrideAllowOpenMap);
+          await m.addColumn(navigationTracks, navigationTracks.overrideShowSelfLocation);
+          await m.addColumn(navigationTracks, navigationTracks.overrideShowRouteOnMap);
         }
       },
     );

@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/cluster_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/cluster.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/safety_point.dart';
+import '../../../../domain/entities/user.dart';
 import '../../../../services/gps_service.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
@@ -16,12 +19,14 @@ import '../../../widgets/map_controls.dart';
 /// מסך מפה מלא — נפתח מ-drawer בזמן ניווט פעיל
 class NavigatorMapScreen extends StatefulWidget {
   final domain.Navigation navigation;
+  final User currentUser;
   final bool showSelfLocation;
   final bool showRoute;
 
   const NavigatorMapScreen({
     super.key,
     required this.navigation,
+    required this.currentUser,
     this.showSelfLocation = false,
     this.showRoute = false,
   });
@@ -36,6 +41,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final ClusterRepository _clusterRepo = ClusterRepository();
+  final CheckpointRepository _checkpointRepo = CheckpointRepository();
 
   LatLng? _currentPosition;
   StreamSubscription? _positionSubscription;
@@ -46,16 +52,19 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
   List<Cluster> _clusters = [];
+  List<Checkpoint> _checkpoints = [];
 
   bool _showGG = true;
   bool _showNB = false;
   bool _showBA = false;
   bool _showRoutes = true;
+  bool _showNZ = true;
 
   double _ggOpacity = 1.0;
   double _nbOpacity = 1.0;
   double _baOpacity = 1.0;
   double _routesOpacity = 1.0;
+  double _nzOpacity = 1.0;
 
   // ברירת מחדל — מרכז ישראל
   static const _defaultCenter = LatLng(31.5, 34.8);
@@ -70,17 +79,27 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
     _loadMapLayers();
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב
+  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב, נ"צ
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
       final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
+
+      // טעינת נקודות ציון — סינון לנקודות שמוקצות למנווט הנוכחי
+      final allCheckpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
+      final route = widget.navigation.routes[widget.currentUser.uid];
+      final assignedIds = route?.checkpointIds.toSet() ?? <String>{};
+      final checkpoints = assignedIds.isNotEmpty
+          ? allCheckpoints.where((cp) => assignedIds.contains(cp.id)).toList()
+          : allCheckpoints;
+
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
           _boundaries = boundaries;
           _clusters = clusters;
+          _checkpoints = checkpoints;
         });
       }
     } catch (_) {}
@@ -149,11 +168,81 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   List<Polyline> _buildPolylines() {
     final polylines = <Polyline>[];
+    final route = widget.navigation.routes[widget.currentUser.uid];
+    if (route == null || route.plannedPath.isEmpty) return polylines;
 
-    // TODO: build route polyline from assigned route checkpoints when showRoute is true
-    // This requires loading checkpoint coordinates from NavCheckpoints table
-
+    polylines.add(Polyline(
+      points: route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList(),
+      strokeWidth: 2.5,
+      color: Colors.purple.withValues(alpha: 0.7 * _routesOpacity),
+    ));
     return polylines;
+  }
+
+  /// בניית מרקרים לנקודות ציון — התחלה/סיום/ביניים/רגילה
+  List<Marker> _buildCheckpointMarkers() {
+    final route = widget.navigation.routes[widget.currentUser.uid];
+
+    final startIds = <String>{};
+    final endIds = <String>{};
+    final waypointIds = <String>{};
+
+    if (route != null) {
+      if (route.startPointId != null) startIds.add(route.startPointId!);
+      if (route.endPointId != null) endIds.add(route.endPointId!);
+      waypointIds.addAll(route.waypointIds);
+    }
+    for (final wp in widget.navigation.waypointSettings.waypoints) {
+      waypointIds.add(wp.checkpointId);
+    }
+
+    return _checkpoints
+        .where((cp) => !cp.isPolygon && cp.coordinates != null)
+        .map((cp) {
+      final isStart = startIds.contains(cp.id) || cp.isStart;
+      final isEnd = endIds.contains(cp.id) || cp.isEnd;
+      final isWaypoint = waypointIds.contains(cp.id);
+
+      Color cpColor;
+      String letter;
+      if (isStart) {
+        cpColor = const Color(0xFF4CAF50);
+        letter = 'H';
+      } else if (isEnd) {
+        cpColor = const Color(0xFFF44336);
+        letter = 'S';
+      } else if (isWaypoint) {
+        cpColor = const Color(0xFFFFC107);
+        letter = 'B';
+      } else {
+        cpColor = Colors.blue;
+        letter = '';
+      }
+
+      return Marker(
+        point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+        width: 48,
+        height: 48,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.place,
+              color: cpColor.withValues(alpha: _nzOpacity),
+              size: 32,
+            ),
+            Text(
+              '${cp.sequenceNumber}$letter',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: cpColor,
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
   }
 
   // ===========================================================================
@@ -242,6 +331,9 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
                     isFilled: true,
                   )).toList(),
                 ),
+              // נקודות ציון
+              if (_showNZ && _checkpoints.isNotEmpty)
+                MarkerLayer(markers: _buildCheckpointMarkers()),
               // מסלול
               if (_showRoutes)
                 PolylineLayer(polylines: _buildPolylines()),
@@ -266,6 +358,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
               MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
               MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
               MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
+              MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
               MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
             ],
           ),

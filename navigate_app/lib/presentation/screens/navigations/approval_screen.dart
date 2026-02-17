@@ -644,6 +644,115 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   }
 
   // ===========================================================================
+  // Undo Disqualification
+  // ===========================================================================
+
+  Future<void> _undoDisqualification(String navigatorId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ביטול פסילה'),
+        content: Text(
+          'לבטל את פסילת ${_getNavigatorDisplayName(navigatorId)}?\n\n'
+          'הנתונים יישמרו והציון יחושב מחדש.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.green),
+            child: const Text('בטל פסילה'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // מציאת track מ-Firestore
+      final tracks = await _trackRepo.getByNavigationFromFirestore(
+          widget.navigation.id);
+      final navTrack = tracks.where((t) => t.navigatorUserId == navigatorId).toList();
+
+      if (navTrack.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('לא נמצא track למנווט'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // ביטול פסילה ב-Drift + Firestore
+      await _trackRepo.undoDisqualification(navTrack.first.id);
+
+      // עדכון הנתונים המקומיים
+      final data = _navigatorDataMap[navigatorId];
+      if (data != null) {
+        _navigatorDataMap[navigatorId] = _NavigatorData(
+          navigatorId: data.navigatorId,
+          trackPoints: data.trackPoints,
+          punches: data.punches,
+          plannedRoute: data.plannedRoute,
+          routeCheckpoints: data.routeCheckpoints,
+          score: data.score,
+          plannedDistanceKm: data.plannedDistanceKm,
+          actualDistanceKm: data.actualDistanceKm,
+          totalDuration: data.totalDuration,
+          avgSpeedKmh: data.avgSpeedKmh,
+          checkpointsHit: data.checkpointsHit,
+          totalCheckpoints: data.totalCheckpoints,
+          color: data.color,
+          isDisqualified: false,
+        );
+      }
+
+      // חישוב ציון מחדש (ללא פסילה)
+      final criteria = _currentNavigation.reviewSettings.scoringCriteria;
+      final route = _currentNavigation.routes[navigatorId];
+      final updatedData = _navigatorDataMap[navigatorId]!;
+      final newScore = _scoringService.calculateAutomaticScore(
+        navigationId: widget.navigation.id,
+        navigatorId: navigatorId,
+        punches: updatedData.punches,
+        verificationSettings: widget.navigation.verificationSettings,
+        scoringCriteria: criteria,
+        isDisqualified: false,
+        routeCheckpointIds: route?.checkpointIds,
+      );
+      _scores[navigatorId] = newScore;
+      _autoScores[navigatorId] = newScore.totalScore;
+
+      setState(() {});
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('הפסילה של ${_getNavigatorDisplayName(navigatorId)} בוטלה — ציון חושב מחדש: ${newScore.totalScore}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בביטול פסילה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // ===========================================================================
   // Status Transitions
   // ===========================================================================
 
@@ -1907,6 +2016,23 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                       );
                     }),
                   ],
+                ),
+              ),
+            // Undo disqualification button
+            if (data.isDisqualified)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _undoDisqualification(navigatorId),
+                    icon: const Icon(Icons.undo, size: 16),
+                    label: const Text('בטל פסילה — חשב ציון רגיל', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.green,
+                      side: const BorderSide(color: Colors.green),
+                    ),
+                  ),
                 ),
               ),
             // Action buttons

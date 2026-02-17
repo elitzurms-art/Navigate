@@ -33,12 +33,14 @@ class ActiveView extends StatefulWidget {
   final domain.Navigation navigation;
   final User currentUser;
   final ValueChanged<domain.Navigation> onNavigationUpdated;
+  final void Function(bool allowOpenMap, bool showSelfLocation, bool showRouteOnMap)? onMapPermissionsChanged;
 
   const ActiveView({
     super.key,
     required this.navigation,
     required this.currentUser,
     required this.onNavigationUpdated,
+    this.onMapPermissionsChanged,
   });
 
   @override
@@ -61,7 +63,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   int _punchCount = 0;
   bool _securityActive = false;
   bool _isDisqualified = false;
+  DateTime? _securityStartTime; // grace period — התעלמות מ-Lock Task exit מיד אחרי הפעלה
   List<domain_cp.Checkpoint> _routeCheckpoints = [];
+
+  // דריסות מפה פר-מנווט (מהמפקד)
+  bool _overrideAllowOpenMap = false;
+  bool _overrideShowSelfLocation = false;
+  bool _overrideShowRouteOnMap = false;
 
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
@@ -109,6 +117,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadTrackState();
+  }
+
+  @override
+  void didUpdateWidget(covariant ActiveView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // עדכון הגדרות מהמפקד בזמן אמת (ללא הריסת state וניתוק נעילה)
+    if (oldWidget.navigation.allowOpenMap != widget.navigation.allowOpenMap ||
+        oldWidget.navigation.showSelfLocation != widget.navigation.showSelfLocation ||
+        oldWidget.navigation.showRouteOnMap != widget.navigation.showRouteOnMap) {
+      widget.onMapPermissionsChanged?.call(
+        widget.navigation.allowOpenMap || _overrideAllowOpenMap,
+        widget.navigation.showSelfLocation || _overrideShowSelfLocation,
+        widget.navigation.showRouteOnMap || _overrideShowRouteOnMap,
+      );
+    }
   }
 
   @override
@@ -223,10 +246,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _startTrackDocListener();
         }
 
-        // אם סיים — לחשב זמן כולל
+        // אם סיים — לחשב זמן כולל + listener לביטול פסילה
         if (status == NavigatorPersonalStatus.finished && track != null) {
           _startTime = track.startedAt;
           _elapsed = (track.endedAt ?? DateTime.now()).difference(track.startedAt);
+          // listener ל-track — כדי לזהות ביטול פסילה או איפוס ע"י מפקד
+          _startTrackDocListener();
         }
       }
     } catch (e) {
@@ -307,7 +332,23 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (_securityActive) return;
 
     // רישום callback לפסילה על חריגה קריטית (iOS Guided Access exit וכו')
-    _securityManager.onCriticalViolation = (type) => _handleDisqualification(type);
+    _securityManager.onCriticalViolation = (type) async {
+      if (type == ViolationType.exitLockTask) {
+        // בדיקה אם Lock Task באמת כבוי — אירועים ישנים/מיותרים נפוצים
+        final stillLocked = await DeviceSecurityService().isInLockTaskMode();
+        if (stillLocked) {
+          print('DEBUG ActiveView: Ignoring onLockTaskExit — Lock Task still active');
+          return;
+        }
+        // grace period — אחרי הפעלה/איפוס/ביטול פסילה, לא לפסול מייד
+        if (_securityStartTime != null &&
+            DateTime.now().difference(_securityStartTime!).inSeconds < 90) {
+          print('DEBUG ActiveView: onLockTaskExit in grace period — ignoring');
+          return;
+        }
+      }
+      _handleDisqualification(type);
+    };
 
     final success = await _securityManager.startNavigationSecurity(
       navigationId: _nav.id,
@@ -318,6 +359,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
     if (mounted) {
       setState(() => _securityActive = success);
+      if (success) _securityStartTime = DateTime.now();
     }
 
     if (!success && mounted) {
@@ -397,12 +439,26 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   /// בדיקת שלמות Lock Task — אם היינו במצב נעילה ויצאנו ממנו, פסילה
   Future<void> _checkLockTaskIntegrity() async {
     try {
+      // בדיקה רלוונטית רק כש-Lock Task/Kiosk פעיל (Android בלבד)
+      final securityLevel = await _securityManager.getSecurityLevel();
+      if (securityLevel != SecurityLevel.lockTask &&
+          securityLevel != SecurityLevel.kioskMode) {
+        return;
+      }
+
+      // grace period — התעלמות מאירועי exit מיד אחרי הפעלת אבטחה (מונע false positive אחרי איפוס)
+      if (_securityStartTime != null &&
+          DateTime.now().difference(_securityStartTime!).inSeconds < 90) {
+        print('DEBUG ActiveView: Lock Task check skipped — grace period (${DateTime.now().difference(_securityStartTime!).inSeconds}s)');
+        return;
+      }
+
       final deviceSecurity = DeviceSecurityService();
       final inLockTask = await deviceSecurity.isInLockTaskMode();
 
-      // אם אבטחה פעילה אבל Lock Task כבוי — המשתמש יצא מהנעילה
+      // אם אבטחה פעילה אבל Lock Task כבוי — פסילה
       if (!inLockTask && _securityActive && !_isDisqualified) {
-        print('🚨 ActiveView: Lock Task exit detected on resume!');
+        print('🚨 ActiveView: Lock Task exit detected on resume — disqualifying');
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -432,21 +488,32 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _checkGpsSource() async {
-    await _gpsService.getCurrentPosition(
-      highAccuracy: false,
-      boundaryCenter: _boundaryCenter,
-    );
-    if (mounted) {
-      final source = _gpsService.lastPositionSource;
+  void _checkGpsSource() {
+    if (!mounted) return;
+
+    // קריאת מקור GPS מנקודת המעקב האחרונה — ללא קריאת GPS נפרדת שמתחרה עם ה-Tracker
+    final points = _gpsTracker.trackPoints;
+    if (points.isEmpty) {
       setState(() {
-        _gpsSource = source;
-        // If we have a boundary and GPS source is not GPS, it might be blocked
-        _gpsBlocked = _boundaryCenter != null &&
-            source != PositionSource.gps &&
-            source != PositionSource.none;
+        _gpsSource = PositionSource.none;
+        _gpsBlocked = false;
       });
+      return;
     }
+
+    final lastPoint = points.last;
+    final source = PositionSource.values.firstWhere(
+      (s) => s.name == lastPoint.positionSource,
+      orElse: () => PositionSource.none,
+    );
+
+    setState(() {
+      _gpsSource = source;
+      // If we have a boundary and GPS source is not GPS, it might be blocked
+      _gpsBlocked = _boundaryCenter != null &&
+          source != PositionSource.gps &&
+          source != PositionSource.none;
+    });
   }
 
   // ===========================================================================
@@ -559,7 +626,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       }
 
       // סנכרון ל-Firestore — גם ללא נקודות, כדי שהמפקד יראה סטטוס פעיל
-      final updatedTrack = await _trackRepo.getById(_track!.id);
+      var updatedTrack = await _trackRepo.getById(_track!.id);
+      // safety net: UI state הוא ה-source of truth לפסילה — מונע דריסת ביטול פסילה
+      if (updatedTrack.isDisqualified != _isDisqualified) {
+        updatedTrack = updatedTrack.copyWith(isDisqualified: _isDisqualified);
+      }
       await _trackRepo.syncTrackToFirestore(updatedTrack);
 
       if (mounted && points.isNotEmpty) {
@@ -593,7 +664,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         .collection(AppConstants.navigationTracksCollection)
         .doc(_track!.id)
         .snapshots()
-        .listen((snapshot) {
+        .listen((snapshot) async {
       if (!mounted) return;
 
       if (!snapshot.exists) {
@@ -602,11 +673,41 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         return;
       }
 
-      // שאר הלוגיקה רלוונטית רק במצב פעיל
-      if (_personalStatus != NavigatorPersonalStatus.active) return;
-
       final data = snapshot.data();
       if (data == null) return;
+
+      // בדיקת ביטול פסילה — רלוונטי בכל מצב (פעיל או סיים)
+      final remoteDisqualified = data['isDisqualified'] as bool? ?? false;
+      if (_isDisqualified && !remoteDisqualified) {
+        // המפקד ביטל את הפסילה — עדכון Drift מקומי כדי שסנכרון הבא לא ידרוס
+        if (_track != null) {
+          try {
+            await _trackRepo.undoDisqualification(_track!.id);
+          } catch (_) {}
+        }
+        // הפעלה מחדש של Lock Task אם אבטחה פעילה (הנעילה כבר נפלה כשנפסל)
+        if (_securityActive) {
+          try {
+            final reEnabled = await DeviceSecurityService().enableLockTask();
+            if (reEnabled) {
+              _securityStartTime = DateTime.now(); // grace period חדש
+              print('✓ ActiveView: Lock Task re-enabled after undo disqualification');
+            }
+          } catch (_) {}
+        }
+        setState(() => _isDisqualified = false);
+        HapticFeedback.mediumImpact();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('הפסילה בוטלה על ידי המפקד'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+
+      // שאר הלוגיקה רלוונטית רק במצב פעיל
+      if (_personalStatus != NavigatorPersonalStatus.active) return;
 
       final isActive = data['isActive'] as bool? ?? true;
       if (!isActive) {
@@ -621,6 +722,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _gpsTracker.forcePositionSource != trackSource) {
         _gpsTracker.forcePositionSource = trackSource;
         print('DEBUG ActiveView: forcePositionSource changed to: $trackSource (realtime)');
+      }
+
+      // קריאת דריסות מפה פר-מנווט
+      final newAllowOpenMap = data['overrideAllowOpenMap'] as bool? ?? false;
+      final newShowSelfLocation = data['overrideShowSelfLocation'] as bool? ?? false;
+      final newShowRouteOnMap = data['overrideShowRouteOnMap'] as bool? ?? false;
+      if (newAllowOpenMap != _overrideAllowOpenMap ||
+          newShowSelfLocation != _overrideShowSelfLocation ||
+          newShowRouteOnMap != _overrideShowRouteOnMap) {
+        _overrideAllowOpenMap = newAllowOpenMap;
+        _overrideShowSelfLocation = newShowSelfLocation;
+        _overrideShowRouteOnMap = newShowRouteOnMap;
+        widget.onMapPermissionsChanged?.call(
+          newAllowOpenMap, newShowSelfLocation, newShowRouteOnMap,
+        );
       }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');

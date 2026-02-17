@@ -45,8 +45,6 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   double _nbOpacity = 1.0;
   bool _showRoutes = true;
   double _routesOpacity = 1.0;
-  bool _showWaypoints = true;
-  double _waypointsOpacity = 1.0;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -622,7 +620,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                   // ציור הצירים
                   if (_showRoutes) ..._buildRoutePolylines(),
 
-                  // נקודות ציון — רגילות
+                  // נקודות ציון — עם סימון התחלה/סיום/ביניים
                   if (_showNZ)
                     MarkerLayer(
                       markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
@@ -632,20 +630,23 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                   polygon: _boundary!.coordinates,
                                 )
                               : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
-                          .where((cp) => !waypointIds.contains(cp.id)) // סנן waypoints — יוצגו בנפרד
                           .map((cp) {
                         final isShared = _sharedCheckpointIds.contains(cp.id);
                         final isStart = cp.id == _startPointId;
                         final isEnd = cp.id == _endPointId;
+                        final isWaypoint = waypointIds.contains(cp.id);
 
                         Color markerColor;
                         String label;
                         if (isStart) {
-                          markerColor = const Color(0xFF4CAF50);
+                          markerColor = const Color(0xFF4CAF50); // ירוק — התחלה
                           label = '${cp.sequenceNumber}H';
                         } else if (isEnd) {
-                          markerColor = const Color(0xFFF44336);
+                          markerColor = const Color(0xFFF44336); // אדום — סיום
                           label = '${cp.sequenceNumber}S';
+                        } else if (isWaypoint) {
+                          markerColor = const Color(0xFFFFC107); // צהוב — ביניים
+                          label = '${cp.sequenceNumber}B';
                         } else if (isShared) {
                           markerColor = Colors.orange;
                           label = '';
@@ -680,40 +681,6 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-
-                  // נקודות ביניים (waypoints) — אייקון כוכב סגול
-                  if (_showWaypoints && waypointIds.isNotEmpty)
-                    MarkerLayer(
-                      markers: _checkpoints
-                          .where((cp) => waypointIds.contains(cp.id) && !cp.isPolygon && cp.coordinates != null)
-                          .map((cp) {
-                        return Marker(
-                          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-                          width: 40,
-                          height: 40,
-                          child: Opacity(
-                            opacity: _waypointsOpacity,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.purple,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 2),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.purple.withValues(alpha: 0.4),
-                                    blurRadius: 6,
-                                    spreadRadius: 1,
-                                  ),
-                                ],
-                              ),
-                              child: const Center(
-                                child: Icon(Icons.star, size: 20, color: Colors.white),
                               ),
                             ),
                           ),
@@ -799,20 +766,23 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                         polygon: _boundary!.coordinates,
                                       )
                                     : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
-                                .where((cp) => !waypointIds.contains(cp.id))
                                 .map((cp) {
                               final isShared = _sharedCheckpointIds.contains(cp.id);
                               final isStart = cp.id == _startPointId;
                               final isEnd = cp.id == _endPointId;
+                              final isWaypoint = waypointIds.contains(cp.id);
 
                               Color markerColor;
                               String label;
                               if (isStart) {
-                                markerColor = const Color(0xFF4CAF50);
+                                markerColor = const Color(0xFF4CAF50); // ירוק — התחלה
                                 label = '${cp.sequenceNumber}H';
                               } else if (isEnd) {
-                                markerColor = const Color(0xFFF44336);
+                                markerColor = const Color(0xFFF44336); // אדום — סיום
                                 label = '${cp.sequenceNumber}S';
+                              } else if (isWaypoint) {
+                                markerColor = const Color(0xFFFFC107); // צהוב — ביניים
+                                label = '${cp.sequenceNumber}B';
                               } else if (isShared) {
                                 markerColor = Colors.orange;
                                 label = '';
@@ -867,13 +837,6 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     onVisibilityChanged: (v) => setState(() => _showNZ = v),
                     opacity: _nzOpacity,
                     onOpacityChanged: (v) => setState(() => _nzOpacity = v),
-                  ),
-                  MapLayerConfig(
-                    id: 'waypoints', label: 'נקודות ביניים', color: Colors.purple,
-                    visible: _showWaypoints,
-                    onVisibilityChanged: (v) => setState(() => _showWaypoints = v),
-                    opacity: _waypointsOpacity,
-                    onOpacityChanged: (v) => setState(() => _waypointsOpacity = v),
                   ),
                   MapLayerConfig(
                     id: 'nb', label: 'נקודות בטיחות', color: Colors.red,

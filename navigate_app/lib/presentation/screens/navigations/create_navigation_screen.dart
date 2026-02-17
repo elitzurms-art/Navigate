@@ -1141,9 +1141,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   width: 120,
                   child: Slider(
                     value: _gpsUpdateInterval.toDouble(),
-                    min: 5,
+                    min: 1,
                     max: 120,
-                    divisions: 23,
+                    divisions: 119,
                     label: '$_gpsUpdateInterval שניות',
                     onChanged: (value) {
                       setState(() => _gpsUpdateInterval = value.round());
