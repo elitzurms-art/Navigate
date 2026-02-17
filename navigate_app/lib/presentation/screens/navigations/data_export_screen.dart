@@ -1534,22 +1534,28 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                   title: 'ייצוא נתונים',
                   initialCenter: camera.center,
                   initialZoom: camera.zoom,
-                  layers: [
-                    if (_showGG && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
+                  layerConfigs: [
+                    MapLayerConfig(id: 'nz', label: 'נ.צ', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'nb', label: 'נ.ב', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'gg', label: 'ג.ג', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'ba', label: 'ב.א', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                  ],
+                  layerBuilder: (visibility, opacity) => [
+                    if (visibility['gg'] == true && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
                       PolygonLayer(
                         polygons: [
                           Polygon(
                             points: widget.boundary!.coordinates
                                 .map((coord) => LatLng(coord.lat, coord.lng))
                                 .toList(),
-                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                            borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                             borderStrokeWidth: widget.boundary!.strokeWidth,
                             isFilled: true,
                           ),
                         ],
                       ),
-                    if (_showNZ && _filteredCheckpoints.isNotEmpty)
+                    if (visibility['nz'] == true && _filteredCheckpoints.isNotEmpty)
                       MarkerLayer(
                         markers: _filteredCheckpoints.map((checkpoint) {
                           return Marker(
@@ -1557,7 +1563,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                             width: 36,
                             height: 36,
                             child: Opacity(
-                              opacity: _nzOpacity,
+                              opacity: (opacity['nz'] ?? 1.0),
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: Colors.blue,
@@ -1575,7 +1581,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                           );
                         }).toList(),
                       ),
-                    if (_showNB && widget.safetyPoints.where((p) => p.type == 'point' && p.coordinates != null).isNotEmpty)
+                    if (visibility['nb'] == true && widget.safetyPoints.where((p) => p.type == 'point' && p.coordinates != null).isNotEmpty)
                       MarkerLayer(
                         markers: widget.safetyPoints
                             .where((p) => p.type == 'point' && p.coordinates != null)
@@ -1584,7 +1590,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                                   width: 30,
                                   height: 30,
                                   child: Opacity(
-                                    opacity: _nbOpacity,
+                                    opacity: (opacity['nb'] ?? 1.0),
                                     child: Icon(Icons.warning, color: Colors.orange, size: 28),
                                   ),
                                 ))

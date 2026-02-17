@@ -13,6 +13,7 @@ import '../../../services/navigation_layer_copy_service.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/fullscreen_map_screen.dart';
+import '../../widgets/map_controls.dart';
 
 /// שלב 4 - עריכת צירים (UI משודרג עם מפה, drag & drop, bottom sheet)
 class RoutesEditScreen extends StatefulWidget {
@@ -945,9 +946,15 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                           title: 'עריכת צירים',
                           initialCenter: camera.center,
                           initialZoom: camera.zoom,
-                          layers: [
-                            PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
-                            MarkerLayer(markers: _buildMarkers(navigatorId: navigatorId)),
+                          layerConfigs: [
+                            MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange, visible: true, onVisibilityChanged: (_) {}),
+                            MapLayerConfig(id: 'checkpoints', label: 'נקודות ציון', color: Colors.blue, visible: true, onVisibilityChanged: (_) {}),
+                          ],
+                          layerBuilder: (visibility, opacity) => [
+                            if (visibility['routes'] == true)
+                              PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
+                            if (visibility['checkpoints'] == true)
+                              MarkerLayer(markers: _buildMarkers(navigatorId: navigatorId)),
                           ],
                         ),
                       ));

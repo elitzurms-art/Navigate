@@ -624,8 +624,14 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
               title: 'אימון ניווטים',
               initialCenter: camera.center,
               initialZoom: camera.zoom,
-              layers: [
-                if (_showNZ && _checkpoints.isNotEmpty)
+              layerConfigs: [
+                MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+              ],
+              layerBuilder: (visibility, opacity) => [
+                if (visibility['nz'] == true && _checkpoints.isNotEmpty)
                   MarkerLayer(
                     markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((checkpoint) {
                       final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
@@ -634,7 +640,7 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
                         width: 36,
                         height: 36,
                         child: Opacity(
-                          opacity: _nzOpacity,
+                          opacity: (opacity['nz'] ?? 1.0),
                           child: Container(
                             decoration: BoxDecoration(
                               color: markerColor,
@@ -652,7 +658,7 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
                       );
                     }).toList(),
                   ),
-                if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
                   MarkerLayer(
                     markers: _safetyPoints
                         .where((p) => p.type == 'point' && p.coordinates != null)
@@ -661,41 +667,41 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
                               width: 40,
                               height: 50,
                               child: Opacity(
-                                opacity: _nbOpacity,
+                                opacity: (opacity['nb'] ?? 1.0),
                                 child: Icon(Icons.warning, color: _getSeverityColor(point.severity), size: 32),
                               ),
                             ))
                         .toList(),
                   ),
-                if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
                   PolygonLayer(
                     polygons: _safetyPoints
                         .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
                         .map((point) => Polygon(
                               points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                              color: _getSeverityColor(point.severity).withValues(alpha: 0.3 * _nbOpacity),
-                              borderColor: _getSeverityColor(point.severity).withValues(alpha: _nbOpacity),
+                              color: _getSeverityColor(point.severity).withValues(alpha: 0.3 * (opacity['nb'] ?? 1.0)),
+                              borderColor: _getSeverityColor(point.severity).withValues(alpha: (opacity['nb'] ?? 1.0)),
                               borderStrokeWidth: 3,
                               isFilled: true,
                             ))
                         .toList(),
                   ),
-                if (_showGG && _boundaries.isNotEmpty)
+                if (visibility['gg'] == true && _boundaries.isNotEmpty)
                   PolygonLayer(
                     polygons: _boundaries.map((boundary) => Polygon(
                           points: boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                          color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                          borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                           borderStrokeWidth: boundary.strokeWidth,
                           isFilled: true,
                         )).toList(),
                   ),
-                if (_showBA && _clusters.isNotEmpty)
+                if (visibility['ba'] == true && _clusters.isNotEmpty)
                   PolygonLayer(
                     polygons: _clusters.map((cluster) => Polygon(
                           points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                          borderColor: Colors.green.withValues(alpha: _baOpacity),
+                          color: Colors.green.withValues(alpha: cluster.fillOpacity * (opacity['ba'] ?? 1.0)),
+                          borderColor: Colors.green.withValues(alpha: (opacity['ba'] ?? 1.0)),
                           borderStrokeWidth: cluster.strokeWidth,
                           isFilled: true,
                         )).toList(),

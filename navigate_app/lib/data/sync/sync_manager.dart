@@ -1139,6 +1139,8 @@ class SyncManager {
         reviewSettingsJson: Value(data['reviewSettingsJson'] as String? ??
             (data['reviewSettings'] != null ? jsonEncode(data['reviewSettings']) : '{"showScoresAfterApproval":true}')),
         distributeNow: Value(data['distributeNow'] as bool? ?? false),
+        enabledPositionSourcesJson: Value(data['enabledPositionSourcesJson'] as String? ??
+            (data['enabledPositionSources'] != null ? jsonEncode(data['enabledPositionSources']) : '["gps","cellTower","pdr","pdrCellHybrid"]')),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),

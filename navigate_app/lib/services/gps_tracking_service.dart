@@ -8,11 +8,15 @@ import 'gps_service.dart';
 class GPSTrackingService {
   Timer? _trackingTimer;
   StreamController<Position>? _positionStream;
+  StreamSubscription<Position>? _geolocatorStreamSub;
   List<TrackPoint> _trackPoints = [];
   final GpsService _gpsService = GpsService();
 
   bool _isTracking = false;
   bool get isTracking => _isTracking;
+
+  /// נעילת concurrency — מונע קריאות getCurrentPosition מקבילות
+  bool _isRecording = false;
 
   int _intervalSeconds = 30;
   LatLng? _boundaryCenter;
@@ -26,6 +30,9 @@ class GPSTrackingService {
     print('DEBUG GPSTrackingService: forcePositionSource set to: $value');
   }
 
+  /// מקורות מיקום מותרים (מוגדר per-navigation)
+  List<String> _enabledSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'];
+
   /// Stream של מיקומים
   Stream<Position> get positionStream =>
       _positionStream?.stream ?? const Stream.empty();
@@ -38,6 +45,7 @@ class GPSTrackingService {
     int intervalSeconds = 30,
     LatLng? boundaryCenter,
     String forcePositionSource = 'auto',
+    List<String> enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
   }) async {
     if (_isTracking) {
       print('GPS Tracking כבר פעיל');
@@ -47,6 +55,7 @@ class GPSTrackingService {
     _intervalSeconds = intervalSeconds;
     _boundaryCenter = boundaryCenter;
     _forcePositionSource = forcePositionSource;
+    _enabledSources = enabledPositionSources;
 
     // Initialize PDR if not forcing cellTower-only
     if (_forcePositionSource != 'cellTower') {
@@ -211,14 +220,54 @@ class GPSTrackingService {
       } catch (_) {}
     }
 
-    // Timer לרישום מיקום כל X שניות
-    _trackingTimer = Timer.periodic(
-      Duration(seconds: _intervalSeconds),
-      (timer) => _recordCurrentPosition(),
-    );
-
-    print('GPS Tracking פעיל - רישום כל $_intervalSeconds שניות');
+    // אסטרטגיית דגימה: stream לאינטרוולים קצרים, timer לאינטרוולים ארוכים
+    if (_intervalSeconds <= 5 && gpsAvailable) {
+      // שימוש ב-Position Stream — GPS נשאר דלוק ברציפות, דגימה מהירה
+      _startPositionStream();
+      print('GPS Tracking פעיל (stream mode) - רישום כל $_intervalSeconds שניות');
+    } else {
+      // Timer-based polling — לאינטרוולים ארוכים
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds),
+        (timer) => _recordCurrentPosition(),
+      );
+      print('GPS Tracking פעיל (timer mode) - רישום כל $_intervalSeconds שניות');
+    }
     return true;
+  }
+
+  /// מצב stream — GPS רציף לאינטרוולים קצרים (≤5 שניות)
+  void _startPositionStream() {
+    _geolocatorStreamSub?.cancel();
+    DateTime? _lastRecordTime;
+
+    _geolocatorStreamSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+      ),
+    ).listen(
+      (position) {
+        final now = DateTime.now();
+        // מסנן לפי interval שהוגדר — stream יכול לשלוח בתדירות גבוהה יותר
+        if (_lastRecordTime != null &&
+            now.difference(_lastRecordTime!).inMilliseconds < (_intervalSeconds * 800)) {
+          return; // מוקדם מדי — דלג
+        }
+        _lastRecordTime = now;
+
+        // Update PDR anchor on good GPS fix
+        if (position.accuracy < 20) {
+          _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
+        }
+
+        _recordPoint(position, positionSource: 'gps');
+        _positionStream?.add(position);
+      },
+      onError: (e) {
+        print('GPS stream error: $e');
+      },
+    );
   }
 
   /// עצירת מעקב GPS
@@ -227,6 +276,9 @@ class GPSTrackingService {
 
     _trackingTimer?.cancel();
     _trackingTimer = null;
+
+    await _geolocatorStreamSub?.cancel();
+    _geolocatorStreamSub = null;
 
     await _positionStream?.close();
     _positionStream = null;
@@ -241,6 +293,20 @@ class GPSTrackingService {
 
   /// רישום מיקום נוכחי
   Future<void> _recordCurrentPosition() async {
+    // מניעת קריאות מקבילות — אם הקריאה הקודמת עדיין רצה, דלג
+    if (_isRecording) {
+      print('DEBUG GPS: skipping _recordCurrentPosition — previous call still running');
+      return;
+    }
+    _isRecording = true;
+    try {
+      await _recordCurrentPositionInner();
+    } finally {
+      _isRecording = false;
+    }
+  }
+
+  Future<void> _recordCurrentPositionInner() async {
     // כפיית אנטנות — דלג על כל בדיקות ה-GPS
     if (_forcePositionSource == 'cellTower') {
       try {
@@ -290,12 +356,18 @@ class GPSTrackingService {
 
     if (!gpsAvailable) {
       if (_forcePositionSource == 'gps') return; // GPS כפוי אבל לא זמין
+      // בדיקה אם יש מקור חלופי מותר
+      final hasFallback = _enabledSources.contains('cellTower') ||
+          _enabledSources.contains('pdr') ||
+          _enabledSources.contains('pdrCellHybrid');
+      if (!hasFallback) return;
       try {
         final cellPos = await _gpsService.getCurrentPosition(
           boundaryCenter: _boundaryCenter,
           forceSource: _forcePositionSource,
         );
-        if (cellPos != null) {
+        if (cellPos != null &&
+            _isSourceAllowed(_gpsService.lastPositionSource.name)) {
           _recordPointFromLatLng(
             cellPos.latitude,
             cellPos.longitude,
@@ -339,11 +411,12 @@ class GPSTrackingService {
           _boundaryCenter!.latitude,
           _boundaryCenter!.longitude,
         );
-        if (dist > 50000) {
+        if (dist > 50000 && _hasAllowedFallback()) {
           // GPS likely spoofed — try PDR hybrid / cell towers
           final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
           if (cellPos != null &&
-              _gpsService.lastPositionSource != PositionSource.gps) {
+              _gpsService.lastPositionSource != PositionSource.gps &&
+              _isSourceAllowed(_gpsService.lastPositionSource.name)) {
             _recordPointFromLatLng(
               cellPos.latitude,
               cellPos.longitude,
@@ -356,11 +429,12 @@ class GPSTrackingService {
         }
       }
 
-      // אם הדיוק נמוך (> 50 מטר), נסה fallback
-      if (position.accuracy > 50) {
+      // אם הדיוק נמוך (> 50 מטר), נסה fallback (רק אם יש מקור חלופי מותר)
+      if (position.accuracy > 50 && _hasAllowedFallback()) {
         final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
         if (cellPos != null &&
-            _gpsService.lastPositionSource != PositionSource.gps) {
+            _gpsService.lastPositionSource != PositionSource.gps &&
+            _isSourceAllowed(_gpsService.lastPositionSource.name)) {
           _recordPointFromLatLng(
             cellPos.latitude,
             cellPos.longitude,
@@ -377,10 +451,12 @@ class GPSTrackingService {
     } catch (e) {
       // GPS failed completely — try fallback
       if (_forcePositionSource == 'gps') return;
+      if (!_hasAllowedFallback()) return;
       print('שגיאה ברישום מיקום: $e — מנסה fallback');
       try {
         final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
-        if (cellPos != null) {
+        if (cellPos != null &&
+            _isSourceAllowed(_gpsService.lastPositionSource.name)) {
           _recordPointFromLatLng(
             cellPos.latitude,
             cellPos.longitude,
@@ -392,6 +468,23 @@ class GPSTrackingService {
         print('גם fallback נכשל');
       }
     }
+  }
+
+  /// בדיקה אם מקור מיקום מותר
+  bool _isSourceAllowed(String source) {
+    // GPS תמיד מותר (אלא אם הוסר במפורש)
+    if (source == 'gps') return _enabledSources.contains('gps');
+    if (source == 'cellTower') return _enabledSources.contains('cellTower');
+    if (source == 'pdr') return _enabledSources.contains('pdr');
+    if (source == 'pdrCellHybrid') return _enabledSources.contains('pdrCellHybrid');
+    return true; // מקור לא ידוע — מאפשר
+  }
+
+  /// בדיקה אם יש fallback מותר כלשהו
+  bool _hasAllowedFallback() {
+    return _enabledSources.contains('cellTower') ||
+        _enabledSources.contains('pdr') ||
+        _enabledSources.contains('pdrCellHybrid');
   }
 
   /// רישום נקודה מ-Position (Geolocator)

@@ -741,23 +741,45 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                       title: 'אימות צירים',
                       initialCenter: camera.center,
                       initialZoom: camera.zoom,
-                      layers: [
-                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                      layerConfigs: [
+                        MapLayerConfig(
+                          id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                          visible: _showGG, onVisibilityChanged: (_) {},
+                          opacity: _ggOpacity, onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                          visible: _showNZ, onVisibilityChanged: (_) {},
+                          opacity: _nzOpacity, onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                          visible: _showNB, onVisibilityChanged: (_) {},
+                          opacity: _nbOpacity, onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'routes', label: 'צירים', color: Colors.orange,
+                          visible: _showRoutes, onVisibilityChanged: (_) {},
+                          opacity: _routesOpacity, onOpacityChanged: (_) {},
+                        ),
+                      ],
+                      layerBuilder: (visibility, opacity) => [
+                        if (visibility['gg'] == true && _boundary != null && _boundary!.coordinates.isNotEmpty)
                           PolygonLayer(
                             polygons: [
                               Polygon(
                                 points: _boundary!.coordinates
                                     .map((coord) => LatLng(coord.lat, coord.lng))
                                     .toList(),
-                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                                borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                                 borderStrokeWidth: _boundary!.strokeWidth,
                                 isFilled: true,
                               ),
                             ],
                           ),
-                        if (_showRoutes) ..._buildRoutePolylines(),
-                        if (_showNZ)
+                        if (visibility['routes'] == true) ..._buildRoutePolylines(),
+                        if (visibility['nz'] == true)
                           MarkerLayer(
                             markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
                                     ? GeometryUtils.filterPointsInPolygon(
@@ -796,7 +818,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                 width: 36,
                                 height: 36,
                                 child: Opacity(
-                                  opacity: _nzOpacity,
+                                  opacity: (opacity['nz'] ?? 1.0),
                                   child: Container(
                                     decoration: BoxDecoration(
                                       color: markerColor,

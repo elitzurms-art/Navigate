@@ -99,9 +99,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideShowSelfLocation = {};
   final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
-
-  // כפיית מקור מיקום גלובלי
-  String _globalForcePositionSource = 'auto';
+  bool _isUpdatingOverrides = false; // מניעת דריסה ע"י listener בזמן עדכון
 
   // מרכוז מפה
   CenteringMode _centeringMode = CenteringMode.off;
@@ -189,19 +187,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         _mapController.move(LatLng(center.lat, center.lng), 13.0);
       }
 
-      // קריאת forcePositionSource גלובלי מ-Firestore
-      try {
-        final navDoc = await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(widget.navigation.id)
-            .get();
-        final navData = navDoc.data();
-        if (navData != null && navData['forcePositionSource'] is String) {
-          setState(() {
-            _globalForcePositionSource = navData['forcePositionSource'] as String;
-          });
-        }
-      } catch (_) {}
     } catch (e) {
       setState(() => _isLoading = false);
     }
@@ -892,16 +877,17 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         // קריאת isDisqualified מה-track doc
         liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
 
-        // cache trackId + קריאת דריסות מפה
+        // cache trackId + קריאת דריסות מפה (רק אם לא באמצע עדכון מקומי)
         _navigatorTrackIds[navigatorId] = doc.id;
-        _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
-        _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
-        _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
+        if (!_isUpdatingOverrides) {
+          _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
+          _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
+          _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
+        }
 
         // קריאת forcePositionSource מה-track doc
         final trackForceSource = data['forcePositionSource'] as String?;
-        liveData.isForceCell = (trackForceSource == 'cellTower') ||
-            (trackForceSource == null && _globalForcePositionSource == 'cellTower');
+        liveData.isForceCell = trackForceSource == 'cellTower';
       }
     });
   }
@@ -1235,9 +1221,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           case 'reset':
             _resetNavigatorNavigation(navigatorId);
             break;
-          case 'force_cell':
-            _toggleNavigatorForceCell(navigatorId);
-            break;
           case 'undo_disqualify':
             _undoDisqualification(navigatorId);
             break;
@@ -1270,28 +1253,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
-        // כפיית אנטנות — active/noReception
-        if (status == NavigatorPersonalStatus.active ||
-            status == NavigatorPersonalStatus.noReception)
-          PopupMenuItem(
-            value: 'force_cell',
-            child: Row(
-              children: [
-                Icon(
-                  data.isForceCell ? Icons.gps_fixed : Icons.cell_tower,
-                  color: data.isForceCell ? Colors.green : Colors.orange,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  data.isForceCell ? 'ביטול כפיית אנטנות' : 'כפה אנטנות',
-                  style: TextStyle(
-                    color: data.isForceCell ? Colors.green : Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-          ),
         // אפס ניווט — active/finished/noReception
         const PopupMenuItem(
           value: 'reset',
@@ -1317,117 +1278,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ),
       ],
     );
-  }
-
-  // ===========================================================================
-  // Force Position Source — כפיית מקור מיקום
-  // ===========================================================================
-
-  Future<void> _toggleGlobalForcePositionSource() async {
-    final newSource = _globalForcePositionSource == 'cellTower' ? 'auto' : 'cellTower';
-
-    try {
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .update({'forcePositionSource': newSource});
-
-      setState(() => _globalForcePositionSource = newSource);
-
-      // עדכון כל המנווטים הפעילים
-      if (newSource == 'cellTower') {
-        for (final entry in _navigatorData.entries) {
-          if (entry.value.personalStatus == NavigatorPersonalStatus.active ||
-              entry.value.personalStatus == NavigatorPersonalStatus.noReception) {
-            entry.value.isForceCell = true;
-          }
-        }
-      } else {
-        // חזרה ל-auto — רק מי שאין לו override אישי
-        for (final entry in _navigatorData.entries) {
-          entry.value.isForceCell = false;
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newSource == 'cellTower'
-                ? 'כפיית מיקום אנטנות הופעלה לכל המנווטים'
-                : 'מיקום אנטנות כפוי בוטל — חזרה לאוטומטי'),
-            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בעדכון מצב מיקום: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _toggleNavigatorForceCell(String navigatorId) async {
-    final data = _navigatorData[navigatorId];
-    if (data == null) return;
-
-    final newSource = data.isForceCell ? 'auto' : 'cellTower';
-
-    try {
-      // מציאת track פעיל של המנווט
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('navigatorUserId', isEqualTo: navigatorId)
-          .where('isActive', isEqualTo: true)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('לא נמצא track פעיל למנווט'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return;
-      }
-
-      await snapshot.docs.first.reference.update({
-        'forcePositionSource': newSource,
-      });
-
-      setState(() {
-        data.isForceCell = newSource == 'cellTower';
-      });
-
-      if (mounted) {
-        final name = _userNames[navigatorId] ?? navigatorId;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newSource == 'cellTower'
-                ? 'כפיית אנטנות הופעלה ל-$name'
-                : 'כפיית אנטנות בוטלה ל-$name'),
-            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בעדכון מצב מיקום: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _finishAllNavigation() async {
@@ -1883,20 +1733,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ),
         actions: [
           IconButton(
-            icon: Icon(
-              _globalForcePositionSource == 'cellTower'
-                  ? Icons.cell_tower
-                  : Icons.gps_fixed,
-              color: _globalForcePositionSource == 'cellTower'
-                  ? Colors.orange
-                  : Colors.white,
-            ),
-            tooltip: _globalForcePositionSource == 'cellTower'
-                ? 'מצב אנטנות כפוי — לחץ לביטול'
-                : 'כפה מיקום אנטנות לכל המנווטים',
-            onPressed: _toggleGlobalForcePositionSource,
-          ),
-          IconButton(
             icon: const Icon(Icons.stop_circle),
             tooltip: 'סיום ניווט כללי',
             onPressed: _finishAllNavigation,
@@ -1949,8 +1785,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     _mapLegendItem('סיים', Colors.blue),
                     _mapLegendItem('ללא קליטה', Colors.orange),
                     _mapLegendItem('התרעה', Colors.red),
-                    if (_globalForcePositionSource == 'cellTower')
-                      _mapLegendItem('אנטנות כפוי', Colors.orange),
                   ],
                 ),
               ),
@@ -2180,19 +2014,66 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       title: 'ניהול ניווט',
                       initialCenter: camera.center,
                       initialZoom: camera.zoom,
-                      layers: [
-                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                      layerConfigs: [
+                        MapLayerConfig(
+                          id: 'gg',
+                          label: 'גבול גזרה',
+                          color: Colors.black,
+                          visible: _showGG,
+                          opacity: _ggOpacity,
+                          onVisibilityChanged: (_) {},
+                          onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'nz',
+                          label: 'נקודות ציון',
+                          color: Colors.blue,
+                          visible: _showNZ,
+                          opacity: _nzOpacity,
+                          onVisibilityChanged: (_) {},
+                          onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'tracks',
+                          label: 'מסלולים',
+                          color: Colors.orange,
+                          visible: _showTracks,
+                          opacity: _tracksOpacity,
+                          onVisibilityChanged: (_) {},
+                          onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'punches',
+                          label: 'דקירות',
+                          color: Colors.green,
+                          visible: _showPunches,
+                          opacity: _punchesOpacity,
+                          onVisibilityChanged: (_) {},
+                          onOpacityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'alerts',
+                          label: 'התראות',
+                          color: Colors.red,
+                          visible: _showAlerts,
+                          opacity: 1.0,
+                          onVisibilityChanged: (_) {},
+                          onOpacityChanged: (_) {},
+                        ),
+                      ],
+                      layerBuilder: (visibility, opacity) => [
+                        if (visibility['gg'] == true && _boundary != null && _boundary!.coordinates.isNotEmpty)
                           PolygonLayer(
                             polygons: [
                               Polygon(
                                 points: _boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                                color: Colors.black.withOpacity(0.2 * _ggOpacity),
+                                color: Colors.black.withOpacity(0.2 * (opacity['gg'] ?? 1.0)),
                                 borderColor: Colors.black,
                                 borderStrokeWidth: 2,
                               ),
                             ],
                           ),
-                        if (_showNZ)
+                        if (visibility['nz'] == true)
                           MarkerLayer(
                             markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
                               // זיהוי סוג נקודה: התחלה / סיום / ביניים
@@ -2237,7 +2118,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                   children: [
                                     Icon(
                                       Icons.place,
-                                      color: cpColor.withValues(alpha: _nzOpacity),
+                                      color: cpColor.withValues(alpha: (opacity['nz'] ?? 1.0)),
                                       size: 32,
                                     ),
                                     Text(
@@ -2253,12 +2134,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                               );
                             }).toList(),
                           ),
-                        if (_showTracks) ..._buildNavigatorTracks(),
-                        if (_showPunches) ..._buildPunchMarkers(),
+                        if (visibility['tracks'] == true) ..._buildNavigatorTracks(),
+                        if (visibility['punches'] == true) ..._buildPunchMarkers(),
                         ..._buildNavigatorMarkers(),
                         ..._buildSelfMarker(),
                         ..._buildCommanderMarkers(),
-                        if (_showAlerts) ..._buildAlertMarkers(),
+                        if (visibility['alerts'] == true) ..._buildAlertMarkers(),
                       ],
                     ),
                   ));
@@ -2416,11 +2297,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             ),
                             child: const Text('נפסל',
                                 style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                          ),
-                        if (data.isForceCell)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.cell_tower, color: Colors.orange, size: 18),
                           ),
                         if (data.hasActiveAlert)
                           const Padding(
@@ -2880,10 +2756,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         runSpacing: 6,
                         children: [
                           _deviceChip(
-                            icon: data.isGpsPlusFix ? Icons.cell_tower : Icons.gps_fixed,
-                            label: data.isGpsPlusFix ? 'GPS Plus' : 'GPS',
-                            color: data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green,
+                            icon: _positionSourceIcon(data.trackPoints.isNotEmpty ? data.trackPoints.last.positionSource : 'gps'),
+                            label: _positionSourceLabel(data.trackPoints.isNotEmpty ? data.trackPoints.last.positionSource : 'gps'),
+                            color: _positionSourceColor(data.trackPoints.isNotEmpty ? data.trackPoints.last.positionSource : 'gps'),
                           ),
+                          if (data.trackPoints.isNotEmpty && data.trackPoints.last.accuracy >= 0)
+                            _deviceChip(
+                              icon: Icons.my_location,
+                              label: 'דיוק: ${data.trackPoints.last.accuracy.toStringAsFixed(0)}מ׳',
+                              color: data.trackPoints.last.accuracy <= 10
+                                  ? Colors.green
+                                  : data.trackPoints.last.accuracy <= 50
+                                      ? Colors.orange
+                                      : Colors.red,
+                            ),
                           _deviceChip(
                             icon: data.personalStatus == NavigatorPersonalStatus.noReception
                                 ? Icons.signal_wifi_off
@@ -3099,6 +2985,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   Future<void> _updateNavigatorMapOverrides(String navigatorId) async {
+    _isUpdatingOverrides = true;
+
     String? trackId = _navigatorTrackIds[navigatorId];
 
     // fallback: חיפוש track ב-Firestore אם אין cache
@@ -3117,14 +3005,67 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       } catch (_) {}
     }
 
-    if (trackId == null) return;
+    if (trackId == null) {
+      _isUpdatingOverrides = false;
+      // אין track — המנווט לא התחיל עדיין. איפוס הטוגלים
+      if (mounted) {
+        setState(() {
+          _navigatorOverrideAllowOpenMap[navigatorId] = false;
+          _navigatorOverrideShowSelfLocation[navigatorId] = false;
+          _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('המנווט לא התחיל ניווט — לא ניתן לעדכן הגדרות מפה'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
 
-    await _trackRepo.updateMapOverrides(
-      trackId,
-      allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? false,
-      showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? false,
-      showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
-    );
+    try {
+      await _trackRepo.updateMapOverrides(
+        trackId,
+        allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? false,
+        showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? false,
+        showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
+      );
+    } finally {
+      // המתנה קצרה — listener צריך לקבל את הנתון החדש לפני שנפסיק לחסום
+      await Future.delayed(const Duration(milliseconds: 500));
+      _isUpdatingOverrides = false;
+    }
+  }
+
+  String _positionSourceLabel(String source) {
+    switch (source) {
+      case 'gps': return 'GPS';
+      case 'cellTower': return 'אנטנות';
+      case 'pdr': return 'PDR';
+      case 'pdrCellHybrid': return 'PDR+Cell';
+      default: return source;
+    }
+  }
+
+  IconData _positionSourceIcon(String source) {
+    switch (source) {
+      case 'gps': return Icons.gps_fixed;
+      case 'cellTower': return Icons.cell_tower;
+      case 'pdr': return Icons.directions_walk;
+      case 'pdrCellHybrid': return Icons.merge_type;
+      default: return Icons.location_on;
+    }
+  }
+
+  Color _positionSourceColor(String source) {
+    switch (source) {
+      case 'gps': return Colors.green;
+      case 'cellTower': return Colors.orange;
+      case 'pdr': return Colors.blue;
+      case 'pdrCellHybrid': return Colors.purple;
+      default: return Colors.grey;
+    }
   }
 
   Widget _deviceChip({

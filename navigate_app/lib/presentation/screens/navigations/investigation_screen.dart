@@ -2042,14 +2042,59 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             title: 'מפת תחקיר',
             initialCenter: camera.center,
             initialZoom: camera.zoom,
-            layers: [
-              ..._buildBoundaryLayers(),
-              ..._buildSafetyLayers(),
+            layerConfigs: [
+              MapLayerConfig(
+                id: 'gg', label: 'גבול גזרה', color: _kBoundaryColor,
+                visible: _showGG, onVisibilityChanged: (_) {},
+                opacity: _ggOpacity, onOpacityChanged: (_) {},
+              ),
+              MapLayerConfig(
+                id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                visible: _showNZ, onVisibilityChanged: (_) {},
+                opacity: _nzOpacity, onOpacityChanged: (_) {},
+              ),
+              MapLayerConfig(
+                id: 'nb', label: 'נקודות בטיחות', color: _kSafetyColor,
+                visible: _showNB, onVisibilityChanged: (_) {},
+                opacity: _nbOpacity, onOpacityChanged: (_) {},
+              ),
+              MapLayerConfig(
+                id: 'planned', label: 'ציר מתוכנן', color: _kPlannedRouteColor,
+                visible: _showPlanned, onVisibilityChanged: (_) {},
+                opacity: _plannedOpacity, onOpacityChanged: (_) {},
+              ),
+              MapLayerConfig(
+                id: 'routes', label: 'מסלול בפועל', color: _kActualRouteColor,
+                visible: _showRoutes, onVisibilityChanged: (_) {},
+                opacity: _routesOpacity, onOpacityChanged: (_) {},
+              ),
+              if (!_allNavigatorsMode)
+                MapLayerConfig(
+                  id: 'punches', label: 'דקירות', color: Colors.green,
+                  visible: _showPunches, onVisibilityChanged: (_) {},
+                  opacity: _punchesOpacity, onOpacityChanged: (_) {},
+                ),
+              if (!_allNavigatorsMode)
+                MapLayerConfig(
+                  id: 'deviations', label: 'סטיות', color: Colors.red,
+                  visible: _showDeviations, onVisibilityChanged: (_) {},
+                  opacity: 1.0, onOpacityChanged: (_) {},
+                ),
+              if (_allNavigatorsMode)
+                MapLayerConfig(
+                  id: 'heatmap', label: 'מפת חום', color: Colors.orange,
+                  visible: _showHeatmap, onVisibilityChanged: (_) {},
+                  opacity: 1.0, onOpacityChanged: (_) {},
+                ),
+            ],
+            layerBuilder: (visibility, opacity) => [
+              if (visibility['gg'] == true) ..._buildBoundaryLayers(),
+              if (visibility['nb'] == true) ..._buildSafetyLayers(),
               if (_allNavigatorsMode)
                 ..._buildAllNavigatorsRouteLayers()
               else
                 ..._buildSingleNavigatorRouteLayers(),
-              if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
+              if (visibility['nz'] == true) ..._buildCheckpointMarkers(_navCheckpoints),
             ],
           ),
         ));

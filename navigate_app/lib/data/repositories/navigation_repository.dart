@@ -102,6 +102,7 @@ class NavigationRepository {
               systemCheckStartTime: Value(navigation.systemCheckStartTime),
               activeStartTime: Value(navigation.activeStartTime),
               gpsUpdateIntervalSeconds: navigation.gpsUpdateIntervalSeconds,
+              enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -171,6 +172,7 @@ class NavigationRepository {
           systemCheckStartTime: Value(navigation.systemCheckStartTime),
           activeStartTime: Value(navigation.activeStartTime),
           gpsUpdateIntervalSeconds: Value(navigation.gpsUpdateIntervalSeconds),
+          enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -311,6 +313,9 @@ class NavigationRepository {
       systemCheckStartTime: data.systemCheckStartTime,
       activeStartTime: data.activeStartTime,
       gpsUpdateIntervalSeconds: data.gpsUpdateIntervalSeconds,
+      enabledPositionSources: data.enabledPositionSourcesJson.isNotEmpty
+          ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
+          : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)
           : const domain.NavigationPermissions(managers: [], viewers: []),
@@ -731,6 +736,7 @@ class NavigationRepository {
           systemCheckStartTime: Value(nav.systemCheckStartTime),
           activeStartTime: Value(nav.activeStartTime),
           gpsUpdateIntervalSeconds: Value(nav.gpsUpdateIntervalSeconds),
+          enabledPositionSourcesJson: Value(jsonEncode(nav.enabledPositionSources)),
           permissionsJson: Value(jsonEncode(nav.permissions.toMap())),
           updatedAt: Value(nav.updatedAt),
         ),

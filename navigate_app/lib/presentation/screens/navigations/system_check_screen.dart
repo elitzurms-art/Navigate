@@ -370,6 +370,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               longitude: (data['longitude'] as num?)?.toDouble(),
               positionSource: data['positionSource'] as String? ?? 'gps',
               positionUpdatedAt: posTime,
+              gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
             );
           }
         });
@@ -424,6 +425,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             longitude: (data['longitude'] as num?)?.toDouble(),
             positionSource: data['positionSource'] as String? ?? 'gps',
             positionUpdatedAt: posTime,
+            gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
           );
         }
       });
@@ -979,6 +981,26 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   ),
                 ),
               ],
+              // דיוק GPS
+              if (status.gpsAccuracy > 0)
+                _buildDetailRow(
+                  'דיוק',
+                  '${status.gpsAccuracy.toStringAsFixed(0)} מטר',
+                  Icons.my_location,
+                  status.gpsAccuracy <= 10
+                      ? Colors.green
+                      : status.gpsAccuracy <= 50
+                          ? Colors.orange
+                          : Colors.red,
+                ),
+              // מקור מיקום
+              if (status.isConnected && status.hasGPS)
+                _buildDetailRow(
+                  'מקור מיקום',
+                  _positionSourceLabel(status.positionSource),
+                  _positionSourceIcon(status.positionSource),
+                  _positionSourceColor(status.positionSource),
+                ),
               const Divider(),
 
               // סוללה
@@ -1032,6 +1054,36 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         ],
       ),
     );
+  }
+
+  String _positionSourceLabel(String source) {
+    switch (source) {
+      case 'gps': return 'GPS';
+      case 'cellTower': return 'אנטנות';
+      case 'pdr': return 'PDR';
+      case 'pdrCellHybrid': return 'PDR+Cell';
+      default: return source;
+    }
+  }
+
+  IconData _positionSourceIcon(String source) {
+    switch (source) {
+      case 'gps': return Icons.gps_fixed;
+      case 'cellTower': return Icons.cell_tower;
+      case 'pdr': return Icons.directions_walk;
+      case 'pdrCellHybrid': return Icons.merge_type;
+      default: return Icons.location_on;
+    }
+  }
+
+  Color _positionSourceColor(String source) {
+    switch (source) {
+      case 'gps': return Colors.green;
+      case 'cellTower': return Colors.orange;
+      case 'pdr': return Colors.blue;
+      case 'pdrCellHybrid': return Colors.purple;
+      default: return Colors.grey;
+    }
   }
 
   Widget _buildDetailRow(String label, String value, IconData icon, Color color) {
@@ -1353,22 +1405,26 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       title: 'בדיקת מערכת',
                       initialCenter: camera.center,
                       initialZoom: camera.zoom,
-                      layers: [
-                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                      layerConfigs: [
+                        MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                        MapLayerConfig(id: 'navigators', label: 'מנווטים', color: Colors.blue, visible: _showNavigators, opacity: _navigatorsOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                      ],
+                      layerBuilder: (visibility, opacity) => [
+                        if (visibility['gg'] == true && _boundary != null && _boundary!.coordinates.isNotEmpty)
                           PolygonLayer(
                             polygons: [
                               Polygon(
                                 points: _boundary!.coordinates
                                     .map((coord) => LatLng(coord.lat, coord.lng))
                                     .toList(),
-                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                                borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                                 borderStrokeWidth: _boundary!.strokeWidth,
                                 isFilled: true,
                               ),
                             ],
                           ),
-                        if (_showNavigators)
+                        if (visibility['navigators'] == true)
                           MarkerLayer(
                             markers: _navigatorStatuses.entries
                                 .where((e) => e.value.latitude != null)
@@ -1379,7 +1435,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                                 width: 60,
                                 height: 60,
                                 child: Opacity(
-                                  opacity: _navigatorsOpacity,
+                                  opacity: (opacity['navigators'] ?? 1.0),
                                   child: Icon(
                                     Icons.person_pin_circle,
                                     color: Colors.green,
@@ -2301,6 +2357,7 @@ class NavigatorStatus {
   final double? longitude;
   final String positionSource; // 'gps', 'cellTower', or 'none'
   final DateTime? positionUpdatedAt; // מתי עודכן המיקום לאחרונה
+  final double gpsAccuracy; // -1 = לא ידוע
 
   NavigatorStatus({
     required this.isConnected,
@@ -2311,5 +2368,6 @@ class NavigatorStatus {
     this.longitude,
     this.positionSource = 'gps',
     this.positionUpdatedAt,
+    this.gpsAccuracy = -1,
   });
 }

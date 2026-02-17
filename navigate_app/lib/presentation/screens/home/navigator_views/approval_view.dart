@@ -534,40 +534,79 @@ class _ApprovalViewState extends State<ApprovalView> {
                   title: 'מפת אישרור',
                   initialCenter: camera.center,
                   initialZoom: camera.zoom,
-                  layers: [
-                    if (_boundaries.isNotEmpty)
-                      PolygonLayer(
-                        polygons: _boundaries
-                            .where((b) => b.coordinates.isNotEmpty)
-                            .map((b) => Polygon(
-                                  points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                  color: _kBoundaryColor.withOpacity(0.1),
-                                  borderColor: _kBoundaryColor,
-                                  borderStrokeWidth: 2.0,
-                                  isFilled: true,
-                                ))
-                            .toList(),
-                      ),
-                    if (_showPlanned && _plannedRoute.length > 1)
-                      PolylineLayer(polylines: [
-                        Polyline(points: _plannedRoute, color: _kPlannedRouteColor, strokeWidth: 4.0),
-                      ]),
-                    if (_showActual && _actualRoute.length > 1)
-                      PolylineLayer(polylines: [
-                        Polyline(points: _actualRoute, color: _kActualRouteColor, strokeWidth: 3.0),
-                      ]),
-                    if (_safetyPoints.isNotEmpty)
-                      MarkerLayer(
-                        markers: _safetyPoints
-                            .where((p) => p.coordinates != null)
-                            .map((p) => Marker(
-                                  point: LatLng(p.coordinates!.lat, p.coordinates!.lng),
-                                  width: 30, height: 30,
-                                  child: const Icon(Icons.warning_amber, color: _kSafetyColor, size: 28),
-                                ))
-                            .toList(),
-                      ),
+                  layerConfigs: [
+                    MapLayerConfig(id: 'boundary', label: 'גבול גזרה', color: _kBoundaryColor, visible: true, onVisibilityChanged: (_) {}),
+                    MapLayerConfig(id: 'planned', label: 'ציר מתוכנן', color: _kPlannedRouteColor, visible: _showPlanned, onVisibilityChanged: (_) {}),
+                    MapLayerConfig(id: 'actual', label: 'מסלול בפועל', color: _kActualRouteColor, visible: _showActual, onVisibilityChanged: (_) {}),
+                    MapLayerConfig(id: 'safety', label: 'נ.ב', color: _kSafetyColor, visible: true, onVisibilityChanged: (_) {}),
+                    MapLayerConfig(id: 'checkpoints', label: 'נ.צ', color: _kCheckpointColor, visible: _showCheckpoints, onVisibilityChanged: (_) {}),
                   ],
+                  layerBuilder: (visibility, opacity) {
+                    final startId = route?.startPointId;
+                    final endId = route?.endPointId;
+                    return [
+                      if (visibility['boundary'] == true && _boundaries.isNotEmpty)
+                        PolygonLayer(
+                          polygons: _boundaries
+                              .where((b) => b.coordinates.isNotEmpty)
+                              .map((b) => Polygon(
+                                    points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                    color: _kBoundaryColor.withOpacity(0.1),
+                                    borderColor: _kBoundaryColor,
+                                    borderStrokeWidth: 2.0,
+                                    isFilled: true,
+                                  ))
+                              .toList(),
+                        ),
+                      if (visibility['planned'] == true && _plannedRoute.length > 1)
+                        PolylineLayer(polylines: [
+                          Polyline(points: _plannedRoute, color: _kPlannedRouteColor, strokeWidth: 4.0),
+                        ]),
+                      if (visibility['actual'] == true && _actualRoute.length > 1)
+                        PolylineLayer(polylines: [
+                          Polyline(points: _actualRoute, color: _kActualRouteColor, strokeWidth: 3.0),
+                        ]),
+                      if (visibility['safety'] == true && _safetyPoints.isNotEmpty)
+                        MarkerLayer(
+                          markers: _safetyPoints
+                              .where((p) => p.coordinates != null)
+                              .map((p) => Marker(
+                                    point: LatLng(p.coordinates!.lat, p.coordinates!.lng),
+                                    width: 30, height: 30,
+                                    child: const Icon(Icons.warning_amber, color: _kSafetyColor, size: 28),
+                                  ))
+                              .toList(),
+                        ),
+                      if (visibility['checkpoints'] == true && pointCps.isNotEmpty)
+                        MarkerLayer(
+                          markers: pointCps.map((cp) {
+                            Color bgColor;
+                            String letter;
+                            final isStart = (startId != null && (cp.id == startId || cp.sourceId == startId)) || cp.type == 'start';
+                            final isEnd = (endId != null && (cp.id == endId || cp.sourceId == endId)) || cp.type == 'end';
+                            if (isStart) { bgColor = _kStartColor; letter = 'H'; }
+                            else if (isEnd) { bgColor = _kEndColor; letter = 'S'; }
+                            else { bgColor = _kCheckpointColor; letter = 'B'; }
+                            final label = '${cp.sequenceNumber}$letter';
+                            return Marker(
+                              point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+                              width: 38, height: 38,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: bgColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)],
+                                ),
+                                child: Center(
+                                  child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                    ];
+                  },
                 ),
               ));
             },

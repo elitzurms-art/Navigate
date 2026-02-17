@@ -189,6 +189,7 @@ class Navigations extends Table {
   TextColumn get routesStage => text().nullable()(); // שלב תהליך הצירים
   BoolColumn get routesDistributed => boolean().withDefault(const Constant(false))(); // האם חולקו צירים
   IntColumn get gpsUpdateIntervalSeconds => integer()();
+  TextColumn get enabledPositionSourcesJson => text().withDefault(const Constant('["gps","cellTower","pdr","pdrCellHybrid"]'))();
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
@@ -382,7 +383,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   @override
   MigrationStrategy get migration {
@@ -546,6 +547,9 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(navigationTracks, navigationTracks.overrideAllowOpenMap);
           await m.addColumn(navigationTracks, navigationTracks.overrideShowSelfLocation);
           await m.addColumn(navigationTracks, navigationTracks.overrideShowRouteOnMap);
+        }
+        if (from <= 21 && to >= 22) {
+          await m.addColumn(navigations, navigations.enabledPositionSourcesJson);
         }
       },
     );

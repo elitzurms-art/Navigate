@@ -1374,30 +1374,40 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       title: 'מצב אימון',
                       initialCenter: camera.center,
                       initialZoom: camera.zoom,
-                      layers: [
-                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                      layerConfigs: [
+                        MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                          visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                        MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                          visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                        MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                          visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                        MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange,
+                          visible: _showRoutes, opacity: _routesOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                      ],
+                      layerBuilder: (visibility, opacity) => [
+                        if (visibility['gg'] == true && _boundary != null && _boundary!.coordinates.isNotEmpty)
                           PolygonLayer(
                             polygons: [
                               Polygon(
                                 points: _boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                                color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                                borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                                borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                                 borderStrokeWidth: _boundary!.strokeWidth,
                                 isFilled: true,
                               ),
                             ],
                           ),
-                        if (_showRoutes) ..._buildRoutePolylines(),
-                        if (_showNZ)
+                        if (visibility['routes'] == true) ..._buildRoutePolylines(),
+                        if (visibility['nz'] == true)
                           MarkerLayer(
                             markers: _buildNavigationMarkers().map((m) => Marker(
                               point: m.point,
                               width: m.width,
                               height: m.height,
-                              child: Opacity(opacity: _nzOpacity, child: m.child),
+                              child: Opacity(opacity: (opacity['nz'] ?? 1.0), child: m.child),
                             )).toList(),
                           ),
-                        if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                        if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
                           MarkerLayer(
                             markers: _safetyPoints
                                 .where((p) => p.type == 'point' && p.coordinates != null)
@@ -1406,20 +1416,20 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                                       width: 30,
                                       height: 30,
                                       child: Opacity(
-                                        opacity: _nbOpacity,
+                                        opacity: (opacity['nb'] ?? 1.0),
                                         child: const Icon(Icons.warning, color: Colors.red, size: 30),
                                       ),
                                     ))
                                 .toList(),
                           ),
-                        if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                        if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
                           PolygonLayer(
                             polygons: _safetyPoints
                                 .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
                                 .map((point) => Polygon(
                                       points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                      color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
-                                      borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                                      color: Colors.red.withValues(alpha: 0.2 * (opacity['nb'] ?? 1.0)),
+                                      borderColor: Colors.red.withValues(alpha: (opacity['nb'] ?? 1.0)),
                                       borderStrokeWidth: 2,
                                       isFilled: true,
                                     ))
@@ -1886,36 +1896,46 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
                   title: 'מצב אימון',
                   initialCenter: camera.center,
                   initialZoom: camera.zoom,
-                  layers: [
-                    if (_showGG && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
+                  layerConfigs: [
+                    MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                      visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                      visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
+                      visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                    MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange,
+                      visible: _showRoutes, opacity: _routesOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
+                  ],
+                  layerBuilder: (visibility, opacity) => [
+                    if (visibility['gg'] == true && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
                       PolygonLayer(
                         polygons: [
                           Polygon(
                             points: widget.boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
+                            borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
                             borderStrokeWidth: widget.boundary!.strokeWidth,
                             isFilled: true,
                           ),
                         ],
                       ),
-                    if (_showRoutes && widget.referencePoints.length > 1)
+                    if (visibility['routes'] == true && widget.referencePoints.length > 1)
                       PolylineLayer(polylines: [
                         Polyline(
                           points: widget.referencePoints,
-                          color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
+                          color: Colors.blue.withValues(alpha: 0.3 * (opacity['routes'] ?? 1.0)),
                           strokeWidth: 2.0,
                         ),
                       ]),
-                    if (_showRoutes && widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
+                    if (visibility['routes'] == true && widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
                       PolylineLayer(polylines: [
                         Polyline(
                           points: widget.plannedPathPoints,
-                          color: Colors.blue.withValues(alpha: _routesOpacity),
+                          color: Colors.blue.withValues(alpha: (opacity['routes'] ?? 1.0)),
                           strokeWidth: 3.0,
                         ),
                       ]),
-                    if (_showNB && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
+                    if (visibility['nb'] == true && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
                       MarkerLayer(
                         markers: widget.safetyPoints
                             .where((p) => p.type == 'point' && p.coordinates != null)
@@ -1924,31 +1944,31 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
                                   width: 30,
                                   height: 30,
                                   child: Opacity(
-                                    opacity: _nbOpacity,
+                                    opacity: (opacity['nb'] ?? 1.0),
                                     child: const Icon(Icons.warning, color: Colors.red, size: 30),
                                   ),
                                 ))
                             .toList(),
                       ),
-                    if (_showNB && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                    if (visibility['nb'] == true && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
                       PolygonLayer(
                         polygons: widget.safetyPoints
                             .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
                             .map((point) => Polygon(
                                   points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                  color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
-                                  borderColor: Colors.red.withValues(alpha: _nbOpacity),
+                                  color: Colors.red.withValues(alpha: 0.2 * (opacity['nb'] ?? 1.0)),
+                                  borderColor: Colors.red.withValues(alpha: (opacity['nb'] ?? 1.0)),
                                   borderStrokeWidth: 2,
                                   isFilled: true,
                                 ))
                             .toList(),
                       ),
-                    if (_showNZ)
+                    if (visibility['nz'] == true)
                       MarkerLayer(markers: markers.map((m) => Marker(
                         point: m.point,
                         width: m.width,
                         height: m.height,
-                        child: Opacity(opacity: _nzOpacity, child: m.child),
+                        child: Opacity(opacity: (opacity['nz'] ?? 1.0), child: m.child),
                       )).toList()),
                   ],
                 ),

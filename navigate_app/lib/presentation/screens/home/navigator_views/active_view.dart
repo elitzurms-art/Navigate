@@ -74,6 +74,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
   Timer? _trackSaveTimer;
+  bool _isSavingTrack = false;
   int _trackPointCount = 0;
 
   // GPS source tracking
@@ -340,12 +341,16 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           print('DEBUG ActiveView: Ignoring onLockTaskExit — Lock Task still active');
           return;
         }
-        // grace period — אחרי הפעלה/איפוס/ביטול פסילה, לא לפסול מייד
+        // grace period קצר (6 שניות) — מונע false positive מיד אחרי startLockTask()
         if (_securityStartTime != null &&
-            DateTime.now().difference(_securityStartTime!).inSeconds < 90) {
-          print('DEBUG ActiveView: onLockTaskExit in grace period — ignoring');
+            DateTime.now().difference(_securityStartTime!).inSeconds < 6) {
+          print('DEBUG ActiveView: onLockTaskExit in grace period — re-enabling silently');
+          await DeviceSecurityService().enableLockTask();
           return;
         }
+        // מחוץ ל-grace period — הפעלה מחדש + פסילה
+        print('🚨 ActiveView: Lock Task exit detected — re-enabling + disqualifying');
+        await DeviceSecurityService().enableLockTask();
       }
       _handleDisqualification(type);
     };
@@ -382,8 +387,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   Future<void> _handleDisqualification(ViolationType type) async {
     if (_isDisqualified || _track == null) return;
 
+    // סימון מיידי — מונע race condition עם _saveTrackPoints שרץ במקביל
+    // (ללא setState כדי שה-safety net ב-_saveTrackPoints יראה את הערך הנכון מיד)
+    _isDisqualified = true;
+
     try {
-      // סימון isDisqualified=true ב-track
+      // סימון isDisqualified=true ב-track (Drift + Firestore)
       await _trackRepo.disqualifyNavigator(_track!.id);
 
       // שליחת התראה למפקד
@@ -397,7 +406,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     }
 
     if (mounted) {
-      setState(() => _isDisqualified = true);
+      setState(() {}); // רענון UI — _isDisqualified כבר true
       HapticFeedback.heavyImpact();
     }
   }
@@ -446,9 +455,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         return;
       }
 
-      // grace period — התעלמות מאירועי exit מיד אחרי הפעלת אבטחה (מונע false positive אחרי איפוס)
+      // grace period קצר (6 שניות) — מונע false positive מיד אחרי startLockTask()
       if (_securityStartTime != null &&
-          DateTime.now().difference(_securityStartTime!).inSeconds < 90) {
+          DateTime.now().difference(_securityStartTime!).inSeconds < 6) {
         print('DEBUG ActiveView: Lock Task check skipped — grace period (${DateTime.now().difference(_securityStartTime!).inSeconds}s)');
         return;
       }
@@ -456,9 +465,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       final deviceSecurity = DeviceSecurityService();
       final inLockTask = await deviceSecurity.isInLockTaskMode();
 
-      // אם אבטחה פעילה אבל Lock Task כבוי — פסילה
+      // אם אבטחה פעילה אבל Lock Task כבוי — הפעלה מחדש + פסילה
       if (!inLockTask && _securityActive && !_isDisqualified) {
-        print('🚨 ActiveView: Lock Task exit detected on resume — disqualifying');
+        print('🚨 ActiveView: Lock Task exit detected on resume — re-enabling + disqualifying');
+        await deviceSecurity.enableLockTask();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -596,14 +606,15 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     final started = await _gpsTracker.startTracking(
       intervalSeconds: interval,
       boundaryCenter: _boundaryCenter,
+      enabledPositionSources: _nav.enabledPositionSources,
     );
     if (!started) {
       print('DEBUG ActiveView: GPS tracking failed to start');
       return;
     }
 
-    // שמירה תקופתית ל-Drift כל interval שניות (או מינימום 30)
-    final saveInterval = interval < 30 ? interval : 30;
+    // שמירה תקופתית ל-Drift — מינימום 10 שניות גם אם interval קצר יותר
+    final saveInterval = interval < 10 ? 10 : (interval < 30 ? interval : 30);
     _trackSaveTimer = Timer.periodic(
       Duration(seconds: saveInterval),
       (_) => _saveTrackPoints(),
@@ -612,6 +623,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Future<void> _saveTrackPoints() async {
     if (_track == null) return;
+    // מניעת שמירות מקבילות
+    if (_isSavingTrack) return;
+    _isSavingTrack = true;
 
     final points = _gpsTracker.trackPoints;
 
@@ -638,6 +652,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       }
     } catch (e) {
       print('DEBUG ActiveView: track save error: $e');
+    } finally {
+      _isSavingTrack = false;
     }
   }
 
@@ -1433,6 +1449,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _buildAlertBanner(_currentAlertBanner!),
         // Status bar with elapsed timer
         _buildActiveStatusBar(),
+        // GPS accuracy banner
+        _buildGpsAccuracyBanner(),
         // Disqualification banner
         if (_isDisqualified)
           Container(
@@ -1486,6 +1504,54 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               ],
             ),
           ),
+        // כפתור בקשת הארכה (בפיתוח)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.timer),
+              label: const Text(
+                'בקשת הארכה — בפיתוח',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.purple.withOpacity(0.5),
+                disabledForegroundColor: Colors.white70,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // כפתור סיום ניווט
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _endNavigation,
+              icon: const Icon(Icons.stop),
+              label: const Text(
+                'סיום ניווט',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ),
         // 2×2 grid
         Expanded(
           child: Padding(
@@ -1523,30 +1589,44 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             ),
           ),
         ),
-        // כפתור סיום ניווט
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _endNavigation,
-              icon: const Icon(Icons.stop),
-              label: const Text(
-                'סיום ניווט',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildGpsAccuracyBanner() {
+    final points = _gpsTracker.trackPoints;
+    if (points.isEmpty) return const SizedBox.shrink();
+    final accuracy = points.last.accuracy;
+    if (accuracy < 0) return const SizedBox.shrink();
+
+    Color bannerColor;
+    IconData bannerIcon;
+    if (accuracy <= 10) {
+      bannerColor = Colors.green;
+      bannerIcon = Icons.gps_fixed;
+    } else if (accuracy <= 50) {
+      bannerColor = Colors.orange;
+      bannerIcon = Icons.gps_not_fixed;
+    } else {
+      bannerColor = Colors.red;
+      bannerIcon = Icons.gps_off;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: bannerColor.withOpacity(0.15),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(bannerIcon, size: 16, color: bannerColor),
+          const SizedBox(width: 6),
+          Text(
+            'דיוק: ${accuracy.toStringAsFixed(0)} מטר',
+            style: TextStyle(fontSize: 13, color: bannerColor, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
     );
   }
 

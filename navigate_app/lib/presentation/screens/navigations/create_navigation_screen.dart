@@ -83,6 +83,14 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   // הגדרות ניווט
   int _gpsUpdateInterval = 30; // שניות
+
+  // הגדרות מיקום
+  bool _useAllPositionSources = true;
+  bool _enableGps = true;
+  bool _enableCellTower = true;
+  bool _enablePdr = true;
+  bool _enablePdrCellHybrid = true;
+
   bool _autoVerification = false;
   String _verificationType = 'approved_failed'; // approved_failed, score_by_distance
   int _approvalDistance = 20;
@@ -340,6 +348,14 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     // הגדרות GPS
     _gpsUpdateInterval = nav.gpsUpdateIntervalSeconds;
 
+    // הגדרות מיקום
+    final sources = nav.enabledPositionSources;
+    _enableGps = sources.contains('gps');
+    _enableCellTower = sources.contains('cellTower');
+    _enablePdr = sources.contains('pdr');
+    _enablePdrCellHybrid = sources.contains('pdrCellHybrid');
+    _useAllPositionSources = _enableGps && _enableCellTower && _enablePdr && _enablePdrCellHybrid;
+
     // הגדרות אימות
     _autoVerification = nav.verificationSettings.autoVerification;
     _verificationType = nav.verificationSettings.verificationType ?? 'approved_failed';
@@ -545,6 +561,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   _buildNavigationSettings(),
 
                   if (!widget.alertsOnlyMode) ...[
+                    const SizedBox(height: 24),
+
+                    // הגדרות מיקום
+                    _buildSectionTitle('הגדרות מיקום'),
+                    _buildLocationSettings(),
                     const SizedBox(height: 24),
 
                     // הגדרות תחקיר
@@ -877,6 +898,104 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     );
   }
 
+  List<String> _buildEnabledPositionSources() {
+    if (_useAllPositionSources) {
+      return const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'];
+    }
+    final sources = <String>[];
+    if (_enableGps) sources.add('gps');
+    if (_enableCellTower) sources.add('cellTower');
+    if (_enablePdr) sources.add('pdr');
+    if (_enablePdrCellHybrid) sources.add('pdrCellHybrid');
+    // לפחות GPS חייב להיות דלוק
+    if (sources.isEmpty) sources.add('gps');
+    return sources;
+  }
+
+  Widget _buildLocationSettings() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // מרווח דגימת GPS
+            ListTile(
+              leading: const Icon(Icons.timer, color: Colors.blue),
+              title: const Text('מרווח דגימת GPS'),
+              subtitle: Text('$_gpsUpdateInterval שניות'),
+              trailing: SizedBox(
+                width: 120,
+                child: Slider(
+                  value: _gpsUpdateInterval.toDouble(),
+                  min: 1,
+                  max: 120,
+                  divisions: 119,
+                  label: '$_gpsUpdateInterval שניות',
+                  onChanged: (value) {
+                    setState(() => _gpsUpdateInterval = value.round());
+                  },
+                ),
+              ),
+            ),
+            const Divider(),
+            // בחירת אמצעי מיקום
+            SwitchListTile(
+              title: const Text('בחר את כל אמצעי המיקום'),
+              subtitle: const Text('כולל GPS, אנטנות, PDR ומשולב'),
+              value: _useAllPositionSources,
+              onChanged: (value) {
+                setState(() {
+                  _useAllPositionSources = value;
+                  if (value) {
+                    _enableGps = true;
+                    _enableCellTower = true;
+                    _enablePdr = true;
+                    _enablePdrCellHybrid = true;
+                  }
+                });
+              },
+            ),
+            if (!_useAllPositionSources) ...[
+              SwitchListTile(
+                secondary: const Icon(Icons.gps_fixed),
+                title: const Text('GPS'),
+                value: _enableGps,
+                onChanged: (value) {
+                  setState(() => _enableGps = value);
+                },
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.cell_tower),
+                title: const Text('אנטנות סלולריות'),
+                value: _enableCellTower,
+                onChanged: (value) {
+                  setState(() => _enableCellTower = value);
+                },
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.directions_walk),
+                title: const Text('PDR — חישוב הליכה'),
+                value: _enablePdr,
+                onChanged: (value) {
+                  setState(() => _enablePdr = value);
+                },
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.merge_type),
+                title: const Text('PDR + אנטנות (משולב)'),
+                value: _enablePdrCellHybrid,
+                onChanged: (value) {
+                  setState(() => _enablePdrCellHybrid = value);
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildReviewSettings() {
     return Card(
       child: Padding(
@@ -1127,32 +1246,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     setState(() => _showRouteOnMap = value);
                   },
                 ),
-            ],
-
-            if (!widget.alertsOnlyMode) ...[
-              const Divider(),
-
-              // הגדרות GPS
-              ListTile(
-                leading: const Icon(Icons.timer, color: Colors.blue),
-                title: const Text('מרווח דגימת GPS'),
-                subtitle: Text('$_gpsUpdateInterval שניות'),
-                trailing: SizedBox(
-                  width: 120,
-                  child: Slider(
-                    value: _gpsUpdateInterval.toDouble(),
-                    min: 1,
-                    max: 120,
-                    divisions: 119,
-                    label: '$_gpsUpdateInterval שניות',
-                    onChanged: (value) {
-                      setState(() => _gpsUpdateInterval = value.round());
-                    },
-                  ),
-                ),
-              ),
-
-              const Divider(),
             ],
 
             // בדיקת תקינות מנווטים
@@ -1623,6 +1716,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         systemCheckStartTime: widget.navigation?.systemCheckStartTime,
         activeStartTime: widget.navigation?.activeStartTime,
         gpsUpdateIntervalSeconds: _gpsUpdateInterval,
+        enabledPositionSources: _buildEnabledPositionSources(),
         permissions: widget.navigation?.permissions ?? domain.NavigationPermissions(
           managers: [currentUser.uid],
           viewers: [],
