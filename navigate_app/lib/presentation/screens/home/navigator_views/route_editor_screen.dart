@@ -62,7 +62,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
 
   bool _showGG = true;
   bool _showNZ = true;
-  bool _showNB = false;
+  bool _showNB = true;
   bool _showBA = false;
   bool _showRoutes = true;
 

@@ -19,6 +19,7 @@ class SecurityManager {
   String? _currentNavigatorName;
   SecuritySettings? _currentSettings;
   StreamController<SecurityViolation>? _violationStream;
+  SecurityLevel? _activeSecurityLevel;
 
   /// Debounce: זמן אחרון שכל סוג חריגה נרשם
   final Map<ViolationType, DateTime> _lastViolationTime = {};
@@ -53,6 +54,7 @@ class SecurityManager {
 
     // קבלת רמת האבטחה
     final securityLevel = await _deviceSecurity.getSecurityLevel();
+    _activeSecurityLevel = securityLevel;
     print('🛡️ רמת אבטחה: ${securityLevel.displayName}');
 
     bool success = false;
@@ -105,6 +107,14 @@ class SecurityManager {
 
     // עצירת ניטור אירועים
     _deviceSecurity.stopMonitoring();
+
+    // שחרור נעילת מכשיר
+    if (_activeSecurityLevel == SecurityLevel.lockTask) {
+      await _deviceSecurity.disableLockTask('');
+    } else if (_activeSecurityLevel == SecurityLevel.kioskMode) {
+      await _deviceSecurity.disableKioskMode('');
+    }
+    _activeSecurityLevel = null;
 
     if (!normalEnd) {
       // סיום חריג - רישום

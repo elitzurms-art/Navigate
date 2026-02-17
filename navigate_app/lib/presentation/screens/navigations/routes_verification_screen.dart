@@ -165,6 +165,22 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     }
   }
 
+  /// נקודת התחלה (H) — מחפש בצירים ואז fallback להגדרות ניווט
+  String? get _startPointId {
+    for (final route in widget.navigation.routes.values) {
+      if (route.startPointId != null) return route.startPointId;
+    }
+    return widget.navigation.startPoint;
+  }
+
+  /// נקודת סיום (S) — מחפש בצירים ואז fallback להגדרות ניווט
+  String? get _endPointId {
+    for (final route in widget.navigation.routes.values) {
+      if (route.endPointId != null) return route.endPointId;
+    }
+    return widget.navigation.endPoint;
+  }
+
   /// איסוף כל מזהי waypoints מכל הצירים
   Set<String> get _allWaypointIds {
     final ids = <String>{};
@@ -384,18 +400,18 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 _buildLegendItem('ארוך מדי', Colors.red),
               ],
             ),
-            if (_allWaypointIds.isNotEmpty || _sharedCheckpointIds.isNotEmpty) ...[
-              const Divider(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  if (_allWaypointIds.isNotEmpty)
-                    _buildLegendIconItem('נקודת ביניים', Icons.star, Colors.purple),
-                  if (_sharedCheckpointIds.isNotEmpty)
-                    _buildLegendIconItem('נקודה משותפת', Icons.people, Colors.orange),
-                ],
-              ),
-            ],
+            const Divider(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildLegendItem('התחלה (H)', const Color(0xFF4CAF50)),
+                _buildLegendItem('סיום (S)', const Color(0xFFF44336)),
+                if (_allWaypointIds.isNotEmpty)
+                  _buildLegendIconItem('נקודת ביניים', Icons.star, Colors.purple),
+                if (_sharedCheckpointIds.isNotEmpty)
+                  _buildLegendIconItem('נקודה משותפת', Icons.people, Colors.orange),
+              ],
+            ),
           ],
         ),
       ),
@@ -619,9 +635,24 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                           .where((cp) => !waypointIds.contains(cp.id)) // סנן waypoints — יוצגו בנפרד
                           .map((cp) {
                         final isShared = _sharedCheckpointIds.contains(cp.id);
-                        final markerColor = isShared
-                            ? Colors.orange
-                            : (cp.color == 'green' ? Colors.green : Colors.blue);
+                        final isStart = cp.id == _startPointId;
+                        final isEnd = cp.id == _endPointId;
+
+                        Color markerColor;
+                        String label;
+                        if (isStart) {
+                          markerColor = const Color(0xFF4CAF50);
+                          label = '${cp.sequenceNumber}H';
+                        } else if (isEnd) {
+                          markerColor = const Color(0xFFF44336);
+                          label = '${cp.sequenceNumber}S';
+                        } else if (isShared) {
+                          markerColor = Colors.orange;
+                          label = '';
+                        } else {
+                          markerColor = Colors.blue;
+                          label = '${cp.sequenceNumber}';
+                        }
 
                         return Marker(
                           point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
@@ -642,10 +673,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                 child: isShared
                                     ? const Icon(Icons.people, size: 14, color: Colors.white)
                                     : Text(
-                                        '${cp.sequenceNumber}',
+                                        label,
                                         style: const TextStyle(
                                           color: Colors.white,
-                                          fontSize: 12,
+                                          fontSize: 11,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
@@ -768,7 +799,28 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                         polygon: _boundary!.coordinates,
                                       )
                                     : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
+                                .where((cp) => !waypointIds.contains(cp.id))
                                 .map((cp) {
+                              final isShared = _sharedCheckpointIds.contains(cp.id);
+                              final isStart = cp.id == _startPointId;
+                              final isEnd = cp.id == _endPointId;
+
+                              Color markerColor;
+                              String label;
+                              if (isStart) {
+                                markerColor = const Color(0xFF4CAF50);
+                                label = '${cp.sequenceNumber}H';
+                              } else if (isEnd) {
+                                markerColor = const Color(0xFFF44336);
+                                label = '${cp.sequenceNumber}S';
+                              } else if (isShared) {
+                                markerColor = Colors.orange;
+                                label = '';
+                              } else {
+                                markerColor = Colors.blue;
+                                label = '${cp.sequenceNumber}';
+                              }
+
                               return Marker(
                                 point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                                 width: 36,
@@ -777,15 +829,20 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                   opacity: _nzOpacity,
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.blue,
+                                      color: markerColor,
                                       shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 2),
+                                      border: Border.all(
+                                        color: isShared ? Colors.orange[900]! : Colors.white,
+                                        width: isShared ? 3 : 2,
+                                      ),
                                     ),
                                     child: Center(
-                                      child: Text(
-                                        '${cp.sequenceNumber}',
-                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                      ),
+                                      child: isShared
+                                          ? const Icon(Icons.people, size: 14, color: Colors.white)
+                                          : Text(
+                                              label,
+                                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                            ),
                                     ),
                                   ),
                                 ),

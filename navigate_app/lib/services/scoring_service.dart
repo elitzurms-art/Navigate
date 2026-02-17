@@ -35,14 +35,17 @@ class ScoringService {
     int approvedCount = 0;
 
     for (final punch in punches) {
-      if (punch.isDeleted) continue;
+      if (punch.isDeleted || punch.isRejected) continue;
 
-      final distance = punch.distanceFromCheckpoint ?? 0;
+      final distance = punch.distanceFromCheckpoint;
       bool approved = false;
       int score = 0;
 
-      // חישוב לפי שיטה
-      if (verificationSettings.verificationType == 'approved_failed') {
+      // אם אין מרחק מחושב — לא ניתן לאשר אוטומטית
+      if (distance == null) {
+        approved = false;
+        score = 0;
+      } else if (verificationSettings.verificationType == 'approved_failed') {
         final threshold = verificationSettings.approvalDistance ?? 50;
         approved = distance <= threshold;
         score = approved ? 100 : 0;
@@ -78,7 +81,7 @@ class ScoringService {
         checkpointId: punch.checkpointId,
         approved: approved,
         score: score,
-        distanceMeters: distance,
+        distanceMeters: distance ?? 0,
         weight: cpWeight,
       );
 

@@ -18,7 +18,7 @@ class GPSTrackingService {
   LatLng? _boundaryCenter;
   int get intervalSeconds => _intervalSeconds;
 
-  /// מקור מיקום כפוי — 'auto' (ברירת מחדל), 'cellTower', 'gps'
+  /// מקור מיקום כפוי — 'auto' (ברירת מחדל), 'cellTower', 'gps', 'pdr'
   String _forcePositionSource = 'auto';
   String get forcePositionSource => _forcePositionSource;
   set forcePositionSource(String value) {
@@ -47,6 +47,11 @@ class GPSTrackingService {
     _intervalSeconds = intervalSeconds;
     _boundaryCenter = boundaryCenter;
     _forcePositionSource = forcePositionSource;
+
+    // Initialize PDR if not forcing cellTower-only
+    if (_forcePositionSource != 'cellTower') {
+      await _gpsService.initPdr();
+    }
 
     // כפיית אנטנות — לא צריך הרשאות GPS
     if (_forcePositionSource == 'cellTower') {
@@ -78,6 +83,36 @@ class GPSTrackingService {
       return true;
     }
 
+    // כפיית PDR+Cell hybrid
+    if (_forcePositionSource == 'pdr') {
+      _positionStream = StreamController<Position>.broadcast();
+      _trackPoints = [];
+      _isTracking = true;
+
+      try {
+        final pdrPos = await _gpsService.getCurrentPosition(
+          boundaryCenter: _boundaryCenter,
+          forceSource: 'pdr',
+        );
+        if (pdrPos != null) {
+          final source = _gpsService.lastPositionSource;
+          _recordPointFromLatLng(pdrPos.latitude, pdrPos.longitude, -1,
+            positionSource: source.name);
+          print('GPS Tracking התחיל - מיקום ראשוני (PDR): ${pdrPos.latitude}, ${pdrPos.longitude}');
+        }
+      } catch (e) {
+        print('שגיאה בקבלת מיקום ראשוני (PDR): $e');
+      }
+
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds),
+        (timer) => _recordCurrentPosition(),
+      );
+
+      print('GPS Tracking פעיל (PDR forced) - רישום כל $_intervalSeconds שניות');
+      return true;
+    }
+
     // בדיקת הרשאות GPS — אם אין, ממשיך עם fallback אנטנות
     bool gpsAvailable = false;
     try {
@@ -97,7 +132,7 @@ class GPSTrackingService {
     }
 
     if (!gpsAvailable) {
-      print('GPS לא זמין — ממשיך עם fallback אנטנות');
+      print('GPS לא זמין — ממשיך עם fallback PDR+Cell');
     }
 
     _positionStream = StreamController<Position>.broadcast();
@@ -112,21 +147,28 @@ class GPSTrackingService {
           timeLimit: const Duration(seconds: 10),
         );
 
-        // אם הדיוק נמוך, נסה fallback דרך GPS Plus (אנטנות סלולריות)
+        // Set PDR anchor on good GPS fix
+        if (position.accuracy < 20) {
+          _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
+        }
+
+        // אם הדיוק נמוך, נסה fallback דרך GPS Plus
         if (position.accuracy > 50 && _forcePositionSource != 'gps') {
           final cellPos = await _gpsService.getCurrentPosition(
             boundaryCenter: _boundaryCenter,
             forceSource: _forcePositionSource,
           );
           if (cellPos != null &&
-              _gpsService.lastPositionSource == PositionSource.cellTower) {
+              (_gpsService.lastPositionSource == PositionSource.cellTower ||
+               _gpsService.lastPositionSource == PositionSource.pdr ||
+               _gpsService.lastPositionSource == PositionSource.pdrCellHybrid)) {
             _recordPointFromLatLng(
               cellPos.latitude,
               cellPos.longitude,
               position.accuracy,
-              positionSource: 'cellTower',
+              positionSource: _gpsService.lastPositionSource.name,
             );
-            print('GPS Tracking התחיל - מיקום ראשוני (cellTower): ${cellPos.latitude}, ${cellPos.longitude}');
+            print('GPS Tracking התחיל - מיקום ראשוני (${_gpsService.lastPositionSource.name}): ${cellPos.latitude}, ${cellPos.longitude}');
           } else {
             _recordPoint(position, positionSource: 'gps');
             print('GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
@@ -136,7 +178,7 @@ class GPSTrackingService {
           print('GPS Tracking התחיל - מיקום ראשוני: ${position.latitude}, ${position.longitude}');
         }
       } else {
-        // GPS לא זמין — נסה אנטנות
+        // GPS לא זמין — נסה PDR hybrid / אנטנות
         final cellPos = await _gpsService.getCurrentPosition(
           boundaryCenter: _boundaryCenter,
           forceSource: _forcePositionSource,
@@ -146,9 +188,7 @@ class GPSTrackingService {
             cellPos.latitude,
             cellPos.longitude,
             -1,
-            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
-                ? 'cellTower'
-                : 'gps',
+            positionSource: _gpsService.lastPositionSource.name,
           );
           print('GPS Tracking התחיל - מיקום ראשוני (fallback): ${cellPos.latitude}, ${cellPos.longitude}');
         } else {
@@ -157,7 +197,7 @@ class GPSTrackingService {
       }
     } catch (e) {
       print('שגיאה בקבלת מיקום ראשוני: $e');
-      // נסה fallback אנטנות
+      // נסה fallback
       try {
         final cellPos = await _gpsService.getCurrentPosition(
           boundaryCenter: _boundaryCenter,
@@ -165,7 +205,7 @@ class GPSTrackingService {
         );
         if (cellPos != null) {
           _recordPointFromLatLng(cellPos.latitude, cellPos.longitude, -1,
-            positionSource: 'cellTower');
+            positionSource: _gpsService.lastPositionSource.name);
           print('מיקום ראשוני מ-fallback: ${cellPos.latitude}, ${cellPos.longitude}');
         }
       } catch (_) {}
@@ -191,6 +231,9 @@ class GPSTrackingService {
     await _positionStream?.close();
     _positionStream = null;
 
+    // Stop PDR
+    _gpsService.stopPdr();
+
     _isTracking = false;
 
     print('GPS Tracking הופסק - נרשמו ${_trackPoints.length} נקודות');
@@ -215,7 +258,24 @@ class GPSTrackingService {
       return;
     }
 
-    // בדיקה מהירה: אם GPS לא זמין, ישר ל-fallback אנטנות
+    // כפיית PDR+Cell hybrid
+    if (_forcePositionSource == 'pdr') {
+      try {
+        final pdrPos = await _gpsService.getCurrentPosition(
+          boundaryCenter: _boundaryCenter,
+          forceSource: 'pdr',
+        );
+        if (pdrPos != null) {
+          _recordPointFromLatLng(pdrPos.latitude, pdrPos.longitude, -1,
+            positionSource: _gpsService.lastPositionSource.name);
+        }
+      } catch (e) {
+        print('PDR fallback (forced) נכשל: $e');
+      }
+      return;
+    }
+
+    // בדיקה מהירה: אם GPS לא זמין, ישר ל-fallback
     bool gpsAvailable = true;
     try {
       final perm = await Geolocator.checkPermission();
@@ -240,13 +300,11 @@ class GPSTrackingService {
             cellPos.latitude,
             cellPos.longitude,
             -1,
-            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
-                ? 'cellTower'
-                : 'gps',
+            positionSource: _gpsService.lastPositionSource.name,
           );
         }
       } catch (e) {
-        print('fallback אנטנות נכשל: $e');
+        print('fallback נכשל: $e');
       }
       return;
     }
@@ -259,9 +317,18 @@ class GPSTrackingService {
 
       // כפיית GPS — אין fallback
       if (_forcePositionSource == 'gps') {
+        // Update PDR anchor on good fix
+        if (position.accuracy < 20) {
+          _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
+        }
         _recordPoint(position, positionSource: 'gps');
         _positionStream?.add(position);
         return;
+      }
+
+      // Update PDR anchor on good GPS fix
+      if (position.accuracy < 20) {
+        _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
       }
 
       // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
@@ -273,15 +340,15 @@ class GPSTrackingService {
           _boundaryCenter!.longitude,
         );
         if (dist > 50000) {
-          // GPS likely spoofed — try cell towers
+          // GPS likely spoofed — try PDR hybrid / cell towers
           final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
           if (cellPos != null &&
-              _gpsService.lastPositionSource == PositionSource.cellTower) {
+              _gpsService.lastPositionSource != PositionSource.gps) {
             _recordPointFromLatLng(
               cellPos.latitude,
               cellPos.longitude,
               position.accuracy,
-              positionSource: 'cellTower',
+              positionSource: _gpsService.lastPositionSource.name,
             );
             _positionStream?.add(position);
             return;
@@ -289,16 +356,16 @@ class GPSTrackingService {
         }
       }
 
-      // אם הדיוק נמוך (> 50 מטר), נסה fallback דרך GPS Plus
+      // אם הדיוק נמוך (> 50 מטר), נסה fallback
       if (position.accuracy > 50) {
         final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
         if (cellPos != null &&
-            _gpsService.lastPositionSource == PositionSource.cellTower) {
+            _gpsService.lastPositionSource != PositionSource.gps) {
           _recordPointFromLatLng(
             cellPos.latitude,
             cellPos.longitude,
             position.accuracy,
-            positionSource: 'cellTower',
+            positionSource: _gpsService.lastPositionSource.name,
           );
           _positionStream?.add(position);
           return;
@@ -308,9 +375,9 @@ class GPSTrackingService {
       _recordPoint(position, positionSource: 'gps');
       _positionStream?.add(position);
     } catch (e) {
-      // GPS failed completely — try cell tower fallback
+      // GPS failed completely — try fallback
       if (_forcePositionSource == 'gps') return;
-      print('שגיאה ברישום מיקום: $e — מנסה fallback אנטנות');
+      print('שגיאה ברישום מיקום: $e — מנסה fallback');
       try {
         final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
         if (cellPos != null) {
@@ -318,13 +385,11 @@ class GPSTrackingService {
             cellPos.latitude,
             cellPos.longitude,
             -1,
-            positionSource: _gpsService.lastPositionSource == PositionSource.cellTower
-                ? 'cellTower'
-                : 'gps',
+            positionSource: _gpsService.lastPositionSource.name,
           );
         }
       } catch (_) {
-        print('גם fallback אנטנות נכשל');
+        print('גם fallback נכשל');
       }
     }
   }

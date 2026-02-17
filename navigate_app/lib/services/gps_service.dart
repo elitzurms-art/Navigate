@@ -4,7 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:gps_plus/gps_plus.dart';
 
 /// מקור מיקום אחרון
-enum PositionSource { gps, cellTower, none }
+enum PositionSource { gps, cellTower, pdr, pdrCellHybrid, none }
 
 /// שירות GPS ומיקום — עם fallback לאנטנות סלולריות דרך gps_plus
 class GpsService {
@@ -17,6 +17,10 @@ class GpsService {
   // Cell tower fallback
   CellLocationService? _cellService;
   bool _cellInitialized = false;
+
+  // PDR service
+  PdrService? _pdrService;
+  bool _pdrInitialized = false;
 
   /// סף דיוק (במטרים) — מתחתיו GPS מספיק טוב, מעליו מנסה fallback
   static const double _accuracyThreshold = 50.0;
@@ -59,6 +63,107 @@ class GpsService {
     }
   }
 
+  // ===========================================================================
+  // PDR — Pedestrian Dead Reckoning
+  // ===========================================================================
+
+  /// אתחול lazy של PdrService — נקרא פעם אחת
+  Future<void> initPdr() async {
+    if (_pdrInitialized) return;
+    try {
+      _pdrService = PdrService();
+      final available = await _pdrService!.isAvailable;
+      if (!available) {
+        print('DEBUG GpsService: PDR not available (missing sensors)');
+        _pdrService = null;
+        return;
+      }
+      await _pdrService!.start();
+      _pdrInitialized = true;
+      print('DEBUG GpsService: PDR initialized and started');
+    } catch (e) {
+      print('DEBUG GpsService: PDR init failed: $e');
+      _pdrService = null;
+    }
+  }
+
+  /// קביעת anchor ל-PDR — נקרא כשיש GPS fix טוב
+  void setPdrAnchor(double lat, double lon, {double? heading}) {
+    _pdrService?.setAnchor(lat, lon, heading: heading);
+  }
+
+  /// עצירת PDR
+  void stopPdr() {
+    if (_pdrService != null) {
+      _pdrService!.stop();
+      _pdrService!.reset();
+      print('DEBUG GpsService: PDR stopped');
+    }
+  }
+
+  /// PDR position stream (for external listeners)
+  Stream<PdrPositionResult>? get pdrPositionStream => _pdrService?.positionStream;
+
+  /// מיקום PDR+Cell hybrid
+  ///
+  /// אם שניהם זמינים — weighted average לפי accuracy.
+  /// רק PDR → return PDR.
+  /// רק Cell → return Cell.
+  Future<({LatLng position, double accuracy, PositionSource source})?> _getPdrCellHybridPosition() async {
+    PdrPositionResult? pdrPos;
+    CellPositionResult? cellPos;
+
+    // Try PDR
+    if (_pdrService != null && _pdrService!.isRunning) {
+      pdrPos = _pdrService!.currentPosition;
+    }
+
+    // Try Cell
+    cellPos = await _getCellPosition();
+
+    if (pdrPos != null && cellPos != null) {
+      // Weighted average — inversely proportional to accuracy (lower accuracy = higher weight)
+      final pdrAccuracy = pdrPos.accuracyMeters;
+      final cellAccuracy = cellPos.accuracyMeters;
+      final totalAccuracy = pdrAccuracy + cellAccuracy;
+
+      if (totalAccuracy <= 0) {
+        // Edge case — return PDR
+        return (position: pdrPos.latLng, accuracy: pdrAccuracy, source: PositionSource.pdrCellHybrid);
+      }
+
+      final pdrWeight = cellAccuracy / totalAccuracy;
+      final cellWeight = pdrAccuracy / totalAccuracy;
+
+      final hybridLat = pdrPos.lat * pdrWeight + cellPos.lat * cellWeight;
+      final hybridLon = pdrPos.lon * pdrWeight + cellPos.lon * cellWeight;
+      final hybridAccuracy = (pdrAccuracy * pdrWeight + cellAccuracy * cellWeight);
+
+      print('DEBUG GpsService: PDR+Cell hybrid — pdrW=${pdrWeight.toStringAsFixed(2)} '
+          'cellW=${cellWeight.toStringAsFixed(2)} accuracy=${hybridAccuracy.toStringAsFixed(0)}m');
+
+      return (
+        position: LatLng(hybridLat, hybridLon),
+        accuracy: hybridAccuracy,
+        source: PositionSource.pdrCellHybrid,
+      );
+    }
+
+    if (pdrPos != null) {
+      return (position: pdrPos.latLng, accuracy: pdrPos.accuracyMeters, source: PositionSource.pdr);
+    }
+
+    if (cellPos != null) {
+      return (position: cellPos.latLng, accuracy: cellPos.accuracyMeters, source: PositionSource.cellTower);
+    }
+
+    return null;
+  }
+
+  // ===========================================================================
+  // Permissions
+  // ===========================================================================
+
   /// בדיקת הרשאות מיקום
   Future<bool> checkPermissions() async {
     bool serviceEnabled;
@@ -86,9 +191,14 @@ class GpsService {
     return true;
   }
 
-  /// קבלת מיקום נוכחי — עם fallback לאנטנות
+  // ===========================================================================
+  // getCurrentPosition — with PDR hybrid fallback
+  // ===========================================================================
+
+  /// קבלת מיקום נוכחי — עם fallback chain: GPS → PDR+Cell hybrid → Cell → none
   ///
-  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד, 'gps' = GPS בלבד
+  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד,
+  /// 'gps' = GPS בלבד, 'pdr' = PDR+Cell hybrid בלבד
   Future<LatLng?> getCurrentPosition({
     bool highAccuracy = true,
     LatLng? boundaryCenter,
@@ -105,19 +215,30 @@ class GpsService {
       return null;
     }
 
+    // כפיית PDR+Cell hybrid
+    if (forceSource == 'pdr') {
+      final hybridResult = await _getPdrCellHybridPosition();
+      if (hybridResult != null) {
+        _lastPositionSource = hybridResult.source;
+        return hybridResult.position;
+      }
+      _lastPositionSource = PositionSource.none;
+      return null;
+    }
+
     try {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
-        // אין הרשאות GPS — נסה אנטנות (אלא אם כפוי GPS בלבד)
+        // אין הרשאות GPS — נסה PDR hybrid, אחרת אנטנות
         if (forceSource == 'gps') {
           _lastPositionSource = PositionSource.none;
           return null;
         }
-        print('DEBUG GpsService: no GPS permission, trying cell fallback');
-        final cellResult = await _getCellPosition();
-        if (cellResult != null) {
-          _lastPositionSource = PositionSource.cellTower;
-          return cellResult.latLng;
+        print('DEBUG GpsService: no GPS permission, trying PDR+Cell hybrid fallback');
+        final hybridResult = await _getPdrCellHybridPosition();
+        if (hybridResult != null) {
+          _lastPositionSource = hybridResult.source;
+          return hybridResult.position;
         }
         _lastPositionSource = PositionSource.none;
         return null;
@@ -136,7 +257,16 @@ class GpsService {
       // כפיית GPS — אין fallback
       if (forceSource == 'gps') {
         _lastPositionSource = PositionSource.gps;
+        // Update PDR anchor on good GPS fix
+        if (position.accuracy < 20) {
+          setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
+        }
         return gpsLatLng;
+      }
+
+      // Update PDR anchor on good GPS fix
+      if (position.accuracy < 20) {
+        setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
       }
 
       // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
@@ -151,41 +281,42 @@ class GpsService {
         if (distanceFromBoundary > _maxDistanceFromBoundary) {
           print('DEBUG GpsService: GPS likely spoofed/blocked! '
               'Distance from boundary center: ${(distanceFromBoundary / 1000).toStringAsFixed(1)} km');
-          final cellResult = await _getCellPosition();
-          if (cellResult != null) {
-            _lastPositionSource = PositionSource.cellTower;
-            return cellResult.latLng;
+          // Try PDR+Cell hybrid first, then cell only
+          final hybridResult = await _getPdrCellHybridPosition();
+          if (hybridResult != null) {
+            _lastPositionSource = hybridResult.source;
+            return hybridResult.position;
           }
-          // Even if cell fails, still return GPS — better than nothing
+          // Even if hybrid fails, still return GPS — better than nothing
           _lastPositionSource = PositionSource.gps;
           return gpsLatLng;
         }
       }
 
-      // אם הדיוק נמוך, נסה fallback
+      // אם הדיוק נמוך, נסה PDR hybrid fallback
       if (position.accuracy > _accuracyThreshold) {
-        final cellResult = await _getCellPosition();
-        if (cellResult != null && cellResult.accuracyMeters < position.accuracy) {
+        final hybridResult = await _getPdrCellHybridPosition();
+        if (hybridResult != null && hybridResult.accuracy < position.accuracy) {
           print('DEBUG GpsService: GPS accuracy ${position.accuracy.toStringAsFixed(0)}m > threshold, '
-              'cell accuracy ${cellResult.accuracyMeters.toStringAsFixed(0)}m is better — using cell fallback');
-          _lastPositionSource = PositionSource.cellTower;
-          return cellResult.latLng;
+              'hybrid accuracy ${hybridResult.accuracy.toStringAsFixed(0)}m is better — using ${hybridResult.source.name}');
+          _lastPositionSource = hybridResult.source;
+          return hybridResult.position;
         }
       }
 
       _lastPositionSource = PositionSource.gps;
       return gpsLatLng;
     } catch (e) {
-      // GPS נכשל לחלוטין — נסה אנטנות (אלא אם כפוי GPS בלבד)
+      // GPS נכשל לחלוטין — נסה PDR hybrid, אחרת אנטנות
       if (forceSource == 'gps') {
         _lastPositionSource = PositionSource.none;
         return null;
       }
-      print('DEBUG GpsService: GPS failed ($e), trying cell fallback');
-      final cellResult = await _getCellPosition();
-      if (cellResult != null) {
-        _lastPositionSource = PositionSource.cellTower;
-        return cellResult.latLng;
+      print('DEBUG GpsService: GPS failed ($e), trying PDR+Cell hybrid fallback');
+      final hybridResult = await _getPdrCellHybridPosition();
+      if (hybridResult != null) {
+        _lastPositionSource = hybridResult.source;
+        return hybridResult.position;
       }
       _lastPositionSource = PositionSource.none;
       return null;
@@ -194,7 +325,8 @@ class GpsService {
 
   /// קבלת מיקום עם פרטי דיוק מלאים
   ///
-  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד, 'gps' = GPS בלבד
+  /// [forceSource]: 'auto' = ברירת מחדל, 'cellTower' = אנטנות בלבד,
+  /// 'gps' = GPS בלבד, 'pdr' = PDR+Cell hybrid בלבד
   Future<({LatLng position, double accuracy, PositionSource source})?> getCurrentPositionWithAccuracy({
     bool highAccuracy = true,
     LatLng? boundaryCenter,
@@ -209,15 +341,16 @@ class GpsService {
       return null;
     }
 
+    // כפיית PDR+Cell hybrid
+    if (forceSource == 'pdr') {
+      return await _getPdrCellHybridPosition();
+    }
+
     try {
       final hasPermission = await checkPermissions();
       if (!hasPermission) {
         if (forceSource == 'gps') return null;
-        final cellResult = await _getCellPosition();
-        if (cellResult != null) {
-          return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
-        }
-        return null;
+        return await _getPdrCellHybridPosition();
       }
 
       final gpsPosition = await Geolocator.getCurrentPosition(
@@ -228,7 +361,15 @@ class GpsService {
 
       // כפיית GPS — אין fallback
       if (forceSource == 'gps') {
+        if (gpsPosition.accuracy < 20) {
+          setPdrAnchor(gpsPosition.latitude, gpsPosition.longitude, heading: gpsPosition.heading);
+        }
         return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
+      }
+
+      // Update PDR anchor on good GPS fix
+      if (gpsPosition.accuracy < 20) {
+        setPdrAnchor(gpsPosition.latitude, gpsPosition.longitude, heading: gpsPosition.heading);
       }
 
       // בדיקת GPS חסום/מזויף
@@ -238,30 +379,24 @@ class GpsService {
           boundaryCenter.latitude, boundaryCenter.longitude,
         );
         if (dist > _maxDistanceFromBoundary) {
-          final cellResult = await _getCellPosition();
-          if (cellResult != null) {
-            return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
-          }
+          final hybridResult = await _getPdrCellHybridPosition();
+          if (hybridResult != null) return hybridResult;
           return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
         }
       }
 
       // השוואת דיוק
       if (gpsPosition.accuracy > _accuracyThreshold) {
-        final cellResult = await _getCellPosition();
-        if (cellResult != null && cellResult.accuracyMeters < gpsPosition.accuracy) {
-          return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
+        final hybridResult = await _getPdrCellHybridPosition();
+        if (hybridResult != null && hybridResult.accuracy < gpsPosition.accuracy) {
+          return hybridResult;
         }
       }
 
       return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
     } catch (e) {
       if (forceSource == 'gps') return null;
-      final cellResult = await _getCellPosition();
-      if (cellResult != null) {
-        return (position: cellResult.latLng, accuracy: cellResult.accuracyMeters, source: PositionSource.cellTower);
-      }
-      return null;
+      return await _getPdrCellHybridPosition();
     }
   }
 
@@ -459,6 +594,11 @@ class GpsService {
   /// ניקוי משאבים
   Future<void> dispose() async {
     await stopLocationTracking();
+    if (_pdrService != null) {
+      _pdrService!.dispose();
+      _pdrService = null;
+      _pdrInitialized = false;
+    }
     if (_cellService != null) {
       await _cellService!.dispose();
       _cellService = null;

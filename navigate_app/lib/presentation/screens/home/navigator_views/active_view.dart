@@ -89,6 +89,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   NavigatorAlert? _currentAlertBanner;
   Timer? _alertBannerTimer;
 
+  // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
+  StreamSubscription<DocumentSnapshot>? _trackDocListener;
+
   // טיימר זמן שחלף
   Timer? _elapsedTimer;
   Duration _elapsed = Duration.zero;
@@ -112,6 +115,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopSecurity();
+    _stopTrackDocListener();
     _gpsCheckTimer?.cancel();
     _elapsedTimer?.cancel();
     _trackSaveTimer?.cancel();
@@ -199,6 +203,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _startStatusReporting();
           _startHealthCheck();
           _startAlertMonitoring();
+          _startTrackDocListener();
         }
 
         // אם סיים — לחשב זמן כולל
@@ -419,9 +424,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       final source = _gpsService.lastPositionSource;
       setState(() {
         _gpsSource = source;
-        // If we have a boundary and GPS source is cellTower, it might be blocked
+        // If we have a boundary and GPS source is not GPS, it might be blocked
         _gpsBlocked = _boundaryCenter != null &&
-            source == PositionSource.cellTower;
+            source != PositionSource.gps &&
+            source != PositionSource.none;
       });
     }
   }
@@ -558,8 +564,53 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   // ===========================================================================
-  // Remote Stop — זיהוי עצירה מרחוק ע"י מפקד
+  // Remote Stop — זיהוי מיידי של עצירה/איפוס מרחוק ע"י מפקד
   // ===========================================================================
+
+  /// התחלת האזנה בזמן אמת למסמך ה-track ב-Firestore
+  void _startTrackDocListener() {
+    if (_track == null) return;
+    _trackDocListener?.cancel();
+
+    _trackDocListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationTracksCollection)
+        .doc(_track!.id)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted || _personalStatus != NavigatorPersonalStatus.active) return;
+
+      if (!snapshot.exists) {
+        // המפקד מחק את ה-track — איפוס
+        _performRemoteReset();
+        return;
+      }
+
+      final data = snapshot.data();
+      if (data == null) return;
+
+      final isActive = data['isActive'] as bool? ?? true;
+      if (!isActive) {
+        // המפקד עצר את הניווט
+        _performRemoteStop();
+        return;
+      }
+
+      // קריאת forcePositionSource מהמסמך
+      final trackSource = data['forcePositionSource'] as String?;
+      if (trackSource != null && trackSource != 'auto' &&
+          _gpsTracker.forcePositionSource != trackSource) {
+        _gpsTracker.forcePositionSource = trackSource;
+        print('DEBUG ActiveView: forcePositionSource changed to: $trackSource (realtime)');
+      }
+    }, onError: (e) {
+      print('DEBUG ActiveView: track doc listener error: $e');
+    });
+  }
+
+  void _stopTrackDocListener() {
+    _trackDocListener?.cancel();
+    _trackDocListener = null;
+  }
 
   /// בדיקת עצירה מרחוק + קריאת forcePositionSource. מחזיר true אם הניווט נעצר.
   Future<bool> _checkRemoteStop() async {
@@ -572,8 +623,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           .get();
 
       if (!doc.exists) {
-        // המפקד מחק את ה-track (איפוס לפני הפעלה מחדש)
-        await _performRemoteStop();
+        // המפקד מחק את ה-track (איפוס — חזרה למצב ממתין)
+        await _performRemoteReset();
         return true;
       }
 
@@ -621,6 +672,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _performRemoteStop() async {
+    // עצירת listener מיידית — למנוע קריאות כפולות
+    _stopTrackDocListener();
+
     // עצירת GPS tracking
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;
@@ -655,6 +709,63 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         const SnackBar(
           content: Text('הניווט הופסק על ידי המפקד'),
           backgroundColor: Colors.orange,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  /// איפוס ניווט מרחוק — המפקד מחק את ה-track, המנווט חוזר למצב ממתין נקי
+  Future<void> _performRemoteReset() async {
+    // עצירת listener מיידית — למנוע קריאות כפולות
+    _stopTrackDocListener();
+
+    // עצירת GPS tracking
+    _trackSaveTimer?.cancel();
+    _trackSaveTimer = null;
+    await _gpsTracker.stopTracking();
+
+    // עצירת שירותים
+    _alertMonitoringService?.stop();
+    _alertMonitoringService = null;
+    _healthCheckService?.dispose();
+    _healthCheckService = null;
+    _gpsCheckTimer?.cancel();
+    _statusReportTimer?.cancel();
+    _elapsedTimer?.cancel();
+    _alertBannerTimer?.cancel();
+    await _stopSecurity();
+
+    // מחיקת נתונים מקומיים — track + דקירות
+    try {
+      await _trackRepo.deleteByNavigation(_nav.id);
+    } catch (_) {}
+    try {
+      await _punchRepo.deleteByNavigation(_nav.id);
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _personalStatus = NavigatorPersonalStatus.waiting;
+        _track = null;
+        _isDisqualified = false;
+        _punchCount = 0;
+        _trackPointCount = 0;
+        _elapsed = Duration.zero;
+        _startTime = null;
+        _gpsSource = PositionSource.none;
+        _gpsBlocked = false;
+        _currentAlertBanner = null;
+        _navigatorAlerts = [];
+        _actualDistanceKm = 0;
+        _isLoading = false;
+      });
+
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('הניווט אופס על ידי המפקד — ניתן להתחיל מחדש'),
+          backgroundColor: Colors.blue,
           duration: Duration(seconds: 5),
         ),
       );
@@ -755,6 +866,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _startStatusReporting();
       _startHealthCheck();
       _startAlertMonitoring();
+      _startTrackDocListener();
 
       setState(() {
         _track = track;
@@ -801,6 +913,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
     setState(() => _isLoading = true);
     try {
+      _stopTrackDocListener();
+
       // עצירת GPS tracking + שמירה סופית
       await _stopGpsTracking();
 
@@ -1574,6 +1688,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     IconData icon;
     String label;
     Color color;
+    IconData? secondIcon;
 
     if (_gpsBlocked) {
       icon = Icons.gps_off;
@@ -1589,6 +1704,15 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           icon = Icons.cell_tower;
           label = 'אנטנות';
           color = Colors.orange;
+        case PositionSource.pdr:
+          icon = Icons.directions_walk;
+          label = 'PDR';
+          color = Colors.orange;
+        case PositionSource.pdrCellHybrid:
+          icon = Icons.directions_walk;
+          secondIcon = Icons.cell_tower;
+          label = 'PDR+Cell';
+          color = Colors.orange;
         case PositionSource.none:
           icon = Icons.gps_off;
           label = 'אין מיקום';
@@ -1599,6 +1723,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 16, color: color),
+        if (secondIcon != null) ...[
+          const SizedBox(width: 2),
+          Icon(secondIcon, size: 14, color: color),
+        ],
         const SizedBox(width: 4),
         Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.bold)),
       ],
