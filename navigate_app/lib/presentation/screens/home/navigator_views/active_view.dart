@@ -710,8 +710,15 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;
 
-    // שמירה סופית לפני עצירה
-    await _saveTrackPoints();
+    // שמירה סופית לפני עצירה — שמירת נקודות ב-Drift תמיד (גם אם remote stop)
+    if (_track != null) {
+      final points = _gpsTracker.trackPoints;
+      if (points.isNotEmpty) {
+        try {
+          await _trackRepo.updateTrackPoints(_track!.id, points);
+        } catch (_) {}
+      }
+    }
 
     await _gpsTracker.stopTracking();
   }
@@ -1813,6 +1820,58 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ],
           const SizedBox(width: 12),
           _buildGpsChip(),
+          // זמן משימה
+          if (_route != null && _nav.timeCalculationSettings.enabled) ...[
+            const SizedBox(width: 12),
+            Builder(builder: (context) {
+              final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                routeLengthKm: _route!.routeLengthKm,
+                settings: _nav.timeCalculationSettings,
+              );
+              return _statusChip(
+                icon: Icons.flag,
+                label: 'משימה: ${GeometryUtils.formatNavigationTime(missionMinutes)}',
+              );
+            }),
+          ],
+          // שעת בטיחות
+          if (_nav.activeStartTime != null && _nav.timeCalculationSettings.enabled) ...[
+            const SizedBox(width: 12),
+            Builder(builder: (context) {
+              final safetyTime = GeometryUtils.calculateSafetyTime(
+                activeStartTime: _nav.activeStartTime!,
+                routes: _nav.routes,
+                settings: _nav.timeCalculationSettings,
+              );
+              if (safetyTime == null) return const SizedBox.shrink();
+              final isOverdue = DateTime.now().isAfter(safetyTime);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isOverdue
+                      ? Colors.red.withOpacity(0.15)
+                      : Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.shield, size: 16,
+                        color: isOverdue ? Colors.red[700] : Colors.orange[700]),
+                    const SizedBox(width: 4),
+                    Text(
+                      'בטיחות: ${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: isOverdue ? Colors.red[700] : Colors.orange[700],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       )),
     );

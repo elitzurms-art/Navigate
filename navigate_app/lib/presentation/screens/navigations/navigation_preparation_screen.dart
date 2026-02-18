@@ -134,6 +134,18 @@ class _NavigationPreparationScreenState
     );
   }
 
+  void _openUpdatedDataExport() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DataExportScreen(
+          navigation: _navigation,
+          afterLearning: true,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openVerification() async {
     final result = await Navigator.push(
       context,
@@ -536,6 +548,19 @@ class _NavigationPreparationScreenState
                         isDone: _isLearningDone,
                         isMandatory: false,
                         onTap: _openLearning,
+                        extraButton: _isLearningDone
+                            ? TextButton.icon(
+                                onPressed: _openUpdatedDataExport,
+                                icon: const Icon(Icons.file_download, size: 18),
+                                label: const Text('ייצוא צירים מעודכן'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.teal,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                              )
+                            : null,
                       ),
                       const SizedBox(height: 10),
                       _buildStepCard(

@@ -104,6 +104,7 @@ class NavigationRepository {
               gpsUpdateIntervalSeconds: navigation.gpsUpdateIntervalSeconds,
               enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
               allowManualPosition: Value(navigation.allowManualPosition),
+              timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -175,6 +176,7 @@ class NavigationRepository {
           gpsUpdateIntervalSeconds: Value(navigation.gpsUpdateIntervalSeconds),
           enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
           allowManualPosition: Value(navigation.allowManualPosition),
+          timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -319,6 +321,9 @@ class NavigationRepository {
           ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
           : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: data.allowManualPosition,
+      timeCalculationSettings: _parseJsonAsMap(data.timeCalculationSettingsJson) != null
+          ? domain.TimeCalculationSettings.fromMap(_parseJsonAsMap(data.timeCalculationSettingsJson)!)
+          : const domain.TimeCalculationSettings(),
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)
           : const domain.NavigationPermissions(managers: [], viewers: []),

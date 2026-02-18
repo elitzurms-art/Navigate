@@ -324,6 +324,7 @@ class LearningSettings extends Equatable {
   final bool enabledWithPhones; // אפשר למידה עם פלאפונים
   final bool showAllCheckpoints; // אפשר לראות כל נקודות כל המנווטים
   final bool showNavigationDetails; // הצגת פרטי ניווט
+  final bool showMissionTimes; // הצגת זמני משימה למנווט
   final bool showRoutes; // הצגת צירים
   final bool allowRouteEditing; // אפשר עריכת צירים
   final bool allowRouteNarration; // אפשר סיפור דרך
@@ -336,6 +337,7 @@ class LearningSettings extends Equatable {
     this.enabledWithPhones = true,
     this.showAllCheckpoints = false,
     this.showNavigationDetails = true,
+    this.showMissionTimes = true,
     this.showRoutes = true,
     this.allowRouteEditing = true,
     this.allowRouteNarration = true,
@@ -349,6 +351,7 @@ class LearningSettings extends Equatable {
     bool? enabledWithPhones,
     bool? showAllCheckpoints,
     bool? showNavigationDetails,
+    bool? showMissionTimes,
     bool? showRoutes,
     bool? allowRouteEditing,
     bool? allowRouteNarration,
@@ -361,6 +364,7 @@ class LearningSettings extends Equatable {
       enabledWithPhones: enabledWithPhones ?? this.enabledWithPhones,
       showAllCheckpoints: showAllCheckpoints ?? this.showAllCheckpoints,
       showNavigationDetails: showNavigationDetails ?? this.showNavigationDetails,
+      showMissionTimes: showMissionTimes ?? this.showMissionTimes,
       showRoutes: showRoutes ?? this.showRoutes,
       allowRouteEditing: allowRouteEditing ?? this.allowRouteEditing,
       allowRouteNarration: allowRouteNarration ?? this.allowRouteNarration,
@@ -376,6 +380,7 @@ class LearningSettings extends Equatable {
       'enabledWithPhones': enabledWithPhones,
       'showAllCheckpoints': showAllCheckpoints,
       'showNavigationDetails': showNavigationDetails,
+      'showMissionTimes': showMissionTimes,
       'showRoutes': showRoutes,
       'allowRouteEditing': allowRouteEditing,
       'allowRouteNarration': allowRouteNarration,
@@ -392,6 +397,7 @@ class LearningSettings extends Equatable {
       enabledWithPhones: map['enabledWithPhones'] as bool? ?? true,
       showAllCheckpoints: map['showAllCheckpoints'] as bool? ?? false,
       showNavigationDetails: map['showNavigationDetails'] as bool? ?? true,
+      showMissionTimes: map['showMissionTimes'] as bool? ?? true,
       showRoutes: map['showRoutes'] as bool? ?? true,
       allowRouteEditing: map['allowRouteEditing'] as bool? ?? true,
       allowRouteNarration: map['allowRouteNarration'] as bool? ?? true,
@@ -409,6 +415,7 @@ class LearningSettings extends Equatable {
         enabledWithPhones,
         showAllCheckpoints,
         showNavigationDetails,
+        showMissionTimes,
         showRoutes,
         allowRouteEditing,
         allowRouteNarration,
@@ -649,6 +656,70 @@ class DisplaySettings extends Equatable {
         activeLayers,
         layerOpacity,
       ];
+}
+
+/// הגדרות חישוב זמני ניווט
+class TimeCalculationSettings extends Equatable {
+  final bool enabled;           // טוגל (default: true)
+  final bool isHeavyLoad;       // מעל 40% משקל גוף
+  final bool isNightNavigation; // ניווט לילה
+  final bool isSummer;          // קיץ (true) / חורף (false)
+
+  const TimeCalculationSettings({
+    this.enabled = true,
+    this.isHeavyLoad = false,
+    this.isNightNavigation = false,
+    this.isSummer = true,
+  });
+
+  /// מהירות הליכה בקמ"ש לפי משקל ותאורה
+  double get walkingSpeedKmh {
+    if (isHeavyLoad) return isNightNavigation ? 2.0 : 3.5;
+    return isNightNavigation ? 2.5 : 4.0;
+  }
+
+  /// דקות הפסקה לפי אורך ציר (הפסקה כל 10 ק"מ)
+  int breakDurationMinutes(double routeLengthKm) {
+    if (routeLengthKm <= 10) return 0;
+    final breakCount = (routeLengthKm / 10).floor();
+    final minutesPerBreak = isSummer ? 15 : 10;
+    return breakCount * minutesPerBreak;
+  }
+
+  TimeCalculationSettings copyWith({
+    bool? enabled,
+    bool? isHeavyLoad,
+    bool? isNightNavigation,
+    bool? isSummer,
+  }) {
+    return TimeCalculationSettings(
+      enabled: enabled ?? this.enabled,
+      isHeavyLoad: isHeavyLoad ?? this.isHeavyLoad,
+      isNightNavigation: isNightNavigation ?? this.isNightNavigation,
+      isSummer: isSummer ?? this.isSummer,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'enabled': enabled,
+      'isHeavyLoad': isHeavyLoad,
+      'isNightNavigation': isNightNavigation,
+      'isSummer': isSummer,
+    };
+  }
+
+  factory TimeCalculationSettings.fromMap(Map<String, dynamic> map) {
+    return TimeCalculationSettings(
+      enabled: map['enabled'] as bool? ?? true,
+      isHeavyLoad: map['isHeavyLoad'] as bool? ?? false,
+      isNightNavigation: map['isNightNavigation'] as bool? ?? false,
+      isSummer: map['isSummer'] as bool? ?? true,
+    );
+  }
+
+  @override
+  List<Object?> get props => [enabled, isHeavyLoad, isNightNavigation, isSummer];
 }
 
 /// נקודת ביניים - נ.צ. שכולם עוברים בה

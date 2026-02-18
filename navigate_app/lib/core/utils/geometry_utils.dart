@@ -1,5 +1,7 @@
 import 'dart:math';
 import '../../domain/entities/coordinate.dart';
+import '../../domain/entities/navigation.dart';
+import '../../domain/entities/navigation_settings.dart';
 
 /// פונקציות עזר לגאומטריה
 class GeometryUtils {
@@ -230,6 +232,44 @@ class GeometryUtils {
     }
 
     return false;
+  }
+
+  /// חישוב זמן ניווט כולל (בדקות)
+  static int calculateNavigationTimeMinutes({
+    required double routeLengthKm,
+    required TimeCalculationSettings settings,
+  }) {
+    if (!settings.enabled) return 0;
+    final walkingMinutes = (routeLengthKm / settings.walkingSpeedKmh) * 60;
+    final breakMinutes = settings.breakDurationMinutes(routeLengthKm);
+    return (walkingMinutes + breakMinutes).ceil();
+  }
+
+  /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר)
+  static DateTime? calculateSafetyTime({
+    required DateTime activeStartTime,
+    required Map<String, AssignedRoute> routes,
+    required TimeCalculationSettings settings,
+  }) {
+    if (!settings.enabled || routes.isEmpty) return null;
+    int maxMinutes = 0;
+    for (final route in routes.values) {
+      final minutes = calculateNavigationTimeMinutes(
+        routeLengthKm: route.routeLengthKm,
+        settings: settings,
+      );
+      if (minutes > maxMinutes) maxMinutes = minutes;
+    }
+    return activeStartTime.add(Duration(minutes: maxMinutes + 60));
+  }
+
+  /// עיצוב דקות ל- "X:YY שעות" או "X דק'"
+  static String formatNavigationTime(int totalMinutes) {
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    if (hours == 0) return '$minutes דק\'';
+    if (minutes == 0) return '$hours שעות';
+    return '$hours:${minutes.toString().padLeft(2, '0')} שעות';
   }
 
   /// סינון פוליגונים שחותכים פוליגון נתון

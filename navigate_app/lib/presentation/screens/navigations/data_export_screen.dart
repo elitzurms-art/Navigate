@@ -20,6 +20,7 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
+import '../../../data/repositories/user_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
@@ -28,8 +29,13 @@ import '../../widgets/fullscreen_map_screen.dart';
 /// ייצוא נתונים
 class DataExportScreen extends StatefulWidget {
   final domain.Navigation navigation;
+  final bool afterLearning;
 
-  const DataExportScreen({super.key, required this.navigation});
+  const DataExportScreen({
+    super.key,
+    required this.navigation,
+    this.afterLearning = false,
+  });
 
   @override
   State<DataExportScreen> createState() => _DataExportScreenState();
@@ -40,14 +46,17 @@ class _DataExportScreenState extends State<DataExportScreen> {
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final ClusterRepository _clusterRepo = ClusterRepository();
-
+  final UserRepository _userRepo = UserRepository();
 
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
   List<Cluster> _clusters = [];
   Boundary? _boundary;
+  Map<String, String> _userNames = {};
   bool _isLoading = false;
+
+  String _navigatorName(String uid) => _userNames[uid] ?? uid;
 
   String _formatUtm(Checkpoint cp) {
     if (cp.coordinates == null) return '';
@@ -151,12 +160,20 @@ class _DataExportScreenState extends State<DataExportScreen> {
         boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
       }
 
+      // טעינת שמות משתמשים למיפוי uid → שם מלא
+      final users = await _userRepo.getAll();
+      final names = <String, String>{};
+      for (final u in users) {
+        names[u.uid] = u.fullName;
+      }
+
       setState(() {
         _checkpoints = results[0] as List<Checkpoint>;
         _safetyPoints = results[1] as List<SafetyPoint>;
         _boundaries = results[2] as List<Boundary>;
         _clusters = results[3] as List<Cluster>;
         _boundary = boundary;
+        _userNames = names;
         _isLoading = false;
       });
     } catch (e) {
@@ -197,13 +214,16 @@ class _DataExportScreenState extends State<DataExportScreen> {
         header.add('UTM $i');
       }
       header.add('אורך ציר (ק"מ)');
-      rows.add(header.reversed.toList());
+      if (widget.navigation.timeCalculationSettings.enabled) {
+        header.add('זמן ניווט');
+      }
+      rows.add(widget.afterLearning ? header : header.reversed.toList());
 
       for (final entry in widget.navigation.routes.entries) {
         final navigatorId = entry.key;
         final route = entry.value;
 
-        List<dynamic> row = [navigatorId];
+        List<dynamic> row = [_navigatorName(navigatorId)];
 
         for (final checkpointId in route.sequence) {
           final checkpoint = _checkpoints.firstWhere(
@@ -222,7 +242,14 @@ class _DataExportScreenState extends State<DataExportScreen> {
         }
 
         row.add(route.routeLengthKm.toStringAsFixed(2));
-        rows.add(row.reversed.toList());
+        if (widget.navigation.timeCalculationSettings.enabled) {
+          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+            routeLengthKm: route.routeLengthKm,
+            settings: widget.navigation.timeCalculationSettings,
+          );
+          row.add(GeometryUtils.formatNavigationTime(totalMinutes));
+        }
+        rows.add(widget.afterLearning ? row : row.reversed.toList());
       }
 
       final csv = const ListToCsvConverter().convert(rows);
@@ -281,6 +308,9 @@ class _DataExportScreenState extends State<DataExportScreen> {
         headerCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
       }
       headerCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
+      if (widget.navigation.timeCalculationSettings.enabled) {
+        headerCells.add(_pdfCell('זמן ניווט', bold: true, fontSize: 7));
+      }
 
       // Build column widths
       final colWidths = <int, pw.TableColumnWidth>{
@@ -292,13 +322,16 @@ class _DataExportScreenState extends State<DataExportScreen> {
         colWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
       }
       colWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
+      if (widget.navigation.timeCalculationSettings.enabled) {
+        colWidths[2 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.2);
+      }
 
       // Build data rows
       final dataRows = <pw.TableRow>[];
       for (final entry in widget.navigation.routes.entries) {
         final navigatorId = entry.key;
         final route = entry.value;
-        final cells = <pw.Widget>[_pdfCell(navigatorId, fontSize: 7)];
+        final cells = <pw.Widget>[_pdfCell(_navigatorName(navigatorId), fontSize: 7)];
 
         for (final checkpointId in route.sequence) {
           final checkpoint = _checkpoints.firstWhere(
@@ -315,6 +348,13 @@ class _DataExportScreenState extends State<DataExportScreen> {
           cells.add(_pdfCell('', fontSize: 7));
         }
         cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
+        if (widget.navigation.timeCalculationSettings.enabled) {
+          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+            routeLengthKm: route.routeLengthKm,
+            settings: widget.navigation.timeCalculationSettings,
+          );
+          cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));
+        }
         dataRows.add(pw.TableRow(children: cells.reversed.toList()));
       }
 
@@ -645,6 +685,8 @@ class _DataExportScreenState extends State<DataExportScreen> {
           initialShowBA: _showBA,
           initialBaOpacity: _baOpacity,
           initialShowDistributedOnly: _showDistributedOnly,
+          afterLearning: widget.afterLearning,
+          userNames: _userNames,
         ),
       ),
     );
@@ -654,7 +696,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ייצוא נתונים'),
+        title: Text(widget.afterLearning ? 'ייצוא צירים — מעודכן' : 'ייצוא נתונים'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
       ),
@@ -819,6 +861,8 @@ class _MapPreviewScreen extends StatefulWidget {
   final bool initialShowBA;
   final double initialBaOpacity;
   final bool initialShowDistributedOnly;
+  final bool afterLearning;
+  final Map<String, String> userNames;
 
   const _MapPreviewScreen({
     required this.navigation,
@@ -836,6 +880,8 @@ class _MapPreviewScreen extends StatefulWidget {
     required this.initialBaOpacity,
     required this.initialShowDistributedOnly,
     this.boundary,
+    this.afterLearning = false,
+    this.userNames = const {},
   });
 
   @override
@@ -1200,6 +1246,24 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             }).toList(),
           ),
         ...MapControls.buildMeasureLayers(_measurePoints),
+        // שכבת צירים מעודכנים (afterLearning)
+        if (widget.afterLearning)
+          PolylineLayer(
+            polylines: widget.navigation.routes.entries
+                .where((e) => e.value.plannedPath.isNotEmpty)
+                .map((entry) {
+              final route = entry.value;
+              final color = Colors.primaries[
+                  entry.key.hashCode.abs() % Colors.primaries.length];
+              return Polyline(
+                points: route.plannedPath
+                    .map((c) => LatLng(c.lat, c.lng))
+                    .toList(),
+                strokeWidth: 3.0,
+                color: color.withOpacity(0.8),
+              );
+            }).toList(),
+          ),
       ],
     );
   }
@@ -1300,6 +1364,8 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             }
           }
 
+          final timeEnabled = widget.navigation.timeCalculationSettings.enabled;
+
           final pivotHeaderCells = <pw.Widget>[_pdfCell('שם מנווט', bold: true, fontSize: 7)];
           for (int i = 1; i <= maxCheckpoints; i++) {
             pivotHeaderCells.add(_pdfCell('נ.צ $i', bold: true, fontSize: 7));
@@ -1307,6 +1373,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             pivotHeaderCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
           }
           pivotHeaderCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
+          if (timeEnabled) {
+            pivotHeaderCells.add(_pdfCell('זמן ניווט', bold: true, fontSize: 7));
+          }
 
           final pivotColWidths = <int, pw.TableColumnWidth>{
             0: const pw.FlexColumnWidth(0.8),
@@ -1317,12 +1386,19 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             pivotColWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
           }
           pivotColWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
+          if (timeEnabled) {
+            pivotColWidths[2 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.2);
+          }
+
+          // שמות מנווטים — טעינה מ-_userNames דרך ה-parent
+          final userNames = widget.userNames;
 
           final pivotDataRows = <pw.TableRow>[];
           for (final entry in widget.navigation.routes.entries) {
             final navigatorId = entry.key;
             final route = entry.value;
-            final cells = <pw.Widget>[_pdfCell(navigatorId, fontSize: 7)];
+            final navigatorName = userNames[navigatorId] ?? navigatorId;
+            final cells = <pw.Widget>[_pdfCell(navigatorName, fontSize: 7)];
 
             for (final checkpointId in route.sequence) {
               final checkpoint = widget.checkpoints.firstWhere(
@@ -1338,6 +1414,13 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
               cells.add(_pdfCell('', fontSize: 7));
             }
             cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
+            if (timeEnabled) {
+              final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                routeLengthKm: route.routeLengthKm,
+                settings: widget.navigation.timeCalculationSettings,
+              );
+              cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));
+            }
             pivotDataRows.add(pw.TableRow(children: cells.reversed.toList()));
           }
 

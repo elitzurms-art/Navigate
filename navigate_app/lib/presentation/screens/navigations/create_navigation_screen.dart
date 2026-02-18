@@ -103,6 +103,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _showRouteOnMap = false;
   bool _allowManualPosition = false;
 
+  // חישוב זמנים
+  bool _timeCalcEnabled = true;
+  bool _isHeavyLoad = false;
+  bool _isNightNavigation = false;
+  bool _isSummer = true;
+
   // הגדרות תצוגה
   String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
 
@@ -372,6 +378,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _showRouteOnMap = nav.showRouteOnMap;
     _allowManualPosition = nav.allowManualPosition;
 
+    // חישוב זמנים
+    _timeCalcEnabled = nav.timeCalculationSettings.enabled;
+    _isHeavyLoad = nav.timeCalculationSettings.isHeavyLoad;
+    _isNightNavigation = nav.timeCalculationSettings.isNightNavigation;
+    _isSummer = nav.timeCalculationSettings.isSummer;
+
     // הגדרות תצוגה
     _defaultMapType = nav.displaySettings.defaultMap ?? 'topographic';
 
@@ -563,6 +575,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   _buildNavigationSettings(),
 
                   if (!widget.alertsOnlyMode) ...[
+                    const SizedBox(height: 24),
+
+                    // חישוב זמנים
+                    _buildSectionTitle('חישוב זמנים'),
+                    _buildTimeCalculationSettings(),
                     const SizedBox(height: 24),
 
                     // הגדרות מיקום
@@ -912,6 +929,84 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     // לפחות GPS חייב להיות דלוק
     if (sources.isEmpty) sources.add('gps');
     return sources;
+  }
+
+  Widget _buildTimeCalculationSettings() {
+    final speedKmh = const TimeCalculationSettings().copyWith(
+      isHeavyLoad: _isHeavyLoad,
+      isNightNavigation: _isNightNavigation,
+    ).walkingSpeedKmh;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SwitchListTile(
+              title: const Text('חישוב זמנים אוטומטי'),
+              subtitle: const Text('חישוב זמני ניווט לפי מהירות הליכה, הפסקות ושעת בטיחות'),
+              value: _timeCalcEnabled,
+              onChanged: (v) => setState(() => _timeCalcEnabled = v),
+            ),
+            if (_timeCalcEnabled) ...[
+              const Divider(),
+              const SizedBox(height: 8),
+              const Text('משקל', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('עד 40% משקל גוף')),
+                  ButtonSegment(value: true, label: Text('מעל 40%')),
+                ],
+                selected: {_isHeavyLoad},
+                onSelectionChanged: (v) => setState(() => _isHeavyLoad = v.first),
+              ),
+              const SizedBox(height: 16),
+              const Text('זמן', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('יום')),
+                  ButtonSegment(value: true, label: Text('לילה')),
+                ],
+                selected: {_isNightNavigation},
+                onSelectionChanged: (v) => setState(() => _isNightNavigation = v.first),
+              ),
+              const SizedBox(height: 16),
+              const Text('עונה', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text('קיץ')),
+                  ButtonSegment(value: false, label: Text('חורף')),
+                ],
+                selected: {_isSummer},
+                onSelectionChanged: (v) => setState(() => _isSummer = v.first),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.speed, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'קצב הליכה: ${speedKmh.toStringAsFixed(1)} קמ"ש',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildLocationSettings() {
@@ -1728,6 +1823,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         gpsUpdateIntervalSeconds: _gpsUpdateInterval,
         enabledPositionSources: _buildEnabledPositionSources(),
         allowManualPosition: _allowManualPosition,
+        timeCalculationSettings: TimeCalculationSettings(
+          enabled: _timeCalcEnabled,
+          isHeavyLoad: _isHeavyLoad,
+          isNightNavigation: _isNightNavigation,
+          isSummer: _isSummer,
+        ),
         permissions: widget.navigation?.permissions ?? domain.NavigationPermissions(
           managers: [currentUser.uid],
           viewers: [],

@@ -192,6 +192,7 @@ class Navigations extends Table {
   TextColumn get enabledPositionSourcesJson => text().withDefault(const Constant('["gps","cellTower","pdr","pdrCellHybrid"]'))();
   BoolColumn get allowManualPosition => boolean().withDefault(const Constant(false))();
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
+  TextColumn get timeCalculationSettingsJson => text().withDefault(const Constant('{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}'))();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -387,7 +388,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration {
@@ -560,6 +561,9 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(navigationTracks, navigationTracks.overrideAllowManualPosition);
           await m.addColumn(navigationTracks, navigationTracks.manualPositionUsed);
           await m.addColumn(navigationTracks, navigationTracks.manualPositionUsedAt);
+        }
+        if (from <= 23 && to >= 24) {
+          await m.addColumn(navigations, navigations.timeCalculationSettingsJson);
         }
       },
     );

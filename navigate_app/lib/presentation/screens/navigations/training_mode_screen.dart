@@ -67,6 +67,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   bool _enableLearningWithPhones = true;
   bool _showAllCheckpoints = false;
   bool _showNavigationDetails = true;
+  bool _showMissionTimes = true;
   bool _showLearningRoutes = true;
   bool _allowRouteEditing = true;
   bool _allowRouteNarration = true;
@@ -90,7 +91,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _currentNavigation = widget.navigation;
     _learningStarted = widget.navigation.status == 'learning';
     _initLearningSettings();
@@ -121,6 +122,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _enableLearningWithPhones = ls.enabledWithPhones;
     _showAllCheckpoints = ls.showAllCheckpoints;
     _showNavigationDetails = ls.showNavigationDetails;
+    _showMissionTimes = ls.showMissionTimes;
     _showLearningRoutes = ls.showRoutes;
     _allowRouteEditing = ls.allowRouteEditing;
     _allowRouteNarration = ls.allowRouteNarration;
@@ -573,6 +575,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             tabs: const [
               Tab(icon: Icon(Icons.settings), text: 'הגדרות'),
               Tab(icon: Icon(Icons.table_chart), text: 'טבלה'),
+              Tab(icon: Icon(Icons.access_time), text: 'זמנים'),
               Tab(icon: Icon(Icons.map), text: 'מפה'),
             ],
           ),
@@ -584,6 +587,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               children: [
                 _buildSettingsView(),
                 _buildTableView(),
+                _buildTimesView(),
                 _buildMapView(),
               ],
             ),
@@ -684,6 +688,15 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     setState(() => _showNavigationDetails = value);
                   },
                 ),
+                if (_showNavigationDetails)
+                  SwitchListTile(
+                    title: const Text('הצג זמני משימה'),
+                    value: _showMissionTimes,
+                    contentPadding: const EdgeInsets.only(right: 32, left: 16),
+                    onChanged: (value) {
+                      setState(() => _showMissionTimes = value);
+                    },
+                  ),
                 SwitchListTile(
                   title: const Text('הצגת צירים'),
                   value: _showLearningRoutes,
@@ -868,6 +881,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       enabledWithPhones: _enableLearningWithPhones,
       showAllCheckpoints: _showAllCheckpoints,
       showNavigationDetails: _showNavigationDetails,
+      showMissionTimes: _showMissionTimes,
       showRoutes: _showLearningRoutes,
       allowRouteEditing: _allowRouteEditing,
       allowRouteNarration: _allowRouteNarration,
@@ -1168,6 +1182,39 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               ],
             ),
 
+            // זמן ניווט — כשהציר מאושר וחישוב זמנים מופעל
+            if (route.approvalStatus == 'approved' &&
+                _currentNavigation.timeCalculationSettings.enabled) ...[
+              const SizedBox(height: 4),
+              Builder(builder: (context) {
+                final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                  routeLengthKm: route.routeLengthKm,
+                  settings: _currentNavigation.timeCalculationSettings,
+                );
+                final breakMinutes = _currentNavigation.timeCalculationSettings
+                    .breakDurationMinutes(route.routeLengthKm);
+                return Row(
+                  children: [
+                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                    const SizedBox(width: 6),
+                    Text(
+                      'זמן: ${GeometryUtils.formatNavigationTime(totalMinutes)}',
+                      style: TextStyle(color: Colors.grey[700]),
+                    ),
+                    if (breakMinutes > 0) ...[
+                      const SizedBox(width: 16),
+                      Icon(Icons.pause_circle, size: 16, color: Colors.grey[600]),
+                      const SizedBox(width: 6),
+                      Text(
+                        'הפסקות: $breakMinutes דק\'',
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                    ],
+                  ],
+                );
+              }),
+            ],
+
             // כפתורי פעולה - רק למפקדים
             if (widget.isCommander) ...[
               const SizedBox(height: 16),
@@ -1217,6 +1264,133 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTimesView() {
+    final settings = _currentNavigation.timeCalculationSettings;
+    if (!settings.enabled) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.timer_off, size: 48, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('חישוב זמנים לא מופעל לניווט זה'),
+          ],
+        ),
+      );
+    }
+
+    // איסוף צירים מאושרים
+    final approvedRoutes = <String, domain.AssignedRoute>{};
+    for (final entry in _currentNavigation.routes.entries) {
+      if (entry.value.approvalStatus == 'approved') {
+        approvedRoutes[entry.key] = entry.value;
+      }
+    }
+
+    if (approvedRoutes.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.hourglass_empty, size: 48, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('אין צירים מאושרים להצגת זמנים'),
+          ],
+        ),
+      );
+    }
+
+    int maxMinutes = 0;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // פרטי חישוב
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('פרמטרי חישוב',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Text('קצב הליכה: ${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                  Text('משקל: ${settings.isHeavyLoad ? "מעל 40%" : "עד 40%"} משקל גוף'),
+                  Text('זמן: ${settings.isNightNavigation ? "לילה" : "יום"}'),
+                  Text('עונה: ${settings.isSummer ? "קיץ" : "חורף"}'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // טבלת זמנים
+          Card(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('מנווט')),
+                  DataColumn(label: Text('אורך ציר')),
+                  DataColumn(label: Text('קצב')),
+                  DataColumn(label: Text('הליכה')),
+                  DataColumn(label: Text('הפסקות')),
+                  DataColumn(label: Text('סה"כ')),
+                ],
+                rows: approvedRoutes.entries.map((entry) {
+                  final uid = entry.key;
+                  final route = entry.value;
+                  final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                    routeLengthKm: route.routeLengthKm,
+                    settings: settings,
+                  );
+                  final walkMinutes = ((route.routeLengthKm / settings.walkingSpeedKmh) * 60).ceil();
+                  final breakMinutes = settings.breakDurationMinutes(route.routeLengthKm);
+                  if (totalMinutes > maxMinutes) maxMinutes = totalMinutes;
+
+                  return DataRow(cells: [
+                    DataCell(Text(uid.length > 7 ? uid.substring(0, 7) : uid)),
+                    DataCell(Text('${route.routeLengthKm.toStringAsFixed(2)} ק"מ')),
+                    DataCell(Text('${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש')),
+                    DataCell(Text(GeometryUtils.formatNavigationTime(walkMinutes))),
+                    DataCell(Text(breakMinutes > 0 ? '$breakMinutes דק\'' : '-')),
+                    DataCell(Text(
+                      GeometryUtils.formatNavigationTime(totalMinutes),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    )),
+                  ]);
+                }).toList(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // שורת סיכום
+          Card(
+            color: Colors.orange.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('סיכום',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Text('זמן ציר ארוך ביותר: ${GeometryUtils.formatNavigationTime(maxMinutes)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text('שעת בטיחות (זמן מקסימלי + שעה): ${GeometryUtils.formatNavigationTime(maxMinutes + 60)}'),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

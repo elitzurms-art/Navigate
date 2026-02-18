@@ -282,6 +282,57 @@ class _LearningViewState extends State<LearningView>
             _infoCard('מספר נקודות', '${route.checkpointIds.length}'),
             _infoCard('אורך ציר', '${route.routeLengthKm.toStringAsFixed(2)} ק"מ'),
             _infoCard('סטטוס', _approvalStatusLabel(route.approvalStatus)),
+            if (route.approvalStatus == 'approved' &&
+                nav.timeCalculationSettings.enabled &&
+                nav.learningSettings.showMissionTimes) ...[
+              const Divider(),
+              Text(
+                'הזמנים שלי',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Builder(builder: (context) {
+                final settings = nav.timeCalculationSettings;
+                final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                  routeLengthKm: route.routeLengthKm,
+                  settings: settings,
+                );
+                final walkMinutes = ((route.routeLengthKm / settings.walkingSpeedKmh) * 60).ceil();
+                final breakMinutes = settings.breakDurationMinutes(route.routeLengthKm);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _infoCard('קצב', '${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                    _infoCard('זמן הליכה', GeometryUtils.formatNavigationTime(walkMinutes)),
+                    if (breakMinutes > 0)
+                      _infoCard('הפסקות',
+                          '${(route.routeLengthKm / 10).floor()} הפסקות ($breakMinutes דק\')')
+                    else
+                      _infoCard('הפסקות', 'ללא (ציר קצר מ-10 ק"מ)'),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 120,
+                            child: Text('סה"כ זמן משימה',
+                                style: TextStyle(color: Colors.grey[600])),
+                          ),
+                          Expanded(
+                            child: Text(
+                              GeometryUtils.formatNavigationTime(totalMinutes),
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ],
           ],
         ],
       ),
@@ -392,6 +443,8 @@ class _LearningViewState extends State<LearningView>
     for (var i = 0; i < _routeCheckpoints.length; i++) {
       final cp = _routeCheckpoints[i];
       if (cp.isPolygon || cp.coordinates == null) continue;
+      // דילוג על נקודות התחלה/סיום — כבר מוצגות בצבע ייחודי
+      if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
 
       markers.add(Marker(
         point: cp.coordinates!.toLatLng(),
@@ -613,11 +666,22 @@ class _LearningViewState extends State<LearningView>
       ));
     }
 
+    // מזהי נקודות ביניים (waypoints)
+    final waypointIds = <String>{};
+    if (_currentNavigation.waypointSettings.enabled) {
+      for (final wp in _currentNavigation.waypointSettings.waypoints) {
+        waypointIds.add(wp.checkpointId);
+      }
+    }
+
     for (final cp in _routeCheckpoints) {
+      // דילוג על נקודות התחלה/סיום — כבר ברשימה
+      if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
+      final isWaypoint = waypointIds.contains(cp.id);
       allCheckpoints.add(_CheckpointDisplayItem(
         checkpoint: cp,
         sequenceNumber: seq++,
-        role: _CheckpointRole.middle,
+        role: isWaypoint ? _CheckpointRole.waypoint : _CheckpointRole.middle,
       ));
     }
 
@@ -648,21 +712,30 @@ class _LearningViewState extends State<LearningView>
           final item = allCheckpoints[index];
           final cp = item.checkpoint;
 
-          // צבע ואייקון לפי תפקיד
+          // צבע, אות ואייקון לפי תפקיד
           final Color circleColor;
           final IconData trailingIcon;
+          final String? roleLetter; // H/S/B לנקודות מיוחדות
           switch (item.role) {
             case _CheckpointRole.start:
               circleColor = Colors.green;
               trailingIcon = Icons.play_arrow;
+              roleLetter = 'H';
               break;
             case _CheckpointRole.end:
               circleColor = Colors.red;
               trailingIcon = Icons.flag;
+              roleLetter = 'S';
+              break;
+            case _CheckpointRole.waypoint:
+              circleColor = Colors.amber;
+              trailingIcon = Icons.adjust;
+              roleLetter = 'B';
               break;
             case _CheckpointRole.middle:
               circleColor = Colors.blue;
               trailingIcon = Icons.circle;
+              roleLetter = null;
               break;
           }
 
@@ -677,7 +750,7 @@ class _LearningViewState extends State<LearningView>
             leading: CircleAvatar(
               backgroundColor: circleColor,
               child: Text(
-                '${item.sequenceNumber}',
+                roleLetter ?? '${item.sequenceNumber}',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1825,7 +1898,7 @@ class _LearningTab {
   });
 }
 
-enum _CheckpointRole { start, middle, end }
+enum _CheckpointRole { start, middle, end, waypoint }
 
 class _CheckpointDisplayItem {
   final Checkpoint checkpoint;

@@ -42,6 +42,7 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
 
   List<Checkpoint> _myCheckpoints = [];
   List<String> _routeSequence = [];
+  List<LatLng> _plannedPath = [];
   List<nav.NavBoundary> _boundaries = [];
   List<SafetyPoint> _safetyPoints = [];
   bool _isLoading = true;
@@ -156,6 +157,9 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
       setState(() {
         _myCheckpoints = checkpoints;
         _routeSequence = List.from(route.sequence);
+        _plannedPath = route.plannedPath
+            .map((c) => LatLng(c.lat, c.lng))
+            .toList();
         _boundaries = boundaries;
         _safetyPoints = safetyPoints;
         _isLoading = false;
@@ -390,20 +394,23 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
       center = const LatLng(32.0853, 34.7818); // ברירת מחדל - תל אביב
     }
 
-    final List<LatLng> routePoints = pointCheckpoints.isNotEmpty
-        ? _routeSequence
-            .map((id) {
-              try {
-                final c = _myCheckpoints.firstWhere((c) => c.id == id);
-                if (c.isPolygon || c.coordinates == null) return null;
-                return LatLng(c.coordinates!.lat, c.coordinates!.lng);
-              } catch (_) {
-                return null;
-              }
-            })
-            .whereType<LatLng>()
-            .toList()
-        : [];
+    // עדיפות ל-plannedPath (הציר שהמנווט צייר), fallback לנקודות ציון
+    final List<LatLng> routePoints = _plannedPath.isNotEmpty
+        ? _plannedPath
+        : pointCheckpoints.isNotEmpty
+            ? _routeSequence
+                .map((id) {
+                  try {
+                    final c = _myCheckpoints.firstWhere((c) => c.id == id);
+                    if (c.isPolygon || c.coordinates == null) return null;
+                    return LatLng(c.coordinates!.lat, c.coordinates!.lng);
+                  } catch (_) {
+                    return null;
+                  }
+                })
+                .whereType<LatLng>()
+                .toList()
+            : [];
 
     return Stack(
       children: [

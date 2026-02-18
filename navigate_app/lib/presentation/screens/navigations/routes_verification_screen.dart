@@ -946,45 +946,46 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       // בדיקה אם המנווט נבחר
       if (_selectedNavigators[navigatorId] != true) continue;
 
-      // בניית הציר המלא: התחלה → נקודות → סיום
+      // בניית הציר — עדיפות ל-plannedPath (הציר שהמנווט צייר), fallback לנקודות ציון
       List<LatLng> points = [];
 
-      if (_checkpoints.isEmpty) continue;
-
-      // 1. נקודת התחלה (אם קיימת)
-      if (route.startPointId != null) {
-        try {
-          final startPoint = _checkpoints.firstWhere(
-            (cp) => cp.id == route.startPointId,
-          );
-          if (!startPoint.isPolygon && startPoint.coordinates != null) {
-            points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
-          }
-        } catch (_) {}
-      }
-
-      // 2. נקודות המנווט (לפי הרצף)
-      for (final checkpointId in route.sequence) {
-        try {
-          final checkpoint = _checkpoints.firstWhere(
-            (cp) => cp.id == checkpointId,
-          );
-          if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
-            points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
-          }
-        } catch (_) {}
-      }
-
-      // 3. נקודת הסיום (אם קיימת ושונה מההתחלה)
-      if (route.endPointId != null && route.endPointId != route.startPointId) {
-        try {
-          final endPoint = _checkpoints.firstWhere(
-            (cp) => cp.id == route.endPointId,
-          );
-          if (!endPoint.isPolygon && endPoint.coordinates != null) {
-            points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
-          }
-        } catch (_) {}
+      if (route.plannedPath.isNotEmpty) {
+        // שימוש בציר המלא שהמנווט צייר
+        points = route.plannedPath
+            .map((c) => LatLng(c.lat, c.lng))
+            .toList();
+      } else if (_checkpoints.isNotEmpty) {
+        // fallback — חיבור נקודות ציון בלבד
+        if (route.startPointId != null) {
+          try {
+            final startPoint = _checkpoints.firstWhere(
+              (cp) => cp.id == route.startPointId,
+            );
+            if (!startPoint.isPolygon && startPoint.coordinates != null) {
+              points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
+            }
+          } catch (_) {}
+        }
+        for (final checkpointId in route.sequence) {
+          try {
+            final checkpoint = _checkpoints.firstWhere(
+              (cp) => cp.id == checkpointId,
+            );
+            if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
+              points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
+            }
+          } catch (_) {}
+        }
+        if (route.endPointId != null && route.endPointId != route.startPointId) {
+          try {
+            final endPoint = _checkpoints.firstWhere(
+              (cp) => cp.id == route.endPointId,
+            );
+            if (!endPoint.isPolygon && endPoint.coordinates != null) {
+              points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
+            }
+          } catch (_) {}
+        }
       }
 
       if (points.isNotEmpty) {

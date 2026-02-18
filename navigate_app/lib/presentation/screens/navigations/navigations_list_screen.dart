@@ -1237,7 +1237,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
               children: [
                 Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
                 SizedBox(width: 8),
-                Text('ייצוא צירים'),
+                Text('ייצוא נתונים'),
               ],
             ),
           ));
@@ -1286,7 +1286,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
               children: [
                 Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
                 SizedBox(width: 8),
-                Text('ייצוא צירים'),
+                Text('ייצוא נתונים'),
               ],
             ),
           ));
@@ -1336,6 +1336,18 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
+        if (navigation.routes.isNotEmpty && navigation.routes.values.any((r) => r.isVerified)) {
+          items.add(const PopupMenuItem(
+            value: 'export_routes',
+            child: Row(
+              children: [
+                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
+                SizedBox(width: 8),
+                Text('ייצוא נתונים'),
+              ],
+            ),
+          ));
+        }
         break;
 
       case 'system_check':
@@ -1350,6 +1362,18 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
+        if (navigation.routes.isNotEmpty) {
+          items.add(const PopupMenuItem(
+            value: 'export_routes_updated',
+            child: Row(
+              children: [
+                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
+                SizedBox(width: 8),
+                Text('ייצוא צירים — מעודכן'),
+              ],
+            ),
+          ));
+        }
         break;
 
       case 'waiting':
@@ -1522,6 +1546,18 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
           context,
           MaterialPageRoute(
             builder: (context) => DataExportScreen(navigation: navigation),
+          ),
+        );
+        break;
+
+      case 'export_routes_updated':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DataExportScreen(
+              navigation: navigation,
+              afterLearning: true,
+            ),
           ),
         );
         break;
