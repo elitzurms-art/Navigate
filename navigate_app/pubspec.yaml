@@ -48,6 +48,7 @@ dependencies:
   geolocator: ^11.0.0
   permission_handler: ^11.2.0
   battery_plus: ^6.0.3
+  flutter_foreground_task: ^8.10.0
   gps_plus:
     path: ../gps_plus
 

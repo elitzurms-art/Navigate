@@ -1016,10 +1016,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
       case 'learning':
         if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
-          screen = TrainingModeScreen(
-            navigation: navigation,
-            isCommander: true,
-          );
+          screen = NavigationPreparationScreen(navigation: navigation);
         } else {
           screen = NavigatorPlanningScreen(navigation: navigation);
         }
@@ -1203,7 +1200,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   List<PopupMenuEntry<String>> _buildPopupMenuItems(domain.Navigation navigation) {
     final items = <PopupMenuEntry<String>>[];
-    final stage = navigation.routesStage ?? 'not_started';
 
     switch (navigation.status) {
       case 'preparation':
@@ -1228,20 +1224,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
-        // Export - available after verification
-        if (navigation.routesStage == 'ready' ||
-            (navigation.routes.isNotEmpty && navigation.routes.values.any((r) => r.isVerified))) {
-          items.add(const PopupMenuItem(
-            value: 'export_routes',
-            child: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
-                SizedBox(width: 8),
-                Text('ייצוא נתונים'),
-              ],
-            ),
-          ));
-        }
         items.add(const PopupMenuDivider());
         items.add(const PopupMenuItem(
           value: 'delete',
@@ -1277,20 +1259,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
-        // Export - available after verification
-        if (navigation.routesStage == 'ready' ||
-            (navigation.routes.isNotEmpty && navigation.routes.values.any((r) => r.isVerified))) {
-          items.add(const PopupMenuItem(
-            value: 'export_routes',
-            child: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
-                SizedBox(width: 8),
-                Text('ייצוא נתונים'),
-              ],
-            ),
-          ));
-        }
         items.add(const PopupMenuDivider());
         items.add(const PopupMenuItem(
           value: 'delete',
@@ -1336,18 +1304,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
-        if (navigation.routes.isNotEmpty && navigation.routes.values.any((r) => r.isVerified)) {
-          items.add(const PopupMenuItem(
-            value: 'export_routes',
-            child: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
-                SizedBox(width: 8),
-                Text('ייצוא נתונים'),
-              ],
-            ),
-          ));
-        }
         break;
 
       case 'system_check':
@@ -1369,7 +1325,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
               children: [
                 Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
                 SizedBox(width: 8),
-                Text('ייצוא צירים — מעודכן'),
+                Text('ייצוא צירים'),
               ],
             ),
           ));

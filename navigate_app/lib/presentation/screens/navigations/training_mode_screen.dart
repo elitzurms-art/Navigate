@@ -692,7 +692,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   SwitchListTile(
                     title: const Text('הצג זמני משימה'),
                     value: _showMissionTimes,
-                    contentPadding: const EdgeInsets.only(right: 32, left: 16),
                     onChanged: (value) {
                       setState(() => _showMissionTimes = value);
                     },

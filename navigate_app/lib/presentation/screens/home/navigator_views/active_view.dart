@@ -23,6 +23,7 @@ import '../../../../services/health_check_service.dart';
 import '../../../../services/security_manager.dart';
 import '../../../../services/device_security_service.dart';
 import '../../../../services/alert_monitoring_service.dart';
+import '../../../../services/background_location_service.dart';
 import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
@@ -154,6 +155,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _alertMonitoringService?.dispose();
     _alertBannerTimer?.cancel();
     _gpsTracker.stopTracking();
+    BackgroundLocationService().stop(); // safety net
     _gpsService.dispose();
     super.dispose();
   }
@@ -651,6 +653,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _startGpsTracking() async {
+    // הפעלת foreground service — מחזיק את האפליקציה חיה ברקע
+    await BackgroundLocationService().start();
+
     final interval = _nav.gpsUpdateIntervalSeconds;
     final started = await _gpsTracker.startTracking(
       intervalSeconds: interval,
@@ -721,6 +726,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     }
 
     await _gpsTracker.stopTracking();
+
+    // עצירת foreground service
+    await BackgroundLocationService().stop();
   }
 
   // ===========================================================================
@@ -914,10 +922,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _performRemoteStop() async {
-    // עצירת GPS tracking
+    // עצירת GPS tracking + foreground service
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;
     await _gpsTracker.stopTracking();
+    await BackgroundLocationService().stop();
 
     // עצירת שירותים
     _alertMonitoringService?.stop();
@@ -959,10 +968,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     // עצירת listener מיידית — למנוע קריאות כפולות
     _stopTrackDocListener();
 
-    // עצירת GPS tracking
+    // עצירת GPS tracking + foreground service
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;
     await _gpsTracker.stopTracking();
+    await BackgroundLocationService().stop();
 
     // עצירת שירותים
     _alertMonitoringService?.stop();
@@ -1295,10 +1305,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _punchCount++);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'דקירה ${widget.currentUser.uid}-${_punchCount}: ${nearestCp.name} (${nearestDistance.toStringAsFixed(0)} מ\')',
-            ),
+          const SnackBar(
+            content: Text('בוצעה דקירת נקודה במפה'),
             backgroundColor: Colors.blue,
           ),
         );
@@ -1572,37 +1580,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               ],
             ),
           ),
-        // Security indicator
-        if (_securityActive && !_isDisqualified)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            color: Colors.green.withOpacity(0.15),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.lock, size: 14, color: Colors.green[700]),
-                const SizedBox(width: 6),
-                Text(
-                  'אבטחה פעילה',
-                  style: TextStyle(fontSize: 12, color: Colors.green[700], fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: _showUnlockDialog,
-                  child: Text(
-                    'ביטול נעילה',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.red[700],
-                      fontWeight: FontWeight.bold,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        // Security indicator (hidden — security still active in background)
         // באנר דקירת מיקום ידני
         if (_allowManualPosition && !_manualPositionUsed && !_manualPinPending)
           GestureDetector(
@@ -1644,11 +1622,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         // 2×2 grid
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: GridView.count(
               crossAxisCount: 2,
-              mainAxisSpacing: 16,
-              crossAxisSpacing: 16,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 1.3,
               children: [
                 _buildActionCard(
                   title: 'דקירת נ.צ',
@@ -1769,111 +1748,161 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Widget _buildActiveStatusBar() {
-    final route = _route;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 12, 16, 12),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       color: Theme.of(context).primaryColor.withOpacity(0.1),
-      child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(
+      child: Column(
         children: [
-          // שעון זמן שחלף
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.timer, size: 18, color: Colors.green[700]),
-                const SizedBox(width: 4),
-                Text(
-                  _formatDuration(_elapsed),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green[700],
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          _statusChip(
-            icon: Icons.route,
-            label: route != null
-                ? '${route.routeLengthKm.toStringAsFixed(1)} ק"מ'
-                : '-',
-          ),
-          const SizedBox(width: 12),
-          _statusChip(
-            icon: Icons.location_on,
-            label: '$_punchCount דקירות',
-          ),
-          if (_trackPointCount > 0) ...[
-            const SizedBox(width: 12),
-            _statusChip(
-              icon: Icons.timeline,
-              label: '$_trackPointCount נק׳',
-            ),
-          ],
-          const SizedBox(width: 12),
-          _buildGpsChip(),
-          // זמן משימה
-          if (_route != null && _nav.timeCalculationSettings.enabled) ...[
-            const SizedBox(width: 12),
-            Builder(builder: (context) {
-              final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                routeLengthKm: _route!.routeLengthKm,
-                settings: _nav.timeCalculationSettings,
-              );
-              return _statusChip(
-                icon: Icons.flag,
-                label: 'משימה: ${GeometryUtils.formatNavigationTime(missionMinutes)}',
-              );
-            }),
-          ],
-          // שעת בטיחות
-          if (_nav.activeStartTime != null && _nav.timeCalculationSettings.enabled) ...[
-            const SizedBox(width: 12),
-            Builder(builder: (context) {
-              final safetyTime = GeometryUtils.calculateSafetyTime(
-                activeStartTime: _nav.activeStartTime!,
-                routes: _nav.routes,
-                settings: _nav.timeCalculationSettings,
-              );
-              if (safetyTime == null) return const SizedBox.shrink();
-              final isOverdue = DateTime.now().isAfter(safetyTime);
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          // שורה ראשונה: טיימר, דקירות, נקודות, GPS
+          Row(
+            children: [
+              // שעון זמן שחלף
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isOverdue
-                      ? Colors.red.withOpacity(0.15)
-                      : Colors.orange.withOpacity(0.15),
+                  color: Colors.green.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.shield, size: 16,
-                        color: isOverdue ? Colors.red[700] : Colors.orange[700]),
+                    Icon(Icons.timer, size: 18, color: Colors.green[700]),
                     const SizedBox(width: 4),
                     Text(
-                      'בטיחות: ${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}',
+                      _formatDuration(_elapsed),
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: isOverdue ? Colors.red[700] : Colors.orange[700],
+                        color: Colors.green[700],
+                        fontFamily: 'monospace',
                       ),
                     ),
                   ],
                 ),
-              );
-            }),
+              ),
+              const Spacer(),
+              _statusChip(
+                icon: Icons.location_on,
+                label: '$_punchCount דקירות',
+              ),
+              if (_trackPointCount > 0) ...[
+                const SizedBox(width: 10),
+                _statusChip(
+                  icon: Icons.timeline,
+                  label: '$_trackPointCount נק׳',
+                ),
+              ],
+              const SizedBox(width: 10),
+              _buildGpsChip(),
+            ],
+          ),
+          // שורה שנייה: זמן שנותר + שעת בטיחות + שעון
+          if (_route != null && _nav.timeCalculationSettings.enabled) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                // ספירה לאחור — זמן שנותר (עם שניות)
+                Expanded(
+                  child: Builder(builder: (context) {
+                    final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                      routeLengthKm: _route!.routeLengthKm,
+                      settings: _nav.timeCalculationSettings,
+                    );
+                    final remainingSeconds = (missionMinutes * 60) - _elapsed.inSeconds;
+                    final isOvertime = remainingSeconds <= 0;
+                    final abs = remainingSeconds.abs();
+                    final h = abs ~/ 3600;
+                    final m = (abs % 3600) ~/ 60;
+                    final s = abs % 60;
+                    final timeStr = h > 0
+                        ? '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
+                        : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: isOvertime
+                            ? Colors.red.withOpacity(0.15)
+                            : Colors.blue.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.flag, size: 14,
+                              color: isOvertime ? Colors.red[700] : Colors.blue[700]),
+                          const SizedBox(width: 4),
+                          Text(
+                            isOvertime ? 'חריגה: +$timeStr' : 'זמן שנותר: $timeStr',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              color: isOvertime ? Colors.red[700] : Colors.blue[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(width: 8),
+                // שעת בטיחות + שעון נוכחי
+                if (_nav.activeStartTime != null)
+                  Builder(builder: (context) {
+                    final safetyTime = GeometryUtils.calculateSafetyTime(
+                      activeStartTime: _nav.activeStartTime!,
+                      routes: _nav.routes,
+                      settings: _nav.timeCalculationSettings,
+                    );
+                    if (safetyTime == null) return const SizedBox.shrink();
+                    final now = DateTime.now();
+                    final isOverdue = now.isAfter(safetyTime);
+                    final nowStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+                    final safetyStr = '${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: isOverdue
+                            ? Colors.red.withOpacity(0.15)
+                            : Colors.orange.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.shield, size: 14,
+                              color: isOverdue ? Colors.red[700] : Colors.orange[700]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'שעת בטיחות: $safetyStr',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: isOverdue ? Colors.red[700] : Colors.orange[700],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(Icons.access_time, size: 14, color: Colors.grey[700]),
+                          const SizedBox(width: 3),
+                          Text(
+                            nowStr,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'monospace',
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
           ],
         ],
-      )),
+      ),
     );
   }
 
@@ -2157,24 +2186,24 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }) {
     return Material(
       color: color.withOpacity(0.1),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: color.withOpacity(0.3), width: 2),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 48, color: color),
-              const SizedBox(height: 12),
+              Icon(icon, size: 36, color: color),
+              const SizedBox(height: 6),
               Text(
                 title,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 15,
                   fontWeight: FontWeight.bold,
                   color: color,
                 ),

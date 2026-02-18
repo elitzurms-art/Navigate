@@ -523,7 +523,7 @@ class _NavigationPreparationScreenState
                             ? TextButton.icon(
                                 onPressed: _openDataExport,
                                 icon: const Icon(Icons.file_download, size: 18),
-                                label: const Text('ייצוא נתונים'),
+                                label: const Text('ייצוא צירים'),
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.teal,
                                   padding: const EdgeInsets.symmetric(
@@ -552,7 +552,7 @@ class _NavigationPreparationScreenState
                             ? TextButton.icon(
                                 onPressed: _openUpdatedDataExport,
                                 icon: const Icon(Icons.file_download, size: 18),
-                                label: const Text('ייצוא צירים מעודכן'),
+                                label: const Text('ייצוא צירים'),
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.teal,
                                   padding: const EdgeInsets.symmetric(

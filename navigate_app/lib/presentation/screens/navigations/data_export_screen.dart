@@ -696,7 +696,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.afterLearning ? 'ייצוא צירים — מעודכן' : 'ייצוא נתונים'),
+        title: Text(widget.afterLearning ? 'ייצוא צירים' : 'ייצוא נתונים'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
       ),

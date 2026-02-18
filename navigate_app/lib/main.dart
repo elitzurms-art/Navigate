@@ -13,6 +13,7 @@ import 'data/repositories/navigation_tree_repository.dart';
 import 'data/repositories/user_repository.dart';
 import 'data/sync/sync_manager.dart';
 import 'services/notification_service.dart';
+import 'services/background_location_service.dart';
 import 'domain/entities/hat_type.dart';
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/auth/register_screen.dart';
@@ -64,6 +65,9 @@ void main() async {
   // התחלת סנכרון עם Firebase
   final syncManager = SyncManager();
   await syncManager.start();
+
+  // אתחול foreground service למעקב GPS ברקע
+  BackgroundLocationService().init();
 
   // אתחול שירות התראות push
   final notificationService = NotificationService();
