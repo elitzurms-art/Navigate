@@ -3825,11 +3825,10 @@ class _CheckpointArrival {
 
   bool get reached {
     if (punch == null) return false;
-    // אם אין אימות אוטומטי — כל דקירה נחשבת הגעה
-    if (!verificationSettings.autoVerification) return true;
     final dist = punch!.distanceFromCheckpoint;
     if (dist == null) return true; // אין מידע מרחק — נחשב הגעה
 
+    // תמיד בודק לפי כללי המרחק שהוגדרו — גם אם אימות אוטומטי כבוי
     switch (verificationSettings.verificationType) {
       case 'approved_failed':
         final limit = verificationSettings.approvalDistance ?? 100;
@@ -3840,7 +3839,8 @@ class _CheckpointArrival {
         final maxDist = ranges.map((r) => r.maxDistance).reduce((a, b) => a > b ? a : b);
         return dist <= maxDist;
       default:
-        return true;
+        // אין סוג אימות מוגדר — fallback למרחק סביר (100 מ')
+        return dist <= 100;
     }
   }
 }
