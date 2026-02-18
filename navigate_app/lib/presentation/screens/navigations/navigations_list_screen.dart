@@ -30,6 +30,7 @@ import 'data_loading_screen.dart';
 import 'navigation_preparation_screen.dart';
 import 'data_export_screen.dart';
 import 'navigation_management_screen.dart';
+import '../../../data/repositories/voice_message_repository.dart';
 
 
 /// צומת לקיבוץ ניווטים לפי עץ
@@ -62,7 +63,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   Set<String> _expandedNodes = {};
   bool _isLoading = false;
   User? _currentUser;
-  StreamSubscription<List<domain.Navigation>>? _navigationsListener;
+  StreamSubscription<({List<domain.Navigation> navigations, Set<String> deletedIds})>? _navigationsListener;
 
   @override
   void initState() {
@@ -117,30 +118,45 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   /// האזנה בזמן אמת לשינויי ניווטים ב-Firestore
   void _startNavigationsListener() {
     _navigationsListener?.cancel();
-    _navigationsListener = _repository.watchAllNavigations().listen(
-      (firestoreNavigations) async {
+    _navigationsListener = _repository.watchAllNavigationsWithDeleted().listen(
+      (result) async {
         if (!mounted) return;
-        // בדיקה אם יש שינוי בסטטוס של אחד הניווטים הקיימים
+        final firestoreNavigations = result.navigations;
+        final deletedIds = result.deletedIds;
+
         bool hasChanges = false;
+
+        // מחיקת ניווטים שנמחקו ב-Firestore (soft-delete)
+        for (final deletedId in deletedIds) {
+          final exists = _navigations.any((n) => n.id == deletedId);
+          if (exists) {
+            await _repository.deleteLocalOnly(deletedId);
+            hasChanges = true;
+          }
+        }
+
+        // בדיקה אם יש שינוי בסטטוס של אחד הניווטים הקיימים
         for (final fsNav in firestoreNavigations) {
           final existing = _navigations.where((n) => n.id == fsNav.id).firstOrNull;
           if (existing == null) {
             hasChanges = true; // ניווט חדש
-            break;
-          }
-          if (existing.status != fsNav.status || existing.updatedAt != fsNav.updatedAt) {
+          } else if (existing.status != fsNav.status || existing.updatedAt != fsNav.updatedAt) {
             hasChanges = true; // סטטוס או נתונים השתנו
-            break;
           }
         }
-        // בדיקה אם ניווט נמחק
-        if (!hasChanges && _navigations.length != firestoreNavigations.length) {
-          hasChanges = true;
+
+        // בדיקה אם ניווט הוסר מהרשימה (לא כולל soft-deleted שטופלו למעלה)
+        final firestoreIds = firestoreNavigations.map((n) => n.id).toSet();
+        for (final localNav in _navigations) {
+          if (!firestoreIds.contains(localNav.id) && !deletedIds.contains(localNav.id)) {
+            hasChanges = true;
+          }
         }
+
         if (hasChanges) {
-          // עדכון local DB ורענון תצוגה
+          // upsert כל הניווטים מ-Firestore (כולל חדשים)
           for (final nav in firestoreNavigations) {
-            await _repository.updateLocalFromFirestore(nav);
+            await _repository.upsertLocalFromFirestore(nav);
           }
           _loadNavigations();
         }
@@ -666,7 +682,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
-    AutoMapDownloadService().triggerDownload(updatedNavigation);
+    _triggerAutoMapDownload(updatedNavigation);
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner
@@ -816,6 +832,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
+    _triggerAutoMapDownload(updatedNavigation);
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner
@@ -930,6 +947,14 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
+      _triggerAutoMapDownload(updated);
+
+      // יצירת חדר ווקי טוקי אם מופעל
+      if (updated.communicationSettings.walkieTalkieEnabled) {
+        try {
+          await VoiceMessageRepository().createRoom(updated.id, updated.name);
+        } catch (_) {}
+      }
 
       if (mounted) {
         Navigator.pop(context); // סגירת עיגול טעינה
@@ -1638,6 +1663,14 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
+      _triggerAutoMapDownload(updated);
+
+      // יצירת חדר ווקי טוקי אם מופעל
+      if (updated.communicationSettings.walkieTalkieEnabled) {
+        try {
+          await VoiceMessageRepository().createRoom(updated.id, updated.name);
+        } catch (_) {}
+      }
 
       if (mounted) {
         // סגירת דיאלוג טעינה
@@ -2146,6 +2179,32 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   }
 
   /// מחוון שלב צירים (progress indicator)
+  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
+  void _triggerAutoMapDownload(domain.Navigation navigation) {
+    final service = AutoMapDownloadService();
+    service.onStatusMessage = (message, {bool isError = false}) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.blue,
+          duration: Duration(seconds: isError ? 4 : 3),
+        ),
+      );
+    };
+    service.triggerDownload(navigation).then((result) {
+      if (!mounted) return;
+      if (result == AutoDownloadResult.boundaryNotSynced) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('גבול הגזרה לא סונכרן עדיין — מפות ירדו אוטומטית כשיתעדכן'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    });
+  }
+
   Widget _buildRoutesStageIndicator(domain.Navigation navigation) {
     final stage = navigation.routesStage ?? 'not_started';
     final stages = ['not_started', 'setup', 'verification', 'ready'];

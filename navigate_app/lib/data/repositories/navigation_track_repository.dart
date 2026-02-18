@@ -62,6 +62,7 @@ class NavigationTrackRepository {
         overrideShowSelfLocation: data['overrideShowSelfLocation'] as bool? ?? false,
         overrideShowRouteOnMap: data['overrideShowRouteOnMap'] as bool? ?? false,
         overrideAllowManualPosition: data['overrideAllowManualPosition'] as bool? ?? false,
+        overrideWalkieTalkieEnabled: data['overrideWalkieTalkieEnabled'] as bool? ?? false,
         manualPositionUsed: data['manualPositionUsed'] as bool? ?? false,
         manualPositionUsedAt: data['manualPositionUsedAt'] != null
             ? (data['manualPositionUsedAt'] is Timestamp
@@ -143,6 +144,7 @@ class NavigationTrackRepository {
         'overrideShowSelfLocation': track.overrideShowSelfLocation,
         'overrideShowRouteOnMap': track.overrideShowRouteOnMap,
         'overrideAllowManualPosition': track.overrideAllowManualPosition,
+        'overrideWalkieTalkieEnabled': track.overrideWalkieTalkieEnabled,
         'manualPositionUsed': track.manualPositionUsed,
         'manualPositionUsedAt': track.manualPositionUsedAt?.toIso8601String(),
       },
@@ -264,6 +266,28 @@ class NavigationTrackRepository {
         'manualPositionUsedAt': null,
       });
     } catch (_) {}
+  }
+
+  /// עדכון דריסת ווקי טוקי פר-מנווט (Drift + Firestore)
+  Future<void> updateWalkieTalkieOverride(String trackId, {required bool enabled}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideWalkieTalkieEnabled: Value(enabled),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'overrideWalkieTalkieEnabled': enabled});
+    } catch (_) {}
+  }
+
+  /// עדכון דריסת ווקי טוקי מקומי בלבד (לשימוש מנווט)
+  Future<void> updateWalkieTalkieOverrideLocal(String trackId, {required bool enabled}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideWalkieTalkieEnabled: Value(enabled),
+    ));
   }
 
   /// סימון שנעשה שימוש בדקירת מיקום ידני (Drift + Firestore)

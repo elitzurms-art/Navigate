@@ -193,6 +193,7 @@ class Navigations extends Table {
   BoolColumn get allowManualPosition => boolean().withDefault(const Constant(false))();
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
   TextColumn get timeCalculationSettingsJson => text().withDefault(const Constant('{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}'))();
+  TextColumn get communicationSettingsJson => text().withDefault(const Constant('{"walkieTalkieEnabled":false}'))();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -219,6 +220,7 @@ class NavigationTracks extends Table {
   BoolColumn get overrideShowSelfLocation => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideShowRouteOnMap => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideAllowManualPosition => boolean().withDefault(const Constant(false))();
+  BoolColumn get overrideWalkieTalkieEnabled => boolean().withDefault(const Constant(false))();
   BoolColumn get manualPositionUsed => boolean().withDefault(const Constant(false))();
   DateTimeColumn get manualPositionUsedAt => dateTime().nullable()();
 
@@ -388,7 +390,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration {
@@ -564,6 +566,10 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 23 && to >= 24) {
           await m.addColumn(navigations, navigations.timeCalculationSettingsJson);
+        }
+        if (from <= 24 && to >= 25) {
+          await m.addColumn(navigations, navigations.communicationSettingsJson);
+          await m.addColumn(navigationTracks, navigationTracks.overrideWalkieTalkieEnabled);
         }
       },
     );

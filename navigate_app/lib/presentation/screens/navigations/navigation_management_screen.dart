@@ -26,6 +26,8 @@ import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../../domain/entities/user.dart' as app_user;
+import '../../../services/voice_service.dart';
+import '../../widgets/voice_messages_panel.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
@@ -100,6 +102,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideShowSelfLocation = {};
   final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
+  final Map<String, bool> _navigatorOverrideWalkieTalkieEnabled = {};
+
+  // Voice (PTT)
+  VoiceService? _voiceService;
 
   // כפיית מקור מיקום גלובלי
   String _globalForcePositionSource = 'auto';
@@ -166,6 +172,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _commanderPublishTimer?.cancel();
     _commanderStatusListener?.cancel();
     _tabController.dispose();
+    _voiceService?.dispose();
     super.dispose();
   }
 
@@ -898,6 +905,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
         _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
         _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
+        _navigatorOverrideWalkieTalkieEnabled[navigatorId] = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
 
         // קריאת forcePositionSource מה-track doc
         final trackForceSource = data['forcePositionSource'] as String?;
@@ -1936,6 +1944,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     ],
                   ),
                 ),
+                // ווקי טוקי
+                if (widget.navigation.communicationSettings.walkieTalkieEnabled && _currentUser != null)
+                  Builder(builder: (context) {
+                    _voiceService ??= VoiceService();
+                    return VoiceMessagesPanel(
+                      navigationId: widget.navigation.id,
+                      currentUser: _currentUser!,
+                      voiceService: _voiceService!,
+                      isCommander: true,
+                      enabled: true,
+                      navigators: _navigatorData.entries
+                          .map((e) => NavigatorInfo(
+                                id: e.key,
+                                name: _userNames[e.key] ?? e.key,
+                              ))
+                          .toList(),
+                    );
+                  }),
               ],
             ),
     );
@@ -3086,6 +3112,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             },
                           ),
                       ],
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        title: const Text('ווקי טוקי', style: TextStyle(fontSize: 13)),
+                        subtitle: const Text('אפשר קשר קולי למנווט', style: TextStyle(fontSize: 11)),
+                        value: _navigatorOverrideWalkieTalkieEnabled[navigatorId] ?? false,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (v) {
+                          setState(() {
+                            _navigatorOverrideWalkieTalkieEnabled[navigatorId] = v;
+                          });
+                          setSheetState(() {});
+                          final trackId = _navigatorTrackIds[navigatorId];
+                          if (trackId != null) {
+                            NavigationTrackRepository().updateWalkieTalkieOverride(trackId, enabled: v);
+                          }
+                        },
+                      ),
 
                       // 7. נתונים חיים
                       const Divider(height: 20),

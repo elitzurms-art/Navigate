@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../domain/entities/area.dart';
 import '../../../data/repositories/area_repository.dart';
+import '../../../data/sync/sync_manager.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import 'create_area_screen.dart';
 import 'area_details_screen.dart';
@@ -18,16 +21,23 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
   final AuthService _authService = AuthService();
   List<Area> _areas = [];
   bool _isLoading = true;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadAreas();
+    _syncSubscription = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.areasCollection && mounted) {
+        _loadAreas();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _syncSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

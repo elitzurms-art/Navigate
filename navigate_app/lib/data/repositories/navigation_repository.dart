@@ -105,6 +105,7 @@ class NavigationRepository {
               enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
               allowManualPosition: Value(navigation.allowManualPosition),
               timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
+              communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -177,6 +178,7 @@ class NavigationRepository {
           enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
           allowManualPosition: Value(navigation.allowManualPosition),
           timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
+          communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -204,6 +206,9 @@ class NavigationRepository {
   Future<void> delete(String id) async {
     try {
       print('DEBUG: Deleting navigation: $id');
+
+      // סימון כנמחק לאחרונה — מונע שחזור ע"י Firestore listener
+      markAsRecentlyDeleted(id);
 
       // מחיקה מקומית
       await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
@@ -321,6 +326,9 @@ class NavigationRepository {
           ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
           : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: data.allowManualPosition,
+      communicationSettings: _parseJsonAsMap(data.communicationSettingsJson) != null
+          ? domain.CommunicationSettings.fromMap(_parseJsonAsMap(data.communicationSettingsJson)!)
+          : const domain.CommunicationSettings(),
       timeCalculationSettings: _parseJsonAsMap(data.timeCalculationSettingsJson) != null
           ? domain.TimeCalculationSettings.fromMap(_parseJsonAsMap(data.timeCalculationSettingsJson)!)
           : const domain.TimeCalculationSettings(),
@@ -685,33 +693,83 @@ class NavigationRepository {
     });
   }
 
+  /// מזהי ניווטים שנמחקו לאחרונה — מניעת שחזור ע"י listener בחלון מרוץ
+  static final _recentlyDeletedIds = <String, DateTime>{};
+
+  /// סימון ניווט כנמחק לאחרונה (מונע שחזור מ-Firestore listener)
+  static void markAsRecentlyDeleted(String navigationId) {
+    _recentlyDeletedIds[navigationId] = DateTime.now();
+    // ניקוי אחרי 2 דקות
+    Future.delayed(const Duration(minutes: 2), () {
+      _recentlyDeletedIds.remove(navigationId);
+    });
+  }
+
+  /// האם ניווט נמחק לאחרונה (בתוך 2 דקות)
+  static bool isRecentlyDeleted(String navigationId) {
+    final deletedAt = _recentlyDeletedIds[navigationId];
+    if (deletedAt == null) return false;
+    if (DateTime.now().difference(deletedAt).inMinutes >= 2) {
+      _recentlyDeletedIds.remove(navigationId);
+      return false;
+    }
+    return true;
+  }
+
   /// Listen for realtime changes on all navigations in Firestore
-  Stream<List<domain.Navigation>> watchAllNavigations() {
+  /// מסנן ניווטים שנמחקו (soft-delete) ומחזיר רשימה + סט מזהי מסמכים שנמחקו
+  Stream<({List<domain.Navigation> navigations, Set<String> deletedIds})> watchAllNavigationsWithDeleted() {
     return _firestore
         .collection(AppConstants.navigationsCollection)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      final navigations = <domain.Navigation>[];
+      final deletedIds = <String>{};
+
+      for (final doc in snapshot.docs) {
         final data = doc.data();
         data['id'] = doc.id;
+
+        // סינון soft-deleted
+        if (data['deletedAt'] != null) {
+          deletedIds.add(doc.id);
+          continue;
+        }
+
         try {
-          return domain.Navigation.fromMap(data);
+          navigations.add(domain.Navigation.fromMap(data));
         } catch (e) {
           print('DEBUG: Error parsing navigation ${doc.id}: $e');
-          return null;
         }
-      }).whereType<domain.Navigation>().toList();
+      }
+
+      return (navigations: navigations, deletedIds: deletedIds);
     });
   }
 
-  /// Update local DB from a Firestore navigation snapshot (without re-queuing sync)
-  Future<void> updateLocalFromFirestore(domain.Navigation nav) async {
+  /// Listen for realtime changes on all navigations in Firestore (filtered)
+  Stream<List<domain.Navigation>> watchAllNavigations() {
+    return watchAllNavigationsWithDeleted().map((result) => result.navigations);
+  }
+
+  /// Upsert local DB from a Firestore navigation snapshot (without re-queuing sync)
+  /// משתמש ב-insertOnConflictUpdate כדי להוסיף ניווטים חדשים + לעדכן קיימים
+  Future<void> upsertLocalFromFirestore(domain.Navigation nav) async {
+    // הגנה מפני שחזור ניווט שנמחק לאחרונה
+    if (isRecentlyDeleted(nav.id)) {
+      print('DEBUG: Skipping upsert for recently deleted navigation: ${nav.id}');
+      return;
+    }
+
     try {
-      await (_db.update(_db.navigations)..where((n) => n.id.equals(nav.id)))
-          .write(
-        NavigationsCompanion(
-          name: Value(nav.name),
-          status: Value(nav.status),
+      await _db.into(_db.navigations).insertOnConflictUpdate(
+        NavigationsCompanion.insert(
+          id: nav.id,
+          name: nav.name,
+          status: nav.status,
+          createdBy: nav.createdBy,
+          treeId: nav.treeId,
+          areaId: nav.areaId,
           frameworkId: Value(nav.selectedUnitId),
           selectedSubFrameworkIdsJson: Value(nav.selectedSubFrameworkIds.isNotEmpty
               ? jsonEncode(nav.selectedSubFrameworkIds)
@@ -719,6 +777,11 @@ class NavigationRepository {
           selectedParticipantIdsJson: Value(nav.selectedParticipantIds.isNotEmpty
               ? jsonEncode(nav.selectedParticipantIds)
               : null),
+          layerNzId: nav.layerNzId,
+          layerNbId: nav.layerNbId,
+          layerGgId: nav.layerGgId,
+          layerBaId: Value(nav.layerBaId),
+          distributionMethod: nav.distributionMethod,
           navigationType: Value(nav.navigationType),
           executionOrder: Value(nav.executionOrder),
           boundaryLayerId: Value(nav.boundaryLayerId),
@@ -729,29 +792,42 @@ class NavigationRepository {
           safetyTimeJson: Value(nav.safetyTime != null
               ? jsonEncode(nav.safetyTime!.toMap())
               : null),
-          learningSettingsJson: Value(jsonEncode(nav.learningSettings.toMap())),
-          verificationSettingsJson: Value(jsonEncode(nav.verificationSettings.toMap())),
+          learningSettingsJson: jsonEncode(nav.learningSettings.toMap()),
+          verificationSettingsJson: jsonEncode(nav.verificationSettings.toMap()),
           allowOpenMap: Value(nav.allowOpenMap),
           showSelfLocation: Value(nav.showSelfLocation),
           showRouteOnMap: Value(nav.showRouteOnMap),
-          alertsJson: Value(jsonEncode(nav.alerts.toMap())),
+          alertsJson: jsonEncode(nav.alerts.toMap()),
           reviewSettingsJson: Value(jsonEncode(nav.reviewSettings.toMap())),
-          displaySettingsJson: Value(jsonEncode(nav.displaySettings.toMap())),
-          routesJson: Value(jsonEncode(nav.routes.map((k, v) => MapEntry(k, v.toMap())))),
+          displaySettingsJson: jsonEncode(nav.displaySettings.toMap()),
+          routesJson: jsonEncode(nav.routes.map((k, v) => MapEntry(k, v.toMap()))),
           routesStage: Value(nav.routesStage),
           routesDistributed: Value(nav.routesDistributed),
           trainingStartTime: Value(nav.trainingStartTime),
           systemCheckStartTime: Value(nav.systemCheckStartTime),
           activeStartTime: Value(nav.activeStartTime),
-          gpsUpdateIntervalSeconds: Value(nav.gpsUpdateIntervalSeconds),
+          gpsUpdateIntervalSeconds: nav.gpsUpdateIntervalSeconds,
           enabledPositionSourcesJson: Value(jsonEncode(nav.enabledPositionSources)),
           allowManualPosition: Value(nav.allowManualPosition),
-          permissionsJson: Value(jsonEncode(nav.permissions.toMap())),
-          updatedAt: Value(nav.updatedAt),
+          timeCalculationSettingsJson: Value(jsonEncode(nav.timeCalculationSettings.toMap())),
+          communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
+          permissionsJson: jsonEncode(nav.permissions.toMap()),
+          createdAt: nav.createdAt,
+          updatedAt: nav.updatedAt,
         ),
       );
     } catch (e) {
-      print('DEBUG: Error updating local navigation from Firestore: $e');
+      print('DEBUG: Error upserting local navigation from Firestore: $e');
+    }
+  }
+
+  /// מחיקה מקומית של ניווט ללא סנכרון (עבור Firestore listener)
+  Future<void> deleteLocalOnly(String id) async {
+    try {
+      await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
+      print('DEBUG: Deleted local navigation from Firestore listener: $id');
+    } catch (e) {
+      print('DEBUG: Error deleting local navigation: $e');
     }
   }
 
@@ -804,10 +880,10 @@ class NavigationRepository {
         final data = doc.data();
         data['id'] = doc.id;
 
+        final nav = domain.Navigation.fromMap(data);
         final existing = await getById(doc.id);
         if (existing == null) {
           // Insert into local DB (without re-queuing for sync)
-          final nav = domain.Navigation.fromMap(data);
           await _db.into(_db.navigations).insert(
                 NavigationsCompanion.insert(
                   id: nav.id,
@@ -856,11 +932,15 @@ class NavigationRepository {
                   systemCheckStartTime: Value(nav.systemCheckStartTime),
                   activeStartTime: Value(nav.activeStartTime),
                   gpsUpdateIntervalSeconds: nav.gpsUpdateIntervalSeconds,
+                  communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
                   permissionsJson: jsonEncode(nav.permissions.toMap()),
                   createdAt: nav.createdAt,
                   updatedAt: nav.updatedAt,
                 ),
               );
+        } else {
+          // Update existing navigation from Firestore
+          await upsertLocalFromFirestore(nav);
         }
       }
 

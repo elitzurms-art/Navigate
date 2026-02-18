@@ -80,11 +80,23 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           return;
         }
         // עדכון local DB בלי sync חזרה
-        _navigationRepo.updateLocalFromFirestore(nav);
-        // הורדת מפות אוטומטית כשעוברים למצב למידה
-        if (nav.status == 'learning' &&
-            (_currentNavigation == null || _currentNavigation!.status != 'learning')) {
-          AutoMapDownloadService().triggerDownload(nav);
+        _navigationRepo.upsertLocalFromFirestore(nav);
+        // הורדת מפות אוטומטית כשעוברים למצב למידה/בדיקת מערכות/ממתין
+        final autoDownloadStatuses = {'learning', 'system_check', 'waiting'};
+        if (autoDownloadStatuses.contains(nav.status) &&
+            (_currentNavigation == null || !autoDownloadStatuses.contains(_currentNavigation!.status))) {
+          final service = AutoMapDownloadService();
+          service.onStatusMessage = (message, {bool isError = false}) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(message),
+                backgroundColor: isError ? Colors.red : Colors.blue,
+                duration: Duration(seconds: isError ? 4 : 3),
+              ),
+            );
+          };
+          service.triggerDownload(nav);
         }
         // עדכון UI אם הסטטוס או הנתונים השתנו
         if (_currentNavigation == null ||

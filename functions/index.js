@@ -1,7 +1,9 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getStorage } = require("firebase-admin/storage");
 
 initializeApp();
 
@@ -172,3 +174,63 @@ exports.onNavigatorAlert = onDocumentCreated(
     }
   }
 );
+
+/**
+ * Scheduled: ניקוי הודעות קוליות ישנות (מעל 7 ימים)
+ *
+ * מוחק את הקבצים מ-Firebase Storage ואת המסמכים מ-Firestore.
+ * רץ כל 24 שעות.
+ */
+exports.cleanupOldVoiceMessages = onSchedule("every 24 hours", async () => {
+  const expirationMs = 7 * 24 * 60 * 60 * 1000;
+  const cutoffDate = new Date(Date.now() - expirationMs);
+
+  let storageDeleted = 0;
+  let firestoreDeleted = 0;
+
+  // 1. מחיקת קבצי אודיו מ-Storage
+  try {
+    const bucket = getStorage().bucket();
+    const [files] = await bucket.getFiles({ prefix: "voice_messages/" });
+
+    const deletePromises = [];
+    for (const file of files) {
+      const created = new Date(file.metadata.timeCreated);
+      if (created < cutoffDate) {
+        deletePromises.push(file.delete());
+        storageDeleted++;
+      }
+    }
+    await Promise.all(deletePromises);
+  } catch (error) {
+    console.error("Error cleaning Storage files:", error);
+  }
+
+  // 2. מחיקת מסמכי הודעות מ-Firestore (rooms/{navId}/messages)
+  try {
+    const roomsSnap = await db.collection("rooms").get();
+
+    for (const roomDoc of roomsSnap.docs) {
+      const messagesSnap = await roomDoc.ref
+        .collection("messages")
+        .where("createdAt", "<", cutoffDate)
+        .limit(500)
+        .get();
+
+      if (messagesSnap.empty) continue;
+
+      const batch = db.batch();
+      for (const msgDoc of messagesSnap.docs) {
+        batch.delete(msgDoc.ref);
+        firestoreDeleted++;
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    console.error("Error cleaning Firestore messages:", error);
+  }
+
+  console.log(
+    `Cleanup done: ${storageDeleted} storage files, ${firestoreDeleted} Firestore messages deleted`
+  );
+});

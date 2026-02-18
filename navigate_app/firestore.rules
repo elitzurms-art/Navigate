@@ -12,143 +12,55 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    /// Get the current user's UID
-    function userId() {
-      return request.auth.uid;
-    }
-
-    /// Read the user document for the current auth user
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(userId())).data;
-    }
-
-    /// Check if user has a specific role
-    function hasRole(role) {
-      return isAuthenticated() && getUserData().role == role;
-    }
-
-    /// Check if user is a developer (highest privilege)
-    function isDeveloper() {
-      return hasRole('developer');
-    }
-
-    /// Check if user is an admin
-    function isAdmin() {
-      return hasRole('admin');
-    }
-
-    /// Check if user is a developer or admin
-    function isDeveloperOrAdmin() {
-      return isDeveloper() || isAdmin();
-    }
-
-    /// Check if user is a unit_admin
-    function isUnitAdmin() {
-      return hasRole('unit_admin');
-    }
-
-    /// Check if user is a commander
-    function isCommander() {
-      return hasRole('commander');
-    }
-
-    /// Check if user is a navigator
-    function isNavigator() {
-      return hasRole('navigator');
-    }
-
-    /// Check if user is a member of a specific unit
-    function isUnitMember(unitId) {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/units/$(unitId)/members/$(userId()));
-    }
-
-    /// Check if user is an admin/manager of a specific unit
-    function isUnitManager(unitId) {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/units/$(unitId)/members/$(userId())) &&
-        get(/databases/$(database)/documents/units/$(unitId)/members/$(userId())).data.role in ['admin', 'unit_admin', 'manager'];
-    }
-
     // =========================================================================
     // /users/{userId} -- User profiles
     // =========================================================================
     match /users/{uid} {
-      // Any authenticated user can read any user profile
       allow read: if isAuthenticated();
-
-      // Users can create/update their own profile
-      allow create: if isAuthenticated() && userId() == uid;
-      allow update: if isAuthenticated() && (userId() == uid || isDeveloperOrAdmin());
-
-      // Only developers/admins can delete users
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
     }
 
     // =========================================================================
     // /units/{unitId} -- Organizational units
     // =========================================================================
     match /units/{unitId} {
-      // Any authenticated user can read units
       allow read: if isAuthenticated();
-
-      // Developers, admins, and unit_admins can create units
-      allow create: if isAuthenticated() && (isDeveloperOrAdmin() || isUnitAdmin());
-
-      // Unit managers and developers/admins can update
-      allow update: if isAuthenticated() && (isDeveloperOrAdmin() || isUnitManager(unitId));
-
-      // Only developers/admins can delete units
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
 
       // ----- /units/{unitId}/members/{memberId} -----
       match /members/{memberId} {
-        // Unit members can read membership data
         allow read: if isAuthenticated();
-
-        // Unit managers and developers can manage members
-        allow create, update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitManager(unitId));
-
-        allow delete: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitManager(unitId));
+        allow create, update, delete: if isAuthenticated();
       }
     }
 
     // =========================================================================
-    // /areas/{areaId} -- Geographic areas (global, developer-managed)
+    // /areas/{areaId} -- Geographic areas
     // =========================================================================
     match /areas/{areaId} {
-      // All authenticated users can read areas
       allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
 
-      // Only developers/admins can create/update/delete areas
-      allow create, update, delete: if isDeveloperOrAdmin();
-
-      // ----- /areas/{areaId}/layers_nz/{checkpointId} -----
       match /layers_nz/{checkpointId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- /areas/{areaId}/layers_nb/{safetyPointId} -----
       match /layers_nb/{safetyPointId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- /areas/{areaId}/layers_gg/{boundaryId} -----
       match /layers_gg/{boundaryId} {
         allow read: if isAuthenticated();
-        // Developers/admins can full manage; unit_admin can CREATE new GG
-        allow create: if isAuthenticated() && (isDeveloperOrAdmin() || isUnitAdmin());
-        allow update, delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- /areas/{areaId}/layers_ba/{clusterId} -----
       match /layers_ba/{clusterId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
     }
 
@@ -157,47 +69,35 @@ service cloud.firestore {
     // =========================================================================
     match /layers_nz/{docId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
     match /layers_nb/{docId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
     match /layers_gg/{docId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (isDeveloperOrAdmin() || isUnitAdmin());
-      allow update, delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
     match /layers_ba/{docId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     // =========================================================================
     // /navigation_trees/{treeId} -- Navigation tree definitions
     // =========================================================================
     match /navigation_trees/{treeId} {
-      // Renamed from navigator_trees in some places; match both
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-      allow update: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
 
-      // ----- /navigation_trees/{treeId}/frameworks/{frameworkId} -----
       match /frameworks/{frameworkId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
 
-        // ----- sub_frameworks -----
         match /sub_frameworks/{subFrameworkId} {
           allow read: if isAuthenticated();
-          allow create, update: if isAuthenticated() &&
-            (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-          allow delete: if isDeveloperOrAdmin();
+          allow create, update, delete: if isAuthenticated();
         }
       }
     }
@@ -205,152 +105,103 @@ service cloud.firestore {
     // Legacy collection name
     match /navigator_trees/{treeId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     // =========================================================================
     // /navigations/{navId} -- Navigation events
     // =========================================================================
     match /navigations/{navId} {
-      // All authenticated users can read navigations
-      // (fine-grained access -- e.g. unit scoping -- can be added later)
       allow read: if isAuthenticated();
-
-      // Commanders, unit_admins, developers can create navigations
-      allow create: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-
-      // Same roles can update
-      allow update: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-
-      // Only developers/admins can delete navigations
-      allow delete: if isDeveloperOrAdmin();
-
-      // ----- Per-navigation layer subcollections -----
+      allow create, update, delete: if isAuthenticated();
 
       match /nav_layers_nz/{checkpointId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
+        allow create, update, delete: if isAuthenticated();
       }
 
       match /nav_layers_nb/{safetyPointId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
+        allow create, update, delete: if isAuthenticated();
       }
 
       match /nav_layers_gg/{boundaryId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
+        allow create, update, delete: if isAuthenticated();
       }
 
       match /nav_layers_ba/{clusterId} {
         allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Routes -----
       match /routes/{navigatorId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Tracks (GPS) -----
       match /tracks/{trackId} {
-        // Commanders/admins can read all tracks
         allow read: if isAuthenticated();
-
-        // Navigators can write their own tracks; commanders/admins can write any
-        allow create, update: if isAuthenticated();
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Punches -----
       match /punches/{punchId} {
         allow read: if isAuthenticated();
-
-        // Navigators create punches; commanders approve/reject
-        allow create: if isAuthenticated();
-        allow update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Alerts -----
       match /alerts/{alertId} {
         allow read: if isAuthenticated();
-
-        // Any participant can create alerts
-        allow create: if isAuthenticated();
-
-        // Commanders can resolve alerts
-        allow update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Violations (immutable audit trail) -----
       match /violations/{violationId} {
         allow read: if isAuthenticated();
-
-        // System/navigators create violations; no updates allowed (immutable)
-        allow create: if isAuthenticated();
-
-        // Violations should not be updated or deleted (audit trail)
-        allow update, delete: if isDeveloper();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- Scores -----
       match /scores/{navigatorId} {
-        // Navigators can read their own scores after publishing
         allow read: if isAuthenticated();
-
-        // Commanders push scores
-        allow create, update: if isAuthenticated() &&
-          (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
 
-      // ----- System Status (system check) -----
       match /system_status/{statusId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAuthenticated();
-        allow delete: if isDeveloperOrAdmin();
+        allow create, update, delete: if isAuthenticated();
       }
     }
 
     // =========================================================================
-    // Legacy flat collections (backward compatibility)
+    // /rooms/{roomId} -- Voice message rooms (PTT / Walkie Talkie)
+    // =========================================================================
+    match /rooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        allow create, update, delete: if isAuthenticated();
+      }
+    }
+
+    // =========================================================================
+    // Legacy flat collections
     // =========================================================================
     match /navigation_tracks/{trackId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /navigation_approval/{docId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isUnitAdmin() || isCommander());
-      allow delete: if isDeveloperOrAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     // =========================================================================
     // /sync_metadata/{userId} -- Per-user sync state
     // =========================================================================
     match /sync_metadata/{uid} {
-      // Users can only access their own sync metadata
-      allow read, write: if isAuthenticated() && userId() == uid;
+      allow read, write: if isAuthenticated();
     }
   }
 }

@@ -325,6 +325,9 @@ class Navigation extends Equatable {
   // Manual position
   final bool allowManualPosition;
 
+  // Communication (PTT)
+  final CommunicationSettings communicationSettings;
+
   // Time calculation
   final TimeCalculationSettings timeCalculationSettings;
 
@@ -377,6 +380,7 @@ class Navigation extends Equatable {
     required this.gpsUpdateIntervalSeconds,
     this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
     this.allowManualPosition = false,
+    this.communicationSettings = const CommunicationSettings(),
     this.timeCalculationSettings = const TimeCalculationSettings(),
     required this.permissions,
     required this.createdAt,
@@ -436,6 +440,7 @@ class Navigation extends Equatable {
     int? gpsUpdateIntervalSeconds,
     List<String>? enabledPositionSources,
     bool? allowManualPosition,
+    CommunicationSettings? communicationSettings,
     TimeCalculationSettings? timeCalculationSettings,
     NavigationPermissions? permissions,
     DateTime? createdAt,
@@ -484,6 +489,7 @@ class Navigation extends Equatable {
       gpsUpdateIntervalSeconds: gpsUpdateIntervalSeconds ?? this.gpsUpdateIntervalSeconds,
       enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
       allowManualPosition: allowManualPosition ?? this.allowManualPosition,
+      communicationSettings: communicationSettings ?? this.communicationSettings,
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
@@ -539,6 +545,7 @@ class Navigation extends Equatable {
       'gpsUpdateIntervalSeconds': gpsUpdateIntervalSeconds,
       'enabledPositionSources': enabledPositionSources,
       'allowManualPosition': allowManualPosition,
+      'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
       'createdAt': createdAt.toIso8601String(),
@@ -614,6 +621,9 @@ class Navigation extends Equatable {
       gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 30,
       enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
+      communicationSettings: map['communicationSettings'] != null
+          ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
+          : const CommunicationSettings(),
       timeCalculationSettings: map['timeCalculationSettings'] != null
           ? TimeCalculationSettings.fromMap(map['timeCalculationSettings'] as Map<String, dynamic>)
           : const TimeCalculationSettings(),
@@ -669,6 +679,7 @@ class Navigation extends Equatable {
     gpsUpdateIntervalSeconds,
     enabledPositionSources,
     allowManualPosition,
+    communicationSettings,
     timeCalculationSettings,
     permissions,
     createdAt,

@@ -18,6 +18,9 @@ import 'dart:async';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
+import '../../../services/auto_map_download_service.dart';
+import '../../../services/voice_service.dart';
+import '../../widgets/voice_messages_panel.dart';
 
 /// מסך בדיקת מערכות
 class SystemCheckScreen extends StatefulWidget {
@@ -64,6 +67,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   LatLng? _currentPosition;
   bool _isCheckingSystem = false;
 
+  // סטטוס מפות אופליין למנווט
+  MapDownloadStatus _mapDownloadStatus = MapDownloadStatus.notStarted;
+  double _mapDownloadProgress = 0.0;
+  Timer? _mapStatusTimer;
+
   // הרשאות מכשיר (לטאב הרשאות)
   Map<String, PermissionStatus> _permissionStatuses = {};
 
@@ -80,6 +88,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   double _ggOpacity = 1.0;
   double _navigatorsOpacity = 1.0;
+
+  VoiceService? _voiceService;
 
   // הורדת נתונים
   NavigationDataLoader? _dataLoader;
@@ -162,6 +172,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       // בדיקת הרשאות מכשיר
       await _checkDevicePermissions();
 
+      // בדיקת סטטוס מפות אופליין + הפעלת הורדה אם לא התחילה
+      _checkMapDownloadStatus();
+
       setState(() => _isCheckingSystem = false);
 
       // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
@@ -172,9 +185,62 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         const Duration(seconds: 15),
         (_) => _checkAndReportStatus(),
       );
+
+      // polling סטטוס מפות כל 5 שניות (עדכון UI מהיר בזמן הורדה)
+      _mapStatusTimer ??= Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => _checkMapDownloadStatus(),
+      );
     } catch (e) {
       setState(() => _isCheckingSystem = false);
     }
+  }
+
+  /// בדיקת סטטוס הורדת מפות + הפעלה אוטומטית
+  void _checkMapDownloadStatus() {
+    final service = AutoMapDownloadService();
+    final navId = _currentNavigation.id;
+
+    final newStatus = service.getStatus(navId);
+    final newProgress = service.getProgress(navId);
+
+    // הפעלת הורדה אוטומטית אם לא התחילה
+    if (newStatus == MapDownloadStatus.notStarted) {
+      _triggerAutoMapDownload(_currentNavigation);
+    }
+
+    if (newStatus != _mapDownloadStatus || newProgress != _mapDownloadProgress) {
+      if (mounted) {
+        setState(() {
+          _mapDownloadStatus = newStatus;
+          _mapDownloadProgress = newProgress;
+        });
+        // עדכון Firestore עם סטטוס מפות חדש
+        _reportStatusToFirestore();
+      }
+    }
+  }
+
+  /// הורדה ידנית מחדש
+  Future<void> _startManualMapDownload() async {
+    final service = AutoMapDownloadService();
+    service.resetForManualDownload(_currentNavigation.id);
+    service.onStatusMessage = (message, {bool isError = false}) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.blue,
+          duration: Duration(seconds: isError ? 4 : 3),
+        ),
+      );
+    };
+    setState(() {
+      _mapDownloadStatus = MapDownloadStatus.downloading;
+      _mapDownloadProgress = 0.0;
+    });
+    await service.triggerDownload(_currentNavigation);
+    _checkMapDownloadStatus();
   }
 
   /// בדיקה מחזורית ודיווח (מנווט)
@@ -227,6 +293,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
         'positionSource': _gpsService.lastPositionSource.name,
+        'mapsStatus': _mapDownloadStatus.name,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -273,6 +340,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _systemStatusListener?.cancel();
     _statusPollTimer?.cancel();
     _navigatorCheckTimer?.cancel();
+    _mapStatusTimer?.cancel();
+    _voiceService?.dispose();
     super.dispose();
   }
 
@@ -371,6 +440,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               positionSource: data['positionSource'] as String? ?? 'gps',
               positionUpdatedAt: posTime,
               gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
+              mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
             );
           }
         });
@@ -569,15 +639,32 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
+          : Column(
               children: [
-                _buildNavigatorsTab(),
-                _buildBatteryView(),
-                _buildConnectivityView(),
-                _buildSystemTab(),
-                _buildDataTab(),
-                _buildPermissionsTab(),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildNavigatorsTab(),
+                      _buildBatteryView(),
+                      _buildConnectivityView(),
+                      _buildSystemTab(),
+                      _buildDataTab(),
+                      _buildPermissionsTab(),
+                    ],
+                  ),
+                ),
+                if (widget.navigation.communicationSettings.walkieTalkieEnabled && widget.currentUser != null)
+                  Builder(builder: (context) {
+                    _voiceService ??= VoiceService();
+                    return VoiceMessagesPanel(
+                      navigationId: widget.navigation.id,
+                      currentUser: widget.currentUser!,
+                      voiceService: _voiceService!,
+                      isCommander: widget.isCommander,
+                      enabled: true,
+                    );
+                  }),
               ],
             ),
       bottomNavigationBar: Padding(
@@ -640,6 +727,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     );
     await _navRepo.update(updatedNav);
     _currentNavigation = updatedNav;
+    _triggerAutoMapDownload(updatedNav);
     if (mounted) {
       setState(() => _systemCheckStarted = true);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -649,6 +737,22 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         ),
       );
     }
+  }
+
+  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
+  void _triggerAutoMapDownload(domain.Navigation navigation) {
+    final service = AutoMapDownloadService();
+    service.onStatusMessage = (message, {bool isError = false}) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.blue,
+          duration: Duration(seconds: isError ? 4 : 3),
+        ),
+      );
+    };
+    service.triggerDownload(navigation);
   }
 
   Future<void> _finishSystemCheck() async {
@@ -747,6 +851,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               _buildStatusIndicator(Icons.battery_alert, Colors.red, 'סוללה נמוכה'),
               _buildStatusIndicator(Icons.signal_cellular_4_bar, Colors.green, 'קליטה טובה'),
               _buildStatusIndicator(Icons.signal_cellular_0_bar, Colors.red, 'אין קליטה'),
+              _buildStatusIndicator(Icons.map, Colors.green, 'מפות ירדו'),
+              _buildStatusIndicator(Icons.cloud_off, Colors.orange, 'מפות חסרות'),
             ],
           ),
           const SizedBox(height: 16),
@@ -849,6 +955,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     ? _getReceptionColor(status)
                     : Colors.grey,
               ),
+              const SizedBox(width: 8),
+
+              // חיווי מפות אופליין
+              _buildMiniIndicator(
+                icon: _getMapsIcon(status),
+                color: _getMapsColor(status),
+              ),
 
               const SizedBox(width: 4),
               Icon(Icons.chevron_left, color: Colors.grey[400]),
@@ -905,6 +1018,33 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     if (status.receptionLevel <= 1) return Colors.red;
     if (status.receptionLevel <= 2) return Colors.orange;
     return Colors.green;
+  }
+
+  IconData _getMapsIcon(NavigatorStatus status) {
+    switch (status.mapsStatus) {
+      case 'completed':
+        return Icons.map;
+      case 'downloading':
+        return Icons.cloud_download;
+      case 'failed':
+        return Icons.cloud_off;
+      default:
+        return Icons.cloud_off;
+    }
+  }
+
+  Color _getMapsColor(NavigatorStatus status) {
+    if (!status.isConnected) return Colors.grey;
+    switch (status.mapsStatus) {
+      case 'completed':
+        return Colors.green;
+      case 'downloading':
+        return Colors.blue;
+      case 'failed':
+        return Colors.red;
+      default:
+        return Colors.orange;
+    }
   }
 
   void _showNavigatorDetails(String navigatorId, NavigatorStatus status) {
@@ -1502,10 +1642,18 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         .where((s) => s.isConnected && s.receptionLevel <= 0)
         .length;
 
+    final mapsReady = _navigatorStatuses.values
+        .where((s) => s.isConnected && s.mapsReady)
+        .length;
+    final mapsNotReady = _navigatorStatuses.values
+        .where((s) => s.isConnected && !s.mapsReady)
+        .length;
+
     final allOk = connected == totalNavigators &&
         withGps == connected &&
         lowBattery == 0 &&
-        noReception == 0;
+        noReception == 0 &&
+        mapsNotReady == 0;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -1582,6 +1730,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             label: 'ללא קליטה',
             value: '$noReception',
             color: noReception == 0 ? Colors.green : Colors.red,
+          ),
+          _buildSummaryRow(
+            icon: Icons.map,
+            label: 'מפות אופליין',
+            value: '$mapsReady / $connected',
+            color: mapsNotReady == 0 ? Colors.green : Colors.orange,
           ),
         ],
       ),
@@ -1939,7 +2093,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       ),
       body: _isCheckingSystem
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+          : Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
@@ -2147,6 +2304,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       ),
                     ),
 
+                  const SizedBox(height: 16),
+
+                  // בדיקת מפות אופליין
+                  _buildMapDownloadCard(),
+
                   const SizedBox(height: 32),
 
                   // כפתור אישור
@@ -2167,6 +2329,99 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                 ],
               ),
             ),
+                ),
+                if (widget.navigation.communicationSettings.walkieTalkieEnabled && widget.currentUser != null)
+                  Builder(builder: (context) {
+                    _voiceService ??= VoiceService();
+                    return VoiceMessagesPanel(
+                      navigationId: widget.navigation.id,
+                      currentUser: widget.currentUser!,
+                      voiceService: _voiceService!,
+                      isCommander: false,
+                      enabled: true,
+                    );
+                  }),
+              ],
+            ),
+      ),
+    );
+  }
+
+  /// כרטיס סטטוס הורדת מפות אופליין
+  Widget _buildMapDownloadCard() {
+    IconData icon;
+    Color color;
+    String statusText;
+    Widget? trailing;
+
+    switch (_mapDownloadStatus) {
+      case MapDownloadStatus.completed:
+        icon = Icons.check_circle;
+        color = Colors.green;
+        statusText = 'מפות אופליין הורדו בהצלחה';
+        break;
+      case MapDownloadStatus.downloading:
+        icon = Icons.cloud_download;
+        color = Colors.blue;
+        final pct = (_mapDownloadProgress * 100).toStringAsFixed(0);
+        statusText = 'מוריד מפות אופליין... $pct%';
+        trailing = SizedBox(
+          width: 48,
+          height: 48,
+          child: CircularProgressIndicator(
+            value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
+            strokeWidth: 3,
+            color: Colors.blue,
+          ),
+        );
+        break;
+      case MapDownloadStatus.failed:
+        icon = Icons.error;
+        color = Colors.red;
+        statusText = 'הורדת מפות נכשלה';
+        trailing = ElevatedButton(
+          onPressed: _startManualMapDownload,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('הורד שוב'),
+        );
+        break;
+      case MapDownloadStatus.notStarted:
+        icon = Icons.cloud_off;
+        color = Colors.orange;
+        statusText = 'מפות אופליין לא הורדו';
+        trailing = ElevatedButton(
+          onPressed: _startManualMapDownload,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('הורד'),
+        );
+        break;
+    }
+
+    return Card(
+      child: ListTile(
+        leading: Icon(icon, color: color, size: 40),
+        title: const Text('מפות אופליין'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(statusText, style: TextStyle(color: color)),
+            if (_mapDownloadStatus == MapDownloadStatus.downloading)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(
+                  value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
+                  color: Colors.blue,
+                ),
+              ),
+          ],
+        ),
+        trailing: trailing,
       ),
     );
   }
@@ -2358,6 +2613,7 @@ class NavigatorStatus {
   final String positionSource; // 'gps', 'cellTower', or 'none'
   final DateTime? positionUpdatedAt; // מתי עודכן המיקום לאחרונה
   final double gpsAccuracy; // -1 = לא ידוע
+  final String mapsStatus; // 'notStarted', 'downloading', 'completed', 'failed'
 
   NavigatorStatus({
     required this.isConnected,
@@ -2369,5 +2625,8 @@ class NavigatorStatus {
     this.positionSource = 'gps',
     this.positionUpdatedAt,
     this.gpsAccuracy = -1,
+    this.mapsStatus = 'notStarted',
   });
+
+  bool get mapsReady => mapsStatus == 'completed';
 }

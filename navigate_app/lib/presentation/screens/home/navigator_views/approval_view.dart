@@ -19,6 +19,8 @@ import '../../../widgets/map_controls.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
+import '../../../../services/voice_service.dart';
+import '../../../widgets/voice_messages_panel.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -45,6 +47,8 @@ class ApprovalView extends StatefulWidget {
 }
 
 class _ApprovalViewState extends State<ApprovalView> {
+  VoiceService? _voiceService;
+
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
@@ -79,6 +83,12 @@ class _ApprovalViewState extends State<ApprovalView> {
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _voiceService?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -686,6 +696,19 @@ class _ApprovalViewState extends State<ApprovalView> {
             ],
           ),
         ),
+
+        // ווקי טוקי
+        if (widget.navigation.communicationSettings.walkieTalkieEnabled)
+          Builder(builder: (context) {
+            _voiceService ??= VoiceService();
+            return VoiceMessagesPanel(
+              navigationId: widget.navigation.id,
+              currentUser: widget.currentUser,
+              voiceService: _voiceService!,
+              isCommander: false,
+              enabled: true,
+            );
+          }),
       ],
     );
   }

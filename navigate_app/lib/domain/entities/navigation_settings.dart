@@ -722,6 +722,38 @@ class TimeCalculationSettings extends Equatable {
   List<Object?> get props => [enabled, isHeavyLoad, isNightNavigation, isSummer];
 }
 
+/// הגדרות תקשורת (ווקי טוקי)
+class CommunicationSettings extends Equatable {
+  final bool walkieTalkieEnabled;
+
+  const CommunicationSettings({
+    this.walkieTalkieEnabled = false,
+  });
+
+  CommunicationSettings copyWith({
+    bool? walkieTalkieEnabled,
+  }) {
+    return CommunicationSettings(
+      walkieTalkieEnabled: walkieTalkieEnabled ?? this.walkieTalkieEnabled,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'walkieTalkieEnabled': walkieTalkieEnabled,
+    };
+  }
+
+  factory CommunicationSettings.fromMap(Map<String, dynamic> map) {
+    return CommunicationSettings(
+      walkieTalkieEnabled: map['walkieTalkieEnabled'] as bool? ?? false,
+    );
+  }
+
+  @override
+  List<Object?> get props => [walkieTalkieEnabled];
+}
+
 /// נקודת ביניים - נ.צ. שכולם עוברים בה
 class WaypointCheckpoint extends Equatable {
   final String checkpointId; // מזהה נקודת הציון

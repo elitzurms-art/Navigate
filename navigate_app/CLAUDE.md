@@ -19,6 +19,8 @@
 | connectivity_plus | ^5.0.2 | מעקב רשת |
 | geolocator | ^11.0.0 | GPS |
 | gps_plus | local (../gps_plus) | חבילת GPS מקומית |
+| record | ^5.1.0 | הקלטת אודיו (PTT) |
+| audioplayers | ^6.0.0 | השמעת אודיו (PTT) |
 
 ---
 
@@ -33,12 +35,13 @@ lib/
 │   ├── utils/utm_converter.dart        # המרת UTM↔LatLng
 │   └── map_config.dart                 # הגדרת שרתי מפות
 │
-├── domain/entities/       # ישויות עסקיות (18 קבצים)
+├── domain/entities/       # ישויות עסקיות (19 קבצים)
 │   ├── user.dart                  # משתמש
 │   ├── unit.dart                  # יחידה (כולל שדות Framework לשעבר)
 │   ├── navigation.dart            # ניווט (~400 שורות)
 │   ├── navigation_tree.dart       # עץ ניווט + SubFramework
-│   ├── navigation_settings.dart   # הגדרות ניווט (~600 שורות)
+│   ├── navigation_settings.dart   # הגדרות ניווט (כולל CommunicationSettings)
+│   ├── voice_message.dart         # הודעה קולית (PTT)
 │   ├── hat_type.dart              # כובעים/תפקידים (HatType, HatInfo, UnitHats)
 │   ├── area.dart                  # שטח
 │   ├── checkpoint.dart            # נ"צ
@@ -55,9 +58,9 @@ lib/
 │
 ├── data/                  # שכבת נתונים
 │   ├── datasources/
-│   │   ├── local/app_database.dart     # Drift schema (17 טבלאות, גרסה 17)
+│   │   ├── local/app_database.dart     # Drift schema (17 טבלאות, גרסה 25)
 │   │   └── remote/firebase_service.dart # Firebase data source
-│   ├── repositories/              # 14 repositories
+│   ├── repositories/              # 15 repositories
 │   │   ├── user_repository.dart
 │   │   ├── unit_repository.dart          # cascade delete ליחידות ילדים
 │   │   ├── navigation_repository.dart
@@ -71,10 +74,11 @@ lib/
 │   │   ├── nav_layer_repository.dart
 │   │   ├── checkpoint_punch_repository.dart
 │   │   ├── navigator_alert_repository.dart
-│   │   └── security_violation_repository.dart
+│   │   ├── security_violation_repository.dart
+│   │   └── voice_message_repository.dart    # הודעות קוליות (Firestore-only, אין Drift)
 │   └── sync/sync_manager.dart     # סנכרון דו-כיווני Drift↔Firestore
 │
-├── services/              # שירותים (12 קבצים)
+├── services/              # שירותים (13 קבצים)
 │   ├── auth_service.dart              # התחברות, הרשמה, SMS, Anonymous Auth
 │   ├── session_service.dart           # ניהול session + סריקת כובעים
 │   ├── navigation_data_loader.dart    # טעינת נתוני ניווט (גדול!)
@@ -86,7 +90,8 @@ lib/
 │   ├── device_security_service.dart   # אבטחת מכשיר
 │   ├── framework_excel_service.dart   # ייצוא Excel
 │   ├── security_manager.dart          # ניהול אבטחה
-│   └── sms_service.dart               # שליחת SMS
+│   ├── sms_service.dart               # שליחת SMS
+│   └── voice_service.dart             # הקלטה + השמעה קולית (PTT)
 │
 ├── presentation/          # שכבת UI
 │   ├── screens/
@@ -103,7 +108,10 @@ lib/
 │   │   ├── dashboard/      # דשבורד
 │   │   ├── training/       # למידה + אימון
 │   │   └── security/       # הוראות Guided Access
-│   └── widgets/            # 4 widgets משותפים
+│   └── widgets/            # 7 widgets משותפים
+│       ├── push_to_talk_button.dart    # כפתור PTT (לחיצה ארוכה + החלקה לביטול)
+│       ├── voice_message_bubble.dart   # בועת הודעה קולית (סגנון WhatsApp)
+│       └── voice_messages_panel.dart   # פאנל ווקי טוקי (רשימה + כפתור + בורר יעד)
 │
 ├── main.dart              # נקודת כניסה (279 שורות)
 ├── main_simple.dart       # כניסה מופשטת (חלופית)
@@ -114,20 +122,24 @@ lib/
 
 ## מסד נתונים (Drift)
 
-- **סכמה**: גרסה 17
+- **סכמה**: גרסה 25
 - **17 טבלאות**: Users, Units, Areas, Checkpoints, SafetyPoints, Boundaries, Clusters, NavigationTrees, Navigations, NavigationTracks, NavCheckpoints, NavSafetyPoints, NavBoundaries, NavClusters, NavProfiles, ועוד
 - **שם הטבלה**: `NavigationTrees` (לא `NavigatorTrees`!) — accessor: `navigationTrees`
 - **Generated class**: `NavigationTree` (יחיד) מטבלה `NavigationTrees`
-- **הגדרות כ-JSON**: learningSettingsJson, verificationSettingsJson, alertsJson, displaySettingsJson, reviewSettingsJson
+- **הגדרות כ-JSON**: learningSettingsJson, verificationSettingsJson, alertsJson, displaySettingsJson, reviewSettingsJson, communicationSettingsJson, timeCalculationSettingsJson
 
 ### מיגרציות אחרונות
 | גרסה | שינוי |
 |---|---|
-| 13 | securitySettingsJson |
-| 14 | training/systemCheck/activeStartTime |
-| 15 | reviewSettingsJson |
-| 16 | showRouteOnMap |
 | 17 | Unit: level, isNavigators, isGeneral (מיזוג Framework→Unit) |
+| 18 | Checkpoint: geometryType + coordinatesJson (polygon support) |
+| 19 | SafetyPoints: nullable lat/lng/utm (rebuild) |
+| 20 | Users.fcmToken |
+| 21 | NavigationTracks: override flags (allowOpenMap, showSelfLocation, showRouteOnMap) |
+| 22 | Navigations.enabledPositionSourcesJson |
+| 23 | allowManualPosition + track manual position fields |
+| 24 | Navigations.timeCalculationSettingsJson |
+| 25 | Navigations.communicationSettingsJson + NavigationTracks.overrideWalkieTalkieEnabled (PTT) |
 
 ### אחרי שינוי סכמה
 ```bash
@@ -140,8 +152,10 @@ dart run build_runner build --delete-conflicting-outputs
 
 - **פרויקט**: `navigate-native` (319417384412)
 - **אימות**: Phone Auth + Anonymous Auth (לגישת Firestore)
-- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata
+- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT)
 - **Subcollections תחת areas**: layers_nz (נ"צ), layers_nb (נ"ב), layers_gg (ג"ג), layers_ba (ב"א)
+- **Subcollections תחת rooms**: messages (הודעות קוליות)
+- **Firebase Storage**: `voice_messages/{navigationId}/{timestamp}.m4a`
 - **קבצי הגדרות**: `firebase.json`, `firestore.rules`, `firestore.indexes.json`
 
 ---
@@ -215,7 +229,7 @@ dart run build_runner build --delete-conflicting-outputs
 | תחקור | approval, review |
 
 ### סדר חלקים במסך יצירה/עריכה
-שטח ומשתתפים → נקודות → למידה → ניווט → תחקיר → תצוגה
+שטח ומשתתפים → נקודות → למידה → ניווט → תקשורת → תחקיר → תצוגה
 
 ### הגדרות GPS
 - מוגדר **per-navigation** (לא גלובלי) במסך יצירה/עריכה
@@ -265,7 +279,7 @@ dart run build_runner build --delete-conflicting-outputs
 
 ### מלכודות סנכרון (upsert)
 - **`_upsertNavigationTree`**: Firestore שולח `subFrameworks` כ-array, Drift מאחסן כ-`frameworksJson` (string). חובה לעשות `jsonEncode` בזמן pull. גם לתמוך ב-`frameworks` (פורמט ישן) ו-`frameworksJson` (string ישיר)
-- **`_upsertNavigation`**: חובה לכלול **את כל** שדות הניווט — כולל `frameworkId`, `selectedSubFrameworkIdsJson`, `selectedParticipantIdsJson`, שדות bool (allowOpenMap, showSelfLocation, showRouteOnMap, routesDistributed, distributeNow), `reviewSettingsJson`, שדות זמן (trainingStartTime, systemCheckStartTime, activeStartTime). שדה שלא נכתב מקבל null/default ומוחק נתונים!
+- **`_upsertNavigation`**: חובה לכלול **את כל** שדות הניווט — כולל `frameworkId`, `selectedSubFrameworkIdsJson`, `selectedParticipantIdsJson`, שדות bool (allowOpenMap, showSelfLocation, showRouteOnMap, routesDistributed, distributeNow), `reviewSettingsJson`, `communicationSettingsJson`, `timeCalculationSettingsJson`, שדות זמן (trainingStartTime, systemCheckStartTime, activeStartTime). שדה שלא נכתב מקבל null/default ומוחק נתונים!
 - **Firestore Lists → Drift JSON**: שדות כמו `selectedSubFrameworkIds` מגיעים מ-Firestore כ-List אבל Drift מצפה ל-JSON string — צריך fallback עם `jsonEncode`
 
 ---
@@ -289,6 +303,53 @@ dart run build_runner build --delete-conflicting-outputs
 | `/mode-selection` | MainModeSelectionScreen |
 | `/home` | HomeRouter (dynamic) |
 | `/unit-admin-frameworks` | UnitAdminFrameworksScreen |
+
+---
+
+## ווקי טוקי (PTT — Push To Talk)
+
+מערכת קשר קולי בזמן אמת בתוך ניווט פעיל. מפקדים ומנווטים שולחים הודעות קוליות.
+
+### ארכיטקטורה
+- **`CommunicationSettings`** (`navigation_settings.dart`) — הגדרות per-navigation (`walkieTalkieEnabled`)
+- **`VoiceMessage`** (`voice_message.dart`) — ישות Firestore-only (אין טבלת Drift)
+- **`VoiceMessageRepository`** — Firestore `rooms/{navigationId}/messages/` + Firebase Storage
+- **`VoiceService`** — הקלטה (`record` package, 30 שניות מקסימום) + השמעה (`audioplayers`) + תור השמעה (auto-play)
+- **Per-navigator override**: `overrideWalkieTalkieEnabled` בטבלת `NavigationTracks`
+
+### Widgets
+- **`PushToTalkButton`** — לחיצה ארוכה להקלטה, החלקה ימינה (RTL) לביטול, 30 שניות auto-stop
+- **`VoiceMessageBubble`** — בועת WhatsApp עם play/pause, waveform, משך, timestamp
+- **`VoiceMessagesPanel`** — פאנל מתקפל עם header + badge + רשימת הודעות + בורר יעד (מפקד) + PTT button
+
+### אינטגרציה במסכים
+| מסך | תפקיד | מאפיינים |
+|---|---|---|
+| `active_view.dart` | מנווט | PTT panel, override מ-track doc |
+| `navigation_management_screen.dart` | מפקד | PTT panel + בורר יעד + override per-navigator |
+| `system_check_screen.dart` | שניהם | PTT panel (conditional) |
+| `approval_view.dart` | מנווט | PTT panel (conditional) |
+| `create_navigation_screen.dart` | מפקד | SwitchListTile "ווקי טוקי" בסקציית תקשורת |
+| `navigations_list_screen.dart` | — | יצירת room ב-Firestore כשניווט עובר ל-active |
+
+### Firestore Structure
+```
+rooms/{navigationId}/
+  messages/{messageId}/
+    type, audioUrl, duration, senderId, senderName,
+    targetId (null=broadcast), targetName, createdAt
+```
+
+### השמעה אוטומטית (Auto-Play)
+- הודעות חדשות נכנסות מושמעות אוטומטית (לא הודעות שלי)
+- **תור השמעה**: כמה הודעות שמגיעות במקביל מושמעות ברצף (ישנה → חדשה)
+- לחיצה ידנית על play מנקה את התור ומשמיעה מיד
+- לא מושמע בזמן הקלטה
+- `VoiceService.enqueueMessage()` — auto-play, `playMessage()` — ידני (מנקה תור)
+- `VoiceMessagesPanel._seenMessageIds` — מונע השמעה כפולה / השמעה בטעינה ראשונה
+
+### Android Permissions
+`RECORD_AUDIO` ב-`AndroidManifest.xml`
 
 ---
 
@@ -367,6 +428,9 @@ flutter run
 
 ### ReviewSettings
 - showScoresAfterApproval: true
+
+### CommunicationSettings
+- walkieTalkieEnabled: false
 
 ---
 

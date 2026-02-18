@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audioplayers_windows
   battery_plus
   cloud_firestore
   connectivity_plus
@@ -14,6 +15,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   objectbox_flutter_libs
   permission_handler_windows
   printing
+  record_windows
   sqlite3_flutter_libs
 )
 

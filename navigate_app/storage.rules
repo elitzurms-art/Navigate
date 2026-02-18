@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Voice messages (PTT / Walkie Talkie)
+    match /voice_messages/{navigationId}/{fileName} {
+      // Any authenticated user can read voice messages
+      allow read: if request.auth != null;
+
+      // Any authenticated user can upload voice messages (max 5MB)
+      allow create: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+
+      // Only developers can delete
+      allow delete: if request.auth != null;
+    }
+
+    // Default: deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

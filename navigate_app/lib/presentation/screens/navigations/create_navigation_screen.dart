@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/navigation_settings.dart';
@@ -12,6 +13,8 @@ import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
+import '../../../data/sync/sync_manager.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/unit.dart' as domain_unit;
 import '../../../services/auth_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
@@ -103,6 +106,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _showRouteOnMap = false;
   bool _allowManualPosition = false;
 
+  // תקשורת (ווקי טוקי)
+  bool _walkieTalkieEnabled = false;
+
   // חישוב זמנים
   bool _timeCalcEnabled = true;
   bool _isHeavyLoad = false;
@@ -133,11 +139,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   int _noReceptionMinTime = 30;
   bool _healthCheckEnabled = true;
   int _healthCheckIntervalMinutes = 60;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _initializeScreen();
+    // האזנה לשינויי סנכרון — רענון כשמשתמשים חדשים מסתנכרנים
+    _syncSubscription = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.usersCollection && mounted) {
+        _loadUsersForSelectedSubFrameworks();
+      }
+    });
   }
 
   Future<void> _initializeScreen() async {
@@ -378,6 +391,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _showRouteOnMap = nav.showRouteOnMap;
     _allowManualPosition = nav.allowManualPosition;
 
+    // תקשורת
+    _walkieTalkieEnabled = nav.communicationSettings.walkieTalkieEnabled;
+
     // חישוב זמנים
     _timeCalcEnabled = nav.timeCalculationSettings.enabled;
     _isHeavyLoad = nav.timeCalculationSettings.isHeavyLoad;
@@ -474,6 +490,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   @override
   void dispose() {
+    _syncSubscription?.cancel();
     _nameController.dispose();
     super.dispose();
   }
@@ -585,6 +602,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     // הגדרות מיקום
                     _buildSectionTitle('הגדרות מיקום'),
                     _buildLocationSettings(),
+                    const SizedBox(height: 24),
+
+                    // תקשורת
+                    _buildSectionTitle('תקשורת'),
+                    _buildCommunicationSettings(),
                     const SizedBox(height: 24),
 
                     // הגדרות תחקיר
@@ -929,6 +951,26 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     // לפחות GPS חייב להיות דלוק
     if (sources.isEmpty) sources.add('gps');
     return sources;
+  }
+
+  Widget _buildCommunicationSettings() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SwitchListTile(
+              title: const Text('ווקי טוקי'),
+              subtitle: const Text('הפעלת מערכת קשר קולי בזמן אמת'),
+              value: _walkieTalkieEnabled,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (value) => setState(() => _walkieTalkieEnabled = value),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildTimeCalculationSettings() {
@@ -1812,6 +1854,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         showRouteOnMap: _showRouteOnMap,
         alerts: alerts,
         securitySettings: const SecuritySettings(), // ברירת מחדל
+        communicationSettings: CommunicationSettings(walkieTalkieEnabled: _walkieTalkieEnabled),
         reviewSettings: reviewSettings,
         displaySettings: displaySettings,
         routes: widget.navigation?.routes ?? const {}, // שמירת הצירים הקיימים

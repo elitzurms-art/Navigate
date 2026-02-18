@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/unit.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/sync/sync_manager.dart';
 import 'create_unit_screen.dart';
 
 class _UnitWithDepth {
@@ -23,11 +26,24 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
   final UnitRepository _repository = UnitRepository();
   List<_UnitWithDepth> _hierarchicalUnits = [];
   bool _isLoading = true;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadUnits();
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשיחידות מתעדכנות
+    _syncSubscription = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.unitsCollection && mounted) {
+        _loadUnits();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   List<_UnitWithDepth> _buildHierarchy(List<Unit> allUnits) {

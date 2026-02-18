@@ -834,13 +834,13 @@ class RouteExportService {
     // Check if navigation already exists — update or create
     final existing = await navRepo.getById(navigation.id);
     if (existing != null) {
-      await navRepo.updateLocalFromFirestore(navigation);
+      await navRepo.upsertLocalFromFirestore(navigation);
     } else {
       try {
         await navRepo.create(navigation);
       } catch (_) {
         // If create fails (e.g. unique constraint), try update
-        await navRepo.updateLocalFromFirestore(navigation);
+        await navRepo.upsertLocalFromFirestore(navigation);
       }
     }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../../domain/entities/navigation_tree.dart';
@@ -7,6 +8,8 @@ import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/sync/sync_manager.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import '../../../services/framework_excel_service.dart';
@@ -57,11 +60,27 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
   String _unitName = ''; // שם היחידה לתצוגה
   String _unitId = ''; // מזהה היחידה
   List<app_user.User> _allUsers = []; // כל המשתמשים לניהול משתמשים
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים/יחידות/עצים מתעדכנים
+    _syncSubscription = SyncManager().onDataChanged.listen((collection) {
+      if (mounted && (
+          collection == AppConstants.usersCollection ||
+          collection == AppConstants.unitsCollection ||
+          collection == AppConstants.navigatorTreesCollection)) {
+        _loadData();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {

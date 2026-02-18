@@ -29,6 +29,8 @@ import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
 import 'manual_position_pin_screen.dart';
+import '../../../../services/voice_service.dart';
+import '../../../widgets/voice_messages_panel.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -105,6 +107,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   NavigatorAlert? _currentAlertBanner;
   Timer? _alertBannerTimer;
 
+  // Voice (PTT)
+  VoiceService? _voiceService;
+  bool _overrideWalkieTalkieEnabled = false;
+
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
 
@@ -157,6 +163,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _gpsTracker.stopTracking();
     BackgroundLocationService().stop(); // safety net
     _gpsService.dispose();
+    _voiceService?.dispose();
     super.dispose();
   }
 
@@ -852,6 +859,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       if (effectiveAllow && wasDisabled && !_manualPositionUsed && !_manualPinPending) {
         _checkAndTriggerManualPin();
       }
+
+    // קריאת דריסת ווקי טוקי
+    final newWalkieTalkieEnabled = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
+    if (newWalkieTalkieEnabled != _overrideWalkieTalkieEnabled) {
+      _overrideWalkieTalkieEnabled = newWalkieTalkieEnabled;
+      if (mounted) setState(() {});
+    }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');
     });
@@ -1705,6 +1719,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             ),
           ),
         ),
+        // ווקי טוקי
+        if (widget.navigation.communicationSettings.walkieTalkieEnabled || _overrideWalkieTalkieEnabled) ...[
+          Builder(builder: (context) {
+            _voiceService ??= VoiceService();
+            return VoiceMessagesPanel(
+              navigationId: widget.navigation.id,
+              currentUser: widget.currentUser,
+              voiceService: _voiceService!,
+              isCommander: false,
+              enabled: true,
+            );
+          }),
+        ],
         const SizedBox(height: 95),
       ],
     );

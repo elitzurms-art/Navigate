@@ -68,6 +68,12 @@ class SyncManager {
   /// האזנות realtime פעילות
   final Map<String, StreamSubscription<QuerySnapshot>> _realtimeListeners = {};
 
+  /// Stream controller להודעה על שינויי נתונים (שם הקולקשן שהשתנה)
+  final StreamController<String> _dataChangedController = StreamController<String>.broadcast();
+
+  /// Stream שמודיע כאשר נתונים השתנו (pull/delete) — הערך הוא שם הקולקשן
+  Stream<String> get onDataChanged => _dataChangedController.stream;
+
   /// מנוי לשינויי מצב אימות
   StreamSubscription<dynamic>? _authSubscription;
 
@@ -187,6 +193,8 @@ class SyncManager {
           _initialSyncCompleter.complete();
         }
         processSyncQueue();
+        // הפעלת listeners בזמן אמת לקולקשנים ראשיים
+        _startCollectionRealtimeListeners();
       }).catchError((e) {
         print('SyncManager: Initial pullAll failed: $e');
         if (!_initialSyncCompleter.isCompleted) {
@@ -823,6 +831,8 @@ class SyncManager {
           break;
         case AppConstants.layersGgCollection:
           await _upsertBoundary(documentId, serverData);
+          // בדיקה אם יש ניווטים שממתינים לגבול הזה להורדת מפות
+          unawaited(AutoMapDownloadService().onBoundarySynced(documentId));
           break;
         case AppConstants.layersBaCollection:
           await _upsertCluster(documentId, serverData);
@@ -835,17 +845,20 @@ class SyncManager {
           break;
         case AppConstants.navigationsCollection:
           await _upsertNavigation(documentId, serverData);
-          // הורדת מפות אוטומטית כשניווט עובר למצב למידה
-          if (serverData['status'] == 'learning') {
+          // הורדת מפות אוטומטית כשניווט במצב למידה/בדיקת מערכות/ממתין
+          final autoDownloadStatuses = {'learning', 'system_check', 'waiting'};
+          if (autoDownloadStatuses.contains(serverData['status'])) {
             final nav = await NavigationRepository().getById(documentId);
             if (nav != null) {
-              AutoMapDownloadService().triggerDownload(nav);
+              unawaited(AutoMapDownloadService().triggerDownload(nav));
             }
           }
           break;
         default:
           print('SyncManager: No local upsert handler for collection $collection');
       }
+      // הודעה על שינוי נתונים — למסכים שמאזינים
+      _dataChangedController.add(collection);
     } catch (e) {
       print('SyncManager: Error upserting local record $collection/$documentId: $e');
     }
@@ -872,6 +885,7 @@ class SyncManager {
           await (_db.delete(_db.navigationTrees)..where((t) => t.id.equals(documentId))).go();
           break;
         case AppConstants.navigationsCollection:
+          NavigationRepository.markAsRecentlyDeleted(documentId);
           await (_db.delete(_db.navigations)..where((t) => t.id.equals(documentId))).go();
           break;
         default:
@@ -879,6 +893,8 @@ class SyncManager {
           return;
       }
       print('SyncManager: Soft-delete — removed local $collection/$documentId');
+      // הודעה על שינוי נתונים — למסכים שמאזינים
+      _dataChangedController.add(collection);
     } catch (e) {
       print('SyncManager: Error deleting local record $collection/$documentId: $e');
     }
@@ -1099,6 +1115,11 @@ class SyncManager {
   }
 
   Future<void> _upsertNavigation(String id, Map<String, dynamic> data) async {
+    // הגנה מפני שחזור ניווט שנמחק לאחרונה
+    if (NavigationRepository.isRecentlyDeleted(id)) {
+      print('SyncManager: Skipping upsert for recently deleted navigation $id');
+      return;
+    }
     await _db.into(_db.navigations).insertOnConflictUpdate(
       NavigationsCompanion.insert(
         id: id,
@@ -1153,6 +1174,8 @@ class SyncManager {
         allowManualPosition: Value(data['allowManualPosition'] as bool? ?? false),
         timeCalculationSettingsJson: Value(data['timeCalculationSettingsJson'] as String? ??
             (data['timeCalculationSettings'] != null ? jsonEncode(data['timeCalculationSettings']) : '{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}')),
+        communicationSettingsJson: Value(data['communicationSettingsJson'] as String? ??
+            (data['communicationSettings'] != null ? jsonEncode(data['communicationSettings']) : '{"walkieTalkieEnabled":false}')),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),
@@ -1526,6 +1549,70 @@ class SyncManager {
   ) {
     print('SyncManager: Realtime alert event ($changeType) on navigation $navigationId: ${data['id']}');
     // TODO: עדכון DB מקומי + הודעה ל-UI דרך stream/provider
+  }
+
+  // ---------------------------------------------------------------------------
+  // Collection-level realtime listeners (units, users, areas)
+  // ---------------------------------------------------------------------------
+
+  /// הפעלת listeners בזמן אמת לקולקשנים ראשיים (יחידות, משתמשים, אזורים)
+  void _startCollectionRealtimeListeners() {
+    _startCollectionListener(AppConstants.unitsCollection);
+    _startCollectionListener(AppConstants.usersCollection);
+    _startCollectionListener(AppConstants.areasCollection);
+    _startCollectionListener(AppConstants.navigatorTreesCollection);
+  }
+
+  /// הפעלת listener בזמן אמת לקולקשן ספציפי
+  void _startCollectionListener(String collection) {
+    final listenerId = 'collection_$collection';
+    if (_realtimeListeners.containsKey(listenerId)) return;
+
+    print('SyncManager: Starting realtime listener for $collection');
+
+    bool isFirstSnapshot = true;
+
+    final subscription = _firestore
+        .collection(collection)
+        .snapshots()
+        .listen(
+      (snapshot) async {
+        // דילוג על ה-snapshot הראשוני — הנתונים כבר נטענו ב-pullAll
+        if (isFirstSnapshot) {
+          isFirstSnapshot = false;
+          return;
+        }
+
+        final changes = snapshot.docChanges;
+        if (changes.isEmpty) return;
+
+        print('SyncManager: Realtime $collection — ${changes.length} changes');
+
+        for (final change in changes) {
+          final data = change.doc.data();
+          if (data == null) continue;
+          data['id'] = change.doc.id;
+
+          if (data['deletedAt'] != null || change.type == DocumentChangeType.removed) {
+            await _deleteLocalRecord(collection, change.doc.id);
+          } else {
+            try {
+              await _upsertLocalFromServer(collection, change.doc.id, data);
+            } catch (e) {
+              print('SyncManager: Realtime upsert error for $collection/${change.doc.id}: $e');
+            }
+          }
+        }
+
+        // עדכון lastPullAt לקולקשן — מונע pull כפול
+        await _db.updateLastPullAt(collection, DateTime.now());
+      },
+      onError: (e) {
+        print('SyncManager: Realtime listener error for $collection: $e');
+      },
+    );
+
+    _realtimeListeners[listenerId] = subscription;
   }
 
   // ---------------------------------------------------------------------------

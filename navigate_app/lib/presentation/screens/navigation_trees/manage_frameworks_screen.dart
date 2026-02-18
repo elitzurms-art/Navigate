@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../domain/entities/unit.dart' as domain_unit;
@@ -5,6 +6,7 @@ import '../../../domain/entities/user.dart' as app_user;
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/sync/sync_manager.dart';
 import '../../../core/constants/app_constants.dart';
 
 /// מסך ניהול מסגרות ומסגרות משנה (למנהל מערכת יחידתי)
@@ -26,12 +28,25 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
   domain_unit.Unit? _unit;
   List<app_user.User> _allUsers = [];
   bool _isLoading = false;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _tree = widget.tree;
     _loadUsers();
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים מתעדכנים
+    _syncSubscription = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.usersCollection && mounted) {
+        _loadUsers();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadUsers() async {

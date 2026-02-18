@@ -339,7 +339,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           _initLearningSettings();
         });
         // עדכון DB מקומי כדי לשמור על סנכרון Drift
-        await _navRepo.updateLocalFromFirestore(nav);
+        await _navRepo.upsertLocalFromFirestore(nav);
       }
     } catch (e) {
       print('DEBUG TrainingMode: poll error: $e');
@@ -453,7 +453,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
     await _navRepo.update(updatedNav);
     _currentNavigation = updatedNav;
-    AutoMapDownloadService().triggerDownload(updatedNav);
+    _triggerAutoMapDownload(updatedNav);
 
     if (mounted) {
       setState(() => _learningStarted = true);
@@ -504,6 +504,22 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       Navigator.pop(context, true);
     }
+  }
+
+  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
+  void _triggerAutoMapDownload(domain.Navigation navigation) {
+    final service = AutoMapDownloadService();
+    service.onStatusMessage = (message, {bool isError = false}) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.blue,
+          duration: Duration(seconds: isError ? 4 : 3),
+        ),
+      );
+    };
+    service.triggerDownload(navigation);
   }
 
   Future<void> _deleteNavigation() async {
