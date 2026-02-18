@@ -915,6 +915,13 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   /// התחלת ניווט (status → active) ופתיחת מסך ניהול
   Future<void> _startNavigationAndOpen(domain.Navigation navigation) async {
+    // הצגת עיגול טעינה
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
     try {
       await _resetNavigatorData(navigation.id);
       final updated = navigation.copyWith(
@@ -925,6 +932,8 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       await _repository.update(updated);
 
       if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
+
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -941,6 +950,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
         );
@@ -1611,6 +1621,13 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     );
     if (confirmed != true) return;
 
+    // הצגת דיאלוג טעינה
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
     try {
       // איפוס סטטוסים אישיים — מחיקת tracks, דקירות והתראות ישנים
       await _resetNavigatorData(navigation.id);
@@ -1621,9 +1638,19 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
-      _loadNavigations();
 
       if (mounted) {
+        // סגירת דיאלוג טעינה
+        Navigator.pop(context);
+
+        // מעבר ישיר לניהול ניווט
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => NavigationManagementScreen(navigation: updated),
+          ),
+        ).then((_) => _loadNavigations());
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('הניווט הופעל בהצלחה'),
@@ -1633,6 +1660,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // סגירת דיאלוג טעינה
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
         );

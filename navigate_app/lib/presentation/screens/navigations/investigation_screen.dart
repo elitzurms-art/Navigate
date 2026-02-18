@@ -605,6 +605,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         _autoScores[navId] = score.totalScore;
       }
 
+      // שמירת טיוטה ל-Firestore — כדי שהציונים לא יאבדו ביציאה מהמסך
+      await _saveDraftScores();
+
       setState(() => _isLoading = false);
 
       if (mounted) {
@@ -621,6 +624,21 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
         );
+      }
+    }
+  }
+
+  /// שמירת כל הציונים שטרם הופצו כטיוטה ל-Firestore
+  Future<void> _saveDraftScores() async {
+    for (final entry in _scores.entries) {
+      try {
+        await _navRepo.pushScore(
+          navigationId: widget.navigation.id,
+          navigatorId: entry.key,
+          scoreData: entry.value.toMap(),
+        );
+      } catch (e) {
+        print('DEBUG: draft score save failed for ${entry.key}: $e');
       }
     }
   }
@@ -1124,6 +1142,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                     );
                                   });
                                   Navigator.pop(sheetContext);
+                                  // שמירת טיוטה ל-Firestore
+                                  _saveDraftScores();
                                 },
                                 icon: const Icon(Icons.save, size: 18),
                                 label: const Text('שמור'),

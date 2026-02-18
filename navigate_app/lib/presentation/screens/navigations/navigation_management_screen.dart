@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/checkpoint_punch.dart';
+import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/navigator_personal_status.dart';
@@ -1643,8 +1644,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   void _setupGestureDetection() {
     _mapGestureSubscription?.cancel();
     _mapGestureSubscription = _mapController.mapEventStream.listen((event) {
-      if (event.source != MapEventSource.mapController &&
-          event.source != MapEventSource.nonRotatedSizeChange) {
+      // עצירת מעקב רק בגרירה או לחיצה — זום (פינץ', גלגלת, דאבל-טאפ) לא מפסיק
+      const stopSources = {
+        MapEventSource.dragStart,
+        MapEventSource.onDrag,
+        MapEventSource.dragEnd,
+        MapEventSource.tap,
+        MapEventSource.secondaryTap,
+        MapEventSource.longPress,
+      };
+      if (stopSources.contains(event.source)) {
         _stopCentering();
       }
     });
@@ -1700,7 +1709,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           .where((p) => p.checkpointId == cpId && !p.isDeleted)
           .firstOrNull;
 
-      return _CheckpointArrival(checkpoint: checkpoint, punch: punch);
+      return _CheckpointArrival(
+        checkpoint: checkpoint,
+        punch: punch,
+        verificationSettings: widget.navigation.verificationSettings,
+      );
     }).whereType<_CheckpointArrival>().toList();
   }
 
@@ -2814,9 +2827,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
     final route = widget.navigation.routes[navigatorId];
-    final arrivals = _getCheckpointArrivals(data);
     final alerts = widget.navigation.alerts;
-    final hasPlannedPath = route != null && route.plannedPath.isNotEmpty;
+    final hasPlannedPath = route != null && route.plannedPath.isNotEmpty && route.isApproved;
+    Timer? sheetRefreshTimer;
 
     showModalBottomSheet(
       context: context,
@@ -2827,6 +2840,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
+            // רענון אוטומטי כל 2 שניות
+            sheetRefreshTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+              if (ctx.mounted) setSheetState(() {});
+            });
+            final liveData = _navigatorData[navigatorId] ?? data;
+            final arrivals = _getCheckpointArrivals(liveData);
             return DraggableScrollableSheet(
               initialChildSize: 0.65,
               minChildSize: 0.3,
@@ -2854,20 +2873,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       // 1. כותרת
                       Row(
                         children: [
-                          Icon(_getStatusIcon(data), color: _getNavigatorStatusColor(data), size: 28),
+                          Icon(_getStatusIcon(liveData), color: _getNavigatorStatusColor(liveData), size: 28),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(navigatorId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                Text(data.personalStatus.displayName, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                                Text(liveData.personalStatus.displayName, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
                               ],
                             ),
                           ),
-                          if (data.hasActiveAlert)
+                          if (liveData.hasActiveAlert)
                             const Icon(Icons.warning, color: Colors.red, size: 22),
-                          _buildNavigatorActionsMenu(navigatorId, data,
+                          _buildNavigatorActionsMenu(navigatorId, liveData,
                             onBeforeAction: () => Navigator.pop(ctx),
                           ),
                         ],
@@ -2880,32 +2899,32 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         runSpacing: 6,
                         children: [
                           _deviceChip(
-                            icon: data.isGpsPlusFix ? Icons.cell_tower : Icons.gps_fixed,
-                            label: data.isGpsPlusFix ? 'GPS Plus' : 'GPS',
-                            color: data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green,
+                            icon: liveData.isGpsPlusFix ? Icons.cell_tower : Icons.gps_fixed,
+                            label: liveData.isGpsPlusFix ? 'GPS Plus' : 'GPS',
+                            color: liveData.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green,
                           ),
                           _deviceChip(
-                            icon: data.personalStatus == NavigatorPersonalStatus.noReception
+                            icon: liveData.personalStatus == NavigatorPersonalStatus.noReception
                                 ? Icons.signal_wifi_off
                                 : Icons.signal_cellular_alt,
-                            label: data.personalStatus == NavigatorPersonalStatus.noReception ? 'אין קליטה' : 'קליטה',
-                            color: data.personalStatus == NavigatorPersonalStatus.noReception ? Colors.red : Colors.green,
+                            label: liveData.personalStatus == NavigatorPersonalStatus.noReception ? 'אין קליטה' : 'קליטה',
+                            color: liveData.personalStatus == NavigatorPersonalStatus.noReception ? Colors.red : Colors.green,
                           ),
                           _deviceChip(
-                            icon: data.batteryLevel != null
-                                ? (data.batteryLevel! > 50
+                            icon: liveData.batteryLevel != null
+                                ? (liveData.batteryLevel! > 50
                                     ? Icons.battery_full
-                                    : data.batteryLevel! > 20
+                                    : liveData.batteryLevel! > 20
                                         ? Icons.battery_3_bar
                                         : Icons.battery_alert)
                                 : Icons.battery_unknown,
-                            label: data.batteryLevel != null
-                                ? '${data.batteryLevel}%'
+                            label: liveData.batteryLevel != null
+                                ? '${liveData.batteryLevel}%'
                                 : 'N/A',
-                            color: data.batteryLevel != null
-                                ? (data.batteryLevel! > 50
+                            color: liveData.batteryLevel != null
+                                ? (liveData.batteryLevel! > 50
                                     ? Colors.green
-                                    : data.batteryLevel! > 20
+                                    : liveData.batteryLevel! > 20
                                         ? Colors.orange
                                         : Colors.red)
                                 : Colors.grey,
@@ -2915,7 +2934,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       const SizedBox(height: 12),
 
                       // 3. מרכוז מפה
-                      if (data.currentPosition != null) ...[
+                      if (liveData.currentPosition != null) ...[
                         const Text('מרכוז מפה', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         const SizedBox(height: 6),
                         Row(
@@ -2934,8 +2953,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                 ),
                                 onPressed: () {
                                   Navigator.pop(ctx);
-                                  _cycleNavigatorCenteringMode(navigatorId);
                                   _tabController.animateTo(0);
+                                  // עיכוב — ממתין שה-sheet ייסגר והטאב יעבור לפני מרכוז
+                                  Future.delayed(const Duration(milliseconds: 500), () {
+                                    if (!mounted) return;
+                                    _cycleNavigatorCenteringMode(navigatorId);
+                                  });
                                 },
                               ),
                             ),
@@ -2950,7 +2973,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                   // עיכוב — ממתין שה-sheet ייסגר והטאב יעבור לפני ההזזה
                                   Future.delayed(const Duration(milliseconds: 400), () {
                                     if (!mounted) return;
-                                    _mapController.move(data.currentPosition!, 16.0);
+                                    _mapController.move(liveData.currentPosition!, 16.0);
                                     _setOneTimeHighlight(navigatorId);
                                   });
                                 },
@@ -3068,15 +3091,43 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       const Divider(height: 20),
                       const Text('נתונים חיים', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 6),
-                      _detailRow('מהירות נוכחית', '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש'),
-                      _detailRow('מהירות ממוצעת', '${data.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
-                      _detailRow('מרחק שנעבר', '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
-                      _detailRow('זמן ניווט', _formatDuration(data.elapsedTime)),
-                      _detailRow('נקודות GPS', '${data.trackPoints.length}'),
-                      if (data.lastUpdate != null)
-                        _detailRow('עדכון אחרון', '${_formatTimeSince(data.timeSinceLastUpdate)} לפני'),
+                      _detailRow('מהירות נוכחית', '${liveData.currentSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                      _detailRow('מהירות ממוצעת', '${liveData.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
+                      _detailRow('מרחק שנעבר', '${liveData.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
+                      _detailRow('זמן ניווט', _formatDuration(liveData.elapsedTime)),
+                      _detailRow('נקודות GPS', '${liveData.trackPoints.length}'),
+                      if (liveData.lastUpdate != null)
+                        _detailRow('עדכון אחרון', '${_formatTimeSince(liveData.timeSinceLastUpdate)} לפני'),
                       if (route != null)
                         _detailRow('אורך ציר מתוכנן', '${route.routeLengthKm.toStringAsFixed(1)} ק"מ'),
+
+                      // זמני משימה
+                      if (route != null && widget.navigation.timeCalculationSettings.enabled) ...[
+                        () {
+                          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+                            routeLengthKm: route.routeLengthKm,
+                            settings: widget.navigation.timeCalculationSettings,
+                          );
+                          final activeStart = widget.navigation.activeStartTime;
+                          if (totalMinutes > 0 && activeStart != null) {
+                            final missionEnd = activeStart.add(Duration(minutes: totalMinutes));
+                            final safetyEnd = missionEnd.add(const Duration(hours: 1));
+                            final now = DateTime.now();
+                            final remainMinutes = missionEnd.difference(now).inMinutes;
+                            final remainStr = remainMinutes >= 0
+                                ? '${remainMinutes ~/ 60}:${(remainMinutes % 60).toString().padLeft(2, '0')} שעות'
+                                : 'חריגה: +${(-remainMinutes) ~/ 60}:${((-remainMinutes) % 60).toString().padLeft(2, '0')}';
+                            return Column(
+                              children: [
+                                _detailRow('שעת סיום משימה', '${missionEnd.hour.toString().padLeft(2, '0')}:${missionEnd.minute.toString().padLeft(2, '0')}'),
+                                _detailRow('זמן משימה נותר', remainStr),
+                                _detailRow('שעת בטיחות', '${safetyEnd.hour.toString().padLeft(2, '0')}:${safetyEnd.minute.toString().padLeft(2, '0')}'),
+                              ],
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        }(),
+                      ],
 
                       // 7. נקודות ציון
                       if (arrivals.isNotEmpty) ...[
@@ -3095,7 +3146,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           },
         );
       },
-    );
+    ).then((_) => sheetRefreshTimer?.cancel());
   }
 
   Future<void> _updateNavigatorMapOverrides(String navigatorId) async {
@@ -3764,10 +3815,34 @@ class NavigatorLiveData {
 class _CheckpointArrival {
   final Checkpoint checkpoint;
   final CheckpointPunch? punch;
+  final VerificationSettings verificationSettings;
 
-  _CheckpointArrival({required this.checkpoint, this.punch});
+  _CheckpointArrival({
+    required this.checkpoint,
+    this.punch,
+    required this.verificationSettings,
+  });
 
-  bool get reached => punch != null;
+  bool get reached {
+    if (punch == null) return false;
+    // אם אין אימות אוטומטי — כל דקירה נחשבת הגעה
+    if (!verificationSettings.autoVerification) return true;
+    final dist = punch!.distanceFromCheckpoint;
+    if (dist == null) return true; // אין מידע מרחק — נחשב הגעה
+
+    switch (verificationSettings.verificationType) {
+      case 'approved_failed':
+        final limit = verificationSettings.approvalDistance ?? 100;
+        return dist <= limit;
+      case 'score_by_distance':
+        final ranges = verificationSettings.scoreRanges;
+        if (ranges == null || ranges.isEmpty) return true;
+        final maxDist = ranges.map((r) => r.maxDistance).reduce((a, b) => a > b ? a : b);
+        return dist <= maxDist;
+      default:
+        return true;
+    }
+  }
 }
 
 /// מרחק בין זוג מנווטים

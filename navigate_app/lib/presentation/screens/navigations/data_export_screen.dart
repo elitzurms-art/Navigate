@@ -904,6 +904,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
 
   bool _isExporting = false;
 
+  // סינון צירים לפי מנווט
+  late Set<String> _visibleRouteNavigatorIds;
+
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
@@ -948,6 +951,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     _showBA = widget.initialShowBA;
     _baOpacity = widget.initialBaOpacity;
     _showDistributedOnly = widget.initialShowDistributedOnly;
+    _visibleRouteNavigatorIds = widget.navigation.routes.keys.toSet();
 
     final mapParams = _calculateMapCenterAndZoom();
     _initialCenter = mapParams?.center ?? const LatLng(31.5, 34.75);
@@ -1246,11 +1250,11 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             }).toList(),
           ),
         ...MapControls.buildMeasureLayers(_measurePoints),
-        // שכבת צירים מעודכנים (afterLearning)
+        // שכבת צירים מעודכנים (afterLearning) — מסוננת לפי מנווט
         if (widget.afterLearning)
           PolylineLayer(
             polylines: widget.navigation.routes.entries
-                .where((e) => e.value.plannedPath.isNotEmpty)
+                .where((e) => e.value.plannedPath.isNotEmpty && _visibleRouteNavigatorIds.contains(e.key))
                 .map((entry) {
               final route = entry.value;
               final color = Colors.primaries[
@@ -1551,6 +1555,84 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     }
   }
 
+  void _showRouteFilterDialog() {
+    final tempSelected = Set<String>.from(_visibleRouteNavigatorIds);
+    final routes = widget.navigation.routes;
+    final userNames = widget.userNames;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('סינון צירים לפי מנווט'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // בחר/בטל הכל
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => setDialogState(() => tempSelected.addAll(routes.keys)),
+                      child: const Text('בחר הכל'),
+                    ),
+                    TextButton(
+                      onPressed: () => setDialogState(() => tempSelected.clear()),
+                      child: const Text('נקה הכל'),
+                    ),
+                  ],
+                ),
+                const Divider(),
+                // רשימת מנווטים
+                ...routes.entries.map((entry) {
+                  final navId = entry.key;
+                  final name = userNames[navId] ?? navId;
+                  final color = Colors.primaries[navId.hashCode.abs() % Colors.primaries.length];
+                  return CheckboxListTile(
+                    value: tempSelected.contains(navId),
+                    onChanged: (v) {
+                      setDialogState(() {
+                        if (v == true) {
+                          tempSelected.add(navId);
+                        } else {
+                          tempSelected.remove(navId);
+                        }
+                      });
+                    },
+                    title: Text(name),
+                    secondary: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.8),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    dense: true,
+                  );
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            FilledButton(
+              onPressed: () {
+                setState(() => _visibleRouteNavigatorIds = tempSelected);
+                Navigator.pop(ctx);
+              },
+              child: const Text('אישור'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1685,42 +1767,89 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             },
           ),
 
-          // Distributed-only toggle chip
+          // Chips column — bottom left
           if (widget.navigation.routes.isNotEmpty)
             Positioned(
               bottom: 80,
               left: 16,
-              child: Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => setState(() => _showDistributedOnly = !_showDistributedOnly),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _showDistributedOnly ? Icons.filter_alt : Icons.filter_alt_off,
-                          size: 18,
-                          color: _showDistributedOnly ? Colors.blue : Colors.grey,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _showDistributedOnly
-                              ? 'נ.צ מחולקות (${_filteredCheckpoints.length})'
-                              : 'כל הנ.צ (${_filteredCheckpoints.length})',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: _showDistributedOnly ? Colors.blue : Colors.grey[700],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // סינון צירים לפי מנווט (afterLearning בלבד)
+                  if (widget.afterLearning)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Card(
+                        elevation: 3,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: _showRouteFilterDialog,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.route,
+                                  size: 18,
+                                  color: _visibleRouteNavigatorIds.length == widget.navigation.routes.length
+                                      ? Colors.orange
+                                      : Colors.deepOrange,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'צירים: ${_visibleRouteNavigatorIds.length}/${widget.navigation.routes.length}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: _visibleRouteNavigatorIds.length == widget.navigation.routes.length
+                                        ? Colors.orange[800]
+                                        : Colors.deepOrange,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ],
+                      ),
+                    ),
+
+                  // Distributed-only toggle chip
+                  Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => setState(() => _showDistributedOnly = !_showDistributedOnly),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _showDistributedOnly ? Icons.filter_alt : Icons.filter_alt_off,
+                              size: 18,
+                              color: _showDistributedOnly ? Colors.blue : Colors.grey,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _showDistributedOnly
+                                  ? 'נ.צ מחולקות (${_filteredCheckpoints.length})'
+                                  : 'כל הנ.צ (${_filteredCheckpoints.length})',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: _showDistributedOnly ? Colors.blue : Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
 
