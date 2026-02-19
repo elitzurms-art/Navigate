@@ -1156,6 +1156,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _startHealthCheck();
       _startAlertMonitoring();
       _startTrackDocListener();
+      _startExtensionListener();
 
       // דקירת מיקום ידני — בדיקה אחרי 3 שניות
       if (widget.navigation.allowManualPosition || _allowManualPosition) {

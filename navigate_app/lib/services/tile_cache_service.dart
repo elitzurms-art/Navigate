@@ -13,6 +13,7 @@ class TileCacheService {
 
   static const _storeName = 'navigate_cache';
   bool _initialized = false;
+  int _nextInstanceId = 0;
 
   /// אתחול — קריאה חד-פעמית ב-main.dart
   Future<void> initialize() async {
@@ -66,11 +67,13 @@ class TileCacheService {
       ),
     );
 
+    final instanceId = _nextInstanceId++;
     return FMTCStore(_storeName).download.startForeground(
       region: downloadable,
       parallelThreads: 3,
       skipExistingTiles: true,
       skipSeaTiles: true,
+      instanceId: instanceId,
     );
   }
 

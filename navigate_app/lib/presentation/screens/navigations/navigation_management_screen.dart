@@ -1898,9 +1898,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             const Tab(icon: Icon(Icons.table_chart), text: 'סטטוס'),
             Tab(
               icon: Badge(
-                isLabelVisible: _activeAlerts.isNotEmpty,
+                isLabelVisible: _activeAlerts.isNotEmpty ||
+                    _extensionRequests.any((r) => r.status == ExtensionRequestStatus.pending),
                 label: Text(
-                  '${_activeAlerts.length}',
+                  '${_activeAlerts.length + _extensionRequests.where((r) => r.status == ExtensionRequestStatus.pending).length}',
                   style: const TextStyle(fontSize: 10),
                 ),
                 child: const Icon(Icons.notifications),
@@ -3212,14 +3213,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       // זמני משימה
                       if (route != null && widget.navigation.timeCalculationSettings.enabled) ...[
                         () {
+                          final navigatorExtMinutes = _extensionRequests
+                              .where((r) => r.navigatorId == navigatorId && r.status == ExtensionRequestStatus.approved)
+                              .fold<int>(0, (sum, r) => sum + (r.approvedMinutes ?? 0));
                           final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
                             routeLengthKm: route.routeLengthKm,
                             settings: widget.navigation.timeCalculationSettings,
+                            extensionMinutes: navigatorExtMinutes,
                           );
                           final activeStart = widget.navigation.activeStartTime;
                           if (totalMinutes > 0 && activeStart != null) {
                             final missionEnd = activeStart.add(Duration(minutes: totalMinutes));
-                            final safetyEnd = missionEnd.add(const Duration(hours: 1));
+                            final safetyEnd = activeStart.add(Duration(minutes: totalMinutes + 60));
                             final now = DateTime.now();
                             final remainMinutes = missionEnd.difference(now).inMinutes;
                             final remainStr = remainMinutes >= 0
@@ -3709,8 +3714,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     final pendingExtensions = _extensionRequests
         .where((r) => r.status == ExtensionRequestStatus.pending)
         .toList();
+    final now = DateTime.now();
+    final recentRespondedExtensions = _extensionRequests
+        .where((r) =>
+            r.status != ExtensionRequestStatus.pending &&
+            r.respondedAt != null &&
+            now.difference(r.respondedAt!).inMinutes <= 30)
+        .toList()
+      ..sort((a, b) => (b.respondedAt!).compareTo(a.respondedAt!));
 
-    if (filteredAlerts.isEmpty && pendingExtensions.isEmpty) {
+    if (filteredAlerts.isEmpty && pendingExtensions.isEmpty && recentRespondedExtensions.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -3743,10 +3756,56 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
           ),
           ...pendingExtensions.map((req) => _buildExtensionRequestCard(req)),
-          if (filteredAlerts.isNotEmpty) const Divider(height: 24),
+          if (filteredAlerts.isNotEmpty || recentRespondedExtensions.isNotEmpty)
+            const Divider(height: 24),
         ],
         // התראות רגילות
         ...filteredAlerts.map((alert) => _buildAlertCard(alert)),
+        // בקשות הארכה שנענו לאחרונה
+        if (recentRespondedExtensions.isNotEmpty) ...[
+          if (filteredAlerts.isNotEmpty) const Divider(height: 24),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'בקשות שנענו לאחרונה',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[600],
+              ),
+            ),
+          ),
+          ...recentRespondedExtensions.map((req) {
+            final isApproved = req.status == ExtensionRequestStatus.approved;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              color: isApproved ? Colors.green[50] : Colors.red[50],
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: isApproved ? Colors.green : Colors.red,
+                  width: 1.5,
+                ),
+              ),
+              child: ListTile(
+                leading: Icon(
+                  isApproved ? Icons.check_circle : Icons.cancel,
+                  color: isApproved ? Colors.green : Colors.red,
+                ),
+                title: Text(
+                  isApproved
+                      ? 'אושרה הארכה ל-${req.approvedMinutes ?? req.requestedMinutes} דקות למנווט ${req.navigatorName}'
+                      : 'נדחתה בקשת הארכה של ${req.navigatorName}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                subtitle: Text(
+                  '${req.respondedAt!.hour.toString().padLeft(2, '0')}:${req.respondedAt!.minute.toString().padLeft(2, '0')}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ),
+            );
+          }),
+        ],
       ],
     );
   }
