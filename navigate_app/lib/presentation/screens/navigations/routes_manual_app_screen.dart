@@ -102,20 +102,24 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
       // טעינת עץ מבנה
       final tree = await _treeRepo.getById(widget.navigation.treeId);
 
-      // זיהוי מנווטים (אותה לוגיקה כמו routes_distribution_service)
+      // זיהוי מנווטים — דינמי לפי תפקיד
       List<String> navigators = [];
       if (widget.navigation.selectedParticipantIds.isNotEmpty) {
         navigators = List.from(widget.navigation.selectedParticipantIds);
-      } else if (tree != null && widget.navigation.selectedSubFrameworkIds.isNotEmpty) {
-        for (final sf in tree.subFrameworks) {
-          if (widget.navigation.selectedSubFrameworkIds.contains(sf.id)) {
-            navigators.addAll(sf.userIds);
-          }
-        }
-      } else if (tree != null) {
-        for (final sf in tree.subFrameworks) {
-          if (!sf.isFixed) {
-            navigators.addAll(sf.userIds);
+      } else {
+        final unitId = widget.navigation.selectedUnitId ?? tree?.unitId;
+        if (unitId != null) {
+          if (tree != null && widget.navigation.selectedSubFrameworkIds.isNotEmpty) {
+            for (final sf in tree.subFrameworks) {
+              if (!widget.navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
+              final users = (sf.name.contains('מפקדים') || sf.name.contains('מפקד'))
+                  ? await _userRepo.getCommandersForUnit(unitId)
+                  : await _userRepo.getNavigatorsForUnit(unitId);
+              navigators.addAll(users.map((u) => u.uid));
+            }
+          } else {
+            final users = await _userRepo.getNavigatorsForUnit(unitId);
+            navigators = users.map((u) => u.uid).toList();
           }
         }
       }

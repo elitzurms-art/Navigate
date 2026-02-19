@@ -234,22 +234,24 @@ class GeometryUtils {
     return false;
   }
 
-  /// חישוב זמן ניווט כולל (בדקות)
+  /// חישוב זמן ניווט כולל (בדקות), כולל הארכות מאושרות
   static int calculateNavigationTimeMinutes({
     required double routeLengthKm,
     required TimeCalculationSettings settings,
+    int extensionMinutes = 0,
   }) {
     if (!settings.enabled) return 0;
     final walkingMinutes = (routeLengthKm / settings.walkingSpeedKmh) * 60;
     final breakMinutes = settings.breakDurationMinutes(routeLengthKm);
-    return (walkingMinutes + breakMinutes).ceil();
+    return (walkingMinutes + breakMinutes).ceil() + extensionMinutes;
   }
 
-  /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר)
+  /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר), כולל הארכות
   static DateTime? calculateSafetyTime({
     required DateTime activeStartTime,
     required Map<String, AssignedRoute> routes,
     required TimeCalculationSettings settings,
+    int extensionMinutes = 0,
   }) {
     if (!settings.enabled || routes.isEmpty) return null;
     int maxMinutes = 0;
@@ -260,7 +262,7 @@ class GeometryUtils {
       );
       if (minutes > maxMinutes) maxMinutes = minutes;
     }
-    return activeStartTime.add(Duration(minutes: maxMinutes + 60));
+    return activeStartTime.add(Duration(minutes: maxMinutes + extensionMinutes + 60));
   }
 
   /// עיצוב דקות ל- "X:YY שעות" או "X דק'"

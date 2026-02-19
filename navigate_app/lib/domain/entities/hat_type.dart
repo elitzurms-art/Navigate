@@ -5,8 +5,6 @@ enum HatType {
   admin,
   commander,
   navigator,
-  management,
-  observer,
 }
 
 /// מידע על כובע ספציפי של משתמש ביחידה/תת-מסגרת מסוימת
@@ -38,10 +36,6 @@ class HatInfo extends Equatable {
         return 'מפקד';
       case HatType.navigator:
         return 'מנווט';
-      case HatType.management:
-        return 'מנהלת';
-      case HatType.observer:
-        return 'מבקר';
     }
   }
 
@@ -78,20 +72,4 @@ class HatInfo extends Equatable {
         unitId,
         unitName,
       ];
-}
-
-/// קיבוץ כובעים לפי יחידה
-class UnitHats extends Equatable {
-  final String unitId;
-  final String unitName;
-  final List<HatInfo> hats;
-
-  const UnitHats({
-    required this.unitId,
-    required this.unitName,
-    required this.hats,
-  });
-
-  @override
-  List<Object?> get props => [unitId, unitName, hats];
 }

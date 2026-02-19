@@ -664,12 +664,18 @@ class TimeCalculationSettings extends Equatable {
   final bool isHeavyLoad;       // מעל 40% משקל גוף
   final bool isNightNavigation; // ניווט לילה
   final bool isSummer;          // קיץ (true) / חורף (false)
+  final bool allowExtensionRequests; // אפשר בקשות הארכה
+  final String extensionWindowType;  // 'all' = כל הניווט, 'timed' = זמן מוגדר מסיום
+  final int? extensionWindowMinutes; // דקות לפני סיום (null = ללא הגבלה)
 
   const TimeCalculationSettings({
     this.enabled = true,
     this.isHeavyLoad = false,
     this.isNightNavigation = false,
     this.isSummer = true,
+    this.allowExtensionRequests = false,
+    this.extensionWindowType = 'all',
+    this.extensionWindowMinutes,
   });
 
   /// מהירות הליכה בקמ"ש לפי משקל ותאורה
@@ -691,12 +697,18 @@ class TimeCalculationSettings extends Equatable {
     bool? isHeavyLoad,
     bool? isNightNavigation,
     bool? isSummer,
+    bool? allowExtensionRequests,
+    String? extensionWindowType,
+    int? extensionWindowMinutes,
   }) {
     return TimeCalculationSettings(
       enabled: enabled ?? this.enabled,
       isHeavyLoad: isHeavyLoad ?? this.isHeavyLoad,
       isNightNavigation: isNightNavigation ?? this.isNightNavigation,
       isSummer: isSummer ?? this.isSummer,
+      allowExtensionRequests: allowExtensionRequests ?? this.allowExtensionRequests,
+      extensionWindowType: extensionWindowType ?? this.extensionWindowType,
+      extensionWindowMinutes: extensionWindowMinutes ?? this.extensionWindowMinutes,
     );
   }
 
@@ -706,6 +718,9 @@ class TimeCalculationSettings extends Equatable {
       'isHeavyLoad': isHeavyLoad,
       'isNightNavigation': isNightNavigation,
       'isSummer': isSummer,
+      'allowExtensionRequests': allowExtensionRequests,
+      'extensionWindowType': extensionWindowType,
+      if (extensionWindowMinutes != null) 'extensionWindowMinutes': extensionWindowMinutes,
     };
   }
 
@@ -715,11 +730,17 @@ class TimeCalculationSettings extends Equatable {
       isHeavyLoad: map['isHeavyLoad'] as bool? ?? false,
       isNightNavigation: map['isNightNavigation'] as bool? ?? false,
       isSummer: map['isSummer'] as bool? ?? true,
+      allowExtensionRequests: map['allowExtensionRequests'] as bool? ?? false,
+      extensionWindowType: map['extensionWindowType'] as String? ?? 'all',
+      extensionWindowMinutes: map['extensionWindowMinutes'] as int?,
     );
   }
 
   @override
-  List<Object?> get props => [enabled, isHeavyLoad, isNightNavigation, isSummer];
+  List<Object?> get props => [
+    enabled, isHeavyLoad, isNightNavigation, isSummer,
+    allowExtensionRequests, extensionWindowType, extensionWindowMinutes,
+  ];
 }
 
 /// הגדרות תקשורת (ווקי טוקי)

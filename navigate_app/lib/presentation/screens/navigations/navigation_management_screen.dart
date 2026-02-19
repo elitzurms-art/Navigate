@@ -29,6 +29,8 @@ import '../../../domain/entities/user.dart' as app_user;
 import '../../../services/voice_service.dart';
 import '../../widgets/voice_messages_panel.dart';
 import '../../widgets/map_with_selector.dart';
+import '../../../data/repositories/extension_request_repository.dart';
+import '../../../domain/entities/extension_request.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 
@@ -107,6 +109,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // Voice (PTT)
   VoiceService? _voiceService;
 
+  // בקשות הארכה
+  final ExtensionRequestRepository _extensionRepo = ExtensionRequestRepository();
+  StreamSubscription<List<ExtensionRequest>>? _extensionListener;
+  List<ExtensionRequest> _extensionRequests = [];
+  final Set<String> _shownExtensionPopups = {}; // מניעת popup כפול
+  Timer? _extensionSnoozeTimer;
+
   // כפיית מקור מיקום גלובלי
   String _globalForcePositionSource = 'auto';
 
@@ -145,6 +154,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startPunchesListener();
     _startTracksPolling();
     _startPunchesPolling();
+    _startExtensionRequestListener();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
@@ -171,6 +181,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _selfGpsTimer?.cancel();
     _commanderPublishTimer?.cancel();
     _commanderStatusListener?.cancel();
+    _extensionListener?.cancel();
+    _extensionSnoozeTimer?.cancel();
     _tabController.dispose();
     _voiceService?.dispose();
     super.dispose();
@@ -283,19 +295,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       }
     }
 
-    // טעינת מפקדים מהעץ
-    final treeRepo = NavigationTreeRepository();
-    final tree = await treeRepo.getById(widget.navigation.treeId);
-    if (tree != null) {
-      for (final sf in tree.subFrameworks) {
-        if (sf.name.contains('מפקדים')) {
-          for (final uid in sf.userIds) {
-            if (uid != _currentUser?.uid) {
-              final user = await userRepo.getUser(uid);
-              _userNames[uid] = user?.fullName ?? uid;
-            }
-          }
-          break;
+    // טעינת מפקדים — דינמי לפי תפקיד ויחידה
+    final commanderUnitId = widget.navigation.selectedUnitId;
+    if (commanderUnitId != null) {
+      final commanders = await userRepo.getCommandersForUnit(commanderUnitId);
+      for (final commander in commanders) {
+        if (commander.uid != _currentUser?.uid) {
+          _userNames[commander.uid] = commander.fullName.isNotEmpty
+              ? commander.fullName
+              : commander.uid;
         }
       }
     }
@@ -1928,10 +1936,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // באנר התראות חירום/תקינות
+                // באנר התראות חירום/תקינות/הארכות
                 if (_activeAlerts.any((a) =>
                     a.type == AlertType.emergency ||
-                    a.type == AlertType.healthCheckExpired))
+                    a.type == AlertType.healthCheckExpired) ||
+                    _extensionRequests.any((r) => r.status == ExtensionRequestStatus.pending))
                   _buildAlertsBanner(),
                 Expanded(
                   child: TabBarView(
@@ -3594,6 +3603,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Widget _buildAlertsBanner() {
     final emergencyCount = _activeAlerts.where((a) => a.type == AlertType.emergency).length;
     final healthCount = _activeAlerts.where((a) => a.type == AlertType.healthCheckExpired).length;
+    final extensionCount = _extensionRequests.where((r) => r.status == ExtensionRequestStatus.pending).length;
 
     return GestureDetector(
       onTap: () {
@@ -3603,16 +3613,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ).toList();
         if (urgent.isNotEmpty) {
           _showAlertDialog(urgent.first);
+        } else if (extensionCount > 0) {
+          _tabController.animateTo(3); // טאב התראות
         }
       },
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        color: emergencyCount > 0 ? Colors.red : Colors.orange,
+        color: emergencyCount > 0 ? Colors.red : (extensionCount > 0 ? Colors.purple : Colors.orange),
         child: Row(
           children: [
             Icon(
-              emergencyCount > 0 ? Icons.emergency : Icons.timer_off,
+              emergencyCount > 0 ? Icons.emergency : (extensionCount > 0 ? Icons.timer : Icons.timer_off),
               color: Colors.white,
               size: 20,
             ),
@@ -3622,6 +3634,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 [
                   if (emergencyCount > 0) '$emergencyCount חירום',
                   if (healthCount > 0) '$healthCount תקינות',
+                  if (extensionCount > 0) '$extensionCount הארכה',
                 ].join(' | '),
                 style: const TextStyle(
                   color: Colors.white,
@@ -3638,8 +3651,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Widget _buildAlertsView() {
     final filteredAlerts = _activeAlerts.where(_isAlertVisibleByOverride).toList();
+    final pendingExtensions = _extensionRequests
+        .where((r) => r.status == ExtensionRequestStatus.pending)
+        .toList();
 
-    if (filteredAlerts.isEmpty) {
+    if (filteredAlerts.isEmpty && pendingExtensions.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -3655,67 +3671,158 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       );
     }
 
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      itemCount: filteredAlerts.length,
-      itemBuilder: (context, index) {
-        final alert = filteredAlerts[index];
-        final alertColor = _getAlertColor(alert.type);
-        final elapsed = DateTime.now().difference(alert.timestamp);
-        final elapsedText = elapsed.inMinutes < 60
-            ? '${elapsed.inMinutes} דק\' '
-            : '${elapsed.inHours} שע\' ${elapsed.inMinutes % 60} דק\' ';
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: alertColor, width: 2),
-          ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: alertColor.withValues(alpha: 0.15),
-              child: Text(
-                alert.type.emoji,
-                style: const TextStyle(fontSize: 20),
-              ),
-            ),
-            title: Text(
-              alert.type.displayName,
+      children: [
+        // בקשות הארכה ממתינות
+        if (pendingExtensions.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'בקשות הארכה',
               style: TextStyle(
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: alertColor,
+                color: Colors.purple,
               ),
             ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          ),
+          ...pendingExtensions.map((req) => _buildExtensionRequestCard(req)),
+          if (filteredAlerts.isNotEmpty) const Divider(height: 24),
+        ],
+        // התראות רגילות
+        ...filteredAlerts.map((alert) => _buildAlertCard(alert)),
+      ],
+    );
+  }
+
+  Widget _buildExtensionRequestCard(ExtensionRequest req) {
+    final elapsed = DateTime.now().difference(req.createdAt);
+    final elapsedText = elapsed.inMinutes < 60
+        ? '${elapsed.inMinutes} דק\' '
+        : '${elapsed.inHours} שע\' ${elapsed.inMinutes % 60} דק\' ';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Colors.purple, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Text(alert.navigatorName ?? alert.navigatorId),
-                Text(
-                  'לפני $elapsedText',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                CircleAvatar(
+                  backgroundColor: Colors.purple.withOpacity(0.15),
+                  child: const Icon(Icons.timer, color: Colors.purple),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        req.navigatorName,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'מבקש ${req.requestedMinutes} דקות הארכה',
+                        style: const TextStyle(color: Colors.purple),
+                      ),
+                      Text(
+                        'לפני $elapsedText',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            trailing: IconButton(
-              icon: const Icon(Icons.check_circle),
-              color: Colors.green,
-              tooltip: 'סגור התראה',
-              onPressed: () => _resolveAlert(alert),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: () => _respondToExtension(req, ExtensionRequestStatus.rejected),
+                  icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                  label: const Text('דחה', style: TextStyle(color: Colors.red)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _showExtensionApproveDialog(req),
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text('אשר'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
             ),
-            onTap: () {
-              // מעבר למפה + zoom למיקום ההתראה
-              if (alert.location.lat != 0 && alert.location.lng != 0) {
-                _tabController.animateTo(0);
-                _mapController.move(
-                  LatLng(alert.location.lat, alert.location.lng),
-                  15.0,
-                );
-              }
-            },
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAlertCard(NavigatorAlert alert) {
+    final alertColor = _getAlertColor(alert.type);
+    final elapsed = DateTime.now().difference(alert.timestamp);
+    final elapsedText = elapsed.inMinutes < 60
+        ? '${elapsed.inMinutes} דק\' '
+        : '${elapsed.inHours} שע\' ${elapsed.inMinutes % 60} דק\' ';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: alertColor, width: 2),
+      ),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: alertColor.withValues(alpha: 0.15),
+          child: Text(
+            alert.type.emoji,
+            style: const TextStyle(fontSize: 20),
           ),
-        );
-      },
+        ),
+        title: Text(
+          alert.type.displayName,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: alertColor,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(alert.navigatorName ?? alert.navigatorId),
+            Text(
+              'לפני $elapsedText',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.check_circle),
+          color: Colors.green,
+          tooltip: 'סגור התראה',
+          onPressed: () => _resolveAlert(alert),
+        ),
+        onTap: () {
+          // מעבר למפה + zoom למיקום ההתראה
+          if (alert.location.lat != 0 && alert.location.lng != 0) {
+            _tabController.animateTo(0);
+            _mapController.move(
+              LatLng(alert.location.lat, alert.location.lng),
+              15.0,
+            );
+          }
+        },
+      ),
     );
   }
 
@@ -3778,6 +3885,250 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         return Colors.blue;
       case AlertType.securityBreach:
         return Colors.red;
+    }
+  }
+
+  // ===========================================================================
+  // Extension Requests — בקשות הארכה
+  // ===========================================================================
+
+  void _startExtensionRequestListener() {
+    if (!widget.navigation.timeCalculationSettings.allowExtensionRequests) return;
+    _extensionListener = _extensionRepo
+        .watchByNavigation(widget.navigation.id)
+        .listen((requests) {
+      if (!mounted) return;
+      setState(() => _extensionRequests = requests);
+      // popup אוטומטי לבקשות חדשות
+      for (final req in requests) {
+        if (req.status == ExtensionRequestStatus.pending &&
+            !_shownExtensionPopups.contains(req.id)) {
+          _shownExtensionPopups.add(req.id);
+          _showExtensionPopup(req);
+        }
+      }
+    });
+  }
+
+  void _showExtensionPopup(ExtensionRequest req) {
+    if (!mounted) return;
+    int adjustedMinutes = req.requestedMinutes;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.timer, color: Colors.purple, size: 28),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('בקשת הארכה', style: TextStyle(color: Colors.purple))),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${req.navigatorName} מבקש ${req.requestedMinutes} דקות הארכה',
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                const Text('התאם זמן:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      onPressed: adjustedMinutes > 5
+                          ? () => setDialogState(() => adjustedMinutes -= 5)
+                          : null,
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '$adjustedMinutes דק\'',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.purple,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: adjustedMinutes < 120
+                          ? () => setDialogState(() => adjustedMinutes += 5)
+                          : null,
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: adjustedMinutes.toDouble(),
+                  min: 5,
+                  max: 120,
+                  divisions: 23,
+                  label: '$adjustedMinutes דק\'',
+                  activeColor: Colors.purple,
+                  onChanged: (v) => setDialogState(() => adjustedMinutes = v.round()),
+                ),
+              ],
+            ),
+            actionsAlignment: MainAxisAlignment.spaceBetween,
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  // הזכר עוד 5 דק'
+                  _extensionSnoozeTimer?.cancel();
+                  _extensionSnoozeTimer = Timer(const Duration(minutes: 5), () {
+                    // בדוק שעדיין ממתין
+                    final stillPending = _extensionRequests.any(
+                        (r) => r.id == req.id && r.status == ExtensionRequestStatus.pending);
+                    if (stillPending && mounted) {
+                      _shownExtensionPopups.remove(req.id);
+                      _showExtensionPopup(req);
+                    }
+                  });
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('תזכורת תופיע בעוד 5 דקות')),
+                    );
+                  }
+                },
+                child: const Text('הזכר עוד 5 דק\''),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _respondToExtension(req, ExtensionRequestStatus.rejected);
+                    },
+                    icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                    label: const Text('דחה', style: TextStyle(color: Colors.red)),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _respondToExtension(
+                        req,
+                        ExtensionRequestStatus.approved,
+                        approvedMinutes: adjustedMinutes,
+                      );
+                    },
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('אשר'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
+  void _showExtensionApproveDialog(ExtensionRequest req) {
+    int adjustedMinutes = req.requestedMinutes;
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Text('אישור הארכה'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${req.navigatorName} מבקש ${req.requestedMinutes} דקות'),
+                const SizedBox(height: 16),
+                const Text('התאם זמן:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      onPressed: adjustedMinutes > 5
+                          ? () => setDialogState(() => adjustedMinutes -= 5)
+                          : null,
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Text(
+                      '$adjustedMinutes דק\'',
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.purple),
+                    ),
+                    IconButton(
+                      onPressed: adjustedMinutes < 120
+                          ? () => setDialogState(() => adjustedMinutes += 5)
+                          : null,
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ביטול'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _respondToExtension(req, ExtensionRequestStatus.approved, approvedMinutes: adjustedMinutes);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: const Text('אשר', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _respondToExtension(
+    ExtensionRequest req,
+    ExtensionRequestStatus status, {
+    int? approvedMinutes,
+  }) async {
+    try {
+      await _extensionRepo.respond(
+        navigationId: widget.navigation.id,
+        requestId: req.id,
+        status: status,
+        approvedMinutes: approvedMinutes,
+        respondedBy: _currentUser?.uid ?? '',
+      );
+      if (mounted) {
+        final msg = status == ExtensionRequestStatus.approved
+            ? 'הארכה של ${approvedMinutes ?? 0} דקות אושרה ל-${req.navigatorName}'
+            : 'בקשת הארכה של ${req.navigatorName} נדחתה';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: status == ExtensionRequestStatus.approved ? Colors.green : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 }

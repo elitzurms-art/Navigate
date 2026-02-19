@@ -22,6 +22,7 @@ class Users extends Table {
   TextColumn get frameworkId => text().nullable()();
   TextColumn get unitId => text().nullable()();
   TextColumn get fcmToken => text().nullable()();
+  BoolColumn get isApproved => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -390,7 +391,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration {
@@ -570,6 +571,13 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 24 && to >= 25) {
           await m.addColumn(navigations, navigations.communicationSettingsJson);
           await m.addColumn(navigationTracks, navigationTracks.overrideWalkieTalkieEnabled);
+        }
+        if (from <= 25 && to >= 26) {
+          await m.addColumn(users, users.isApproved);
+          // תאימות לאחור: משתמשים קיימים עם unitId → מאושרים
+          await customStatement(
+            "UPDATE users SET is_approved = 1 WHERE unit_id IS NOT NULL AND unit_id != ''"
+          );
         }
       },
     );

@@ -8,6 +8,8 @@ import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/sync/sync_manager.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../domain/entities/hat_type.dart';
+import '../../../services/session_service.dart';
 
 /// מסך ניהול מסגרות ומסגרות משנה (למנהל מערכת יחידתי)
 class ManageFrameworksScreen extends StatefulWidget {
@@ -29,6 +31,8 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
   List<app_user.User> _allUsers = [];
   bool _isLoading = false;
   StreamSubscription<String>? _syncSubscription;
+  HatInfo? _currentHat;
+  Map<String, List<app_user.User>> _subFrameworkUsersMap = {};
 
   @override
   void initState() {
@@ -56,11 +60,14 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
       if (_tree.unitId != null) {
         unit = await _unitRepository.getById(_tree.unitId!);
       }
+      final session = await SessionService().getSavedSession();
       if (mounted) {
         setState(() {
           _allUsers = users;
           _unit = unit;
+          _currentHat = session;
         });
+        _loadSubFrameworkUsers();
       }
     } catch (e) {
       print('DEBUG: Error loading users: $e');
@@ -79,34 +86,70 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
           _tree = updated;
           if (unit != null) _unit = unit;
         });
+        _loadSubFrameworkUsers();
       }
     } catch (e) {
       print('DEBUG: Error refreshing tree: $e');
     }
   }
 
-  Future<void> _saveTree(NavigationTree updatedTree) async {
-    setState(() => _isLoading = true);
-    try {
-      await _treeRepository.update(updatedTree);
-      setState(() {
-        _tree = updatedTree;
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('השינויים נשמרו בהצלחה'),
-            backgroundColor: Colors.green,
-          ),
-        );
+  void _loadSubFrameworkUsers() {
+    final map = <String, List<app_user.User>>{};
+    for (final sf in _tree.subFrameworks) {
+      final unitId = sf.unitId ?? _tree.unitId;
+      final isCommandersSf = sf.name.contains('מפקדים');
+      if (isCommandersSf) {
+        map[sf.id] = _allUsers.where((u) =>
+            ['commander', 'unit_admin', 'admin', 'developer'].contains(u.role) &&
+            u.unitId == unitId &&
+            u.isApproved).toList();
+      } else {
+        map[sf.id] = _allUsers.where((u) =>
+            u.role == 'navigator' &&
+            u.unitId == unitId &&
+            u.isApproved).toList();
       }
-    } catch (e) {
-      setState(() => _isLoading = false);
+    }
+    _subFrameworkUsersMap = map;
+  }
+
+  Future<void> _removeUserFromUnit(app_user.User user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('הסרת משתמש'),
+        content: Text('להסיר את ${user.fullName} מהיחידה?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('הסר'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _userRepository.removeUserFromUnit(user.uid);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שגיאה בשמירה: $e'),
+            content: Text('${user.fullName} הוסר מהיחידה'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      await _loadUsers();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהסרה: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -125,13 +168,6 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
       return matches.first.fullName;
     }
     return userId;
-  }
-
-  /// בודק אם המשתמש הוא מנהל מערכת (admin או unit_admin)
-  bool _isAdminRole(app_user.User user) {
-    return user.role == AppConstants.roleAdmin ||
-        user.role == AppConstants.roleUnitAdmin ||
-        user.role == AppConstants.roleDeveloper;
   }
 
   /// מחזיר שם תצוגה לתפקיד
@@ -243,6 +279,8 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     final levelName = FrameworkLevel.getName(nextLevel);
     final nameController = TextEditingController();
     final descriptionController = TextEditingController();
+    String? selectedAdminId;
+    String? selectedAdminName;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -297,6 +335,70 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                     ),
                     maxLines: 2,
                   ),
+                  const SizedBox(height: 16),
+                  // בחירת מנהל ליחידה החדשה
+                  const Text(
+                    'מנהל היחידה:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  if (selectedAdminId != null)
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle,
+                              size: 18, color: Colors.green[700]),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              selectedAdminName ?? selectedAdminId!,
+                              style: TextStyle(color: Colors.green[900]),
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close,
+                                size: 18, color: Colors.grey[600]),
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedAdminId = null;
+                                selectedAdminName = null;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final adminId = await _showAdminUserPicker(
+                            context,
+                            [], // אין להחריג אף אחד
+                          );
+                          if (adminId != null) {
+                            final user = _allUsers
+                                .where((u) => u.uid == adminId)
+                                .toList();
+                            setDialogState(() {
+                              selectedAdminId = adminId;
+                              selectedAdminName = user.isNotEmpty
+                                  ? user.first.fullName
+                                  : adminId;
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.person_add),
+                        label: const Text('בחר מנהל'),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -347,6 +449,11 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
           unitType = 'company';
       }
 
+      // מנהלי היחידה: המנהל שנבחר, או מנהלי היחידה הנוכחית כברירת מחדל
+      final managerIds = selectedAdminId != null
+          ? [selectedAdminId!]
+          : List<String>.from(_unit!.managerIds);
+
       final now = DateTime.now();
       final newUnit = domain_unit.Unit(
         id: timestamp,
@@ -354,8 +461,8 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
         description: descriptionController.text,
         type: unitType,
         parentUnitId: _unit!.id,
-        managerIds: _unit!.managerIds,
-        createdBy: _unit!.managerIds.isNotEmpty ? _unit!.managerIds.first : '',
+        managerIds: managerIds,
+        createdBy: managerIds.isNotEmpty ? managerIds.first : '',
         createdAt: now,
         updatedAt: now,
         level: nextLevel,
@@ -363,7 +470,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
 
       await _unitRepository.create(newUnit);
 
-      // יצירת תתי-מסגרות אוטומטיות
+      // יצירת תתי-מסגרות אוטומטיות — תמיד מפקדים + חיילים
       final initialSubFrameworks = <SubFramework>[
         SubFramework(
           id: '${timestamp}_cmd_mgmt',
@@ -372,14 +479,13 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
           isFixed: true,
           unitId: timestamp,
         ),
-        if (nextLevel >= FrameworkLevel.platoon)
-          SubFramework(
-            id: '${timestamp}_soldiers',
-            name: 'חיילים - $unitName',
-            userIds: const [],
-            isFixed: true,
-            unitId: timestamp,
-          ),
+        SubFramework(
+          id: '${timestamp}_soldiers',
+          name: 'חיילים - $unitName',
+          userIds: const [],
+          isFixed: true,
+          unitId: timestamp,
+        ),
       ];
 
       // יצירת עץ ניווט ליחידה החדשה
@@ -417,148 +523,6 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     }
   }
 
-  /// הוספת תת-מסגרת (SubFramework) לעץ
-  Future<void> _addSubFramework() async {
-    final nameController = TextEditingController();
-    String? navigatorType;
-    final bool unitIsNavigators = _unit?.isNavigators ?? false;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text('תת-מסגרת חדשה ב"${_tree.name}"'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'שם תת-המסגרת',
-                      border: OutlineInputBorder(),
-                      hintText: 'לדוגמה: מחלקה 1',
-                    ),
-                    autofocus: true,
-                  ),
-                  if (unitIsNavigators) ...[
-                    const SizedBox(height: 16),
-                    const Text('סוג מנווטים:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'single', label: Text('בודד')),
-                        ButtonSegment(value: 'pairs', label: Text('זוגות')),
-                        ButtonSegment(
-                            value: 'secured', label: Text('מאובטח')),
-                      ],
-                      selected: {navigatorType ?? 'single'},
-                      onSelectionChanged: (selected) {
-                        setDialogState(() {
-                          navigatorType = selected.first;
-                        });
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('ביטול'),
-              ),
-              ElevatedButton(
-                onPressed: nameController.text.isNotEmpty
-                    ? () => Navigator.pop(context, true)
-                    : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('הוסף'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    if (confirmed != true || nameController.text.isEmpty) {
-      return;
-    }
-
-    final newId = DateTime.now().millisecondsSinceEpoch.toString();
-    final newSubFramework = SubFramework(
-      id: newId,
-      name: nameController.text,
-      userIds: const [],
-      navigatorType: unitIsNavigators
-          ? (navigatorType ?? 'single')
-          : null,
-      unitId: _tree.unitId,
-    );
-
-    final updatedSubFrameworks = [
-      ..._tree.subFrameworks,
-      newSubFramework,
-    ];
-
-    final updatedTree = _tree.copyWith(
-      subFrameworks: updatedSubFrameworks,
-      updatedAt: DateTime.now(),
-    );
-
-    await _saveTree(updatedTree);
-  }
-
-  /// מחיקת תת-מסגרת
-  Future<void> _deleteSubFramework(SubFramework subFramework) async {
-    if (subFramework.isFixed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('לא ניתן למחוק תת-מסגרת קבועה'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('מחיקת תת-מסגרת'),
-        content: Text('האם למחוק את "${subFramework.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('מחק'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    final updatedSubFrameworks = _tree.subFrameworks
-        .where((sf) => sf.id != subFramework.id)
-        .toList();
-
-    final updatedTree = _tree.copyWith(
-      subFrameworks: updatedSubFrameworks,
-      updatedAt: DateTime.now(),
-    );
-
-    await _saveTree(updatedTree);
-  }
 
   /// עריכת מנהלי מערכת של היחידה (Unit.managerIds)
   Future<void> _editUnitAdmins() async {
@@ -636,6 +600,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                       final selectedId = await _showAdminUserPicker(
                         context,
                         currentAdmins,
+                        filterUnitId: _unit!.id,
                       );
                       if (selectedId != null) {
                         setDialogState(() {
@@ -697,9 +662,17 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     }
   }
 
-  /// דיאלוג לבחירת מנהל מערכת - מציג רק משתמשים עם תפקיד מנהל
+  /// בדיקה אם המשתמש הוא מפקד (commander/unit_admin/admin/developer)
+  bool _isCommanderRole(app_user.User user) {
+    return user.role == AppConstants.roleAdmin ||
+        user.role == AppConstants.roleUnitAdmin ||
+        user.role == AppConstants.roleDeveloper ||
+        user.role == AppConstants.roleCommander;
+  }
+
+  /// דיאלוג לבחירת מנהל מערכת - מציג רק מפקדים מאושרים שלא מנהלים יחידה אחרת
   Future<String?> _showAdminUserPicker(
-      BuildContext parentContext, List<String> excludeIds) async {
+      BuildContext parentContext, List<String> excludeIds, {String? filterUnitId}) async {
     final searchController = TextEditingController();
     final manualIdController = TextEditingController();
     bool isManualMode = false;
@@ -708,10 +681,12 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
       context: parentContext,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-          // סינון משתמשים עם תפקיד מנהל בלבד
+          // סינון: רק מפקדים מאושרים שלא ברשימת ההחרגות
           final adminUsers = _allUsers.where((user) {
             if (excludeIds.contains(user.uid)) return false;
-            if (!_isAdminRole(user)) return false;
+            if (!_isCommanderRole(user)) return false;
+            if (!user.isApproved) return false;
+            if (filterUnitId != null && user.unitId != filterUnitId) return false;
             if (searchController.text.isEmpty) return true;
             return user.fullName
                     .toLowerCase()
@@ -741,7 +716,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                     TextField(
                       controller: searchController,
                       decoration: const InputDecoration(
-                        labelText: 'חיפוש מנהל מערכת',
+                        labelText: 'חיפוש מפקד',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.search),
                         isDense: true,
@@ -749,7 +724,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                       onChanged: (_) => setDialogState(() {}),
                     ),
                     const SizedBox(height: 8),
-                    // הודעה שמוצגים רק מנהלים
+                    // הודעה שמוצגים רק מפקדים מאושרים
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -764,7 +739,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
-                              'מוצגים רק משתמשים עם תפקיד מנהל',
+                              'מוצגים רק מפקדים מאושרים',
                               style: TextStyle(
                                   fontSize: 11, color: Colors.orange[700]),
                             ),
@@ -784,7 +759,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                                       size: 48, color: Colors.grey[400]),
                                   const SizedBox(height: 8),
                                   Text(
-                                    'לא נמצאו מנהלי מערכת',
+                                    'לא נמצאו מפקדים מאושרים',
                                     style:
                                         TextStyle(color: Colors.grey[600]),
                                   ),
@@ -819,8 +794,27 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                                     '${user.personalNumber} | ${_getRoleDisplayName(user.role)}',
                                     style: const TextStyle(fontSize: 12),
                                   ),
-                                  onTap: () =>
-                                      Navigator.pop(context, user.uid),
+                                  onTap: () async {
+                                    // בדיקה שהמשתמש לא מנהל יחידה אחרת
+                                    final isManaging = await _unitRepository
+                                        .isUserManagingAnyUnit(user.uid);
+                                    if (isManaging) {
+                                      if (parentContext.mounted) {
+                                        ScaffoldMessenger.of(parentContext)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                                '${user.fullName} כבר מנהל יחידה אחרת'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                      return;
+                                    }
+                                    if (context.mounted) {
+                                      Navigator.pop(context, user.uid);
+                                    }
+                                  },
                                 );
                               },
                             ),
@@ -847,8 +841,28 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                             child: ElevatedButton.icon(
                               onPressed: manualIdController
                                       .text.isNotEmpty
-                                  ? () => Navigator.pop(
-                                      context, manualIdController.text)
+                                  ? () async {
+                                      final uid = manualIdController.text;
+                                      // בדיקה שהמשתמש לא מנהל יחידה אחרת
+                                      final isManaging = await _unitRepository
+                                          .isUserManagingAnyUnit(uid);
+                                      if (isManaging) {
+                                        if (parentContext.mounted) {
+                                          ScaffoldMessenger.of(parentContext)
+                                              .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                  'משתמש $uid כבר מנהל יחידה אחרת'),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        }
+                                        return;
+                                      }
+                                      if (context.mounted) {
+                                        Navigator.pop(context, uid);
+                                      }
+                                    }
                                   : null,
                               icon: const Icon(Icons.check),
                               label: const Text('אשר'),
@@ -877,321 +891,6 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     );
   }
 
-  /// דיאלוג לבחירת משתמש (כלל המשתמשים) או הזנה ידנית
-  Future<String?> _showUserPicker(
-      BuildContext parentContext, List<String> excludeIds) async {
-    final searchController = TextEditingController();
-    final manualNameController = TextEditingController();
-    bool isManualMode = false;
-
-    return showDialog<String>(
-      context: parentContext,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final filteredUsers = _allUsers.where((user) {
-            if (excludeIds.contains(user.uid)) return false;
-            if (searchController.text.isEmpty) return true;
-            return user.fullName
-                    .toLowerCase()
-                    .contains(searchController.text.toLowerCase()) ||
-                user.personalNumber
-                    .toLowerCase()
-                    .contains(searchController.text.toLowerCase());
-          }).toList();
-
-          return AlertDialog(
-            title: const Text('הוסף משתמש'),
-            content: SizedBox(
-              width: double.maxFinite,
-              height: 400,
-              child: Column(
-                children: [
-                  // מתג בין בחירה מרשימה להזנה ידנית
-                  _buildEntryModeToggle(
-                    isManualMode: isManualMode,
-                    onChanged: (value) =>
-                        setDialogState(() => isManualMode = value),
-                  ),
-                  const SizedBox(height: 8),
-
-                  if (!isManualMode) ...[
-                    // מצב בחירה מרשימה
-                    TextField(
-                      controller: searchController,
-                      decoration: const InputDecoration(
-                        labelText: 'חיפוש משתמש',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.search),
-                        isDense: true,
-                      ),
-                      onChanged: (_) => setDialogState(() {}),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: filteredUsers.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.person_off,
-                                      size: 48, color: Colors.grey[400]),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'לא נמצאו משתמשים',
-                                    style:
-                                        TextStyle(color: Colors.grey[600]),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'עבור להזנה ידנית להוספת שם',
-                                    style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 12),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : ListView.builder(
-                              itemCount: filteredUsers.length,
-                              itemBuilder: (context, index) {
-                                final user = filteredUsers[index];
-                                return ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor:
-                                        Colors.blue.withOpacity(0.1),
-                                    child: Text(
-                                      user.fullName.isNotEmpty
-                                          ? user.fullName[0]
-                                          : '?',
-                                      style:
-                                          TextStyle(color: Colors.blue[700]),
-                                    ),
-                                  ),
-                                  title: Text(user.fullName),
-                                  subtitle: Text(
-                                    '${user.personalNumber} | ${_getRoleDisplayName(user.role)}',
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  trailing: Icon(
-                                    Icons.add_circle_outline,
-                                    color: Colors.green[600],
-                                    size: 20,
-                                  ),
-                                  onTap: () =>
-                                      Navigator.pop(context, user.uid),
-                                );
-                              },
-                            ),
-                    ),
-                  ] else ...[
-                    // מצב הזנה ידנית
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          TextField(
-                            controller: manualNameController,
-                            decoration: const InputDecoration(
-                              labelText: 'הזן שם מלא',
-                              border: OutlineInputBorder(),
-                              helperText:
-                                  'למשתמש שעדיין לא רשום במערכת - ישויך בהמשך',
-                              prefixIcon: Icon(Icons.person_outline),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.amber[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.amber[200]!),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info_outline,
-                                    size: 16, color: Colors.amber[800]),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'המשתמש יתווסף כשם זמני. '
-                                    'ניתן יהיה לשייך אותו למשתמש רשום בהמשך.',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.amber[900],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: manualNameController
-                                      .text.isNotEmpty
-                                  ? () {
-                                      final manualId =
-                                          'manual_${manualNameController.text}';
-                                      Navigator.pop(context, manualId);
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.check),
-                              label: const Text('הוסף'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('ביטול'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// ניהול משתמשים בתת-מסגרת - עם בחירה מרשימה או הזנה ידנית
-  Future<void> _manageSubFrameworkUsers(SubFramework subFramework) async {
-    List<String> currentUsers = List.from(subFramework.userIds);
-
-    final result = await showDialog<List<String>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('משתמשים - ${subFramework.name}'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // רשימת משתמשים
-                if (currentUsers.isNotEmpty)
-                  Container(
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: currentUsers.length,
-                      itemBuilder: (context, index) {
-                        final userId = currentUsers[index];
-                        final displayName =
-                            _getUserDisplayName(userId);
-                        final isManualEntry =
-                            userId.startsWith('manual_');
-                        return ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: isManualEntry
-                                ? Colors.amber.withOpacity(0.2)
-                                : Colors.blue.withOpacity(0.1),
-                            radius: 16,
-                            child: Icon(
-                              isManualEntry
-                                  ? Icons.person_outline
-                                  : Icons.person,
-                              size: 18,
-                              color: isManualEntry
-                                  ? Colors.amber[700]
-                                  : Colors.blue[700],
-                            ),
-                          ),
-                          title: Text(displayName),
-                          subtitle: isManualEntry
-                              ? Text(
-                                  'הזנה ידנית - ממתין לשיוך',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.amber[700],
-                                  ),
-                                )
-                              : null,
-                          trailing: IconButton(
-                            icon: const Icon(Icons.remove_circle,
-                                color: Colors.red),
-                            onPressed: () {
-                              setDialogState(() {
-                                currentUsers.removeAt(index);
-                              });
-                            },
-                          ),
-                        );
-                      },
-                    ),
-                  )
-                else
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      'אין משתמשים בתת-מסגרת זו',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ),
-
-                const SizedBox(height: 12),
-
-                // כפתור הוספת משתמש
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final selectedId = await _showUserPicker(
-                        context,
-                        currentUsers,
-                      );
-                      if (selectedId != null &&
-                          !currentUsers.contains(selectedId)) {
-                        setDialogState(() {
-                          currentUsers.add(selectedId);
-                        });
-                      }
-                    },
-                    icon: const Icon(Icons.person_add),
-                    label: const Text('הוסף משתמש'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ביטול'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, currentUsers),
-              child: const Text('שמור'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (result == null) return;
-
-    final updatedSubFramework = subFramework.copyWith(userIds: result);
-    final updatedSubFrameworks = _tree.subFrameworks.map((sf) {
-      return sf.id == subFramework.id ? updatedSubFramework : sf;
-    }).toList();
-
-    final updatedTree = _tree.copyWith(
-      subFrameworks: updatedSubFrameworks,
-      updatedAt: DateTime.now(),
-    );
-
-    await _saveTree(updatedTree);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1226,8 +925,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            'ניהול תתי-מסגרות ומנהלי מערכת.\n'
-                            'ניתן להוסיף משתמשים מרשימה או להזין שמות ידנית.',
+                            'משתמשים משויכים אוטומטית לפי תפקידם.',
                             style: TextStyle(
                                 fontSize: 12, color: Colors.blue[900]),
                           ),
@@ -1243,7 +941,8 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                 _buildAdminsSection(),
 
                 // כפתור יצירת מסגרת משנה (יחידת בת)
-                if (_unit != null &&
+                if (_currentHat?.type == HatType.admin &&
+                    _unit != null &&
                     _unit!.level != null &&
                     FrameworkLevel.getNextLevelBelow(_unit!.level!) != null)
                   Padding(
@@ -1297,13 +996,6 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
                   }),
               ],
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _addSubFramework(),
-        icon: const Icon(Icons.add),
-        label: const Text('תת-מסגרת חדשה'),
-        backgroundColor: Colors.green,
-        foregroundColor: Colors.white,
-      ),
     );
   }
 
@@ -1323,11 +1015,12 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
             const Spacer(),
-            TextButton.icon(
-              onPressed: _editUnitAdmins,
-              icon: const Icon(Icons.edit, size: 16),
-              label: const Text('ערוך', style: TextStyle(fontSize: 12)),
-            ),
+            if (_currentHat?.type == HatType.admin)
+              TextButton.icon(
+                onPressed: _editUnitAdmins,
+                icon: const Icon(Icons.edit, size: 16),
+                label: const Text('ערוך', style: TextStyle(fontSize: 12)),
+              ),
           ],
         ),
         const SizedBox(height: 4),
@@ -1374,25 +1067,49 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     );
   }
 
+  /// בדיקה אם תת-מסגרת היא מסוג "חיילים" (מנווטים)
+  bool _isSoldiersSubFramework(SubFramework subFramework) {
+    return subFramework.id.endsWith('_soldiers') ||
+        subFramework.name.contains('חיילים');
+  }
+
+  /// ספירת משתמשים המשויכים אוטומטית לתת-מסגרת לפי תפקיד ויחידה
+  int _countUsersForSubFramework(SubFramework subFramework) {
+    final unitId = subFramework.unitId ?? _tree.unitId;
+    if (_isSoldiersSubFramework(subFramework)) {
+      // חיילים: מנווטים מאושרים ביחידה
+      return _allUsers.where((u) =>
+          u.role == AppConstants.roleNavigator &&
+          u.unitId == unitId &&
+          u.isApproved).length;
+    } else {
+      // מפקדים ומנהלת: מפקדים מאושרים ביחידה
+      return _allUsers.where((u) =>
+          _isCommanderRole(u) &&
+          u.unitId == unitId &&
+          u.isApproved).length;
+    }
+  }
+
   Widget _buildSubFrameworkItem(SubFramework subFramework) {
-    final int userCount = subFramework.userIds.length;
-    final int manualCount =
-        subFramework.userIds.where((id) => id.startsWith('manual_')).length;
-    final int registeredCount = userCount - manualCount;
+    final int userCount = _countUsersForSubFramework(subFramework);
     final bool unitIsNavigators = _unit?.isNavigators ?? false;
+    final users = _subFrameworkUsersMap[subFramework.id] ?? [];
+    final isCommandersSf = !_isSoldiersSubFramework(subFramework);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 6),
       color: Colors.grey[50],
-      child: ListTile(
-        dense: true,
+      child: ExpansionTile(
         leading: CircleAvatar(
-          backgroundColor: Colors.blue.withOpacity(0.1),
+          backgroundColor: isCommandersSf
+              ? Colors.orange.withOpacity(0.1)
+              : Colors.blue.withOpacity(0.1),
           radius: 16,
           child: Text(
             '$userCount',
             style: TextStyle(
-              color: Colors.blue[700],
+              color: isCommandersSf ? Colors.orange[700] : Colors.blue[700],
               fontSize: 12,
               fontWeight: FontWeight.bold,
             ),
@@ -1400,7 +1117,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
         ),
         title: Row(
           children: [
-            Text(subFramework.name),
+            Flexible(child: Text(subFramework.name)),
             if (subFramework.isFixed)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
@@ -1411,59 +1128,56 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Text(
-                  '$registeredCount רשומים',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                ),
-                if (manualCount > 0) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.amber[100],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '$manualCount ידניים',
-                      style: TextStyle(
-                          fontSize: 10, color: Colors.amber[800]),
-                    ),
-                  ),
-                ],
-              ],
+            Text(
+              isCommandersSf
+                  ? '$userCount מפקדים מאושרים'
+                  : '$userCount חיילים מאושרים',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
-            if (unitIsNavigators &&
-                subFramework.navigatorType != null) ...[
+            if (unitIsNavigators && subFramework.navigatorType != null)
               Text(
                 _getNavigatorTypeText(subFramework.navigatorType!),
-                style:
-                    TextStyle(fontSize: 11, color: Colors.blue[700]),
-              ),
-            ],
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.people, size: 20),
-              onPressed: () =>
-                  _manageSubFrameworkUsers(subFramework),
-              tooltip: 'נהל משתמשים',
-            ),
-            if (!subFramework.isFixed)
-              IconButton(
-                icon:
-                    const Icon(Icons.delete, size: 20, color: Colors.red),
-                onPressed: () =>
-                    _deleteSubFramework(subFramework),
-                tooltip: 'מחק',
+                style: TextStyle(fontSize: 11, color: Colors.blue[700]),
               ),
           ],
         ),
+        children: [
+          if (users.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'אין משתמשים משויכים',
+                style: TextStyle(color: Colors.grey[500], fontSize: 13),
+              ),
+            )
+          else
+            ...users.map((user) => ListTile(
+              dense: true,
+              leading: CircleAvatar(
+                radius: 14,
+                backgroundColor: isCommandersSf
+                    ? Colors.orange[50]
+                    : Colors.blue[50],
+                child: Text(
+                  user.fullName.isNotEmpty ? user.fullName[0] : '?',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isCommandersSf ? Colors.orange[700] : Colors.blue[700],
+                  ),
+                ),
+              ),
+              title: Text(user.fullName, style: const TextStyle(fontSize: 13)),
+              subtitle: Text(
+                '${user.personalNumber} | ${_getRoleDisplayName(user.role)}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+              trailing: IconButton(
+                icon: Icon(Icons.person_remove, size: 18, color: Colors.red[400]),
+                tooltip: 'הסר מהיחידה',
+                onPressed: () => _removeUserFromUnit(user),
+              ),
+            )),
+        ],
       ),
     );
   }

@@ -13,6 +13,7 @@ class User extends Equatable {
   final String role; // 'admin', 'commander', 'navigator', 'unit_admin', 'developer'
   final String? unitId; // יחידה שהמשתמש שייך אליה
   final String? fcmToken; // FCM push notification token
+  final bool isApproved; // האם המשתמש מאושר ביחידה
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -27,6 +28,7 @@ class User extends Equatable {
     required this.role,
     this.unitId,
     this.fcmToken,
+    this.isApproved = false,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -65,6 +67,18 @@ class User extends Equatable {
   /// האם המשתמש הוא מפתח
   bool get isDeveloper => role == 'developer';
 
+  /// האם המשתמש עבר onboarding מלא (יש יחידה + מאושר)
+  bool get isOnboarded => unitId != null && unitId!.isNotEmpty && isApproved;
+
+  /// האם ממתין לאישור מפקד
+  bool get isAwaitingApproval => unitId != null && unitId!.isNotEmpty && !isApproved;
+
+  /// האם צריך לבחור יחידה (אין unitId ואין הרשאות מפקד)
+  bool get needsUnitSelection => (unitId == null || unitId!.isEmpty) && !hasCommanderPermissions;
+
+  /// האם עוקף onboarding (admin/developer)
+  bool get bypassesOnboarding => isAdmin || isDeveloper;
+
   /// העתקה עם שינויים
   User copyWith({
     String? uid,
@@ -76,7 +90,9 @@ class User extends Equatable {
     bool? emailVerified,
     String? role,
     String? unitId,
+    bool clearUnitId = false,
     String? fcmToken,
+    bool? isApproved,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -89,8 +105,9 @@ class User extends Equatable {
       email: email ?? this.email,
       emailVerified: emailVerified ?? this.emailVerified,
       role: role ?? this.role,
-      unitId: unitId ?? this.unitId,
+      unitId: clearUnitId ? null : (unitId ?? this.unitId),
       fcmToken: fcmToken ?? this.fcmToken,
+      isApproved: isApproved ?? this.isApproved,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -111,6 +128,7 @@ class User extends Equatable {
       'role': role,
       if (unitId != null) 'unitId': unitId,
       if (fcmToken != null) 'fcmToken': fcmToken,
+      'isApproved': isApproved,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -138,6 +156,8 @@ class User extends Equatable {
         map['personalNumber'] as String? ??
         '';
 
+    final unitId = map['unitId'] as String?;
+
     return User(
       uid: uid,
       firstName: firstName,
@@ -147,8 +167,10 @@ class User extends Equatable {
       email: map['email'] as String? ?? '',
       emailVerified: map['emailVerified'] as bool? ?? false,
       role: map['role'] as String? ?? 'navigator',
-      unitId: map['unitId'] as String?,
+      unitId: unitId,
       fcmToken: map['fcmToken'] as String?,
+      isApproved: map['isApproved'] as bool? ??
+          (unitId != null && unitId.isNotEmpty), // backward compat
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'] as String)
           : DateTime.now(),
@@ -170,6 +192,7 @@ class User extends Equatable {
     role,
     unitId,
     fcmToken,
+    isApproved,
     createdAt,
     updatedAt,
   ];

@@ -6,6 +6,7 @@ import '../domain/entities/navigation_tree.dart';
 import '../domain/entities/navigation_settings.dart';
 import '../domain/entities/boundary.dart';
 import '../core/utils/geometry_utils.dart';
+import '../data/repositories/user_repository.dart';
 
 /// פרמטרים לריצה ב-Isolate (חייבים להיות serializable)
 class _DistributionParams {
@@ -137,7 +138,7 @@ class RoutesDistributionService {
   }) async {
     // --- שלב 1: הכנה ---
     // מציאת משתתפים
-    List<String> navigators = _findNavigators(navigation, tree);
+    List<String> navigators = await _findNavigators(navigation, tree);
 
     if (navigators.isEmpty) {
       throw Exception('לא נמצאו משתתפים - יש לבחור תתי-מסגרות עם משתמשים');
@@ -201,27 +202,34 @@ class RoutesDistributionService {
     return result;
   }
 
-  /// מציאת משתתפים (3-שלבי)
-  List<String> _findNavigators(domain.Navigation navigation, NavigationTree tree) {
-    List<String> navigators = [];
+  final UserRepository _userRepository = UserRepository();
 
+  /// מציאת משתתפים — דינמי לפי תפקיד
+  Future<List<String>> _findNavigators(domain.Navigation navigation, NavigationTree tree) async {
+    // 1. אם נבחרו משתתפים ספציפיים — שימוש ישיר (backward compat)
     if (navigation.selectedParticipantIds.isNotEmpty) {
-      navigators = List.from(navigation.selectedParticipantIds);
-    } else if (navigation.selectedSubFrameworkIds.isNotEmpty) {
-      for (final sf in tree.subFrameworks) {
-        if (navigation.selectedSubFrameworkIds.contains(sf.id)) {
-          navigators.addAll(sf.userIds);
-        }
-      }
-    } else {
-      for (final sf in tree.subFrameworks) {
-        if (!sf.isFixed) {
-          navigators.addAll(sf.userIds);
-        }
-      }
+      return List.from(navigation.selectedParticipantIds);
     }
 
-    return navigators;
+    final unitId = navigation.selectedUnitId ?? tree.unitId;
+    if (unitId == null) return [];
+
+    // 2. אם נבחרו תתי-מסגרות — שליפה דינמית לפי תפקיד
+    if (navigation.selectedSubFrameworkIds.isNotEmpty) {
+      final navigators = <String>[];
+      for (final sf in tree.subFrameworks) {
+        if (!navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
+        final users = (sf.name.contains('מפקדים') || sf.name.contains('מפקד'))
+            ? await _userRepository.getCommandersForUnit(unitId)
+            : await _userRepository.getNavigatorsForUnit(unitId);
+        navigators.addAll(users.map((u) => u.uid));
+      }
+      return navigators;
+    }
+
+    // 3. fallback — כל המנווטים ביחידה
+    final navigators = await _userRepository.getNavigatorsForUnit(unitId);
+    return navigators.map((u) => u.uid).toList();
   }
 
   /// הרצת האלגוריתם ב-Isolate עם progress reporting

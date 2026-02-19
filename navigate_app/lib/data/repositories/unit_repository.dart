@@ -5,6 +5,7 @@ import '../../core/constants/app_constants.dart';
 import '../../domain/entities/unit.dart' as domain;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
+import 'user_repository.dart';
 
 /// Repository for managing units (Drift + Firestore sync)
 ///
@@ -104,6 +105,10 @@ class UnitRepository {
   Future<void> delete(String id) async {
     print('DEBUG: Deleting unit: $id');
     try {
+      // Reset users belonging to this unit (clear unitId + isApproved)
+      final userRepo = UserRepository();
+      await userRepo.resetUsersForUnit(id);
+
       // Local delete
       await (_db.delete(_db.units)..where((t) => t.id.equals(id))).go();
 
@@ -168,6 +173,13 @@ class UnitRepository {
           data: {'id': treeId},
           priority: SyncPriority.high,
         );
+      }
+
+      // Reset users belonging to deleted units (clear unitId + isApproved)
+      // This returns them to the onboarding/unit selection screen
+      final userRepo = UserRepository();
+      for (final unitId in allIdsToDelete) {
+        await userRepo.resetUsersForUnit(unitId);
       }
 
       // Delete all units (children first, then parent)
@@ -478,6 +490,35 @@ class UnitRepository {
     } catch (e) {
       print('DEBUG: Error parsing managerIds JSON: $e');
       return [];
+    }
+  }
+
+  /// בדיקה אם ליחידה (או יחידות-על שלה) יש מפקדים מאושרים
+  Future<bool> hasApprovedCommandersInHierarchy(String unitId) async {
+    final userRepo = UserRepository();
+    String? currentId = unitId;
+    while (currentId != null) {
+      final commanders = await userRepo.getCommandersForUnit(currentId);
+      if (commanders.isNotEmpty) return true;
+      final unit = await getById(currentId);
+      currentId = unit?.parentUnitId;
+    }
+    return false;
+  }
+
+  /// בדיקה אם המשתמש כבר מנהל יחידה כלשהי
+  Future<bool> isUserManagingAnyUnit(String uid) async {
+    final allUnits = await getAll();
+    return allUnits.any((u) => u.managerIds.contains(uid));
+  }
+
+  /// קבלת היחידה שהמשתמש מנהל (null אם לא מנהל)
+  Future<domain.Unit?> getUnitManagedByUser(String uid) async {
+    final allUnits = await getAll();
+    try {
+      return allUnits.firstWhere((u) => u.managerIds.contains(uid));
+    } catch (_) {
+      return null;
     }
   }
 

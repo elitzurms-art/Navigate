@@ -10,9 +10,11 @@ import '../navigations/create_navigation_screen.dart';
 import '../navigations/navigations_list_screen.dart';
 import '../settings/settings_screen.dart';
 
-import '../auth/hat_selection_screen.dart';
 import '../units/units_list_screen.dart';
-import '../navigation_trees/unit_admin_frameworks_screen.dart';
+import '../units/unit_members_screen.dart';
+import '../onboarding/pending_approvals_screen.dart';
+import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/unit_repository.dart';
 
 /// מסך ראשי עם מפה
 class HomeScreen extends StatefulWidget {
@@ -119,8 +121,6 @@ class _HomeScreenState extends State<HomeScreen> {
             // ניווטים — admin, commander
             if (_currentHat?.type == HatType.admin ||
                 _currentHat?.type == HatType.commander ||
-                _currentHat?.type == HatType.management ||
-                _currentHat?.type == HatType.observer ||
                 _currentHat == null)
               ListTile(
                 leading: const Icon(Icons.navigation),
@@ -148,18 +148,60 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-            // ניהול מסגרות — admin
-            if (_currentHat?.type == HatType.admin)
+            // אישור מנווטים / ניהול חברים — מפקד/מנהל/מפתח
+            if (_currentHat?.type == HatType.admin ||
+                _currentHat?.type == HatType.commander ||
+                _userRole == 'developer' ||
+                _userRole == 'unit_admin')
               ListTile(
-                leading: const Icon(Icons.account_tree_outlined, color: Colors.teal),
-                title: const Text('ניהול מסגרות'),
-                subtitle: const Text('יצירה וניהול מסגרות משנה', style: TextStyle(fontSize: 11)),
-                onTap: () {
+                leading: Icon(
+                  _userRole == 'unit_admin' ? Icons.people : Icons.person_add_alt_1,
+                  color: Colors.orange,
+                ),
+                title: Text(_userRole == 'unit_admin' ? 'ניהול חברי יחידה' : 'אישור מנווטים'),
+                trailing: FutureBuilder<int>(
+                  future: _getPendingCount(),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data ?? 0;
+                    if (count == 0) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '$count',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+                onTap: () async {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const UnitAdminFrameworksScreen()),
-                  );
+                  // מנהל יחידה — מסך חברי יחידה עם ממתינים + שינוי תפקידים
+                  if (_userRole == 'unit_admin') {
+                    final user = await _authService.getCurrentUser();
+                    if (user?.unitId != null && user!.unitId!.isNotEmpty) {
+                      final unit = await UnitRepository().getById(user.unitId!);
+                      if (unit != null && mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => UnitMembersScreen(unit: unit),
+                          ),
+                        );
+                      }
+                    }
+                  } else {
+                    // מפקד רגיל — מסך אישורים
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PendingApprovalsScreen(),
+                      ),
+                    );
+                  }
                 },
               ),
             // יחידות — מפתח בלבד
@@ -189,16 +231,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             const Divider(),
-            // כניסה בתור
-            ListTile(
-              leading: const Icon(Icons.swap_horiz, color: Colors.purple),
-              title: const Text('כניסה בתור'),
-              subtitle: Text(
-                _currentHat?.description ?? '',
-                style: const TextStyle(fontSize: 11),
-              ),
-              onTap: () => _switchHat(),
-            ),
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('התנתקות'),
@@ -239,34 +271,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _switchHat() async {
-    Navigator.pop(context); // סגירת drawer
-    final user = await _authService.getCurrentUser();
-    if (user == null) return;
-
-    final unitHats = await _sessionService.scanUserHats(user.uid);
-    final totalHats = unitHats.fold<int>(0, (sum, u) => sum + u.hats.length);
-
-    if (!mounted) return;
-
-    if (totalHats <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('אין כובעים נוספים')),
-      );
-      return;
+  Future<int> _getPendingCount() async {
+    try {
+      // מפתח רואה את כל הממתינים בכל היחידות
+      if (_userRole == 'developer') {
+        final pending = await UserRepository().getAllPendingApprovalUsers();
+        return pending.length;
+      }
+      final unitId = _currentHat?.unitId;
+      if (unitId == null || unitId.isEmpty) return 0;
+      final unitRepo = UnitRepository();
+      final descendantIds = await unitRepo.getDescendantIds(unitId);
+      final allUnitIds = [unitId, ...descendantIds];
+      final pending = await UserRepository().getPendingApprovalUsers(allUnitIds);
+      return pending.length;
+    } catch (_) {
+      return 0;
     }
-
-    await _sessionService.clearSession();
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (context) => HatSelectionScreen(
-          unitHats: unitHats,
-          isSwitch: true,
-        ),
-      ),
-      (route) => false,
-    );
   }
 
   void _showNavigationSubmenu() {

@@ -35,8 +35,8 @@ lib/
 │   ├── utils/utm_converter.dart        # המרת UTM↔LatLng
 │   └── map_config.dart                 # הגדרת שרתי מפות
 │
-├── domain/entities/       # ישויות עסקיות (19 קבצים)
-│   ├── user.dart                  # משתמש
+├── domain/entities/       # ישויות עסקיות (20 קבצים)
+│   ├── user.dart                  # משתמש (כולל isApproved + onboarding getters)
 │   ├── unit.dart                  # יחידה (כולל שדות Framework לשעבר)
 │   ├── navigation.dart            # ניווט (~400 שורות)
 │   ├── navigation_tree.dart       # עץ ניווט + SubFramework
@@ -53,6 +53,7 @@ lib/
 │   ├── checkpoint_punch.dart      # הגעה לנ"צ
 │   ├── navigation_score.dart      # ציון ניווט
 │   ├── security_violation.dart    # הפרת אבטחה
+│   ├── extension_request.dart     # בקשת הארכת זמן (Firestore-only)
 │   ├── navigator_tree.dart        # עץ מנווטים (legacy)
 │   └── user_role.dart             # תפקיד משתמש
 │
@@ -60,7 +61,7 @@ lib/
 │   ├── datasources/
 │   │   ├── local/app_database.dart     # Drift schema (17 טבלאות, גרסה 25)
 │   │   └── remote/firebase_service.dart # Firebase data source
-│   ├── repositories/              # 15 repositories
+│   ├── repositories/              # 16 repositories
 │   │   ├── user_repository.dart
 │   │   ├── unit_repository.dart          # cascade delete ליחידות ילדים
 │   │   ├── navigation_repository.dart
@@ -75,7 +76,8 @@ lib/
 │   │   ├── checkpoint_punch_repository.dart
 │   │   ├── navigator_alert_repository.dart
 │   │   ├── security_violation_repository.dart
-│   │   └── voice_message_repository.dart    # הודעות קוליות (Firestore-only, אין Drift)
+│   │   ├── voice_message_repository.dart    # הודעות קוליות (Firestore-only, אין Drift)
+│   │   └── extension_request_repository.dart # בקשות הארכת זמן (Firestore-only)
 │   └── sync/sync_manager.dart     # סנכרון דו-כיווני Drift↔Firestore
 │
 ├── services/              # שירותים (13 קבצים)
@@ -101,7 +103,8 @@ lib/
 │   │   ├── navigation_trees/  # 4 מסכי עצים (פעילים)
 │   │   ├── layers/         # 15 מסכי שכבות (נ"צ, ג"ג, נ"ב, ב"א)
 │   │   ├── areas/          # 3 מסכי שטחות
-│   │   ├── units/          # 2 מסכי יחידות
+│   │   ├── units/          # 3 מסכי יחידות (+ unit_members_screen)
+│   │   ├── onboarding/    # 3 מסכי onboarding (בחירת יחידה, המתנה לאישור, אישורים ממתינים)
 │   │   ├── trees/          # 3 מסכי עצים (legacy - לא בזרם!)
 │   │   ├── navigation/     # legacy subdirs (לא בזרם!)
 │   │   ├── settings/       # הגדרות
@@ -122,7 +125,7 @@ lib/
 
 ## מסד נתונים (Drift)
 
-- **סכמה**: גרסה 25
+- **סכמה**: גרסה 26
 - **17 טבלאות**: Users, Units, Areas, Checkpoints, SafetyPoints, Boundaries, Clusters, NavigationTrees, Navigations, NavigationTracks, NavCheckpoints, NavSafetyPoints, NavBoundaries, NavClusters, NavProfiles, ועוד
 - **שם הטבלה**: `NavigationTrees` (לא `NavigatorTrees`!) — accessor: `navigationTrees`
 - **Generated class**: `NavigationTree` (יחיד) מטבלה `NavigationTrees`
@@ -140,6 +143,7 @@ lib/
 | 23 | allowManualPosition + track manual position fields |
 | 24 | Navigations.timeCalculationSettingsJson |
 | 25 | Navigations.communicationSettingsJson + NavigationTracks.overrideWalkieTalkieEnabled (PTT) |
+| 26 | Users.isApproved (מערכת onboarding/אישור משתמשים) |
 
 ### אחרי שינוי סכמה
 ```bash
@@ -155,6 +159,7 @@ dart run build_runner build --delete-conflicting-outputs
 - **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT)
 - **Subcollections תחת areas**: layers_nz (נ"צ), layers_nb (נ"ב), layers_gg (ג"ג), layers_ba (ב"א)
 - **Subcollections תחת rooms**: messages (הודעות קוליות)
+- **Subcollections תחת navigations**: extension_requests (בקשות הארכת זמן)
 - **Firebase Storage**: `voice_messages/{navigationId}/{timestamp}.m4a`
 - **קבצי הגדרות**: `firebase.json`, `firestore.rules`, `firestore.indexes.json`
 
@@ -173,11 +178,26 @@ dart run build_runner build --delete-conflicting-outputs
 - `fullName` — computed getter מ-firstName + lastName
 - **אין** `username` או `frameworkId` (הוסרו בגרסה 12)
 - **יש** `email` + `emailVerified` (נוספו בגרסה 12)
+- **`isApproved`** (bool, ברירת מחדל false) — האם המשתמש אושר ע"י מפקד/מנהל
+- **Computed getters חדשים**:
+  - `isOnboarded` → `unitId != null && isApproved` (משתמש מאושר)
+  - `isAwaitingApproval` → `unitId != null && !isApproved` (ממתין לאישור)
+  - `needsUnitSelection` → אין unitId ואין הרשאות מפקד (צריך לבחור יחידה)
+  - `bypassesOnboarding` → `isAdmin || isDeveloper` (מדלג על onboarding)
+- **Backward compat**: `fromMap()` — אם `isApproved` חסר, משתמש עם `unitId` נחשב מאושר
+
+### ExtensionRequest (Firestore-only)
+- **תפקיד**: בקשת הארכת זמן במהלך ניווט פעיל (לא קשור ל-onboarding)
+- **סטטוסים**: `pending`, `approved`, `rejected`
+- **שדות**: navigationId, navigatorId/Name, requestedMinutes, status, approvedMinutes, respondedBy/At
+- **Firestore**: `navigations/{navId}/extension_requests/{requestId}`
+- **Repo**: `ExtensionRequestRepository` — create, respond, watchByNavigation, watchByNavigator, getTotalApprovedMinutes
 
 ### Unit (כולל Framework לשעבר)
 - Framework **הוסר לחלוטין** ונבלע ב-Unit
 - שדות חדשים: `level` (int?), `isNavigators` (bool), `isGeneral` (bool)
-- `UnitRepository.delete()` מבצע cascade: מחיקת יחידות ילדים + עצים + ניווטים
+- `UnitRepository.deleteWithCascade()` מבצע cascade מלא: מחיקת יחידות ילדים רקורסיבית + עצים + ניווטים + איפוס משתמשים
+- `UnitRepository.hasApprovedCommandersInHierarchy(unitId)` — בודק אם יש מפקדים מאושרים בהיררכיה (לזיהוי bootstrap)
 
 ### NavigationTree
 - מאחסן `subFrameworks` (List\<SubFramework\>) ישירות — **אין** רשימת frameworks
@@ -216,6 +236,10 @@ dart run build_runner build --delete-conflicting-outputs
 - `HatType`: admin, commander, navigator, management, observer
 - `HatInfo`: type + subFrameworkId + treeId + unitId + שמות
 - משתמש יכול להחזיק כובעים מרובים → hat_selection_screen
+- **רק משתמשים מאושרים** (`isApproved=true`) מקבלים כובעים — `SessionService` בודק
+
+### HomeScreen Drawer
+- **"אישור מנווטים"** — PendingApprovalsScreen (רק למפקדים/מנהלים)
 
 ---
 
@@ -284,13 +308,77 @@ dart run build_runner build --delete-conflicting-outputs
 
 ---
 
-## אימות (Auth Flow)
+## אימות ו-Onboarding (Auth Flow)
 
 1. משתמש מזין מספר אישי (7 ספרות) → `LoginScreen`
 2. אימות SMS (או email לדסקטופ) → `SmsVerificationScreen`
 3. Anonymous Firebase Auth ברקע (לגישת Firestore) → `_ensureFirebaseAuth()` ב-main.dart
-4. סריקת כובעים → כובע אחד ישר לניווט, מרובים → `HatSelectionScreen`
-5. `HomeRouter` → `NavigatorHomeScreen` (מנווט) או `HomeScreen` (מפקד/מנהל)
+4. **בדיקת onboarding** (חדש):
+   - `bypassesOnboarding` (admin/developer) → דילוג ישר לשלב 5
+   - `needsUnitSelection` (אין unitId) → `ChooseUnitScreen` → בחירת יחידה → `WaitingForApprovalScreen`
+   - `isAwaitingApproval` (יש unitId, לא מאושר) → `WaitingForApprovalScreen`
+   - `isOnboarded` (מאושר) → שלב 5
+5. סריקת כובעים → כובע אחד ישר לניווט, מרובים → `HatSelectionScreen`
+6. `HomeRouter` → `NavigatorHomeScreen` (מנווט) או `HomeScreen` (מפקד/מנהל)
+
+---
+
+## מערכת אישור משתמשים (Onboarding)
+
+### מסכים
+| מסך | תיקייה | תפקיד |
+|---|---|---|
+| `ChooseUnitScreen` | onboarding/ | משתמש חדש בוחר יחידה להצטרף |
+| `WaitingForApprovalScreen` | onboarding/ | המתנה לאישור (polling 30s + SyncManager listener) |
+| `PendingApprovalsScreen` | onboarding/ | מפקד/מנהל מאשר/דוחה משתמשים ממתינים |
+| `UnitMembersScreen` | units/ | ניהול חברי יחידה (מאושרים + ממתינים) |
+
+### זרימת אישור
+```
+משתמש חדש → ChooseUnitScreen → בחירת יחידה (isApproved=false)
+         → WaitingForApprovalScreen (polling/listener)
+         → מפקד מאשר ב-PendingApprovalsScreen
+         → isApproved=true → ניתוב אוטומטי ל-HomeScreen
+```
+
+### דחייה
+- מפקד לוחץ "דחייה" → `rejectUser()` → unitId=null, isApproved=false
+- המשתמש חוזר אוטומטית ל-`ChooseUnitScreen` ויכול לבחור יחידה אחרת
+
+### בעיית Bootstrap (יחידה ללא מפקדים)
+- `hasApprovedCommandersInHierarchy(unitId)` בודק בכל ההיררכיה
+- אם **אין** מפקד מאושר ביחידה — המשתמש הראשון שמאושר מקבל `unit_admin` אוטומטית
+- הודעת אזהרה: "ליחידה אין מפקדים — יאושר כמנהל יחידה"
+
+### הרשאות אישור
+| תפקיד | רואה |
+|---|---|
+| `developer` | כל המשתמשים הממתינים בכל היחידות |
+| `commander` / `unit_admin` | ממתינים ביחידה שלו + יחידות צאצא |
+
+### מתודות UserRepository חדשות
+| מתודה | תפקיד |
+|---|---|
+| `setUserUnit(uid, unitId)` | שיוך ליחידה (isApproved=false) |
+| `approveUser(uid, role?)` | אישור (isApproved=true + role אופציונלי) |
+| `rejectUser(uid)` | דחייה (unitId=null, isApproved=false) |
+| `addUserToUnit(uid, unitId)` | הוספה ידנית (isApproved=true מיידי) |
+| `removeUserFromUnit(uid)` | הסרה מיחידה (unitId=null, reset role) |
+| `getAllPendingApprovalUsers()` | כל הממתינים (למפתח) |
+| `getPendingApprovalUsers(unitIds)` | ממתינים ביחידות ספציפיות |
+| `getApprovedUsersForUnit(unitId)` | חברי יחידה מאושרים |
+| `getCommandersForUnit(unitId)` | מפקדים/מנהלים ביחידה |
+
+### מסך PendingApprovalsScreen
+- נגיש מ-Drawer של HomeScreen (רק למפקדים/מנהלים)
+- טוגל "מפקד" per-user — אם מופעל, המשתמש מאושר כ-commander
+- Bootstrap: אם אין מפקדים ביחידה, טוגל הופך ל"מנהל יחידה" ואישור ראשון = unit_admin
+
+### מסך UnitMembersScreen
+- נגיש מ-UnitsListScreen (לחיצה על יחידה)
+- מציג חברים מאושרים + ממתינים ליחידה הנוכחית + ילדים ישירים
+- אקורדיון מתקפל per-unit + אפשרות נעילה
+- אותו הגיון אישור/דחייה כמו PendingApprovalsScreen
 
 ---
 

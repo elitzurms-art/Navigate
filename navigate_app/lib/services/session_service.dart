@@ -2,6 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/entities/hat_type.dart';
 import '../data/repositories/navigation_tree_repository.dart';
 import '../data/repositories/unit_repository.dart';
+import '../data/repositories/user_repository.dart';
 
 /// שירות ניהול session — סריקת כובעים, שמירה וטעינה
 class SessionService {
@@ -11,6 +12,7 @@ class SessionService {
 
   final NavigationTreeRepository _treeRepository = NavigationTreeRepository();
   final UnitRepository _unitRepository = UnitRepository();
+  final UserRepository _userRepository = UserRepository();
 
   // מפתחות SharedPreferences
   static const _keyHatType = 'session_hat_type';
@@ -21,91 +23,80 @@ class SessionService {
   static const _keyUnitId = 'session_unit_id';
   static const _keyUnitName = 'session_unit_name';
 
-  /// סריקת כל הכובעים של המשתמש — סריקת היררכיית יחידות ועצי ניווט
-  Future<List<UnitHats>> scanUserHats(String uid) async {
+  /// קבלת כובע יחיד של המשתמש — לפי תפקיד (role) ויחידה
+  ///
+  /// מחפש את תת-המסגרת האמיתית של המשתמש בעץ הניווט (לא ID סינתטי),
+  /// כי ב-navigations_list_screen הסינון משווה session.subFrameworkId
+  /// מול navigation.selectedSubFrameworkIds שמכילים IDs אמיתיים מהעץ.
+  Future<HatInfo?> getUserHat(String uid) async {
+    final user = await _userRepository.getUser(uid);
+    if (user == null || !user.isApproved || user.unitId == null) return null;
+
     final trees = await _treeRepository.getAll();
     final allUnits = await _unitRepository.getAll();
-    final hatsByUnit = <String, List<HatInfo>>{};
     final unitNames = <String, String>{};
 
-    // מיפוי שמות יחידות
     for (final unit in allUnits) {
       unitNames[unit.id] = unit.name;
     }
 
-    // סריקת עצי ניווט — בדיקת תתי-מסגרות
-    for (final tree in trees) {
-      final treeUnitId = tree.unitId;
-      if (treeUnitId == null || treeUnitId.isEmpty) continue;
+    final userUnitId = user.unitId!;
+    final unitName = unitNames[userUnitId];
+    if (unitName == null) return null;
 
-      final unitName = unitNames[treeUnitId];
-      if (unitName == null) {
-        // יחידה נמחקה — דילוג
-        print('DEBUG scanUserHats: skipping tree ${tree.id} — unit $treeUnitId deleted');
-        continue;
-      }
+    // חיפוש עץ ליחידה
+    final unitTree = trees.where((t) => t.unitId == userUnitId).firstOrNull;
 
-      // בדיקת תתי-מסגרות לפי שם
-      for (final subFramework in tree.subFrameworks) {
-        if (!subFramework.userIds.contains(uid)) continue;
+    // חיפוש תת-מסגרת אמיתית שהמשתמש שייך אליה
+    String? realSubFrameworkId;
+    String realSubFrameworkName = '';
+    HatType hatType = HatType.navigator;
 
-        final hatType = _resolveHatType(subFramework.name);
-        hatsByUnit.putIfAbsent(treeUnitId, () => []);
-        hatsByUnit[treeUnitId]!.add(HatInfo(
-          type: hatType,
-          subFrameworkId: subFramework.id,
-          subFrameworkName: subFramework.name,
-          treeId: tree.id,
-          treeName: tree.name,
-          unitId: treeUnitId,
-          unitName: unitName,
-        ));
+    if (unitTree != null) {
+      for (final sf in unitTree.subFrameworks) {
+        if (sf.userIds.contains(uid)) {
+          realSubFrameworkId = sf.id;
+          realSubFrameworkName = sf.name;
+          hatType = _resolveHatType(sf.name);
+          break;
+        }
       }
     }
 
-    // בדיקת יחידות שהמשתמש מנהל אותן — כובע admin
-    for (final unit in allUnits) {
-      if (!unit.managerIds.contains(uid)) continue;
-      hatsByUnit.putIfAbsent(unit.id, () => []);
-      // הוספת כובע admin רק אם אין כבר
-      final hasAdmin = hatsByUnit[unit.id]!.any((h) => h.type == HatType.admin);
-      if (!hasAdmin) {
-        // חיפוש עץ ליחידה זו
-        final unitTree = trees.where((t) => t.unitId == unit.id).firstOrNull;
-        hatsByUnit[unit.id]!.add(HatInfo(
-          type: HatType.admin,
-          treeId: unitTree?.id ?? '',
-          treeName: unitTree?.name ?? '',
-          unitId: unit.id,
-          unitName: unit.name,
-        ));
-      }
-      unitNames[unit.id] = unit.name;
+    // בדיקה אם המשתמש מנהל את היחידה שלו — כובע admin
+    final isManagerOfOwnUnit = allUnits.any((u) =>
+        u.id == userUnitId && u.managerIds.contains(uid));
+
+    // קביעת כובע לפי role ותת-מסגרת
+    final role = user.role;
+    if (isManagerOfOwnUnit) {
+      hatType = HatType.admin;
+    } else if (role == 'commander' || role == 'unit_admin' || role == 'admin' || role == 'developer') {
+      if (hatType == HatType.navigator) hatType = HatType.commander;
     }
 
-    // המרה ל-List<UnitHats>
-    return hatsByUnit.entries.map((entry) {
-      return UnitHats(
-        unitId: entry.key,
-        unitName: unitNames[entry.key] ?? '',
-        hats: entry.value,
-      );
-    }).toList();
+    // אם לא נמצאה תת-מסגרת — מנהל/מפקד רואים הכל (ללא סינון תת-מסגרת)
+    // לכן subFrameworkId ריק → הסינון ב-navigations_list_screen מדלג
+    return HatInfo(
+      type: hatType,
+      subFrameworkId: realSubFrameworkId ?? '',
+      subFrameworkName: realSubFrameworkName,
+      treeId: unitTree?.id ?? '',
+      treeName: unitTree?.name ?? '',
+      unitId: userUnitId,
+      unitName: unitName,
+    );
   }
 
   /// פענוח סוג כובע לפי שם תת-מסגרת
   HatType _resolveHatType(String subFrameworkName) {
     final name = subFrameworkName.trim();
-    if (name == 'מפקדים' || name.contains('מפקד')) {
+    if (name == 'מפקדים' || name.contains('מפקד') || name.contains('מנהלת')) {
       return HatType.commander;
     }
-    if (name == 'מנהלת' || name.contains('מנהל')) {
-      return HatType.management;
-    }
     if (name == 'מבקרים' || name.contains('מבקר')) {
-      return HatType.observer;
+      return HatType.commander;
     }
-    // ברירת מחדל — מנווט (כולל מסגרות היררכיות וחיילים)
     return HatType.navigator;
   }
 

@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import '../../../domain/entities/unit.dart';
-import '../../../domain/entities/user.dart' as app_user;
+import '../../../domain/entities/navigation_tree.dart';
 import '../../../data/repositories/unit_repository.dart';
-import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../services/auth_service.dart';
 
 /// מסך יצירת/עריכת יחידה
 class CreateUnitScreen extends StatefulWidget {
   final Unit? unit; // null = יחידה חדשה
+  final String? parentUnitId; // יחידת אב ליצירת יחידת משנה
 
-  const CreateUnitScreen({super.key, this.unit});
+  const CreateUnitScreen({super.key, this.unit, this.parentUnitId});
 
   @override
   State<CreateUnitScreen> createState() => _CreateUnitScreenState();
@@ -18,17 +19,18 @@ class CreateUnitScreen extends StatefulWidget {
 class _CreateUnitScreenState extends State<CreateUnitScreen> {
   final _formKey = GlobalKey<FormState>();
   final UnitRepository _repository = UnitRepository();
-  final UserRepository _userRepository = UserRepository();
   final AuthService _authService = AuthService();
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
 
   String _selectedType = 'company';
-  List<String> _managerIds = []; // מנהלי מערכת
-  Map<String, String> _managerNames = {}; // uid -> fullName
-  bool _isClassified = false;
   bool _isSaving = false;
+  bool _isLoading = false;
+
+  // כשיוצרים יחידת משנה — הסוג נקבע אוטומטית לפי ההורה
+  bool _typeLockedByParent = false;
+  int? _childLevel; // הרמה שנגזרת מההורה
 
   final List<String> _unitTypes = [
     'brigade',
@@ -44,23 +46,71 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
       _nameController.text = widget.unit!.name;
       _descriptionController.text = widget.unit!.description;
       _selectedType = widget.unit!.type;
-      _managerIds = List.from(widget.unit!.managerIds);
-      _isClassified = widget.unit!.isClassified;
-      _loadManagerNames();
+    } else if (widget.parentUnitId != null) {
+      _isLoading = true;
+      _resolveChildType();
     }
   }
 
-  /// טוען שמות מנהלים קיימים לתצוגה בצ'יפים
-  Future<void> _loadManagerNames() async {
-    final allUsers = await _userRepository.getAll();
-    final names = <String, String>{};
-    for (final user in allUsers) {
-      if (_managerIds.contains(user.uid)) {
-        names[user.uid] = user.fullName;
+  /// טוען את יחידת האב וקובע את סוג היחידה החדשה — רמה אחת למטה
+  Future<void> _resolveChildType() async {
+    try {
+      final parent = await _repository.getById(widget.parentUnitId!);
+      if (parent == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
       }
-    }
-    if (mounted) {
-      setState(() => _managerNames = names);
+
+      final parentLevel = parent.level ?? FrameworkLevel.fromUnitType(parent.type);
+      if (parentLevel == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final nextLevel = FrameworkLevel.getNextLevelBelow(parentLevel);
+      if (nextLevel == null) {
+        // אין רמה מתחת (מחלקה = הכי נמוכה) — לא אמור לקרות
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('לא ניתן ליצור יחידת משנה מתחת למחלקה'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // המרת רמה לסוג יחידה
+      String childType;
+      switch (nextLevel) {
+        case FrameworkLevel.brigade:
+          childType = 'brigade';
+          break;
+        case FrameworkLevel.battalion:
+          childType = 'battalion';
+          break;
+        case FrameworkLevel.company:
+          childType = 'company';
+          break;
+        case FrameworkLevel.platoon:
+          childType = 'platoon';
+          break;
+        default:
+          childType = 'company';
+      }
+
+      if (mounted) {
+        setState(() {
+          _selectedType = childType;
+          _typeLockedByParent = true;
+          _childLevel = nextLevel;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -86,29 +136,6 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
     }
   }
 
-  Future<void> _addManager() async {
-    final allUsers = await _userRepository.getAll();
-    // סינון משתמשים שכבר נבחרו
-    final availableUsers =
-        allUsers.where((u) => !_managerIds.contains(u.uid)).toList();
-
-    if (!mounted) return;
-
-    final selectedUser = await showDialog<app_user.User>(
-      context: context,
-      builder: (context) => _UserSelectionDialog(users: availableUsers),
-    );
-
-    if (selectedUser != null) {
-      setState(() {
-        if (!_managerIds.contains(selectedUser.uid)) {
-          _managerIds.add(selectedUser.uid);
-          _managerNames[selectedUser.uid] = selectedUser.fullName;
-        }
-      });
-    }
-  }
-
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -121,28 +148,55 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
       }
 
       final now = DateTime.now();
+      final unitId = widget.unit?.id ?? now.millisecondsSinceEpoch.toString();
+
       final unit = Unit(
-        id: widget.unit?.id ?? now.millisecondsSinceEpoch.toString(),
+        id: unitId,
         name: _nameController.text,
         description: _descriptionController.text,
         type: _selectedType,
-        parentUnitId: widget.unit?.parentUnitId,
-        managerIds: _managerIds.isEmpty ? [currentUser.uid] : _managerIds,
+        parentUnitId: widget.unit?.parentUnitId ?? widget.parentUnitId,
+        managerIds: widget.unit?.managerIds ?? [],
         createdBy: widget.unit?.createdBy ?? currentUser.uid,
         createdAt: widget.unit?.createdAt ?? now,
         updatedAt: now,
-        isClassified: _isClassified,
+        isClassified: widget.unit?.isClassified ?? false,
+        level: widget.unit?.level ?? _childLevel,
       );
 
       if (widget.unit == null) {
         await _repository.create(unit);
+
+        // יצירת עץ ניווט אוטומטי עם תתי-מסגרות קבועות
+        final treeId = 'tree_$unitId';
+        final unitName = _nameController.text;
+        final tree = NavigationTree(
+          id: treeId,
+          name: 'עץ מבנה - $unitName',
+          subFrameworks: [
+            SubFramework(
+              id: '${treeId}_cmd_mgmt',
+              name: 'מפקדים ומנהלת - $unitName',
+              userIds: const [],
+              isFixed: true,
+              unitId: unitId,
+            ),
+            SubFramework(
+              id: '${treeId}_soldiers',
+              name: 'חיילים - $unitName',
+              userIds: const [],
+              isFixed: true,
+              unitId: unitId,
+            ),
+          ],
+          createdBy: currentUser.uid,
+          createdAt: now,
+          updatedAt: now,
+          unitId: unitId,
+        );
+        await NavigationTreeRepository().create(tree);
       } else {
         await _repository.update(unit);
-      }
-
-      // עדכון unitId ותפקיד לכל מנהלי המערכת של היחידה
-      for (final managerId in unit.managerIds) {
-        await _userRepository.updateUserUnitId(managerId, unit.id);
       }
 
       if (mounted) {
@@ -171,6 +225,17 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('יחידה חדשה'),
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.unit == null ? 'יחידה חדשה' : 'עריכת יחידה'),
@@ -182,6 +247,31 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // רמה — מוצג רק כשנקבע אוטומטית מההורה
+            if (_typeLockedByParent && _childLevel != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.layers, size: 18, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Text(
+                      'רמה: ${FrameworkLevel.getName(_childLevel!)}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // שם
             TextFormField(
               controller: _nameController,
@@ -190,6 +280,7 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.military_tech),
               ),
+              autofocus: widget.unit == null,
               validator: (value) {
                 if (value == null || value.isEmpty) {
                   return 'נא להזין שם';
@@ -213,93 +304,34 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
 
             const SizedBox(height: 16),
 
-            // סוג יחידה
-            DropdownButtonFormField<String>(
-              value: _selectedType,
-              decoration: const InputDecoration(
-                labelText: 'סוג יחידה',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.category),
-              ),
-              items: _unitTypes.map((type) {
-                return DropdownMenuItem(
-                  value: type,
-                  child: Text(_getTypeName(type)),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() => _selectedType = value!);
-              },
-            ),
-
-            const SizedBox(height: 16),
-
-            // יחידה מסווגת
-            CheckboxListTile(
-              title: const Text('יחידה מסווגת'),
-              subtitle: Text(
-                'לא מוצגת ליחידות אחרות',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-              ),
-              value: _isClassified,
-              onChanged: (value) {
-                setState(() => _isClassified = value ?? false);
-              },
-              secondary: Icon(
-                Icons.security,
-                color: _isClassified ? Colors.red : Colors.grey,
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-            ),
-
-            const SizedBox(height: 16),
-
-            // מנהלי מערכת (למפתח בלבד)
-            Card(
-              color: Colors.indigo[50],
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'מנהלי מערכת',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'מנהלי מערכת יכולים ליצור מסגרות ולנהל את היחידה',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 12),
-                    if (_managerIds.isEmpty)
-                      const Text('אין מנהלי מערכת', style: TextStyle(color: Colors.grey))
-                    else
-                      Wrap(
-                        spacing: 8,
-                        children: _managerIds.map((id) => Chip(
-                              avatar: const CircleAvatar(
-                                child: Icon(Icons.person, size: 16),
-                              ),
-                              label: Text(_managerNames[id] ?? id),
-                              onDeleted: () {
-                                setState(() {
-                                  _managerIds.remove(id);
-                                  _managerNames.remove(id);
-                                });
-                              },
-                            )).toList(),
-                      ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _addManager,
-                      icon: const Icon(Icons.add),
-                      label: const Text('הוסף מנהל מערכת'),
-                    ),
-                  ],
+            // סוג יחידה — נעול כשנקבע מההורה, חופשי בעריכה / יצירת יחידת שורש
+            if (_typeLockedByParent)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'סוג יחידה',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.category),
                 ),
+                child: Text(_getTypeName(_selectedType)),
+              )
+            else
+              DropdownButtonFormField<String>(
+                value: _selectedType,
+                decoration: const InputDecoration(
+                  labelText: 'סוג יחידה',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.category),
+                ),
+                items: _unitTypes.map((type) {
+                  return DropdownMenuItem(
+                    value: type,
+                    child: Text(_getTypeName(type)),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() => _selectedType = value!);
+                },
               ),
-            ),
 
             const SizedBox(height: 32),
 
@@ -327,109 +359,6 @@ class _CreateUnitScreenState extends State<CreateUnitScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// דיאלוג בחירת משתמש מרשימה עם חיפוש
-class _UserSelectionDialog extends StatefulWidget {
-  final List<app_user.User> users;
-
-  const _UserSelectionDialog({required this.users});
-
-  @override
-  State<_UserSelectionDialog> createState() => _UserSelectionDialogState();
-}
-
-class _UserSelectionDialogState extends State<_UserSelectionDialog> {
-  final TextEditingController _searchController = TextEditingController();
-  List<app_user.User> _filteredUsers = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _filteredUsers = widget.users;
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _filterUsers(String query) {
-    setState(() {
-      if (query.isEmpty) {
-        _filteredUsers = widget.users;
-      } else {
-        _filteredUsers = widget.users
-            .where((u) =>
-                u.fullName.contains(query) ||
-                u.personalNumber.contains(query))
-            .toList();
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: SimpleDialog(
-        title: const Text('בחר מנהל מערכת'),
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                labelText: 'חיפוש לפי שם',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              autofocus: true,
-              onChanged: _filterUsers,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.maxFinite,
-            height: 300,
-            child: _filteredUsers.isEmpty
-                ? const Center(
-                    child: Text(
-                      'לא נמצאו משתמשים',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _filteredUsers.length,
-                    itemBuilder: (context, index) {
-                      final user = _filteredUsers[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.indigo[100],
-                          child: Text(
-                            user.fullName.isNotEmpty
-                                ? user.fullName[0]
-                                : '?',
-                            style: TextStyle(color: Colors.indigo[700]),
-                          ),
-                        ),
-                        title: Text(user.fullName),
-                        subtitle: Text(
-                          '${user.role} | ${user.personalNumber}',
-                          style: TextStyle(
-                              fontSize: 12, color: Colors.grey[600]),
-                        ),
-                        onTap: () => Navigator.pop(context, user),
-                      );
-                    },
-                  ),
-          ),
-        ],
       ),
     );
   }

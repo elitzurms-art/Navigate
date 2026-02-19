@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/unit.dart';
 import '../../../data/repositories/unit_repository.dart';
-import '../../../data/repositories/navigation_tree_repository.dart';
-import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/sync/sync_manager.dart';
 import 'create_unit_screen.dart';
+import 'unit_members_screen.dart';
 
 class _UnitWithDepth {
   final Unit unit;
@@ -97,7 +96,8 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
         title: const Text('מחיקת יחידה'),
         content: Text(
           'האם למחוק את "${unit.name}"?\n'
-          'פעולה זו תמחק גם את כל עצי הניווט והניווטים של היחידה.',
+          'פעולה זו תמחק את היחידה, יחידות המשנה שלה, '
+          'עצי ניווט, ניווטים, ותאפס את המשתמשים המשויכים.',
         ),
         actions: [
           TextButton(
@@ -115,31 +115,13 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
 
     if (confirmed == true) {
       try {
-        // Cascade: unit → trees → navigations
-        final treeRepo = NavigationTreeRepository();
-        final navRepo = NavigationRepository();
-
-        final trees = await treeRepo.getByUnitId(unit.id);
-        for (final tree in trees) {
-          // מחיקת כל הניווטים של העץ
-          final navigations = await navRepo.getByTreeId(tree.id);
-          for (final nav in navigations) {
-            await navRepo.delete(nav.id);
-          }
-          // מחיקת העץ עצמו
-          await treeRepo.delete(tree.id);
-        }
-
-        // מחיקת היחידה
-        await _repository.delete(unit.id);
+        await _repository.deleteWithCascade(unit.id);
 
         _loadUnits();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'יחידה נמחקה (${trees.length} עצים)',
-              ),
+            const SnackBar(
+              content: Text('היחידה נמחקה בהצלחה'),
             ),
           );
         }
@@ -255,7 +237,7 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
                             final result = await Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => CreateUnitScreen(unit: unit),
+                                builder: (context) => UnitMembersScreen(unit: unit),
                               ),
                             );
                             if (result == true) _loadUnits();

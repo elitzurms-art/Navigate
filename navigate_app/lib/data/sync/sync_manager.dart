@@ -603,16 +603,31 @@ class SyncManager {
             .map((item) => item.recordId)
             .toSet();
 
+        // סינון רשומות שממתינות לסנכרון — הן לא צפויות להימצא בשרת עדיין
+        final reconcilableIds = localIds
+            .where((id) => !pendingCreateOrUpdateIds.contains(id))
+            .toList();
+        if (reconcilableIds.isEmpty) continue;
+
         // בדיקה בקבוצות של 10 (מגבלת whereIn של Firestore)
-        for (var i = 0; i < localIds.length; i += 10) {
-          final batch = localIds.skip(i).take(10).toList();
+        for (var i = 0; i < reconcilableIds.length; i += 10) {
+          final batch = reconcilableIds.skip(i).take(10).toList();
           final snapshot = await _firestore
               .collection(collection)
               .where(FieldPath.documentId, whereIn: batch)
-              .get()
+              .get(const GetOptions(source: Source.server))
               .timeout(const Duration(seconds: 15));
 
           final existingIds = snapshot.docs.map((d) => d.id).toSet();
+
+          // הגנה: אם Firestore לא החזירה אף תוצאה ל-batch מלא,
+          // סביר שהשאילתה נכשלה (cache ריק / בעיית רשת) — לא למחוק!
+          if (existingIds.isEmpty && batch.length > 1) {
+            print('SyncManager: Reconcile — Firestore returned 0 results for '
+                '${batch.length} $collection IDs. Skipping batch (possible cache/network issue).');
+            continue;
+          }
+
           // בדיקה גם ל-soft-delete
           final activeIds = snapshot.docs
               .where((d) => (d.data())['deletedAt'] == null)
@@ -620,12 +635,6 @@ class SyncManager {
               .toSet();
 
           for (final localId in batch) {
-            // דילוג על רשומות עם create/update ממתין — עדיין לא הועלו לשרת
-            if (pendingCreateOrUpdateIds.contains(localId)) {
-              print('SyncManager: Reconcile — skipping $collection/$localId (pending sync)');
-              continue;
-            }
-
             if (!existingIds.contains(localId) || !activeIds.contains(localId)) {
               await _deleteLocalRecord(collection, localId);
               print('SyncManager: Reconcile — removed orphan $collection/$localId');
@@ -1186,6 +1195,7 @@ class SyncManager {
   }
 
   Future<void> _upsertUser(String id, Map<String, dynamic> data) async {
+    final unitId = data['unitId'] as String?;
     await _db.into(_db.users).insertOnConflictUpdate(
       UsersCompanion.insert(
         uid: id,
@@ -1200,8 +1210,10 @@ class SyncManager {
         emailVerified: Value(data['emailVerified'] as bool? ?? false),
         role: data['role'] as String? ?? 'navigator',
         frameworkId: const Value(null),
-        unitId: Value(data['unitId'] as String?),
+        unitId: Value(unitId),
         fcmToken: Value(data['fcmToken'] as String?),
+        isApproved: Value(_parseBool(data['isApproved']) ??
+            (unitId != null && unitId.isNotEmpty)),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),
@@ -1795,6 +1807,15 @@ class SyncManager {
     if (value is int) {
       return DateTime.fromMillisecondsSinceEpoch(value);
     }
+    return null;
+  }
+
+  /// פירוק bool מ-Firestore (יכול להגיע כ-String או bool)
+  bool? _parseBool(dynamic value) {
+    if (value == null) return null;
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    if (value is int) return value != 0;
     return null;
   }
 }

@@ -109,6 +109,7 @@ class UserRepository {
           frameworkId: const Value(null), // deprecated
           unitId: Value(user.unitId),
           fcmToken: Value(user.fcmToken),
+          isApproved: Value(user.isApproved),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         ),
@@ -141,6 +142,7 @@ class UserRepository {
       role: row.role,
       unitId: row.unitId,
       fcmToken: row.fcmToken,
+      isApproved: row.isApproved,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     );
@@ -205,9 +207,324 @@ class UserRepository {
     }
   }
 
+  /// עדכון תפקיד משתמש (מקומי + תור סנכרון)
+  Future<void> updateUserRole(String uid, String role) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        role: Value(role),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {'role': role, 'updatedAt': now.toIso8601String()},
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error in updateUserRole: $e');
+    }
+  }
+
   /// מחיקת משתמש מה-DB המקומי
   Future<void> deleteUser(String uid) async {
     final db = _localDatabase ?? AppDatabase();
     await (db.delete(db.users)..where((tbl) => tbl.uid.equals(uid))).go();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Onboarding / Approval Workflow
+  // ---------------------------------------------------------------------------
+
+  /// מנווט בוחר יחידה — שמירה עם isApproved=false
+  Future<void> setUserUnit(String uid, String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        unitId: Value(unitId),
+        isApproved: const Value(false),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {
+          'unitId': unitId,
+          'isApproved': false,
+          'updatedAt': now.toIso8601String(),
+        },
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error in setUserUnit: $e');
+    }
+  }
+
+  /// מפקד מאשר משתמש — isApproved=true + אופציונלי שינוי תפקיד
+  Future<void> approveUser(String uid, {String? role}) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      final companion = UsersCompanion(
+        isApproved: const Value(true),
+        updatedAt: Value(now),
+        role: role != null ? Value(role) : const Value.absent(),
+      );
+
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(companion);
+
+      final data = <String, dynamic>{
+        'isApproved': true,
+        'updatedAt': now.toIso8601String(),
+      };
+      if (role != null) data['role'] = role;
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: data,
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error in approveUser: $e');
+    }
+  }
+
+  /// מפקד דוחה משתמש — ניקוי unitId + isApproved=false
+  Future<void> rejectUser(String uid) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        unitId: const Value(null),
+        isApproved: const Value(false),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {
+          'unitId': null,
+          'isApproved': false,
+          'updatedAt': now.toIso8601String(),
+        },
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error in rejectUser: $e');
+    }
+  }
+
+  /// הוספה ידנית של משתמש ליחידה — isApproved=true מיידית
+  Future<void> addUserToUnit(String uid, String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        unitId: Value(unitId),
+        isApproved: const Value(true),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {
+          'unitId': unitId,
+          'isApproved': true,
+          'updatedAt': now.toIso8601String(),
+        },
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error in addUserToUnit: $e');
+    }
+  }
+
+  /// קבלת כל המשתמשים הממתינים לאישור (למפתח — כל היחידות)
+  Future<List<domain.User>> getAllPendingApprovalUsers() async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.unitId.isNotNull() &
+            tbl.unitId.length.isBiggerThanValue(0) &
+            tbl.isApproved.equals(false)))
+          .get();
+      return results.map((r) => _userFromRow(r)).toList();
+    } catch (e) {
+      print('DEBUG: Error in getAllPendingApprovalUsers: $e');
+      return [];
+    }
+  }
+
+  /// קבלת משתמשים הממתינים לאישור ביחידה מסוימת (או רשימת יחידות)
+  Future<List<domain.User>> getPendingApprovalUsers(List<String> unitIds) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.unitId.isIn(unitIds) &
+            tbl.isApproved.equals(false)))
+          .get();
+      return results.map((r) => _userFromRow(r)).toList();
+    } catch (e) {
+      print('DEBUG: Error in getPendingApprovalUsers: $e');
+      return [];
+    }
+  }
+
+  /// קבלת משתמשים מאושרים ביחידה מסוימת
+  Future<List<domain.User>> getApprovedUsersForUnit(String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.unitId.equals(unitId) &
+            tbl.isApproved.equals(true)))
+          .get();
+      return results.map((r) => _userFromRow(r)).toList();
+    } catch (e) {
+      print('DEBUG: Error in getApprovedUsersForUnit: $e');
+      return [];
+    }
+  }
+
+  /// איפוס שיוך יחידה לכל המשתמשים ביחידה — unitId=null, isApproved=false
+  /// משתמש שהיחידה שלו נמחקה חוזר למסך בחירת יחידה (onboarding)
+  /// איפוס כל משתמשי יחידה — unitId=null, isApproved=false
+  /// מפקד/מנהל יחידה חוזר לתפקיד מנווט
+  Future<void> resetUsersForUnit(String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      final users = await (db.select(db.users)
+        ..where((tbl) => tbl.unitId.equals(unitId)))
+          .get();
+
+      for (final user in users) {
+        final shouldResetRole =
+            user.role == 'commander' || user.role == 'unit_admin';
+
+        await (db.update(db.users)..where((tbl) => tbl.uid.equals(user.uid)))
+            .write(UsersCompanion(
+          unitId: const Value(null),
+          isApproved: const Value(false),
+          role: shouldResetRole
+              ? const Value('navigator')
+              : const Value.absent(),
+          updatedAt: Value(now),
+        ));
+
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: user.uid,
+          operation: 'update',
+          data: {
+            'unitId': null,
+            'isApproved': false,
+            if (shouldResetRole) 'role': 'navigator',
+            'updatedAt': now.toIso8601String(),
+          },
+          priority: SyncPriority.high,
+        );
+      }
+
+      print('DEBUG: Reset ${users.length} users from unit $unitId');
+    } catch (e) {
+      print('DEBUG: Error in resetUsersForUnit: $e');
+    }
+  }
+
+  /// הסרת משתמש ספציפי מיחידה — unitId=null, isApproved=false
+  /// מפקד/מנהל יחידה חוזר לתפקיד מנווט
+  Future<void> removeUserFromUnit(String uid) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      // בדיקת תפקיד — מפקד/מנהל יחידה חוזר למנווט
+      final row = await (db.select(db.users)
+            ..where((tbl) => tbl.uid.equals(uid)))
+          .getSingleOrNull();
+      final shouldResetRole = row != null &&
+          (row.role == 'commander' || row.role == 'unit_admin');
+
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        unitId: const Value(null),
+        isApproved: const Value(false),
+        role: shouldResetRole
+            ? const Value('navigator')
+            : const Value.absent(),
+        updatedAt: Value(now),
+      ));
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'update',
+        data: {
+          'unitId': null,
+          'isApproved': false,
+          if (shouldResetRole) 'role': 'navigator',
+          'updatedAt': now.toIso8601String(),
+        },
+        priority: SyncPriority.high,
+      );
+
+      print('DEBUG: Removed user $uid from unit'
+          '${shouldResetRole ? " (role → navigator)" : ""}');
+    } catch (e) {
+      print('DEBUG: Error in removeUserFromUnit: $e');
+    }
+  }
+
+  /// קבלת מפקדים מאושרים ביחידה (commander, unit_admin, admin, developer)
+  Future<List<domain.User>> getCommandersForUnit(String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.unitId.equals(unitId) &
+            tbl.isApproved.equals(true) &
+            tbl.role.isIn(['commander', 'unit_admin', 'admin', 'developer'])))
+          .get();
+      return results.map((r) => _userFromRow(r)).toList();
+    } catch (e) {
+      print('DEBUG: Error in getCommandersForUnit: $e');
+      return [];
+    }
+  }
+
+  /// קבלת מנווטים מאושרים ביחידה (role=navigator)
+  Future<List<domain.User>> getNavigatorsForUnit(String unitId) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.unitId.equals(unitId) &
+            tbl.isApproved.equals(true) &
+            tbl.role.equals('navigator')))
+          .get();
+      return results.map((r) => _userFromRow(r)).toList();
+    } catch (e) {
+      print('DEBUG: Error in getNavigatorsForUnit: $e');
+      return [];
+    }
   }
 }

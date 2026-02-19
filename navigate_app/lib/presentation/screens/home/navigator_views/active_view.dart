@@ -31,6 +31,8 @@ import '../../../../data/repositories/boundary_repository.dart';
 import 'manual_position_pin_screen.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/voice_messages_panel.dart';
+import '../../../../data/repositories/extension_request_repository.dart';
+import '../../../../domain/entities/extension_request.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -111,6 +113,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   VoiceService? _voiceService;
   bool _overrideWalkieTalkieEnabled = false;
 
+  // בקשות הארכה
+  final ExtensionRequestRepository _extensionRepo = ExtensionRequestRepository();
+  StreamSubscription<List<ExtensionRequest>>? _extensionListener;
+  ExtensionRequest? _activeExtensionRequest; // הבקשה האחרונה (pending/approved/rejected)
+  int _totalApprovedExtensionMinutes = 0;
+
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
 
@@ -164,6 +172,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     BackgroundLocationService().stop(); // safety net
     _gpsService.dispose();
     _voiceService?.dispose();
+    _extensionListener?.cancel();
     super.dispose();
   }
 
@@ -260,6 +269,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _startHealthCheck();
           _startAlertMonitoring();
           _startTrackDocListener();
+          _startExtensionListener();
         }
 
         // אם סיים — לחשב זמן כולל + listener לביטול פסילה
@@ -1671,31 +1681,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             ),
           ),
         ),
-        // כפתור בקשת הארכה (בפיתוח)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.timer),
-              label: const Text(
-                'בקשת הארכה — בפיתוח',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purple,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: Colors.purple.withOpacity(0.5),
-                disabledForegroundColor: Colors.white70,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ),
+        // כפתור בקשת הארכה
+        _buildExtensionButton(),
         // כפתור סיום ניווט — 1.5 ס"מ לפחות מעל קצה העמוד
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1835,6 +1822,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                     final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
                       routeLengthKm: _route!.routeLengthKm,
                       settings: _nav.timeCalculationSettings,
+                      extensionMinutes: _totalApprovedExtensionMinutes,
                     );
                     final remainingSeconds = (missionMinutes * 60) - _elapsed.inSeconds;
                     final isOvertime = remainingSeconds <= 0;
@@ -1881,6 +1869,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                       activeStartTime: _nav.activeStartTime!,
                       routes: _nav.routes,
                       settings: _nav.timeCalculationSettings,
+                      extensionMinutes: _totalApprovedExtensionMinutes,
                     );
                     if (safetyTime == null) return const SizedBox.shrink();
                     final now = DateTime.now();
@@ -2240,5 +2229,255 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  // ===========================================================================
+  // Extension Request — בקשת הארכה
+  // ===========================================================================
+
+  void _startExtensionListener() {
+    if (!_nav.timeCalculationSettings.allowExtensionRequests) return;
+    _extensionListener?.cancel();
+    _extensionListener = _extensionRepo
+        .watchByNavigator(_nav.id, widget.currentUser.uid)
+        .listen((requests) {
+      if (!mounted) return;
+      int totalApproved = 0;
+      ExtensionRequest? active;
+      for (final req in requests) {
+        if (req.status == ExtensionRequestStatus.approved) {
+          totalApproved += req.approvedMinutes ?? 0;
+        }
+        // הבקשה האחרונה (לפי createdAt — descending)
+        if (active == null) active = req;
+      }
+      setState(() {
+        _activeExtensionRequest = active;
+        _totalApprovedExtensionMinutes = totalApproved;
+      });
+    });
+  }
+
+  /// האם חלון הבקשה פתוח (כל הניווט, או בטווח זמן מוגדר)
+  bool _isExtensionWindowOpen() {
+    final settings = _nav.timeCalculationSettings;
+    if (!settings.allowExtensionRequests) return false;
+    if (settings.extensionWindowType == 'all') return true;
+
+    // timed — חלון מוגדר לפני סיום הניווט
+    if (_route == null || _nav.activeStartTime == null) return false;
+    final windowMinutes = settings.extensionWindowMinutes ?? 0;
+    if (windowMinutes <= 0) return false;
+
+    final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+      routeLengthKm: _route!.routeLengthKm,
+      settings: settings,
+      extensionMinutes: _totalApprovedExtensionMinutes,
+    );
+    final expectedEnd = _nav.activeStartTime!.add(Duration(minutes: missionMinutes));
+    final windowStart = expectedEnd.subtract(Duration(minutes: windowMinutes));
+    return DateTime.now().isAfter(windowStart);
+  }
+
+  /// האם ניתן לשלוח בקשה חדשה
+  bool _canRequestExtension() {
+    if (!_isExtensionWindowOpen()) return false;
+    final req = _activeExtensionRequest;
+    if (req == null) return true;
+    if (req.status == ExtensionRequestStatus.pending) return false;
+    // אחרי אישור — אפשר לבקש שוב אחרי 10 דקות
+    if (req.status == ExtensionRequestStatus.approved && req.respondedAt != null) {
+      return DateTime.now().difference(req.respondedAt!).inMinutes >= 10;
+    }
+    // אחרי דחייה — אפשר לבקש שוב אחרי 10 דקות
+    if (req.status == ExtensionRequestStatus.rejected && req.respondedAt != null) {
+      return DateTime.now().difference(req.respondedAt!).inMinutes >= 10;
+    }
+    return true;
+  }
+
+  Widget _buildExtensionButton() {
+    final settings = _nav.timeCalculationSettings;
+    if (!settings.allowExtensionRequests || !settings.enabled) {
+      return const SizedBox.shrink();
+    }
+
+    final req = _activeExtensionRequest;
+
+    Color bgColor;
+    String label;
+    bool enabled;
+    IconData icon = Icons.timer;
+
+    if (req != null && req.status == ExtensionRequestStatus.pending) {
+      bgColor = Colors.amber;
+      label = 'ממתין לתשובת מפקד';
+      enabled = false;
+      icon = Icons.hourglass_top;
+    } else if (req != null &&
+        req.status == ExtensionRequestStatus.approved &&
+        req.respondedAt != null &&
+        DateTime.now().difference(req.respondedAt!).inMinutes < 10) {
+      bgColor = Colors.green;
+      label = 'הארכה מאושרת — ${req.approvedMinutes ?? 0} דק\'';
+      enabled = false;
+      icon = Icons.check_circle;
+    } else if (req != null &&
+        req.status == ExtensionRequestStatus.rejected &&
+        req.respondedAt != null &&
+        DateTime.now().difference(req.respondedAt!).inMinutes < 10) {
+      bgColor = Colors.red;
+      label = 'הבקשה נדחתה';
+      enabled = false;
+      icon = Icons.cancel;
+    } else if (_canRequestExtension()) {
+      bgColor = Colors.purple;
+      label = 'בקשת הארכה';
+      enabled = true;
+    } else {
+      // חלון לא פתוח
+      bgColor = Colors.grey;
+      label = 'בקשת הארכה';
+      enabled = false;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton.icon(
+          onPressed: enabled ? _showExtensionRequestDialog : null,
+          icon: Icon(icon),
+          label: Text(
+            label,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: bgColor,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: bgColor.withOpacity(0.5),
+            disabledForegroundColor: Colors.white70,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showExtensionRequestDialog() {
+    int selectedMinutes = 30;
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.timer, color: Colors.purple),
+                SizedBox(width: 8),
+                Text('בקשת הארכה'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('כמה דקות הארכה לבקש?'),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      onPressed: selectedMinutes > 5
+                          ? () => setDialogState(() => selectedMinutes -= 5)
+                          : null,
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '$selectedMinutes דק\'',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.purple,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: selectedMinutes < 120
+                          ? () => setDialogState(() => selectedMinutes += 5)
+                          : null,
+                      icon: const Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Slider(
+                  value: selectedMinutes.toDouble(),
+                  min: 5,
+                  max: 120,
+                  divisions: 23,
+                  label: '$selectedMinutes דק\'',
+                  activeColor: Colors.purple,
+                  onChanged: (v) => setDialogState(() => selectedMinutes = v.round()),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ביטול'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _submitExtensionRequest(selectedMinutes);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                child: const Text('שלח בקשה', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _submitExtensionRequest(int minutes) async {
+    try {
+      final request = ExtensionRequest(
+        id: '',
+        navigationId: _nav.id,
+        navigatorId: widget.currentUser.uid,
+        navigatorName: widget.currentUser.fullName,
+        requestedMinutes: minutes,
+        createdAt: DateTime.now(),
+      );
+      await _extensionRepo.create(request);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('בקשת הארכה נשלחה למפקד'),
+            backgroundColor: Colors.purple,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בשליחת בקשה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

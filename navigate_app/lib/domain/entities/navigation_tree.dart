@@ -181,24 +181,17 @@ class NavigationTree extends Equatable {
       treeType: treeType,
       unitId: unitId,
       subFrameworks: [
-        // תתי-מסגרות קבועות (כללי)
+        // תתי-מסגרות קבועות — משויכות אוטומטית לפי תפקיד
         SubFramework(
-          id: '${id}_commanders',
+          id: '${id}_cmd_mgmt',
           name: 'מפקדים',
           userIds: [],
           isFixed: true,
           unitId: unitId,
         ),
         SubFramework(
-          id: '${id}_manager',
-          name: 'מנהלת',
-          userIds: [],
-          isFixed: true,
-          unitId: unitId,
-        ),
-        SubFramework(
-          id: '${id}_observers',
-          name: 'מבקרים',
+          id: '${id}_soldiers',
+          name: 'חיילים',
           userIds: [],
           isFixed: true,
           unitId: unitId,

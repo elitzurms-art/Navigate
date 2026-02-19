@@ -72,6 +72,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   Set<String> _selectedSubFrameworkIds = {};
   Set<String> _selectedParticipantIds = {};
   Map<String, domain_user.User> _usersCache = {};
+  Map<String, List<String>> _subFrameworkUsers = {}; // sfId → userIds (dynamic)
   bool _isLoadingUsers = false;
   String _safetyTimeType = 'hours'; // hours, after_last_mission
   int _safetyHours = 2;
@@ -114,6 +115,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _isHeavyLoad = false;
   bool _isNightNavigation = false;
   bool _isSummer = true;
+  bool _allowExtensionRequests = false;
+  String _extensionWindowType = 'all';
+  int _extensionWindowHours = 0;
+  int _extensionWindowMinutes = 30;
 
   // הגדרות תצוגה
   String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
@@ -272,50 +277,48 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       } else {
         _selectedSubFrameworkIds.remove(subFrameworkId);
         // הסרת משתתפים מתת-מסגרת שבוטלה
-        if (_selectedTree != null) {
-          final sf = _selectedTree!.subFrameworks
-              .where((s) => s.id == subFrameworkId)
-              .firstOrNull;
-          if (sf != null) {
-            _selectedParticipantIds.removeAll(sf.userIds);
-          }
-        }
+        final sfUsers = _subFrameworkUsers[subFrameworkId] ?? [];
+        _selectedParticipantIds.removeAll(sfUsers);
       }
     });
     _loadUsersForSelectedSubFrameworks();
   }
 
   /// בחירת/ביטול כל המשתתפים בתת-מסגרת
-  void _toggleAllParticipantsInSubFramework(SubFramework sf, bool selectAll) {
+  void _toggleAllParticipantsInSubFramework(String sfId, bool selectAll) {
+    final sfUsers = _subFrameworkUsers[sfId] ?? [];
     setState(() {
       if (selectAll) {
-        _selectedParticipantIds.addAll(sf.userIds);
+        _selectedParticipantIds.addAll(sfUsers);
       } else {
-        _selectedParticipantIds.removeAll(sf.userIds);
+        _selectedParticipantIds.removeAll(sfUsers);
       }
     });
   }
 
-  /// טעינת פרטי משתמשים עבור תתי-המסגרות הנבחרות
+  /// טעינת משתמשים דינמית לפי תפקיד — מפקדים או מנווטים בהתאם לתת-מסגרת
   Future<void> _loadUsersForSelectedSubFrameworks() async {
-    if (_selectedTree == null) return;
-
-    final allUserIds = <String>{};
-    for (final sf in _selectedTree!.subFrameworks) {
-      if (_selectedSubFrameworkIds.contains(sf.id)) {
-        allUserIds.addAll(sf.userIds);
-      }
-    }
-
-    final missingIds = allUserIds.where((id) => !_usersCache.containsKey(id)).toList();
-    if (missingIds.isEmpty) return;
+    if (_selectedTree == null || _selectedUnit == null) return;
 
     setState(() => _isLoadingUsers = true);
     try {
-      for (final uid in missingIds) {
-        final user = await _userRepository.getUser(uid);
-        if (user != null) {
-          _usersCache[uid] = user;
+      final unitId = _selectedUnit!.id;
+      for (final sf in _selectedTree!.subFrameworks) {
+        if (!_selectedSubFrameworkIds.contains(sf.id)) continue;
+
+        // קביעת סוג משתמשים לפי שם תת-מסגרת
+        List<domain_user.User> users;
+        if (sf.name.contains('מפקדים') || sf.name.contains('מפקד')) {
+          users = await _userRepository.getCommandersForUnit(unitId);
+        } else {
+          users = await _userRepository.getNavigatorsForUnit(unitId);
+        }
+
+        _subFrameworkUsers[sf.id] = users.map((u) => u.uid).toList();
+
+        // עדכון cache שמות
+        for (final user in users) {
+          _usersCache[user.uid] = user;
         }
       }
     } catch (e) {
@@ -326,13 +329,13 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     }
   }
 
-  /// רשימת כל ה-userIds מתתי-המסגרות הנבחרות
+  /// רשימת כל ה-userIds מתתי-המסגרות הנבחרות (דינמי)
   List<String> get _allSelectedSubFrameworkUserIds {
     if (_selectedTree == null) return [];
     final ids = <String>[];
     for (final sf in _selectedTree!.subFrameworks) {
       if (_selectedSubFrameworkIds.contains(sf.id)) {
-        ids.addAll(sf.userIds);
+        ids.addAll(_subFrameworkUsers[sf.id] ?? []);
       }
     }
     return ids;
@@ -399,6 +402,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _isHeavyLoad = nav.timeCalculationSettings.isHeavyLoad;
     _isNightNavigation = nav.timeCalculationSettings.isNightNavigation;
     _isSummer = nav.timeCalculationSettings.isSummer;
+    _allowExtensionRequests = nav.timeCalculationSettings.allowExtensionRequests;
+    _extensionWindowType = nav.timeCalculationSettings.extensionWindowType;
+    final ewm = nav.timeCalculationSettings.extensionWindowMinutes ?? 0;
+    _extensionWindowHours = ewm ~/ 60;
+    _extensionWindowMinutes = ewm % 60;
 
     // הגדרות תצוגה
     _defaultMapType = nav.displaySettings.defaultMap ?? 'topographic';
@@ -772,9 +780,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               ),
               const SizedBox(height: 8),
               ..._selectedTree!.subFrameworks.map((sf) {
+                final dynamicCount = _subFrameworkUsers[sf.id]?.length;
                 return CheckboxListTile(
                   title: Text(sf.name),
-                  subtitle: Text('${sf.userIds.length} משתמשים'),
+                  subtitle: Text(dynamicCount != null
+                      ? '$dynamicCount משתמשים'
+                      : 'משויך אוטומטית לפי תפקיד'),
                   value: _selectedSubFrameworkIds.contains(sf.id),
                   onChanged: (value) {
                     _onSubFrameworkToggled(sf.id, value ?? false);
@@ -803,7 +814,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 ..._selectedTree!.subFrameworks
                     .where((sf) => _selectedSubFrameworkIds.contains(sf.id))
                     .map((sf) {
-                  final allSelected = sf.userIds.every((uid) => _selectedParticipantIds.contains(uid));
+                  final sfUsers = _subFrameworkUsers[sf.id] ?? [];
+                  final allSelected = sfUsers.isNotEmpty && sfUsers.every((uid) => _selectedParticipantIds.contains(uid));
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -821,7 +833,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                           const Spacer(),
                           TextButton(
                             onPressed: () {
-                              _toggleAllParticipantsInSubFramework(sf, !allSelected);
+                              _toggleAllParticipantsInSubFramework(sf.id, !allSelected);
                             },
                             child: Text(
                               allSelected ? 'בטל הכל' : 'בחר הכל',
@@ -830,7 +842,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                           ),
                         ],
                       ),
-                      ...sf.userIds.map((uid) {
+                      ...sfUsers.map((uid) {
                         final user = _usersCache[uid];
                         final displayName = user?.fullName ?? uid;
                         return CheckboxListTile(
@@ -1044,6 +1056,77 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   ],
                 ),
               ),
+              const Divider(height: 24),
+              // בקשות הארכה
+              SwitchListTile(
+                title: const Text('אפשר בקשות הארכה'),
+                subtitle: const Text('מנווטים יוכלו לבקש זמן נוסף במהלך הניווט'),
+                value: _allowExtensionRequests,
+                contentPadding: EdgeInsets.zero,
+                onChanged: (v) => setState(() => _allowExtensionRequests = v),
+              ),
+              if (_allowExtensionRequests) ...[
+                const SizedBox(height: 8),
+                const Text('חלון בקשה', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'all', label: Text('כל הניווט')),
+                    ButtonSegment(value: 'timed', label: Text('זמן מוגדר מסיום')),
+                  ],
+                  selected: {_extensionWindowType},
+                  onSelectionChanged: (v) => setState(() => _extensionWindowType = v.first),
+                ),
+                if (_extensionWindowType == 'timed') ...[
+                  const SizedBox(height: 12),
+                  const Text('זמן לפני סיום הניווט שבו ניתן לבקש הארכה:',
+                      style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: _extensionWindowHours,
+                          decoration: const InputDecoration(
+                            labelText: 'שעות',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                          items: List.generate(5, (i) => DropdownMenuItem(
+                            value: i,
+                            child: Text('$i'),
+                          )),
+                          onChanged: (v) => setState(() => _extensionWindowHours = v ?? 0),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          value: _extensionWindowMinutes,
+                          decoration: const InputDecoration(
+                            labelText: 'דקות',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                          items: List.generate(12, (i) => DropdownMenuItem(
+                            value: i * 5,
+                            child: Text('${i * 5}'),
+                          )),
+                          onChanged: (v) => setState(() => _extensionWindowMinutes = v ?? 0),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_extensionWindowHours == 0 && _extensionWindowMinutes == 0)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        'יש לבחור זמן גדול מ-0',
+                        style: TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ],
             ],
           ],
         ),
@@ -1871,6 +1954,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           isHeavyLoad: _isHeavyLoad,
           isNightNavigation: _isNightNavigation,
           isSummer: _isSummer,
+          allowExtensionRequests: _allowExtensionRequests,
+          extensionWindowType: _extensionWindowType,
+          extensionWindowMinutes: _extensionWindowType == 'timed'
+              ? (_extensionWindowHours * 60 + _extensionWindowMinutes)
+              : null,
         ),
         permissions: widget.navigation?.permissions ?? domain.NavigationPermissions(
           managers: [currentUser.uid],

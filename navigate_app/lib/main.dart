@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
@@ -17,11 +18,12 @@ import 'services/background_location_service.dart';
 import 'domain/entities/hat_type.dart';
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/auth/register_screen.dart';
-import 'presentation/screens/auth/hat_selection_screen.dart';
 import 'presentation/screens/main_mode_selection_screen.dart';
 import 'presentation/screens/home/home_screen.dart';
 import 'presentation/screens/home/navigator_home_screen.dart';
-import 'presentation/screens/navigation_trees/unit_admin_frameworks_screen.dart';
+import 'presentation/screens/onboarding/choose_unit_screen.dart';
+import 'presentation/screens/onboarding/waiting_for_approval_screen.dart';
+import 'data/repositories/unit_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +40,12 @@ void main() async {
     }
   }
 
+  // כיבוי persistence של Firestore — אין צורך (Drift משמש כ-offline DB)
+  // persistence יכול לגרום ל-cache מיושן שמפריע ל-reconciliation בסנכרון
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: false,
+  );
+
   // אתחול cache אריחי מפה (חייב לפני MapConfig)
   await TileCacheService().initialize();
 
@@ -47,10 +55,9 @@ void main() async {
   // אתחול קונפיגורציית מפה
   await MapConfig().init();
 
-  // יצירת משתמש מפתח ומשתמשי ניסוי
+  // יצירת משתמש מפתח
   final authService = AuthService();
   await authService.ensureDeveloperUser();
-  await authService.ensureTestUsers();
 
   // ניקוי חד-פעמי: מחיקת עצי ניווט ישנים ללא unitId על מסגרות
   await _migrateDeleteOldTrees();
@@ -178,7 +185,6 @@ class NavigateApp extends StatelessWidget {
         '/register': (context) => const RegisterScreen(),
         '/mode-selection': (context) => const MainModeSelectionScreen(),
         '/home': (context) => const HomeRouter(),
-        '/unit-admin-frameworks': (context) => const UnitAdminFrameworksScreen(),
       },
       initialRoute: '/',
     );
@@ -229,7 +235,7 @@ class _HomeRouterState extends State<HomeRouter> {
       await SyncManager().waitForInitialSync();
       print('DEBUG HomeRouter: initial sync done');
 
-      // 3. סריקת כובעים
+      // 3. קבלת משתמש נוכחי
       final user = await _authService.getCurrentUser();
       print('DEBUG HomeRouter: user=${user?.uid}, role=${user?.role}');
       if (user == null) {
@@ -237,30 +243,43 @@ class _HomeRouterState extends State<HomeRouter> {
         return;
       }
 
-      final unitHats = await _sessionService.scanUserHats(user.uid);
-      final totalHats = unitHats.fold<int>(0, (sum, u) => sum + u.hats.length);
-      print('DEBUG HomeRouter: totalHats=$totalHats, units=${unitHats.length}');
-      for (final uh in unitHats) {
-        print('DEBUG HomeRouter: unit=${uh.unitName}, hats=${uh.hats.map((h) => h.typeName).toList()}');
+      // 3.5. בדיקת onboarding — מנווטים חדשים חייבים לבחור יחידה ולהמתין לאישור
+      if (!user.bypassesOnboarding) {
+        if (user.needsUnitSelection) {
+          print('DEBUG HomeRouter: user needs unit selection → ChooseUnitScreen');
+          _navigateTo(const ChooseUnitScreen());
+          return;
+        }
+        if (user.isAwaitingApproval) {
+          // קבלת שם היחידה לתצוגה
+          String unitName = '';
+          try {
+            final unit = await UnitRepository().getById(user.unitId!);
+            unitName = unit?.name ?? '';
+          } catch (_) {}
+          print('DEBUG HomeRouter: user awaiting approval → WaitingForApprovalScreen');
+          _navigateTo(WaitingForApprovalScreen(unitName: unitName));
+          return;
+        }
       }
 
-      if (totalHats == 0) {
-        // משתמש רגיל (navigator) ללא כובעים → מסך מנווט "לא משויך"
-        // admin/developer/unit_admin → מסך ניהול
+      // 4. קבלת כובע יחיד
+      final hat = await _sessionService.getUserHat(user.uid);
+      print('DEBUG HomeRouter: hat=${hat?.typeName}');
+
+      if (hat == null) {
+        // משתמש ללא כובע — admin/developer → מסך ניהול, אחרת → מסך מנווט
         final isAdmin = user.role == 'admin' ||
             user.role == 'developer' ||
             user.role == 'unit_admin';
         _navigateTo(isAdmin
             ? const HomeScreen()
             : const NavigatorHomeScreen());
-      } else if (totalHats == 1) {
-        final hat = unitHats.first.hats.first;
+      } else {
         await _sessionService.saveSession(hat);
         _navigateTo(hat.type == HatType.navigator
             ? const NavigatorHomeScreen()
             : const HomeScreen());
-      } else {
-        _navigateTo(HatSelectionScreen(unitHats: unitHats));
       }
     } catch (e, stackTrace) {
       print('DEBUG HomeRouter: ERROR: $e');

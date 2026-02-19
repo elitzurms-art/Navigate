@@ -12,6 +12,9 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../services/auto_map_download_service.dart';
+import '../../../data/repositories/unit_repository.dart';
+import '../onboarding/choose_unit_screen.dart';
+import '../onboarding/waiting_for_approval_screen.dart';
 import 'navigator_state.dart';
 import 'navigator_views/learning_view.dart';
 import 'navigator_views/system_check_view.dart';
@@ -129,6 +132,30 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final user = await _authService.getCurrentUser();
       if (user == null || !mounted) return;
       _currentUser = user;
+
+      // safety net — בדיקת onboarding
+      if (!user.bypassesOnboarding) {
+        if (user.needsUnitSelection) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
+          );
+          return;
+        }
+        if (user.isAwaitingApproval) {
+          String unitName = '';
+          try {
+            final unit = await UnitRepository().getById(user.unitId!);
+            unitName = unit?.name ?? '';
+          } catch (_) {}
+          if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => WaitingForApprovalScreen(unitName: unitName),
+            ),
+          );
+          return;
+        }
+      }
 
       // בדיקת session — האם משויך למסגרת
       final session = await _sessionService.getSavedSession();

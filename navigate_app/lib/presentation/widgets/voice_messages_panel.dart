@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../data/repositories/voice_message_repository.dart';
 import '../../domain/entities/user.dart';
@@ -42,10 +44,53 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
   bool _isExpanded = false;
   String? _selectedTargetId;
   String? _selectedTargetName;
-  int _unreadCount = 0;
-  int _lastSeenCount = 0;
   final Set<String> _seenMessageIds = {};
   bool _initialLoadDone = false;
+
+  StreamSubscription<List<VoiceMessage>>? _messagesSub;
+  List<VoiceMessage> _messages = [];
+  int _readUpToCount = 0;
+
+  int get _unreadCount => (_messages.length - _readUpToCount).clamp(0, 999);
+
+  @override
+  void initState() {
+    super.initState();
+    _messagesSub = _repo
+        .watchMessages(widget.navigationId,
+            currentUserId: widget.currentUser.uid)
+        .listen(_onMessagesUpdate);
+  }
+
+  @override
+  void dispose() {
+    _messagesSub?.cancel();
+    super.dispose();
+  }
+
+  void _onMessagesUpdate(List<VoiceMessage> messages) {
+    if (!mounted) return;
+
+    if (messages.isNotEmpty) {
+      if (!_initialLoadDone) {
+        // טעינה ראשונה — סימון כ"נראו" בלי השמעה
+        _seenMessageIds.addAll(messages.map((m) => m.id));
+        _readUpToCount = messages.length;
+        _initialLoadDone = true;
+      } else {
+        // הודעות חדשות מאחרים — הכנסה לתור (מהישנה לחדשה)
+        for (final msg in messages.reversed) {
+          if (!_seenMessageIds.contains(msg.id) &&
+              msg.senderId != widget.currentUser.uid) {
+            widget.voiceService.enqueueMessage(msg.audioUrl, msg.id);
+          }
+          _seenMessageIds.add(msg.id);
+        }
+      }
+    }
+
+    setState(() => _messages = messages);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +115,12 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
         children: [
           // Header — לחיצה לפתיחה/סגירה
           GestureDetector(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            onTap: () => setState(() {
+              _isExpanded = !_isExpanded;
+              if (_isExpanded) {
+                _readUpToCount = _messages.length;
+              }
+            }),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
@@ -165,91 +215,26 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
             // רשימת הודעות
             SizedBox(
               height: 250,
-              child: StreamBuilder<List<VoiceMessage>>(
-                stream: _repo.watchMessages(
-                  widget.navigationId,
-                  currentUserId: widget.currentUser.uid,
-                ),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          'שגיאה בטעינת הודעות: ${snapshot.error}',
-                          style: TextStyle(color: Colors.red[400], fontSize: 13),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    );
-                  }
-
-                  final messages = snapshot.data ?? [];
-
-                  // השמעה אוטומטית של הודעות חדשות נכנסות
-                  if (messages.isNotEmpty) {
-                    if (!_initialLoadDone) {
-                      // טעינה ראשונה — סימון כ"נראו" בלי השמעה
-                      _seenMessageIds.addAll(messages.map((m) => m.id));
-                      _initialLoadDone = true;
-                    } else {
-                      // הודעות חדשות מאחרים — הכנסה לתור (מהישנה לחדשה)
-                      for (final msg in messages.reversed) {
-                        if (!_seenMessageIds.contains(msg.id) &&
-                            msg.senderId != widget.currentUser.uid) {
-                          widget.voiceService
-                              .enqueueMessage(msg.audioUrl, msg.id);
-                        }
-                        _seenMessageIds.add(msg.id);
-                      }
-                    }
-                  }
-
-                  // חישוב הודעות שלא נקראו
-                  if (messages.length > _lastSeenCount) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        setState(() {
-                          _unreadCount =
-                              messages.length - _lastSeenCount;
-                        });
-                      }
-                    });
-                  }
-                  _lastSeenCount = messages.length;
-                  _unreadCount = 0;
-
-                  if (messages.isEmpty) {
-                    return Center(
+              child: _messages.isEmpty
+                  ? Center(
                       child: Text(
                         'אין הודעות עדיין',
                         style: TextStyle(color: Colors.grey[500]),
                       ),
-                    );
-                  }
-
-                  return ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final msg = messages[index];
-                      return VoiceMessageBubble(
-                        message: msg,
-                        isMine:
-                            msg.senderId == widget.currentUser.uid,
-                        voiceService: widget.voiceService,
-                      );
-                    },
-                  );
-                },
-              ),
+                    )
+                  : ListView.builder(
+                      reverse: true,
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = _messages[index];
+                        return VoiceMessageBubble(
+                          message: msg,
+                          isMine: msg.senderId == widget.currentUser.uid,
+                          voiceService: widget.voiceService,
+                        );
+                      },
+                    ),
             ),
 
             const Divider(height: 1),
