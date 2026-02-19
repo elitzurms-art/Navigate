@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../core/map_config.dart';
@@ -36,34 +35,23 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   // סוג מפה להורדה
   MapType _selectedMapType = MapType.standard;
 
-  // טווח זום
+  // טווח זום — הורדת אזור
   int _minZoom = 10;
   int _maxZoom = 16;
 
-  // הורדה
-  bool _isDownloading = false;
-  int _downloadedTiles = 0;
-  int _totalTiles = 0;
-  int _failedTiles = 0;
-  StreamSubscription<DownloadProgress>? _downloadSubscription;
-
-  // הורדת מפות ישראל
+  // טווח זום — הורדת מפות ישראל
   int _israelMinZoom = 8;
   int _israelMaxZoom = 16;
-  bool _israelDownloading = false;
-  String _israelCurrentType = '';
-  int _israelDownloadedTiles = 0;
-  int _israelTotalTiles = 0;
-  int _israelFailedTiles = 0;
-  int _israelTypesCompleted = 0;
-  StreamSubscription<DownloadProgress>? _israelDownloadSubscription;
 
-  // נתוני גובה — הורדות חו"ל בלבד
+  // נתוני גובה
   int _elevTileCount = 0;
   double _elevSizeMB = 0.0;
   bool _isElevDownloading = false;
   int _elevDone = 0;
   int _elevTotal = 0;
+
+  // הקשבה לשינויי מצב הורדה
+  StreamSubscription<void>? _stateSubscription;
 
   @override
   void initState() {
@@ -71,12 +59,23 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
     _loadStats();
     _loadBoundaries();
     _loadElevationStats();
+
+    // הקשבה לשינויי מצב הורדה מהsingleton
+    _stateSubscription = _tileCacheService.onStateChanged.listen((_) {
+      if (mounted) {
+        setState(() {});
+        // רענון סטטיסטיקות כשהורדה מסתיימת
+        if (!_tileCacheService.isRegionDownloading &&
+            !_tileCacheService.isIsraelDownloading) {
+          _loadStats();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
-    _downloadSubscription?.cancel();
-    _israelDownloadSubscription?.cancel();
+    _stateSubscription?.cancel();
     super.dispose();
   }
 
@@ -153,133 +152,36 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
     return '${(mb * 1024).toStringAsFixed(0)} KB';
   }
 
-  Future<void> _startIsraelDownload() async {
-    const types = MapType.values;
-    const b = MapConfig.israelBounds;
-    final bounds = LatLngBounds(
-      LatLng(b.minLat, b.minLng),
-      LatLng(b.maxLat, b.maxLng),
+  void _startIsraelDownload() {
+    _tileCacheService.startIsraelDownload(
+      minZoom: _israelMinZoom,
+      maxZoom: _israelMaxZoom,
     );
-
-    setState(() {
-      _israelDownloading = true;
-      _israelDownloadedTiles = 0;
-      _israelTotalTiles = _israelEstimatedTiles;
-      _israelFailedTiles = 0;
-      _israelTypesCompleted = 0;
-    });
-
-    int cumulativeDownloaded = 0;
-    int cumulativeFailed = 0;
-
-    for (final type in types) {
-      if (!_israelDownloading) break;
-
-      final maxZ = _israelMaxZoom.clamp(0, _mapConfig.maxZoom(type).toInt());
-      setState(() {
-        _israelCurrentType = _mapConfig.label(type);
-      });
-
-      final completer = Completer<void>();
-      _israelDownloadSubscription = _tileCacheService.downloadRegion(
-        bounds: bounds,
-        mapType: type,
-        minZoom: _israelMinZoom,
-        maxZoom: maxZ,
-      ).listen(
-        (progress) {
-          if (!mounted) return;
-          setState(() {
-            _israelDownloadedTiles = cumulativeDownloaded +
-                progress.cachedTiles + progress.skippedTiles;
-            _israelFailedTiles = cumulativeFailed + progress.failedTiles;
-            if (progress.isComplete && !completer.isCompleted) {
-              cumulativeDownloaded += progress.cachedTiles + progress.skippedTiles;
-              cumulativeFailed += progress.failedTiles;
-              _israelTypesCompleted++;
-              completer.complete();
-            }
-          });
-        },
-        onError: (error) {
-          if (!completer.isCompleted) completer.complete();
-        },
-        onDone: () {
-          if (!completer.isCompleted) completer.complete();
-        },
-      );
-
-      await completer.future;
-    }
-
-    if (mounted) {
-      setState(() => _israelDownloading = false);
-      _loadStats();
-    }
   }
 
   void _cancelIsraelDownload() {
-    _israelDownloadSubscription?.cancel();
-    _israelDownloadSubscription = null;
-    setState(() => _israelDownloading = false);
+    _tileCacheService.cancelIsraelDownload();
   }
 
-  Future<void> _startDownload() async {
+  void _startDownload() {
     if (_selectedBoundary == null) return;
 
     final bbox = GeometryUtils.getBoundingBox(_selectedBoundary!.coordinates);
-    // הוספת padding של ~1 ק"מ
     final bounds = LatLngBounds(
       LatLng(bbox.minLat - 0.01, bbox.minLng - 0.01),
       LatLng(bbox.maxLat + 0.01, bbox.maxLng + 0.01),
     );
 
-    setState(() {
-      _isDownloading = true;
-      _downloadedTiles = 0;
-      _totalTiles = _estimatedTiles;
-      _failedTiles = 0;
-    });
-
-    final stream = _tileCacheService.downloadRegion(
+    _tileCacheService.startRegionDownload(
       bounds: bounds,
       mapType: _selectedMapType,
       minZoom: _minZoom,
       maxZoom: _maxZoom,
     );
-
-    _downloadSubscription = stream.listen(
-      (progress) {
-        if (!mounted) return;
-        setState(() {
-          _downloadedTiles = progress.cachedTiles + progress.skippedTiles;
-          _totalTiles = progress.maxTiles;
-          _failedTiles = progress.failedTiles;
-          if (progress.isComplete) {
-            _isDownloading = false;
-            _loadStats();
-          }
-        });
-      },
-      onError: (error) {
-        if (!mounted) return;
-        setState(() => _isDownloading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה בהורדה: $error')),
-        );
-      },
-      onDone: () {
-        if (!mounted) return;
-        setState(() => _isDownloading = false);
-        _loadStats();
-      },
-    );
   }
 
   void _cancelDownload() {
-    _downloadSubscription?.cancel();
-    _downloadSubscription = null;
-    setState(() => _isDownloading = false);
+    _tileCacheService.cancelRegionDownload();
   }
 
   Future<void> _clearCache() async {
@@ -404,7 +306,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
           const SizedBox(height: 24),
           _buildIsraelDownloadSection(),
           const SizedBox(height: 24),
-          if (_isDownloading)
+          if (_tileCacheService.isRegionDownloading)
             _buildProgressSection()
           else
             _buildDownloadSection(),
@@ -569,7 +471,10 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   }
 
   Widget _buildProgressSection() {
-    final progress = _totalTiles > 0 ? _downloadedTiles / _totalTiles : 0.0;
+    final downloaded = _tileCacheService.regionDownloadedTiles;
+    final total = _tileCacheService.regionTotalTiles;
+    final failed = _tileCacheService.regionFailedTiles;
+    final progress = total > 0 ? downloaded / total : 0.0;
 
     return Card(
       child: Padding(
@@ -590,9 +495,9 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
           const SizedBox(height: 16),
           LinearProgressIndicator(value: progress),
           const SizedBox(height: 8),
-          _buildStatRow('הורדו', '$_downloadedTiles / $_totalTiles'),
-          if (_failedTiles > 0)
-            _buildStatRow('נכשלו', '$_failedTiles'),
+          _buildStatRow('הורדו', '$downloaded / $total'),
+          if (failed > 0)
+            _buildStatRow('נכשלו', '$failed'),
           _buildStatRow(
             'אחוז',
             '${(progress * 100).toStringAsFixed(1)}%',
@@ -612,7 +517,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   }
 
   Widget _buildIsraelDownloadSection() {
-    if (_israelDownloading) {
+    if (_tileCacheService.isIsraelDownloading) {
       return _buildIsraelProgressSection();
     }
 
@@ -685,9 +590,12 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   }
 
   Widget _buildIsraelProgressSection() {
-    final progress = _israelTotalTiles > 0
-        ? _israelDownloadedTiles / _israelTotalTiles
-        : 0.0;
+    final downloaded = _tileCacheService.israelDownloadedTiles;
+    final total = _tileCacheService.israelTotalTiles;
+    final failed = _tileCacheService.israelFailedTiles;
+    final currentType = _tileCacheService.israelCurrentType;
+    final typesCompleted = _tileCacheService.israelTypesCompleted;
+    final progress = total > 0 ? downloaded / total : 0.0;
 
     return Card(
       child: Padding(
@@ -708,10 +616,10 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
           const SizedBox(height: 16),
           LinearProgressIndicator(value: progress),
           const SizedBox(height: 8),
-          _buildStatRow('סוג נוכחי', '$_israelCurrentType ($_israelTypesCompleted/3)'),
-          _buildStatRow('הורדו', '$_israelDownloadedTiles / $_israelTotalTiles'),
-          if (_israelFailedTiles > 0)
-            _buildStatRow('נכשלו', '$_israelFailedTiles'),
+          _buildStatRow('סוג נוכחי', '$currentType ($typesCompleted/3)'),
+          _buildStatRow('הורדו', '$downloaded / $total'),
+          if (failed > 0)
+            _buildStatRow('נכשלו', '$failed'),
           _buildStatRow('אחוז', '${(progress * 100).toStringAsFixed(1)}%'),
           const SizedBox(height: 12),
           SizedBox(

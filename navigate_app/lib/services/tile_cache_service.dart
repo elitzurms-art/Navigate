@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
+import 'package:latlong2/latlong.dart';
 import '../core/map_config.dart';
 
 /// שירות cache אריחי מפה — singleton
@@ -14,6 +15,33 @@ class TileCacheService {
   static const _storeName = 'navigate_cache';
   bool _initialized = false;
   int _nextInstanceId = 0;
+
+  // ─── Broadcast stream for UI state updates ───
+  final _stateController = StreamController<void>.broadcast();
+  Stream<void> get onStateChanged => _stateController.stream;
+
+  void _notifyStateChanged() {
+    if (!_stateController.isClosed) {
+      _stateController.add(null);
+    }
+  }
+
+  // ─── Region download state ───
+  bool isRegionDownloading = false;
+  int regionDownloadedTiles = 0;
+  int regionTotalTiles = 0;
+  int regionFailedTiles = 0;
+  StreamSubscription<DownloadProgress>? _regionSub;
+
+  // ─── Israel download state ───
+  bool isIsraelDownloading = false;
+  int israelDownloadedTiles = 0;
+  int israelTotalTiles = 0;
+  int israelFailedTiles = 0;
+  String israelCurrentType = '';
+  int israelTypesCompleted = 0;
+  StreamSubscription<DownloadProgress>? _israelSub;
+  bool _israelCancelled = false;
 
   /// אתחול — קריאה חד-פעמית ב-main.dart
   Future<void> initialize() async {
@@ -45,7 +73,7 @@ class TileCacheService {
     );
   }
 
-  /// הורדת אריחים לאזור מסוים
+  /// הורדת אריחים לאזור מסוים (low-level — מחזיר stream)
   Stream<DownloadProgress> downloadRegion({
     required LatLngBounds bounds,
     required MapType mapType,
@@ -75,6 +103,147 @@ class TileCacheService {
       skipSeaTiles: true,
       instanceId: instanceId,
     );
+  }
+
+  // ─── Managed region download (persists across screen navigation) ───
+
+  /// התחלת הורדת אזור מנוהלת
+  void startRegionDownload({
+    required LatLngBounds bounds,
+    required MapType mapType,
+    required int minZoom,
+    required int maxZoom,
+  }) {
+    if (isRegionDownloading) return;
+
+    regionDownloadedTiles = 0;
+    regionTotalTiles = countTiles(bounds: bounds, minZoom: minZoom, maxZoom: maxZoom);
+    regionFailedTiles = 0;
+    isRegionDownloading = true;
+    _notifyStateChanged();
+
+    _regionSub = downloadRegion(
+      bounds: bounds,
+      mapType: mapType,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    ).listen(
+      (progress) {
+        regionDownloadedTiles = progress.cachedTiles + progress.skippedTiles;
+        regionTotalTiles = progress.maxTiles;
+        regionFailedTiles = progress.failedTiles;
+        if (progress.isComplete) {
+          isRegionDownloading = false;
+          _regionSub = null;
+        }
+        _notifyStateChanged();
+      },
+      onError: (error) {
+        print('DEBUG TileCacheService: region download error: $error');
+        isRegionDownloading = false;
+        _regionSub = null;
+        _notifyStateChanged();
+      },
+      onDone: () {
+        isRegionDownloading = false;
+        _regionSub = null;
+        _notifyStateChanged();
+      },
+    );
+  }
+
+  /// ביטול הורדת אזור
+  void cancelRegionDownload() {
+    _regionSub?.cancel();
+    _regionSub = null;
+    isRegionDownloading = false;
+    _notifyStateChanged();
+  }
+
+  // ─── Managed Israel download (persists across screen navigation) ───
+
+  /// התחלת הורדת מפות ישראל מנוהלת
+  Future<void> startIsraelDownload({
+    required int minZoom,
+    required int maxZoom,
+  }) async {
+    if (isIsraelDownloading) return;
+
+    final mapConfig = MapConfig();
+    const b = MapConfig.israelBounds;
+    final bounds = LatLngBounds(
+      LatLng(b.minLat, b.minLng),
+      LatLng(b.maxLat, b.maxLng),
+    );
+
+    // חישוב סך אריחים
+    int total = 0;
+    for (final type in MapType.values) {
+      final maxZ = maxZoom.clamp(0, mapConfig.maxZoom(type).toInt());
+      total += countTiles(bounds: bounds, minZoom: minZoom, maxZoom: maxZ);
+    }
+
+    israelDownloadedTiles = 0;
+    israelTotalTiles = total;
+    israelFailedTiles = 0;
+    israelTypesCompleted = 0;
+    isIsraelDownloading = true;
+    _israelCancelled = false;
+    _notifyStateChanged();
+
+    int cumulativeDownloaded = 0;
+    int cumulativeFailed = 0;
+
+    for (final type in MapType.values) {
+      if (_israelCancelled) break;
+
+      final maxZ = maxZoom.clamp(0, mapConfig.maxZoom(type).toInt());
+      israelCurrentType = mapConfig.label(type);
+      _notifyStateChanged();
+
+      final completer = Completer<void>();
+      _israelSub = downloadRegion(
+        bounds: bounds,
+        mapType: type,
+        minZoom: minZoom,
+        maxZoom: maxZ,
+      ).listen(
+        (progress) {
+          israelDownloadedTiles = cumulativeDownloaded +
+              progress.cachedTiles + progress.skippedTiles;
+          israelFailedTiles = cumulativeFailed + progress.failedTiles;
+          if (progress.isComplete && !completer.isCompleted) {
+            cumulativeDownloaded += progress.cachedTiles + progress.skippedTiles;
+            cumulativeFailed += progress.failedTiles;
+            israelTypesCompleted++;
+            completer.complete();
+          }
+          _notifyStateChanged();
+        },
+        onError: (error) {
+          print('DEBUG TileCacheService: Israel download error ($type): $error');
+          if (!completer.isCompleted) completer.complete();
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+
+      await completer.future;
+    }
+
+    isIsraelDownloading = false;
+    _israelSub = null;
+    _notifyStateChanged();
+  }
+
+  /// ביטול הורדת מפות ישראל
+  void cancelIsraelDownload() {
+    _israelCancelled = true;
+    _israelSub?.cancel();
+    _israelSub = null;
+    isIsraelDownloading = false;
+    _notifyStateChanged();
   }
 
   /// ספירת אריחים צפויה להורדה (חישוב מתמטי לפי slippy map)
