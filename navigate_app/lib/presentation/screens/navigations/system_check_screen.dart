@@ -58,6 +58,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   // סטטוס מנווטים (סימולציה)
   Map<String, NavigatorStatus> _navigatorStatuses = {};
   Map<String, domain_user.User> _usersCache = {};
+  // שמות מנווטים מ-Firestore (fallback כשאין ב-usersCache)
+  final Map<String, String> _navigatorNames = {};
 
   // סטטוס מערכת למנווט
   bool _hasGpsPermission = false;
@@ -425,6 +427,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           for (final doc in snapshot.docs) {
             final data = doc.data();
             final navigatorId = data['navigatorId'] as String? ?? doc.id;
+            final navigatorName = data['navigatorName'] as String?;
+            if (navigatorName != null && navigatorName.isNotEmpty) {
+              _navigatorNames[navigatorId] = navigatorName;
+            }
 
             final posUpdatedAt = data['positionUpdatedAt'];
             DateTime? posTime;
@@ -482,6 +488,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         for (final doc in snapshot.docs) {
           final data = doc.data();
           final navigatorId = data['navigatorId'] as String? ?? doc.id;
+          final navigatorName = data['navigatorName'] as String?;
+          if (navigatorName != null && navigatorName.isNotEmpty) {
+            _navigatorNames[navigatorId] = navigatorName;
+          }
           print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']} posUpdatedAt=${data['positionUpdatedAt']}');
 
           final posUpdatedAt = data['positionUpdatedAt'];
@@ -600,6 +610,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     final user = _usersCache[navigatorId];
     if (user != null && user.fullName.isNotEmpty) {
       return user.fullName;
+    }
+    // fallback — שם מ-Firestore system_status
+    final firestoreName = _navigatorNames[navigatorId];
+    if (firestoreName != null && firestoreName.isNotEmpty) {
+      return firestoreName;
     }
     return navigatorId;
   }

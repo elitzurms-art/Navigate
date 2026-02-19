@@ -589,6 +589,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       final data = <String, dynamic>{
         'navigatorId': uid,
+        'navigatorName': widget.currentUser.fullName,
         'isConnected': lastPoint != null || _gpsSource != PositionSource.none,
         'batteryLevel': _batteryLevel >= 0 ? _batteryLevel : null,
         'hasGPS': _gpsSource == PositionSource.gps,
@@ -875,6 +876,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (newWalkieTalkieEnabled != _overrideWalkieTalkieEnabled) {
       _overrideWalkieTalkieEnabled = newWalkieTalkieEnabled;
       if (mounted) setState(() {});
+    }
+
+    // קריאת דריסת תדירות GPS
+    final overrideGpsInterval = data['overrideGpsIntervalSeconds'] as int?;
+    final effectiveInterval = overrideGpsInterval ?? _nav.gpsUpdateIntervalSeconds;
+    if (effectiveInterval != _gpsTracker.intervalSeconds) {
+      print('DEBUG ActiveView: GPS interval override changed to $effectiveInterval (override=$overrideGpsInterval, default=${_nav.gpsUpdateIntervalSeconds})');
+      _gpsTracker.updateInterval(effectiveInterval);
+      // עדכון timer שמירה ל-Drift בהתאם
+      _trackSaveTimer?.cancel();
+      final saveInterval = effectiveInterval < 10 ? 10 : (effectiveInterval < 30 ? effectiveInterval : 30);
+      _trackSaveTimer = Timer.periodic(
+        Duration(seconds: saveInterval),
+        (_) => _saveTrackPoints(),
+      );
     }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');

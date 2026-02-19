@@ -105,6 +105,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
   final Map<String, bool> _navigatorOverrideWalkieTalkieEnabled = {};
+  final Map<String, int?> _navigatorGpsIntervalOverride = {};
 
   // Voice (PTT)
   VoiceService? _voiceService;
@@ -230,6 +231,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Future<void> _initializeNavigators() async {
     // אתחול ראשוני
     final alerts = widget.navigation.alerts;
+    print('DEBUG ManagementScreen init: walkieTalkieEnabled=${widget.navigation.communicationSettings.walkieTalkieEnabled}, allowOpenMap=${widget.navigation.allowOpenMap}, showSelfLocation=${widget.navigation.showSelfLocation}');
     for (final navigatorId in widget.navigation.routes.keys) {
       _selectedNavigators[navigatorId] = true;
       _navigatorData[navigatorId] = NavigatorLiveData(
@@ -243,9 +245,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       );
       _showNavigatorTrack[navigatorId] = false;
       _showPlannedAxis[navigatorId] = false;
-      _navigatorOverrideAllowOpenMap[navigatorId] = false;
-      _navigatorOverrideShowSelfLocation[navigatorId] = false;
-      _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+      // ברירת מחדל מהגדרות הניווט — המפקד יכול לשנות פר-מנווט
+      _navigatorOverrideAllowOpenMap[navigatorId] = widget.navigation.allowOpenMap;
+      _navigatorOverrideShowSelfLocation[navigatorId] = widget.navigation.showSelfLocation;
+      _navigatorOverrideShowRouteOnMap[navigatorId] = widget.navigation.showRouteOnMap;
+      _navigatorOverrideWalkieTalkieEnabled[navigatorId] = widget.navigation.communicationSettings.walkieTalkieEnabled;
+      _navigatorGpsIntervalOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
 
       // ברירת מחדל טוגלי התראות — כל הסוגים, ברירת מחדל מהגדרות הניווט
       _navigatorAlertOverrides[navigatorId] = {
@@ -893,12 +898,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         // קריאת isDisqualified מה-track doc
         liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
 
-        // cache trackId + קריאת דריסות מפה
+        // cache trackId + קריאת דריסות מפה (רק אם הוגדר ב-Firestore — אחרת נשאר default מהגדרות הניווט)
         _navigatorTrackIds[navigatorId] = doc.id;
-        _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
-        _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
-        _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
-        _navigatorOverrideWalkieTalkieEnabled[navigatorId] = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
+        if (data.containsKey('overrideAllowOpenMap')) {
+          _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
+        }
+        if (data.containsKey('overrideShowSelfLocation')) {
+          _navigatorOverrideShowSelfLocation[navigatorId] = data['overrideShowSelfLocation'] as bool? ?? false;
+        }
+        if (data.containsKey('overrideShowRouteOnMap')) {
+          _navigatorOverrideShowRouteOnMap[navigatorId] = data['overrideShowRouteOnMap'] as bool? ?? false;
+        }
+        if (data.containsKey('overrideWalkieTalkieEnabled')) {
+          _navigatorOverrideWalkieTalkieEnabled[navigatorId] = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
+        }
+        if (data.containsKey('overrideGpsIntervalSeconds')) {
+          _navigatorGpsIntervalOverride[navigatorId] = data['overrideGpsIntervalSeconds'] as int?;
+        }
 
         // קריאת forcePositionSource מה-track doc
         final trackForceSource = data['forcePositionSource'] as String?;
@@ -3116,6 +3132,69 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           }
                         },
                       ),
+
+                      // 6.5 תדירות GPS
+                      const Divider(height: 16),
+                      const Text('תדירות GPS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      () {
+                        final defaultInterval = widget.navigation.gpsUpdateIntervalSeconds;
+                        final currentValue = _navigatorGpsIntervalOverride[navigatorId] ?? defaultInterval;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('$currentValue שניות', style: const TextStyle(fontSize: 13)),
+                            Text('ברירת מחדל: $defaultInterval שניות',
+                                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                            Slider(
+                              value: currentValue.toDouble(),
+                              min: 1,
+                              max: 120,
+                              divisions: 119,
+                              label: '$currentValue',
+                              onChanged: (v) {
+                                setState(() {
+                                  final intVal = v.round();
+                                  _navigatorGpsIntervalOverride[navigatorId] =
+                                      intVal == defaultInterval ? null : intVal;
+                                });
+                                setSheetState(() {});
+                              },
+                              onChangeEnd: (v) {
+                                final intVal = v.round();
+                                final override = intVal == defaultInterval ? null : intVal;
+                                _navigatorGpsIntervalOverride[navigatorId] = override;
+                                final trackId = _navigatorTrackIds[navigatorId];
+                                if (trackId != null) {
+                                  FirebaseFirestore.instance
+                                      .collection(AppConstants.navigationTracksCollection)
+                                      .doc(trackId)
+                                      .update({'overrideGpsIntervalSeconds': override});
+                                }
+                              },
+                            ),
+                            if (_navigatorGpsIntervalOverride[navigatorId] != null)
+                              Align(
+                                alignment: AlignmentDirectional.centerEnd,
+                                child: TextButton.icon(
+                                  icon: const Icon(Icons.restart_alt, size: 16),
+                                  label: const Text('חזרה לברירת מחדל', style: TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    setState(() => _navigatorGpsIntervalOverride[navigatorId] = null);
+                                    setSheetState(() {});
+                                    final trackId = _navigatorTrackIds[navigatorId];
+                                    if (trackId != null) {
+                                      FirebaseFirestore.instance
+                                          .collection(AppConstants.navigationTracksCollection)
+                                          .doc(trackId)
+                                          .update({'overrideGpsIntervalSeconds': null});
+                                    }
+                                  },
+                                ),
+                              ),
+                          ],
+                        );
+                      }(),
 
                       // 7. נתונים חיים
                       const Divider(height: 20),

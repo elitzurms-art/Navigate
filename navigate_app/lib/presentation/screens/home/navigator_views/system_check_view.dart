@@ -177,6 +177,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
       final data = <String, dynamic>{
         'navigatorId': uid,
+        'navigatorName': widget.currentUser.fullName,
         'isConnected': _currentPosition != null,
         'batteryLevel': _batteryLevel,
         'hasGPS': _hasGpsPermission && _hasLocationService,

@@ -272,6 +272,38 @@ class GPSTrackingService {
     );
   }
 
+  /// עדכון אינטרוול דגימה בזמן אמת (ללא איפוס נקודות)
+  void updateInterval(int newIntervalSeconds) {
+    if (newIntervalSeconds == _intervalSeconds || !_isTracking) return;
+
+    print('DEBUG GPSTrackingService: updateInterval $_intervalSeconds -> $newIntervalSeconds');
+    _intervalSeconds = newIntervalSeconds;
+
+    // ביטול מנגנון דגימה קיים
+    _trackingTimer?.cancel();
+    _trackingTimer = null;
+    _geolocatorStreamSub?.cancel();
+    _geolocatorStreamSub = null;
+
+    // הפעלה מחדש — cellTower/pdr תמיד timer, אחרת לפי סף 5 שניות
+    if (_forcePositionSource == 'cellTower' || _forcePositionSource == 'pdr') {
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds),
+        (timer) => _recordCurrentPosition(),
+      );
+      print('GPS Tracking interval updated (timer mode, forced $_forcePositionSource) - כל $_intervalSeconds שניות');
+    } else if (_intervalSeconds <= 5) {
+      _startPositionStream();
+      print('GPS Tracking interval updated (stream mode) - כל $_intervalSeconds שניות');
+    } else {
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds),
+        (timer) => _recordCurrentPosition(),
+      );
+      print('GPS Tracking interval updated (timer mode) - כל $_intervalSeconds שניות');
+    }
+  }
+
   /// עצירת מעקב GPS
   Future<void> stopTracking() async {
     if (!_isTracking) return;
