@@ -28,6 +28,7 @@ import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'manual_position_pin_screen.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/voice_messages_panel.dart';
@@ -587,6 +588,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       final points = _gpsTracker.trackPoints;
       final lastPoint = points.isNotEmpty ? points.last : null;
 
+      // בדיקת הרשאות מיקרופון וטלפון
+      final micStatus = await Permission.microphone.status;
+      final phoneStatus = await Permission.phone.status;
+
       final data = <String, dynamic>{
         'navigatorId': uid,
         'navigatorName': widget.currentUser.fullName,
@@ -596,6 +601,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         'gpsAccuracy': lastPoint?.accuracy ?? -1,
         'receptionLevel': _estimateReceptionLevel(),
         'positionSource': _gpsSource.name,
+        'hasMicrophonePermission': micStatus.isGranted,
+        'hasPhonePermission': phoneStatus.isGranted,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 

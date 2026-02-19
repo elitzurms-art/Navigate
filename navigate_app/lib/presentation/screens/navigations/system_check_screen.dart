@@ -2439,6 +2439,21 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           child: const Text('הורד'),
         );
         break;
+      case MapDownloadStatus.interrupted:
+        icon = Icons.pause_circle_filled;
+        color = Colors.orange;
+        final pct = (_mapDownloadProgress * 100).toStringAsFixed(0);
+        statusText = 'הורדת מפות הופסקה ($pct%) — ימשיך אוטומטית';
+        trailing = SizedBox(
+          width: 48,
+          height: 48,
+          child: CircularProgressIndicator(
+            value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
+            strokeWidth: 3,
+            color: Colors.orange,
+          ),
+        );
+        break;
     }
 
     return Card(
