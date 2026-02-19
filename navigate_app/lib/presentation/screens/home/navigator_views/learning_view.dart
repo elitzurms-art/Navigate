@@ -942,11 +942,27 @@ class _LearningViewState extends State<LearningView>
             const SizedBox(height: 8),
           ],
 
+          // הערה — אם הציר טרם נערך
+          if (route.plannedPath.isEmpty &&
+              (approvalStatus == 'not_submitted' || approvalStatus == 'rejected'))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'יש לערוך את הציר על המפה לפני שליחה לאישור',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.orange[700],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+
           // כפתור שליחה/סטטוס
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: (approvalStatus == 'not_submitted' || approvalStatus == 'rejected')
+                      && route.plannedPath.isNotEmpty
                   ? _submitRouteForApproval
                   : null,
               icon: Icon(

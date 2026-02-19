@@ -9,6 +9,8 @@ import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/user.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../services/gps_service.dart';
+import '../../../../services/voice_service.dart';
+import '../../../widgets/voice_messages_panel.dart';
 
 /// תצוגת בדיקת מערכות למנווט
 class SystemCheckView extends StatefulWidget {
@@ -28,6 +30,7 @@ class SystemCheckView extends StatefulWidget {
 class _SystemCheckViewState extends State<SystemCheckView> {
   final Battery _battery = Battery();
   final GpsService _gpsService = GpsService();
+  VoiceService? _voiceService;
 
   int _batteryLevel = -1; // -1 = לא זמין
   bool _isCheckingBattery = true;
@@ -55,6 +58,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   void dispose() {
     _periodicTimer?.cancel();
     _gpsService.dispose();
+    _voiceService?.dispose();
     super.dispose();
   }
 
@@ -110,6 +114,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'location': await Permission.location.status,
         'locationAlways': await Permission.locationAlways.status,
         'notification': await Permission.notification.status,
+        'microphone': await Permission.microphone.status,
+        'phone': await Permission.phone.status,
       };
       if (mounted) {
         setState(() {
@@ -177,6 +183,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
         'positionSource': _gpsService.lastPositionSource.name,
+        'hasMicrophonePermission': _permissions['microphone']?.isGranted ?? false,
+        'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
         'updatedAt': FieldValue.serverTimestamp(),
       };
       // רק מעדכן מיקום כשיש — לא דורס עם null
@@ -260,6 +268,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       case 'location': return 'מיקום (GPS)';
       case 'locationAlways': return 'מיקום ברקע';
       case 'notification': return 'התראות';
+      case 'microphone': return 'מיקרופון';
+      case 'phone': return 'טלפון';
       default: return key;
     }
   }
@@ -277,6 +287,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       case 'location': return Permission.location;
       case 'locationAlways': return Permission.locationAlways;
       case 'notification': return Permission.notification;
+      case 'microphone': return Permission.microphone;
+      case 'phone': return Permission.phone;
       default: return Permission.location;
     }
   }
@@ -308,88 +320,109 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     final route = widget.navigation.routes[widget.currentUser.uid];
     final routeApproved = route?.isApproved ?? false;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'בדיקת מערכות',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
+    final pttEnabled = widget.navigation.communicationSettings.walkieTalkieEnabled;
+
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'בדיקת מערכות',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            widget.navigation.name,
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 24),
+                const SizedBox(height: 8),
+                Text(
+                  widget.navigation.name,
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 24),
 
-          // סוללה
-          _checkCard(
-            icon: _batteryLevel < 0
-                ? Icons.battery_unknown
-                : _batteryLevel < 20
-                    ? Icons.battery_alert
-                    : Icons.battery_std,
-            title: 'סוללה',
-            value: _isCheckingBattery ? 'בודק...' : _batteryText(),
-            color: _isCheckingBattery ? Colors.grey : _batteryColor(),
-          ),
+                // סוללה
+                _checkCard(
+                  icon: _batteryLevel < 0
+                      ? Icons.battery_unknown
+                      : _batteryLevel < 20
+                          ? Icons.battery_alert
+                          : Icons.battery_std,
+                  title: 'סוללה',
+                  value: _isCheckingBattery ? 'בודק...' : _batteryText(),
+                  color: _isCheckingBattery ? Colors.grey : _batteryColor(),
+                ),
 
-          // GPS
-          _checkCard(
-            icon: (_hasGpsPermission && _hasLocationService) ? Icons.gps_fixed : Icons.gps_off,
-            title: 'GPS',
-            value: _isCheckingGps ? 'בודק...' : _gpsText(),
-            color: _isCheckingGps ? Colors.grey : _gpsColor(),
-          ),
+                // GPS
+                _checkCard(
+                  icon: (_hasGpsPermission && _hasLocationService) ? Icons.gps_fixed : Icons.gps_off,
+                  title: 'GPS',
+                  value: _isCheckingGps ? 'בודק...' : _gpsText(),
+                  color: _isCheckingGps ? Colors.grey : _gpsColor(),
+                ),
 
-          // קישוריות
-          _checkCard(
-            icon: Icons.signal_cellular_alt,
-            title: 'קישוריות',
-            value: _isCheckingConnectivity
-                ? 'בודק...'
-                : _connectivityLabel(_connectivity),
-            color: _isCheckingConnectivity
-                ? Colors.grey
-                : _connectivityColor(_connectivity),
-          ),
+                // קישוריות
+                _checkCard(
+                  icon: Icons.signal_cellular_alt,
+                  title: 'קישוריות',
+                  value: _isCheckingConnectivity
+                      ? 'בודק...'
+                      : _connectivityLabel(_connectivity),
+                  color: _isCheckingConnectivity
+                      ? Colors.grey
+                      : _connectivityColor(_connectivity),
+                ),
 
-          // אישור ציר
-          _checkCard(
-            icon: routeApproved ? Icons.check_circle : Icons.cancel,
-            title: 'אישור ציר',
-            value: routeApproved ? 'אושר' : 'לא אושר',
-            color: routeApproved ? Colors.green : Colors.red,
-          ),
+                // אישור ציר
+                _checkCard(
+                  icon: routeApproved ? Icons.check_circle : Icons.cancel,
+                  title: 'אישור ציר',
+                  value: routeApproved ? 'אושר' : 'לא אושר',
+                  color: routeApproved ? Colors.green : Colors.red,
+                ),
 
-          const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-          // הרשאות מכשיר
-          _buildPermissionsSection(),
+                // הרשאות מכשיר
+                _buildPermissionsSection(),
 
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                setState(() {
-                  _isCheckingBattery = true;
-                  _isCheckingConnectivity = true;
-                  _isCheckingGps = true;
-                  _isCheckingPermissions = true;
-                });
-                _runChecks();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('בדיקה מחדש'),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _isCheckingBattery = true;
+                        _isCheckingConnectivity = true;
+                        _isCheckingGps = true;
+                        _isCheckingPermissions = true;
+                      });
+                      _runChecks();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('בדיקה מחדש'),
+                  ),
+                ),
+              ],
             ),
           ),
+        ),
+        // ווקי טוקי
+        if (pttEnabled) ...[
+          Builder(builder: (context) {
+            _voiceService ??= VoiceService();
+            return VoiceMessagesPanel(
+              navigationId: widget.navigation.id,
+              currentUser: widget.currentUser,
+              voiceService: _voiceService!,
+              isCommander: false,
+              enabled: true,
+            );
+          }),
         ],
-      ),
+      ],
     );
   }
 

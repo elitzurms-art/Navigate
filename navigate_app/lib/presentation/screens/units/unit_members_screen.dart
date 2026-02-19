@@ -150,14 +150,22 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _approveUser(domain.User user, String unitId) async {
-    final isCommander = _commanderToggle[user.uid] ?? false;
-    final noCommanders = _noCommandersByUnit[unitId] ?? false;
-    String? role = isCommander
-        ? (noCommanders ? 'unit_admin' : 'commander')
-        : null;
+    final hasNoMembers = _hasNoApprovedMembers(unitId);
+    String? role;
 
-    if (!isCommander && noCommanders) {
+    if (hasNoMembers) {
+      // אין חברים מאושרים ביחידה — חובה לאשר כמנהל יחידה
       role = 'unit_admin';
+    } else {
+      final isCommander = _commanderToggle[user.uid] ?? false;
+      final noCommanders = _noCommandersByUnit[unitId] ?? false;
+      role = isCommander
+          ? (noCommanders ? 'unit_admin' : 'commander')
+          : null;
+
+      if (!isCommander && noCommanders) {
+        role = 'unit_admin';
+      }
     }
 
     await _userRepository.approveUser(user.uid, role: role);
@@ -216,6 +224,18 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
 
   Future<void> _changeRole(domain.User user) async {
     if (!_canChangeRole(user)) return;
+
+    if (_isSoleUnitAdmin(user)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('לא ניתן לשנות תפקיד — מנהל יחידה יחיד'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
     final newRole = await showDialog<String>(
       context: context,
@@ -404,6 +424,26 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
 
   bool _canChangeRole(domain.User user) {
     return user.role != 'admin' && user.role != 'developer';
+  }
+
+  /// האם המשתמש הוא מנהל היחידה היחיד ביחידה שלו
+  bool _isSoleUnitAdmin(domain.User user) {
+    if (user.role != 'unit_admin') return false;
+    for (final entry in _membersByUnit.entries) {
+      final members = entry.value;
+      if (members.any((m) => m.uid == user.uid)) {
+        final unitAdminCount =
+            members.where((m) => m.role == 'unit_admin').length;
+        return unitAdminCount <= 1;
+      }
+    }
+    return false;
+  }
+
+  /// האם ליחידה אין חברים מאושרים כלל
+  bool _hasNoApprovedMembers(String unitId) {
+    final members = _membersByUnit[unitId] ?? [];
+    return members.isEmpty;
   }
 
   // ---------------------------------------------------------------------------
@@ -766,8 +806,9 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
 
   Widget _buildPendingUserTile(
       domain.User user, String unitId, bool noCommanders) {
+    final hasNoMembers = _hasNoApprovedMembers(unitId);
     final isCommanderToggle = _commanderToggle[user.uid] ?? false;
-    final toggleLabel = noCommanders ? 'מנהל יחידה' : 'מפקד';
+    final toggleLabel = (hasNoMembers || noCommanders) ? 'מנהל יחידה' : 'מפקד';
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -817,7 +858,20 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            if (noCommanders && !isCommanderToggle)
+            if (hasNoMembers)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  'ליחידה אין חברים — חובה לאשר כמנהל יחידה',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.bold,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              )
+            else if (noCommanders && !isCommanderToggle)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
@@ -832,16 +886,20 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
             Row(
               children: [
                 Switch(
-                  value: isCommanderToggle,
-                  onChanged: (val) {
-                    setState(() => _commanderToggle[user.uid] = val);
-                  },
+                  value: hasNoMembers ? true : isCommanderToggle,
+                  onChanged: hasNoMembers
+                      ? null // נעול — חובה מנהל יחידה
+                      : (val) {
+                          setState(() => _commanderToggle[user.uid] = val);
+                        },
                 ),
                 Text(
                   toggleLabel,
                   style: TextStyle(
-                    color: isCommanderToggle ? Colors.blue : Colors.grey,
-                    fontWeight: isCommanderToggle
+                    color: (hasNoMembers || isCommanderToggle)
+                        ? Colors.blue
+                        : Colors.grey,
+                    fontWeight: (hasNoMembers || isCommanderToggle)
                         ? FontWeight.bold
                         : FontWeight.normal,
                   ),
@@ -869,6 +927,18 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
   }
 
   Future<void> _removeFromUnit(domain.User user) async {
+    if (_isSoleUnitAdmin(user)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('לא ניתן להסיר — מנהל יחידה יחיד'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     final roleNote = (user.role == 'commander' || user.role == 'unit_admin')
         ? '\nתפקידו ישתנה למנווט.'
         : '';
@@ -909,6 +979,7 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
 
   Widget _buildMemberTile(domain.User user) {
     final canChange = _canChangeRole(user);
+    final isSoleAdmin = _isSoleUnitAdmin(user);
     final roleColor = _getRoleColor(user.role);
 
     return Card(
@@ -926,14 +997,28 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
           user.fullName.isNotEmpty ? user.fullName : user.uid,
           style: const TextStyle(fontWeight: FontWeight.w500),
         ),
-        subtitle: Text(
-          '${user.uid} • ${user.phoneNumber}',
-          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${user.uid} • ${user.phoneNumber}',
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            ),
+            if (isSoleAdmin)
+              Text(
+                'מנהל יחידה יחיד — לא ניתן לשנות או להסיר',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.orange[700],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (canChange)
+            if (canChange && !isSoleAdmin)
               ActionChip(
                 label: Text(
                   _getRoleDisplayName(user.role),
@@ -950,10 +1035,13 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
                   _getRoleDisplayName(user.role),
                   style: TextStyle(color: roleColor, fontSize: 12),
                 ),
+                avatar: isSoleAdmin
+                    ? Icon(Icons.lock, size: 14, color: roleColor)
+                    : null,
                 backgroundColor: roleColor.withOpacity(0.1),
                 side: BorderSide(color: roleColor.withOpacity(0.3)),
               ),
-            if (canChange) ...[
+            if (canChange && !isSoleAdmin) ...[
               const SizedBox(width: 4),
               IconButton(
                 icon: Icon(Icons.person_remove,

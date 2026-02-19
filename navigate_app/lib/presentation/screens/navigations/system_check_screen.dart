@@ -294,6 +294,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'longitude': _currentPosition?.longitude,
         'positionSource': _gpsService.lastPositionSource.name,
         'mapsStatus': _mapDownloadStatus.name,
+        'hasMicrophonePermission': _permissionStatuses['microphone']?.isGranted ?? false,
+        'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -317,6 +319,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'location': await Permission.location.status,
       'locationAlways': await Permission.locationAlways.status,
       'notification': await Permission.notification.status,
+      'microphone': await Permission.microphone.status,
+      'phone': await Permission.phone.status,
     };
   }
 
@@ -441,6 +445,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               positionUpdatedAt: posTime,
               gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
               mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
+              hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
+              hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
             );
           }
         });
@@ -496,6 +502,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             positionSource: data['positionSource'] as String? ?? 'gps',
             positionUpdatedAt: posTime,
             gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
+            hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
+            hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
           );
         }
       });
@@ -1163,6 +1171,21 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               ),
               const Divider(),
 
+              // הרשאות מיקרופון וטלפון
+              _buildDetailRow(
+                'מיקרופון',
+                status.hasMicrophonePermission ? 'מאושר' : 'לא מאושר',
+                Icons.mic,
+                status.hasMicrophonePermission ? Colors.green : Colors.red,
+              ),
+              _buildDetailRow(
+                'טלפון',
+                status.hasPhonePermission ? 'מאושר' : 'לא מאושר',
+                Icons.phone_android,
+                status.hasPhonePermission ? Colors.green : Colors.red,
+              ),
+              const Divider(),
+
               // פרטי משתמש
               if (user != null) ...[
                 _buildDetailRow(
@@ -1507,7 +1530,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                                   border: Border.all(color: color, width: 2),
                                 ),
                                 child: Text(
-                                  navigatorId,
+                                  _getNavigatorDisplayName(navigatorId),
                                   style: TextStyle(
                                     fontSize: 8,
                                     fontWeight: FontWeight.bold,
@@ -2564,6 +2587,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'location': await Permission.location.status,
       'locationAlways': await Permission.locationAlways.status,
       'notification': await Permission.notification.status,
+      'microphone': await Permission.microphone.status,
+      'phone': await Permission.phone.status,
     };
   }
 
@@ -2575,6 +2600,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return 'מיקום ברקע';
       case 'notification':
         return 'התראות';
+      case 'microphone':
+        return 'מיקרופון';
+      case 'phone':
+        return 'טלפון';
       default:
         return key;
     }
@@ -2596,6 +2625,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return Permission.locationAlways;
       case 'notification':
         return Permission.notification;
+      case 'microphone':
+        return Permission.microphone;
+      case 'phone':
+        return Permission.phone;
       default:
         return Permission.location;
     }
@@ -2614,6 +2647,8 @@ class NavigatorStatus {
   final DateTime? positionUpdatedAt; // מתי עודכן המיקום לאחרונה
   final double gpsAccuracy; // -1 = לא ידוע
   final String mapsStatus; // 'notStarted', 'downloading', 'completed', 'failed'
+  final bool hasMicrophonePermission;
+  final bool hasPhonePermission;
 
   NavigatorStatus({
     required this.isConnected,
@@ -2626,6 +2661,8 @@ class NavigatorStatus {
     this.positionUpdatedAt,
     this.gpsAccuracy = -1,
     this.mapsStatus = 'notStarted',
+    this.hasMicrophonePermission = false,
+    this.hasPhonePermission = false,
   });
 
   bool get mapsReady => mapsStatus == 'completed';

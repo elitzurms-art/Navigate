@@ -38,6 +38,9 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
   // יחידות ללא מפקדים מאושרים — אישור ראשון = unit_admin
   final Set<String> _unitsWithoutCommanders = {};
 
+  // יחידות ללא חברים מאושרים כלל — חובה מנהל יחידה
+  final Set<String> _unitsWithNoMembers = {};
+
   @override
   void initState() {
     super.initState();
@@ -78,10 +81,12 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
       try {
         final users = await _userRepo.getAllPendingApprovalUsers();
 
-        // טעינת שמות יחידות + בדיקת יחידות ללא מפקדים
+        // טעינת שמות יחידות + בדיקת יחידות ללא מפקדים + יחידות ללא חברים
         _unitNames.clear();
         _unitsWithoutCommanders.clear();
+        _unitsWithNoMembers.clear();
         final checkedUnits = <String, bool>{};
+        final checkedMembers = <String, bool>{};
         for (final user in users) {
           final uid = user.unitId;
           if (uid != null && uid.isNotEmpty && !_unitNames.containsKey(uid)) {
@@ -92,6 +97,11 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
             final has = await _unitRepo.hasApprovedCommandersInHierarchy(uid);
             checkedUnits[uid] = has;
             if (!has) _unitsWithoutCommanders.add(uid);
+          }
+          if (uid != null && uid.isNotEmpty && !checkedMembers.containsKey(uid)) {
+            final members = await _userRepo.getApprovedUsersForUnit(uid);
+            checkedMembers[uid] = members.isNotEmpty;
+            if (members.isEmpty) _unitsWithNoMembers.add(uid);
           }
         }
 
@@ -122,15 +132,22 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
       final users = await _userRepo.getPendingApprovalUsers(allUnitIds);
 
-      // בדיקת יחידות ללא מפקדים
+      // בדיקת יחידות ללא מפקדים + יחידות ללא חברים
       _unitsWithoutCommanders.clear();
+      _unitsWithNoMembers.clear();
       final checkedUnits = <String, bool>{};
+      final checkedMembers = <String, bool>{};
       for (final user in users) {
         final uid = user.unitId;
         if (uid != null && uid.isNotEmpty && !checkedUnits.containsKey(uid)) {
           final has = await _unitRepo.hasApprovedCommandersInHierarchy(uid);
           checkedUnits[uid] = has;
           if (!has) _unitsWithoutCommanders.add(uid);
+        }
+        if (uid != null && uid.isNotEmpty && !checkedMembers.containsKey(uid)) {
+          final members = await _userRepo.getApprovedUsersForUnit(uid);
+          checkedMembers[uid] = members.isNotEmpty;
+          if (members.isEmpty) _unitsWithNoMembers.add(uid);
         }
       }
 
@@ -149,7 +166,13 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
   Future<void> _approveUser(User user) async {
     String? role;
-    if (_canAssignRoles) {
+    final hasNoMembers = user.unitId != null &&
+        _unitsWithNoMembers.contains(user.unitId);
+
+    if (hasNoMembers) {
+      // אין חברים מאושרים ביחידה — חובה מנהל יחידה
+      role = 'unit_admin';
+    } else if (_canAssignRoles) {
       final isCommander = _commanderToggle[user.uid] ?? false;
       final noCommandersInUnit = user.unitId != null &&
           _unitsWithoutCommanders.contains(user.unitId);
@@ -274,8 +297,12 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
     final unitName = _unitNames[user.unitId ?? ''];
     final noCommandersInUnit = user.unitId != null &&
         _unitsWithoutCommanders.contains(user.unitId);
-    // אם ליחידה אין מפקדים, ה-toggle הופך ל-"מנהל יחידה"
-    final toggleLabel = noCommandersInUnit ? 'מנהל יחידה' : 'מפקד';
+    final hasNoMembers = user.unitId != null &&
+        _unitsWithNoMembers.contains(user.unitId);
+    // אם ליחידה אין חברים או אין מפקדים, ה-toggle הופך ל-"מנהל יחידה"
+    final toggleLabel = (hasNoMembers || noCommandersInUnit)
+        ? 'מנהל יחידה'
+        : 'מפקד';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -337,7 +364,20 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
               const SizedBox(height: 8),
               // הערה + toggle — רק למי שיכול לקבוע תפקידים (developer/unit_admin)
               if (_canAssignRoles) ...[
-                if (noCommandersInUnit && !isCommanderToggle)
+                if (hasNoMembers)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'ליחידה אין חברים — חובה לאשר כמנהל יחידה',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.orange[700],
+                        fontWeight: FontWeight.bold,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  )
+                else if (noCommandersInUnit && !isCommanderToggle)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Text(
@@ -352,18 +392,22 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
                 Row(
                   children: [
                     Switch(
-                      value: isCommanderToggle,
-                      onChanged: (val) {
-                        setState(() {
-                          _commanderToggle[user.uid] = val;
-                        });
-                      },
+                      value: hasNoMembers ? true : isCommanderToggle,
+                      onChanged: hasNoMembers
+                          ? null
+                          : (val) {
+                              setState(() {
+                                _commanderToggle[user.uid] = val;
+                              });
+                            },
                     ),
                     Text(
                       toggleLabel,
                       style: TextStyle(
-                        color: isCommanderToggle ? Colors.blue : Colors.grey,
-                        fontWeight: isCommanderToggle
+                        color: (hasNoMembers || isCommanderToggle)
+                            ? Colors.blue
+                            : Colors.grey,
+                        fontWeight: (hasNoMembers || isCommanderToggle)
                             ? FontWeight.bold
                             : FontWeight.normal,
                       ),

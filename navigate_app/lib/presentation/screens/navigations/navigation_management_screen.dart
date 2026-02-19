@@ -247,37 +247,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       _navigatorOverrideShowSelfLocation[navigatorId] = false;
       _navigatorOverrideShowRouteOnMap[navigatorId] = false;
 
-      // ברירת מחדל טוגלי התראות — נגזר מהגדרות הניווט
-      _navigatorAlertOverrides[navigatorId] = {};
-      if (alerts.enabled) {
-        if (alerts.speedAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.speed] = true;
-        }
-        if (alerts.noMovementAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.noMovement] = true;
-        }
-        if (alerts.ggAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.boundary] = true;
-        }
-        if (alerts.routesAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.routeDeviation] = true;
-        }
-        if (alerts.nbAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.safetyPoint] = true;
-        }
-        if (alerts.navigatorProximityAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.proximity] = true;
-        }
-        if (alerts.batteryAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.battery] = true;
-        }
-        if (alerts.noReceptionAlertEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.noReception] = true;
-        }
-        if (alerts.healthCheckEnabled) {
-          _navigatorAlertOverrides[navigatorId]![AlertType.healthCheckExpired] = true;
-        }
-      }
+      // ברירת מחדל טוגלי התראות — כל הסוגים, ברירת מחדל מהגדרות הניווט
+      _navigatorAlertOverrides[navigatorId] = {
+        AlertType.speed: alerts.speedAlertEnabled,
+        AlertType.noMovement: alerts.noMovementAlertEnabled,
+        AlertType.boundary: alerts.ggAlertEnabled,
+        AlertType.routeDeviation: alerts.routesAlertEnabled,
+        AlertType.safetyPoint: alerts.nbAlertEnabled,
+        AlertType.proximity: alerts.navigatorProximityAlertEnabled,
+        AlertType.battery: alerts.batteryAlertEnabled,
+        AlertType.noReception: alerts.noReceptionAlertEnabled,
+        AlertType.healthCheckExpired: alerts.healthCheckEnabled,
+      };
     }
 
     // טעינת סטטוסים מה-DB
@@ -566,6 +547,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         } else if (batteryRaw is num) {
           liveData.batteryLevel = batteryRaw.toInt();
         }
+
+        // עדכון הרשאות מיקרופון וטלפון
+        liveData.hasMicrophonePermission = data['hasMicrophonePermission'] as bool? ?? false;
+        liveData.hasPhonePermission = data['hasPhonePermission'] as bool? ?? false;
 
         final latitude = (data['latitude'] as num?)?.toDouble();
         final longitude = (data['longitude'] as num?)?.toDouble();
@@ -2862,7 +2847,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
     final route = widget.navigation.routes[navigatorId];
-    final alerts = widget.navigation.alerts;
     final hasPlannedPath = route != null && route.plannedPath.isNotEmpty && route.isApproved;
     Timer? sheetRefreshTimer;
 
@@ -2964,6 +2948,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                         : Colors.red)
                                 : Colors.grey,
                           ),
+                          if (widget.navigation.communicationSettings.walkieTalkieEnabled) ...[
+                            _deviceChip(
+                              icon: Icons.mic,
+                              label: liveData.hasMicrophonePermission ? 'מיקרופון' : 'אין מיקרופון',
+                              color: liveData.hasMicrophonePermission ? Colors.green : Colors.red,
+                            ),
+                            _deviceChip(
+                              icon: Icons.phone_android,
+                              label: liveData.hasPhonePermission ? 'טלפון' : 'אין הרשאת טלפון',
+                              color: liveData.hasPhonePermission ? Colors.green : Colors.red,
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -3045,28 +3041,26 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         ),
 
                       // 5. התראות פר-מנווט
-                      if (alerts.enabled) ...[
-                        const Divider(height: 16),
-                        const Text('התראות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        const SizedBox(height: 4),
-                        ...(_navigatorAlertOverrides[navigatorId]?.entries ?? <MapEntry<AlertType, bool>>[]).map((entry) {
-                          return SwitchListTile(
-                            title: Text(
-                              '${entry.key.emoji} ${entry.key.displayName}',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            value: entry.value,
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            onChanged: (v) {
-                              setState(() {
-                                _navigatorAlertOverrides[navigatorId]![entry.key] = v;
-                              });
-                              setSheetState(() {});
-                            },
-                          );
-                        }),
-                      ],
+                      const Divider(height: 16),
+                      const Text('התראות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      ...(_navigatorAlertOverrides[navigatorId]?.entries ?? <MapEntry<AlertType, bool>>[]).map((entry) {
+                        return SwitchListTile(
+                          title: Text(
+                            '${entry.key.emoji} ${entry.key.displayName}',
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          value: entry.value,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (v) {
+                            setState(() {
+                              _navigatorAlertOverrides[navigatorId]![entry.key] = v;
+                            });
+                            setSheetState(() {});
+                          },
+                        );
+                      }),
 
                       // 6. הגדרות מפה פר-מנווט
                       const Divider(height: 16),
@@ -3098,28 +3092,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           onChanged: (v) {
                             setState(() {
                               _navigatorOverrideShowSelfLocation[navigatorId] = v;
-                              if (!v) {
-                                _navigatorOverrideShowRouteOnMap[navigatorId] = false;
-                              }
                             });
                             setSheetState(() {});
                             _updateNavigatorMapOverrides(navigatorId);
                           },
                         ),
-                        if (_navigatorOverrideShowSelfLocation[navigatorId] ?? false)
-                          SwitchListTile(
-                            title: const Text('הצג ציר ניווט על המפה', style: TextStyle(fontSize: 13)),
-                            value: _navigatorOverrideShowRouteOnMap[navigatorId] ?? false,
-                            dense: true,
-                            contentPadding: const EdgeInsets.only(right: 32),
-                            onChanged: (v) {
-                              setState(() {
-                                _navigatorOverrideShowRouteOnMap[navigatorId] = v;
-                              });
-                              setSheetState(() {});
-                              _updateNavigatorMapOverrides(navigatorId);
-                            },
-                          ),
                       ],
                       const SizedBox(height: 8),
                       SwitchListTile(
@@ -4146,6 +4123,8 @@ class NavigatorLiveData {
   List<CheckpointPunch> punches;
   DateTime? lastUpdate;
   int? batteryLevel; // 0-100%, null = לא ידוע
+  bool hasMicrophonePermission;
+  bool hasPhonePermission;
 
   NavigatorLiveData({
     required this.navigatorId,
@@ -4159,6 +4138,8 @@ class NavigatorLiveData {
     required this.punches,
     this.lastUpdate,
     this.batteryLevel,
+    this.hasMicrophonePermission = false,
+    this.hasPhonePermission = false,
   });
 
   /// מרחק כולל שנעבר בק"מ
