@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:drift/drift.dart' hide Query;
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 
@@ -10,6 +11,7 @@ import '../../core/constants/app_constants.dart';
 import '../../services/auto_map_download_service.dart';
 import '../datasources/local/app_database.dart';
 import '../repositories/navigation_repository.dart';
+import '../repositories/unit_repository.dart';
 
 /// כיוון סנכרון לפי סוג נתונים
 enum SyncDirection {
@@ -82,6 +84,12 @@ class SyncManager {
 
   /// האם כבר בוצע סנכרון ראשוני (למניעת כפילויות)
   bool _didInitialSync = false;
+
+  /// הקשר המשתמש הנוכחי — לסינון listeners
+  String? _currentAppUid;
+  String? _currentRole;
+  String? _currentUnitId;
+  List<String> _allowedUnitScopeIds = [];
 
   /// Completer לסנכרון ראשוני — מאפשר למסכים להמתין לסיום
   Completer<void> _initialSyncCompleter = Completer<void>();
@@ -179,6 +187,44 @@ class SyncManager {
     }
   }
 
+  /// טעינת הקשר המשתמש הנוכחי מ-SharedPreferences + DB מקומי
+  Future<void> _loadCurrentUserContext() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final loggedInUid = prefs.getString('logged_in_uid');
+      if (loggedInUid == null || loggedInUid.isEmpty) return;
+
+      _currentAppUid = loggedInUid;
+
+      // קריאת המשתמש מה-DB המקומי
+      final userRow = await (_db.select(_db.users)
+            ..where((tbl) => tbl.uid.equals(loggedInUid)))
+          .getSingleOrNull();
+
+      if (userRow != null) {
+        _currentRole = userRow.role;
+        _currentUnitId = userRow.unitId;
+
+        if (userRow.unitId != null && userRow.unitId!.isNotEmpty) {
+          final unitRepo = UnitRepository();
+          final descendantIds = await unitRepo.getDescendantIds(userRow.unitId!);
+          _allowedUnitScopeIds = [userRow.unitId!, ...descendantIds];
+        } else {
+          _allowedUnitScopeIds = [];
+        }
+
+        print('SyncManager: User context loaded — uid=$_currentAppUid, role=$_currentRole, '
+            'unitId=$_currentUnitId, scope=${_allowedUnitScopeIds.length} units');
+      }
+    } catch (e) {
+      print('SyncManager: Error loading user context: $e');
+    }
+  }
+
+  /// האם המשתמש הנוכחי הוא developer או admin
+  bool get _isDeveloperOrAdmin =>
+      _currentRole == 'developer' || _currentRole == 'admin';
+
   /// טיפול בשינוי מצב אימות
   void _onAuthStateChanged(dynamic user) {
     if (user != null && _isOnline) {
@@ -188,7 +234,7 @@ class SyncManager {
       }
       _didInitialSync = true;
       print('SyncManager: User authenticated — triggering sync.');
-      pullAll().then((_) {
+      _loadCurrentUserContext().then((_) => pullAll()).then((_) {
         if (!_initialSyncCompleter.isCompleted) {
           _initialSyncCompleter.complete();
         }
@@ -204,6 +250,10 @@ class SyncManager {
     } else if (user == null) {
       _didInitialSync = false;
       _initialSyncCompleter = Completer<void>(); // איפוס ל-login הבא
+      _currentAppUid = null;
+      _currentRole = null;
+      _currentUnitId = null;
+      _allowedUnitScopeIds = [];
       print('SyncManager: User signed out — pausing Firestore sync.');
     }
   }
@@ -1196,6 +1246,7 @@ class SyncManager {
 
   Future<void> _upsertUser(String id, Map<String, dynamic> data) async {
     final unitId = data['unitId'] as String?;
+    final firebaseUid = data['firebaseUid'] as String?;
     await _db.into(_db.users).insertOnConflictUpdate(
       UsersCompanion.insert(
         uid: id,
@@ -1212,6 +1263,7 @@ class SyncManager {
         frameworkId: const Value(null),
         unitId: Value(unitId),
         fcmToken: Value(data['fcmToken'] as String?),
+        firebaseUid: Value(data['firebaseUid'] as String?),
         isApproved: Value(_parseBool(data['isApproved']) ??
             (unitId != null && unitId.isNotEmpty)),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
@@ -1567,25 +1619,74 @@ class SyncManager {
   // Collection-level realtime listeners (units, users, areas)
   // ---------------------------------------------------------------------------
 
-  /// הפעלת listeners בזמן אמת לקולקשנים ראשיים (יחידות, משתמשים, אזורים)
+  /// הפעלת listeners בזמן אמת לקולקשנים ראשיים (יחידות, משתמשים, אזורים, עצים, ניווטים)
   void _startCollectionRealtimeListeners() {
     _startCollectionListener(AppConstants.unitsCollection);
     _startCollectionListener(AppConstants.usersCollection);
     _startCollectionListener(AppConstants.areasCollection);
     _startCollectionListener(AppConstants.navigatorTreesCollection);
+    // listener חדש לניווטים — מסונן לפי משתתפים
+    _startCollectionListener(AppConstants.navigationsCollection);
   }
 
-  /// הפעלת listener בזמן אמת לקולקשן ספציפי
+  /// בניית Query מסוננת לפי הקשר המשתמש הנוכחי
+  Query<Map<String, dynamic>> _buildScopedQuery(String collection) {
+    final baseQuery = _firestore.collection(collection);
+
+    // developer/admin — ללא סינון
+    if (_isDeveloperOrAdmin) {
+      return baseQuery;
+    }
+
+    switch (collection) {
+      case 'units':
+        // סינון לפי allowedUnitScopeIds (whereIn מוגבל ל-30)
+        if (_allowedUnitScopeIds.isNotEmpty && _allowedUnitScopeIds.length <= 30) {
+          return baseQuery.where(FieldPath.documentId, whereIn: _allowedUnitScopeIds);
+        }
+        return baseQuery;
+
+      case 'users':
+        // מנווט: רק יחידה שלו; מפקד: כל היחידות ב-scope
+        if (_currentUnitId != null && _allowedUnitScopeIds.isNotEmpty) {
+          if (_allowedUnitScopeIds.length <= 30) {
+            return baseQuery.where('unitId', whereIn: _allowedUnitScopeIds);
+          }
+          // אם יותר מ-30 — fallback ליחידה הנוכחית בלבד
+          return baseQuery.where('unitId', isEqualTo: _currentUnitId);
+        }
+        return baseQuery;
+
+      case 'navigation_trees':
+        if (_allowedUnitScopeIds.isNotEmpty && _allowedUnitScopeIds.length <= 30) {
+          return baseQuery.where('unitId', whereIn: _allowedUnitScopeIds);
+        }
+        return baseQuery;
+
+      case 'navigations':
+        // סינון לפי participants — רק ניווטים שהמשתמש הנוכחי משתתף בהם
+        if (_currentAppUid != null) {
+          return baseQuery.where('participants', arrayContains: _currentAppUid);
+        }
+        return baseQuery;
+
+      default:
+        return baseQuery;
+    }
+  }
+
+  /// הפעלת listener בזמן אמת לקולקשן ספציפי (עם סינון)
   void _startCollectionListener(String collection) {
     final listenerId = 'collection_$collection';
     if (_realtimeListeners.containsKey(listenerId)) return;
 
-    print('SyncManager: Starting realtime listener for $collection');
+    print('SyncManager: Starting scoped realtime listener for $collection');
 
     bool isFirstSnapshot = true;
 
-    final subscription = _firestore
-        .collection(collection)
+    final query = _buildScopedQuery(collection);
+
+    final subscription = query
         .snapshots()
         .listen(
       (snapshot) async {

@@ -4,6 +4,7 @@ import '../../domain/entities/user.dart' as domain;
 import '../datasources/remote/firebase_service.dart';
 import '../datasources/local/app_database.dart';
 import '../../core/constants/app_constants.dart';
+import '../../services/auth_mapping_service.dart';
 import '../sync/sync_manager.dart';
 
 /// Repository למשתמשים
@@ -109,6 +110,7 @@ class UserRepository {
           frameworkId: const Value(null), // deprecated
           unitId: Value(user.unitId),
           fcmToken: Value(user.fcmToken),
+          firebaseUid: Value(user.firebaseUid),
           isApproved: Value(user.isApproved),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
@@ -142,6 +144,7 @@ class UserRepository {
       role: row.role,
       unitId: row.unitId,
       fcmToken: row.fcmToken,
+      firebaseUid: row.firebaseUid,
       isApproved: row.isApproved,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -225,6 +228,12 @@ class UserRepository {
         data: {'role': role, 'updatedAt': now.toIso8601String()},
         priority: SyncPriority.high,
       );
+
+      // עדכון auth_mapping אם יש firebaseUid
+      final updatedUser = await getUser(uid);
+      if (updatedUser?.firebaseUid != null) {
+        await AuthMappingService().updateMappingForUser(updatedUser!);
+      }
     } catch (e) {
       print('DEBUG: Error in updateUserRole: $e');
     }
@@ -263,6 +272,12 @@ class UserRepository {
         },
         priority: SyncPriority.high,
       );
+
+      // עדכון auth_mapping אם יש firebaseUid
+      final updatedUser = await getUser(uid);
+      if (updatedUser?.firebaseUid != null) {
+        await AuthMappingService().updateMappingForUser(updatedUser!);
+      }
     } catch (e) {
       print('DEBUG: Error in setUserUnit: $e');
     }
@@ -295,6 +310,12 @@ class UserRepository {
         data: data,
         priority: SyncPriority.high,
       );
+
+      // עדכון auth_mapping אם יש firebaseUid
+      final updatedUser = await getUser(uid);
+      if (updatedUser?.firebaseUid != null) {
+        await AuthMappingService().updateMappingForUser(updatedUser!);
+      }
     } catch (e) {
       print('DEBUG: Error in approveUser: $e');
     }
@@ -351,6 +372,12 @@ class UserRepository {
         },
         priority: SyncPriority.high,
       );
+
+      // עדכון auth_mapping אם יש firebaseUid
+      final updatedUser = await getUser(uid);
+      if (updatedUser?.firebaseUid != null) {
+        await AuthMappingService().updateMappingForUser(updatedUser!);
+      }
     } catch (e) {
       print('DEBUG: Error in addUserToUnit: $e');
     }
@@ -486,6 +513,12 @@ class UserRepository {
         },
         priority: SyncPriority.high,
       );
+
+      // עדכון auth_mapping אם יש firebaseUid
+      final updatedUser = await getUser(uid);
+      if (updatedUser?.firebaseUid != null) {
+        await AuthMappingService().updateMappingForUser(updatedUser!);
+      }
 
       print('DEBUG: Removed user $uid from unit'
           '${shouldResetRole ? " (role → navigator)" : ""}');

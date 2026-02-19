@@ -13,6 +13,7 @@ class User extends Equatable {
   final String role; // 'admin', 'commander', 'navigator', 'unit_admin', 'developer'
   final String? unitId; // יחידה שהמשתמש שייך אליה
   final String? fcmToken; // FCM push notification token
+  final String? firebaseUid; // Firebase Auth UID (for auth_mapping)
   final bool isApproved; // האם המשתמש מאושר ביחידה
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -28,6 +29,7 @@ class User extends Equatable {
     required this.role,
     this.unitId,
     this.fcmToken,
+    this.firebaseUid,
     this.isApproved = false,
     required this.createdAt,
     required this.updatedAt,
@@ -92,6 +94,8 @@ class User extends Equatable {
     String? unitId,
     bool clearUnitId = false,
     String? fcmToken,
+    String? firebaseUid,
+    bool clearFirebaseUid = false,
     bool? isApproved,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -107,6 +111,7 @@ class User extends Equatable {
       role: role ?? this.role,
       unitId: clearUnitId ? null : (unitId ?? this.unitId),
       fcmToken: fcmToken ?? this.fcmToken,
+      firebaseUid: clearFirebaseUid ? null : (firebaseUid ?? this.firebaseUid),
       isApproved: isApproved ?? this.isApproved,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -128,6 +133,7 @@ class User extends Equatable {
       'role': role,
       if (unitId != null) 'unitId': unitId,
       if (fcmToken != null) 'fcmToken': fcmToken,
+      if (firebaseUid != null) 'firebaseUid': firebaseUid,
       'isApproved': isApproved,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -169,6 +175,7 @@ class User extends Equatable {
       role: map['role'] as String? ?? 'navigator',
       unitId: unitId,
       fcmToken: map['fcmToken'] as String?,
+      firebaseUid: map['firebaseUid'] as String?,
       isApproved: map['isApproved'] as bool? ??
           (unitId != null && unitId.isNotEmpty), // backward compat
       createdAt: map['createdAt'] != null
@@ -192,6 +199,7 @@ class User extends Equatable {
     role,
     unitId,
     fcmToken,
+    firebaseUid,
     isApproved,
     createdAt,
     updatedAt,

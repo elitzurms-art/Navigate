@@ -22,6 +22,7 @@ class Users extends Table {
   TextColumn get frameworkId => text().nullable()();
   TextColumn get unitId => text().nullable()();
   TextColumn get fcmToken => text().nullable()();
+  TextColumn get firebaseUid => text().nullable()();
   BoolColumn get isApproved => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -391,7 +392,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration {
@@ -578,6 +579,9 @@ class AppDatabase extends _$AppDatabase {
           await customStatement(
             "UPDATE users SET is_approved = 1 WHERE unit_id IS NOT NULL AND unit_id != ''"
           );
+        }
+        if (from <= 26 && to >= 27) {
+          await m.addColumn(users, users.firebaseUid);
         }
       },
     );

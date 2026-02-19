@@ -231,7 +231,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Future<void> _initializeNavigators() async {
     // אתחול ראשוני
     final alerts = widget.navigation.alerts;
-    print('DEBUG ManagementScreen init: walkieTalkieEnabled=${widget.navigation.communicationSettings.walkieTalkieEnabled}, allowOpenMap=${widget.navigation.allowOpenMap}, showSelfLocation=${widget.navigation.showSelfLocation}');
     for (final navigatorId in widget.navigation.routes.keys) {
       _selectedNavigators[navigatorId] = true;
       _navigatorData[navigatorId] = NavigatorLiveData(

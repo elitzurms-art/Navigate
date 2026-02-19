@@ -12,32 +12,73 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    /// Get auth_mapping data for the current user
+    function authData() {
+      return get(/databases/$(database)/documents/auth_mapping/$(request.auth.uid)).data;
+    }
+
+    /// Get the app UID (personal number) of the current user
+    function myAppUid() {
+      return authData().appUid;
+    }
+
+    /// Get the role of the current user
+    function myRole() {
+      return authData().role;
+    }
+
+    /// Check if the current user is a developer or admin
+    function isDeveloperOrAdmin() {
+      let r = myRole();
+      return r == 'developer' || r == 'admin';
+    }
+
+    /// Check if the given unitId is within the current user's unit scope
+    function isInUnitScope(unitId) {
+      return unitId in authData().allowedUnitScopeIds;
+    }
+
+    /// Check if the current user is a participant in the given navigation doc
+    function isParticipant(navDoc) {
+      return myAppUid() in navDoc.data.participants;
+    }
+
+    // =========================================================================
+    // /auth_mapping/{uid} -- Firebase Auth UID -> App user mapping
+    // =========================================================================
+    match /auth_mapping/{uid} {
+      allow read, write: if isAuthenticated() && request.auth.uid == uid;
+    }
+
     // =========================================================================
     // /users/{userId} -- User profiles
     // =========================================================================
     match /users/{uid} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
+      allow create: if isAuthenticated() && myAppUid() == uid;
+      allow update: if isAuthenticated() &&
+        (myAppUid() == uid || isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
+      allow delete: if isAuthenticated() && isDeveloperOrAdmin();
     }
 
     // =========================================================================
     // /units/{unitId} -- Organizational units
     // =========================================================================
     match /units/{unitId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
-      allow delete: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isInUnitScope(unitId));
+      allow create, update, delete: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isInUnitScope(unitId));
 
-      // ----- /units/{unitId}/members/{memberId} -----
       match /members/{memberId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
+        allow read, write: if isAuthenticated() &&
+          (isDeveloperOrAdmin() || isInUnitScope(unitId));
       }
     }
 
     // =========================================================================
-    // /areas/{areaId} -- Geographic areas
+    // /areas/{areaId} -- Geographic areas (shared, all authenticated users)
     // =========================================================================
     match /areas/{areaId} {
       allow read: if isAuthenticated();
@@ -88,16 +129,17 @@ service cloud.firestore {
     // /navigation_trees/{treeId} -- Navigation tree definitions
     // =========================================================================
     match /navigation_trees/{treeId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
 
       match /frameworks/{frameworkId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
+        allow read, write: if isAuthenticated();
 
         match /sub_frameworks/{subFrameworkId} {
-          allow read: if isAuthenticated();
-          allow create, update, delete: if isAuthenticated();
+          allow read, write: if isAuthenticated();
         }
       }
     }
@@ -109,83 +151,44 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // /navigations/{navId} -- Navigation events
+    // /navigations/{navId} -- Navigation events (participant-scoped)
     // =========================================================================
     match /navigations/{navId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isParticipant(resource));
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isParticipant(resource));
 
-      match /nav_layers_nz/{checkpointId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /nav_layers_nb/{safetyPointId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /nav_layers_gg/{boundaryId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /nav_layers_ba/{clusterId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /routes/{navigatorId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /tracks/{trackId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /punches/{punchId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /alerts/{alertId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /violations/{violationId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /scores/{navigatorId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
-      }
-
-      match /system_status/{statusId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
+      // All subcollections inherit parent navigation membership
+      match /{subcollection}/{docId} {
+        allow read: if isAuthenticated() &&
+          (isDeveloperOrAdmin() ||
+           myAppUid() in get(/databases/$(database)/documents/navigations/$(navId)).data.participants);
+        allow create, update, delete: if isAuthenticated() &&
+          (isDeveloperOrAdmin() ||
+           myAppUid() in get(/databases/$(database)/documents/navigations/$(navId)).data.participants);
       }
     }
 
     // =========================================================================
     // /rooms/{roomId} -- Voice message rooms (PTT / Walkie Talkie)
+    // roomId = navigationId, so check navigation participants
     // =========================================================================
     match /rooms/{roomId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated() &&
+        (isDeveloperOrAdmin() ||
+         myAppUid() in get(/databases/$(database)/documents/navigations/$(roomId)).data.participants);
 
       match /messages/{messageId} {
-        allow read: if isAuthenticated();
-        allow create, update, delete: if isAuthenticated();
+        allow read, write: if isAuthenticated() &&
+          (isDeveloperOrAdmin() ||
+           myAppUid() in get(/databases/$(database)/documents/navigations/$(roomId)).data.participants);
       }
     }
 
     // =========================================================================
-    // Legacy flat collections
+    // Legacy flat collections (backward compatibility)
     // =========================================================================
     match /navigation_tracks/{trackId} {
       allow read: if isAuthenticated();

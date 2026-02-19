@@ -125,6 +125,10 @@ class NavigationTrackRepository {
   }
 
   /// סנכרון track ל-Firestore דרך SyncManager
+  ///
+  /// הערה: שדות override (overrideAllowOpenMap, overrideShowSelfLocation, וכו')
+  /// לא נשלחים כאן כי הם נכתבים ישירות ל-Firestore ע"י המפקד בלבד.
+  /// שליחתם עם ברירת מחדל false דורסת את ברירות המחדל מהגדרות הניווט.
   Future<void> syncTrackToFirestore(NavigationTrack track) async {
     await SyncManager().queueOperation(
       collection: AppConstants.navigationTracksCollection,
@@ -140,11 +144,6 @@ class NavigationTrackRepository {
         'endedAt': track.endedAt?.toIso8601String(),
         'isActive': track.isActive,
         'isDisqualified': track.isDisqualified,
-        'overrideAllowOpenMap': track.overrideAllowOpenMap,
-        'overrideShowSelfLocation': track.overrideShowSelfLocation,
-        'overrideShowRouteOnMap': track.overrideShowRouteOnMap,
-        'overrideAllowManualPosition': track.overrideAllowManualPosition,
-        'overrideWalkieTalkieEnabled': track.overrideWalkieTalkieEnabled,
         'manualPositionUsed': track.manualPositionUsed,
         'manualPositionUsedAt': track.manualPositionUsedAt?.toIso8601String(),
       },

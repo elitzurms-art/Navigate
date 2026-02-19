@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/entities/user.dart' as app_user;
 import '../data/repositories/user_repository.dart';
+import 'auth_mapping_service.dart';
 import 'session_service.dart';
 import 'notification_service.dart';
 
@@ -149,6 +150,29 @@ class AuthService {
         print('DEBUG: Signed in anonymously for Firestore access');
       } catch (e) {
         print('DEBUG: Anonymous sign-in failed: $e');
+      }
+    }
+
+    // עדכון firebaseUid + auth_mapping
+    final firebaseUser = _auth.currentUser;
+    if (firebaseUser != null) {
+      final userRepo = UserRepository();
+      final user = await userRepo.getUser(personalNumber);
+      if (user != null) {
+        // שמירת firebaseUid אם חסר
+        if (user.firebaseUid != firebaseUser.uid) {
+          final updatedUser = user.copyWith(
+            firebaseUid: firebaseUser.uid,
+            updatedAt: DateTime.now(),
+          );
+          await userRepo.saveUserLocally(updatedUser);
+        }
+        // עדכון auth_mapping ב-Firestore
+        final effectiveUser = user.copyWith(firebaseUid: firebaseUser.uid);
+        await AuthMappingService().updateAuthMapping(
+          firebaseUser.uid,
+          effectiveUser,
+        );
       }
     }
 

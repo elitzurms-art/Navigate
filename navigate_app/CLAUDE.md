@@ -59,7 +59,7 @@ lib/
 │
 ├── data/                  # שכבת נתונים
 │   ├── datasources/
-│   │   ├── local/app_database.dart     # Drift schema (17 טבלאות, גרסה 25)
+│   │   ├── local/app_database.dart     # Drift schema (17 טבלאות, גרסה 27)
 │   │   └── remote/firebase_service.dart # Firebase data source
 │   ├── repositories/              # 16 repositories
 │   │   ├── user_repository.dart
@@ -82,6 +82,7 @@ lib/
 │
 ├── services/              # שירותים (13 קבצים)
 │   ├── auth_service.dart              # התחברות, הרשמה, SMS, Anonymous Auth
+│   ├── auth_mapping_service.dart      # מיפוי Firebase Auth UID → app user (Firestore rules)
 │   ├── session_service.dart           # ניהול session + סריקת כובעים
 │   ├── navigation_data_loader.dart    # טעינת נתוני ניווט (גדול!)
 │   ├── routes_distribution_service.dart # חלוקת מסלולים
@@ -125,7 +126,7 @@ lib/
 
 ## מסד נתונים (Drift)
 
-- **סכמה**: גרסה 26
+- **סכמה**: גרסה 27
 - **17 טבלאות**: Users, Units, Areas, Checkpoints, SafetyPoints, Boundaries, Clusters, NavigationTrees, Navigations, NavigationTracks, NavCheckpoints, NavSafetyPoints, NavBoundaries, NavClusters, NavProfiles, ועוד
 - **שם הטבלה**: `NavigationTrees` (לא `NavigatorTrees`!) — accessor: `navigationTrees`
 - **Generated class**: `NavigationTree` (יחיד) מטבלה `NavigationTrees`
@@ -144,6 +145,7 @@ lib/
 | 24 | Navigations.timeCalculationSettingsJson |
 | 25 | Navigations.communicationSettingsJson + NavigationTracks.overrideWalkieTalkieEnabled (PTT) |
 | 26 | Users.isApproved (מערכת onboarding/אישור משתמשים) |
+| 27 | Users.firebaseUid (מיפוי Firebase Auth UID למערכת auth_mapping) |
 
 ### אחרי שינוי סכמה
 ```bash
@@ -156,10 +158,11 @@ dart run build_runner build --delete-conflicting-outputs
 
 - **פרויקט**: `navigate-native` (319417384412)
 - **אימות**: Phone Auth + Anonymous Auth (לגישת Firestore)
-- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT)
+- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT), auth_mapping
 - **Subcollections תחת areas**: layers_nz (נ"צ), layers_nb (נ"ב), layers_gg (ג"ג), layers_ba (ב"א)
 - **Subcollections תחת rooms**: messages (הודעות קוליות)
 - **Subcollections תחת navigations**: extension_requests (בקשות הארכת זמן)
+- **auth_mapping**: מיפוי Firebase Auth UID → app user data (ראה סעיף אבטחת Firestore)
 - **Firebase Storage**: `voice_messages/{navigationId}/{timestamp}.m4a`
 - **קבצי הגדרות**: `firebase.json`, `firestore.rules`, `firestore.indexes.json`
 
@@ -179,6 +182,7 @@ dart run build_runner build --delete-conflicting-outputs
 - **אין** `username` או `frameworkId` (הוסרו בגרסה 12)
 - **יש** `email` + `emailVerified` (נוספו בגרסה 12)
 - **`isApproved`** (bool, ברירת מחדל false) — האם המשתמש אושר ע"י מפקד/מנהל
+- **`firebaseUid`** (String?) — Firebase Auth UID. נשמר ב-login, משמש ל-auth_mapping
 - **Computed getters חדשים**:
   - `isOnboarded` → `unitId != null && isApproved` (משתמש מאושר)
   - `isAwaitingApproval` → `unitId != null && !isApproved` (ממתין לאישור)
@@ -219,6 +223,7 @@ dart run build_runner build --delete-conflicting-outputs
 ### Navigation
 - `selectedUnitId` (שם ישן: `frameworkId`, עמודת DB נשארת `frameworkId` לתאימות)
 - סטטוסים: `preparation` → `ready` → `learning` → `system_check` → `waiting` → `active` → `approval` → `review`
+- **`participants`** — שדה מחושב ב-`toMap()` בלבד (לא ב-Drift, לא ב-fromMap). מכיל `selectedParticipantIds + permissions.managers + createdBy`. משמש ל-Firestore Security Rules
 
 ---
 
@@ -296,10 +301,19 @@ dart run build_runner build --delete-conflicting-outputs
 - Push: Drift → Firestore (מעקבים, הגעות, הפרות)
 - **סנכרון GPS**: batch כל 2 דקות
 - **סנכרון תקופתי**: כל 5 דקות
-- **Realtime listeners**: להתראות
+- **Realtime listeners**: מסוננים לפי הקשר משתמש (ראה למטה)
 - **Retry**: exponential backoff, מקסימום 10 ניסיונות
 - **Auth**: בודק `_isAuthenticated` לפני כל סנכרון
 - `_didInitialSync` מונע סנכרון ראשוני כפול
+
+### Scoped Realtime Listeners
+SyncManager טוען הקשר משתמש (`_loadCurrentUserContext`) לפני סנכרון ומסנן listeners:
+- **`units`**: developer/admin — הכל; אחרים — `whereIn: allowedUnitScopeIds`
+- **`users`**: developer/admin — הכל; אחרים — `where unitId in allowedUnitScopeIds`
+- **`navigation_trees`**: developer/admin — הכל; אחרים — `where unitId in allowedUnitScopeIds`
+- **`navigations`** (חדש): `where participants arrayContains currentAppUid`
+- **`areas`**: ללא סינון (משותף לכולם)
+- `_allowedUnitScopeIds` = יחידת המשתמש + כל יחידות הצאצא (מ-UnitRepository.getDescendantIds)
 
 ### מלכודות סנכרון (upsert)
 - **`_upsertNavigationTree`**: Firestore שולח `subFrameworks` כ-array, Drift מאחסן כ-`frameworksJson` (string). חובה לעשות `jsonEncode` בזמן pull. גם לתמוך ב-`frameworks` (פורמט ישן) ו-`frameworksJson` (string ישיר)
@@ -320,6 +334,74 @@ dart run build_runner build --delete-conflicting-outputs
    - `isOnboarded` (מאושר) → שלב 5
 5. סריקת כובעים → כובע אחד ישר לניווט, מרובים → `HatSelectionScreen`
 6. `HomeRouter` → `NavigatorHomeScreen` (מנווט) או `HomeScreen` (מפקד/מנהל)
+
+---
+
+## אבטחת Firestore (Security Rules)
+
+### בעיית הזהות: Firebase Auth UID ≠ App UID
+- Firebase Auth UID = אנונימי, רנדומלי (כל כניסה מייצרת UID חדש)
+- App UID = מספר אישי (7 ספרות, קבוע)
+- Firestore Rules מכירים רק `request.auth.uid` (Firebase UID)
+- **פתרון**: קולקשן `auth_mapping` שמגשר בין השניים
+
+### auth_mapping Collection
+```
+auth_mapping/{firebaseAuthUid} = {
+  appUid: "1234567",              // מספר אישי
+  role: "commander",
+  unitId: "unit_abc",
+  allowedUnitScopeIds: ["unit_abc", "child1", "child2"],
+  updatedAt: timestamp
+}
+```
+- נכתב על ידי `AuthMappingService` בכניסה (`completeLogin`) ובשינוי role/unit
+- `allowedUnitScopeIds` = יחידה + צאצאים (מ-`UnitRepository.getDescendantIds`)
+
+### AuthMappingService (`lib/services/auth_mapping_service.dart`)
+- `updateAuthMapping(firebaseUid, user)` — כתיבת auth_mapping doc
+- `updateCurrentUserMapping(user)` — עדכון המשתמש הנוכחי
+- `updateMappingForUser(user)` — עדכון משתמש אחר (לפי `user.firebaseUid`)
+- נקרא מ: `AuthService.completeLogin()`, `UserRepository.approveUser/updateUserRole/setUserUnit/addUserToUnit/removeUserFromUnit`
+
+### מודל הרשאות (שתי שכבות)
+
+**שכבה 1 — ארגונית (Unit Scope)**:
+| קולקשן | הרשאת קריאה | הרשאת כתיבה |
+|---|---|---|
+| `users` | developer/admin: הכל; אחרים: unit scope | owner + developer/admin + unit scope |
+| `units` | developer/admin: הכל; אחרים: unit scope | developer/admin + unit scope |
+| `navigation_trees` | developer/admin: הכל; אחרים: unit scope | developer/admin + unit scope |
+
+**שכבה 2 — ניווט (Participant Scope)**:
+| קולקשן | הרשאת קריאה | הרשאת כתיבה |
+|---|---|---|
+| `navigations` | developer/admin: הכל; אחרים: participants בלבד | participants + developer/admin |
+| subcollections תחת navigations | כמו navigations (parent lookup) | כמו navigations |
+| `rooms` + `messages` | participants של הניווט המקושר | participants של הניווט המקושר |
+
+**ללא שינוי**: `areas` + שכבות, legacy collections, `sync_metadata` — authenticated בלבד
+
+### Navigation.participants
+- שדה מחושב ב-`toMap()` — `{selectedParticipantIds, permissions.managers, createdBy}`
+- **write-only**: לא נשמר ב-Drift, לא נקרא ב-`fromMap()`
+- Rules בודקים: `authData().appUid in resource.data.participants`
+- מיגרציה: ניווטים קיימים מקבלים participants בעדכון הבא דרך `toMap()`
+
+### Helper Functions ב-Rules
+```javascript
+authData()          // קריאת auth_mapping doc
+myAppUid()          // מספר אישי מ-auth_mapping
+myRole()            // תפקיד מ-auth_mapping
+isDeveloperOrAdmin() // developer או admin
+isInUnitScope(unitId) // unitId ב-allowedUnitScopeIds
+isParticipant(navDoc) // appUid ברשימת participants
+```
+
+### עלות get() בכללים
+- כל בדיקת rule קוראת auth_mapping (1 get)
+- subcollections של navigations גם קוראים parent navigation doc (+1 get)
+- מקסימום 2 reads per evaluation — בתוך מגבלת 10 של Firestore
 
 ---
 

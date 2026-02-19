@@ -548,6 +548,12 @@ class Navigation extends Equatable {
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
+      // Computed field for Firestore security rules — not stored in Drift
+      'participants': {
+        ...selectedParticipantIds,
+        ...permissions.managers,
+        createdBy,
+      }.toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
