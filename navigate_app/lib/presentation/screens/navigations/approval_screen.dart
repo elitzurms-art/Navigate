@@ -28,6 +28,7 @@ import '../../widgets/navigator_comparison_widget.dart';
 import '../../widgets/map_image_export.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../home/navigator_views/approval_view.dart';
+import '../../../data/repositories/user_repository.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -92,6 +93,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   final Map<String, _NavigatorData> _navigatorDataMap = {};
   String? _selectedNavigatorId;
   bool _allNavigatorsMode = false;
+
+  // שמות מנווטים
+  final Map<String, String> _userNames = {};
 
   // ציונים (עריכה מקומית)
   final Map<String, NavigationScore> _scores = {};
@@ -182,6 +186,16 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
   Future<void> _loadCommanderData() async {
     final navigatorIds = widget.navigation.routes.keys.toList();
+
+    // טעינת שמות מנווטים
+    final userRepo = UserRepository();
+    for (final navId in navigatorIds) {
+      final user = await userRepo.getUser(navId);
+      if (user != null) {
+        _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
+      }
+    }
+
     int colorIdx = 0;
 
     // טעינת tracks מ-Firestore (המפקד לא מחזיק tracks מקומיים — sync pushOnly)
@@ -369,9 +383,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   }
 
   String _getNavigatorDisplayName(String navigatorId) {
-    return navigatorId.length > 4
-        ? '...${navigatorId.substring(navigatorId.length - 4)}'
-        : navigatorId;
+    return _userNames[navigatorId] ?? navigatorId;
   }
 
   // ===========================================================================

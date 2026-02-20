@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/session_service.dart';
@@ -82,6 +83,9 @@ void main() async {
     userId: (await SharedPreferences.getInstance()).getString('logged_in_uid'),
   );
 
+  // בקשת הרשאות חסרות בהפעלה
+  await _requestMissingPermissions();
+
   runApp(const NavigateApp());
 }
 
@@ -99,6 +103,26 @@ Future<void> _ensureFirebaseAuth() async {
     print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid)');
   } catch (e) {
     print('DEBUG: Anonymous sign-in failed: $e');
+  }
+}
+
+/// בקשת כל ההרשאות הנדרשות שעדיין לא אושרו
+Future<void> _requestMissingPermissions() async {
+  final permissions = [
+    Permission.notification,
+    Permission.location,
+    Permission.locationAlways,
+    Permission.microphone,
+    Permission.phone,
+    Permission.sms,
+  ];
+
+  for (final permission in permissions) {
+    final status = await permission.status;
+    if (!status.isGranted && !status.isPermanentlyDenied) {
+      final result = await permission.request();
+      print('DEBUG: Permission ${permission.toString()} → ${result.name}');
+    }
   }
 }
 

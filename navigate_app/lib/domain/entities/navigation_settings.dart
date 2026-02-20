@@ -332,6 +332,12 @@ class LearningSettings extends Equatable {
   final DateTime? learningDate; // תאריך לימוד
   final String? learningStartTime; // שעת התחלה (HH:mm)
   final String? learningEndTime; // שעת סיום (HH:mm)
+  final bool requireSoloQuiz; // חובת מבחן ניווט בדד
+  final bool quizOpenManually; // מפקד פתח מבחן ידנית
+  final bool autoQuizTimes; // זמני מבחן אוטומטיים
+  final DateTime? quizDate; // תאריך מבחן
+  final String? quizStartTime; // שעת התחלת מבחן (HH:mm)
+  final String? quizEndTime; // שעת סיום מבחן (HH:mm)
 
   const LearningSettings({
     this.enabledWithPhones = true,
@@ -345,6 +351,12 @@ class LearningSettings extends Equatable {
     this.learningDate,
     this.learningStartTime,
     this.learningEndTime,
+    this.requireSoloQuiz = false,
+    this.quizOpenManually = false,
+    this.autoQuizTimes = false,
+    this.quizDate,
+    this.quizStartTime,
+    this.quizEndTime,
   });
 
   LearningSettings copyWith({
@@ -359,6 +371,12 @@ class LearningSettings extends Equatable {
     DateTime? learningDate,
     String? learningStartTime,
     String? learningEndTime,
+    bool? requireSoloQuiz,
+    bool? quizOpenManually,
+    bool? autoQuizTimes,
+    DateTime? quizDate,
+    String? quizStartTime,
+    String? quizEndTime,
   }) {
     return LearningSettings(
       enabledWithPhones: enabledWithPhones ?? this.enabledWithPhones,
@@ -372,6 +390,12 @@ class LearningSettings extends Equatable {
       learningDate: learningDate ?? this.learningDate,
       learningStartTime: learningStartTime ?? this.learningStartTime,
       learningEndTime: learningEndTime ?? this.learningEndTime,
+      requireSoloQuiz: requireSoloQuiz ?? this.requireSoloQuiz,
+      quizOpenManually: quizOpenManually ?? this.quizOpenManually,
+      autoQuizTimes: autoQuizTimes ?? this.autoQuizTimes,
+      quizDate: quizDate ?? this.quizDate,
+      quizStartTime: quizStartTime ?? this.quizStartTime,
+      quizEndTime: quizEndTime ?? this.quizEndTime,
     );
   }
 
@@ -389,6 +413,13 @@ class LearningSettings extends Equatable {
         'learningDate': learningDate!.toIso8601String(),
       if (learningStartTime != null) 'learningStartTime': learningStartTime,
       if (learningEndTime != null) 'learningEndTime': learningEndTime,
+      'requireSoloQuiz': requireSoloQuiz,
+      'quizOpenManually': quizOpenManually,
+      'autoQuizTimes': autoQuizTimes,
+      if (quizDate != null)
+        'quizDate': quizDate!.toIso8601String(),
+      if (quizStartTime != null) 'quizStartTime': quizStartTime,
+      if (quizEndTime != null) 'quizEndTime': quizEndTime,
     };
   }
 
@@ -407,7 +438,34 @@ class LearningSettings extends Equatable {
           : null,
       learningStartTime: map['learningStartTime'] as String?,
       learningEndTime: map['learningEndTime'] as String?,
+      requireSoloQuiz: map['requireSoloQuiz'] as bool? ?? false,
+      quizOpenManually: map['quizOpenManually'] as bool? ?? false,
+      autoQuizTimes: map['autoQuizTimes'] as bool? ?? false,
+      quizDate: map['quizDate'] != null
+          ? DateTime.parse(map['quizDate'] as String)
+          : null,
+      quizStartTime: map['quizStartTime'] as String?,
+      quizEndTime: map['quizEndTime'] as String?,
     );
+  }
+
+  /// האם המבחן פתוח כרגע (ידנית או אוטומטית)
+  bool get isQuizCurrentlyOpen {
+    if (!requireSoloQuiz) return false;
+    if (quizOpenManually) return true;
+    if (autoQuizTimes && quizDate != null && quizStartTime != null && quizEndTime != null) {
+      final now = DateTime.now();
+      final todayDate = DateTime(now.year, now.month, now.day);
+      final quizDay = DateTime(quizDate!.year, quizDate!.month, quizDate!.day);
+      if (todayDate.isAtSameMomentAs(quizDay)) {
+        final startParts = quizStartTime!.split(':');
+        final endParts = quizEndTime!.split(':');
+        final start = DateTime(now.year, now.month, now.day, int.parse(startParts[0]), int.parse(startParts[1]));
+        final end = DateTime(now.year, now.month, now.day, int.parse(endParts[0]), int.parse(endParts[1]));
+        return now.isAfter(start) && now.isBefore(end);
+      }
+    }
+    return false;
   }
 
   @override
@@ -423,6 +481,12 @@ class LearningSettings extends Equatable {
         learningDate,
         learningStartTime,
         learningEndTime,
+        requireSoloQuiz,
+        quizOpenManually,
+        autoQuizTimes,
+        quizDate,
+        quizStartTime,
+        quizEndTime,
       ];
 }
 

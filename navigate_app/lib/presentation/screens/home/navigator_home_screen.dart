@@ -11,11 +11,14 @@ import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../services/auto_map_download_service.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../onboarding/choose_unit_screen.dart';
 import '../onboarding/waiting_for_approval_screen.dart';
 import 'navigator_state.dart';
+import '../navigations/solo_quiz_screen.dart';
 import 'navigator_views/learning_view.dart';
 import 'navigator_views/system_check_view.dart';
 import 'navigator_views/active_view.dart';
@@ -177,7 +180,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       int bestPriority = -1;
 
       for (final nav in navigations) {
-        if (!nav.routes.containsKey(user.uid)) continue;
+        if (!nav.routes.containsKey(user.uid) &&
+            !nav.selectedParticipantIds.contains(user.uid)) continue;
 
         final priority = navigationStatusPriority(nav.status);
         if (priority <= 0) continue;
@@ -361,6 +365,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   }
 
   /// סיום מיידי של ניווט פעיל + שליחת התראה למפקדים
+  ///
+  /// מבצע שלושה דברים:
+  /// 1. סיום הניווט (סטטוס אישי = סיים)
+  /// 2. פסילת הניווט
+  /// 3. כתיבה ישירה ל-Firestore (לא דרך queue — כי signOut מיד אחרי)
   Future<void> _forceEndNavigationAndAlert() async {
     final nav = _currentNavigation;
     final user = _currentUser;
@@ -370,22 +379,52 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     final alertRepo = NavigatorAlertRepository();
 
     try {
-      // מציאת ה-track הפעיל
-      final track = await trackRepo.getByNavigatorAndNavigation(
+      // מציאת track קיים (פעיל או לא)
+      var track = await trackRepo.getByNavigatorAndNavigation(
         user.uid,
         nav.id,
       );
 
-      if (track != null && track.isActive) {
-        // סיום הניווט
+      // אם אין track — ייצור אחד (מנווט ב-waiting שטרם התחיל)
+      if (track == null) {
+        track = await trackRepo.startNavigation(
+          navigatorUserId: user.uid,
+          navigationId: nav.id,
+        );
+      }
+
+      // סיום הניווט (אם עדיין פעיל)
+      if (track.isActive) {
         await trackRepo.endNavigation(track.id);
+      }
 
-        // פסילת הניווט — כמו פריצת אבטחה
+      // פסילת הניווט
+      if (!track.isDisqualified) {
         await trackRepo.disqualifyNavigator(track.id);
+      }
 
-        // סנכרון ל-Firestore
+      // כתיבה ישירה ל-Firestore — לא דרך queue, כי signOut קורה מיד
+      // ואחריו Firebase Auth כבר לא מאומת
+      try {
         final updatedTrack = await trackRepo.getById(track.id);
-        await trackRepo.syncTrackToFirestore(updatedTrack);
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .doc(track.id)
+            .set({
+          'id': updatedTrack.id,
+          'navigationId': updatedTrack.navigationId,
+          'navigatorUserId': updatedTrack.navigatorUserId,
+          'trackPointsJson': updatedTrack.trackPointsJson,
+          'stabbingsJson': updatedTrack.stabbingsJson,
+          'startedAt': updatedTrack.startedAt.toIso8601String(),
+          'endedAt': updatedTrack.endedAt?.toIso8601String(),
+          'isActive': updatedTrack.isActive,
+          'isDisqualified': updatedTrack.isDisqualified,
+          'manualPositionUsed': updatedTrack.manualPositionUsed,
+          'manualPositionUsedAt': updatedTrack.manualPositionUsedAt?.toIso8601String(),
+        }, SetOptions(merge: true));
+      } catch (_) {
+        // Firestore לא זמין — הנתונים נשמרו מקומית לפחות
       }
 
       // שליחת התראת אבטחה למפקד
@@ -487,6 +526,10 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             if (!isActive)
               _buildScoresDrawerItem(),
 
+            // מבחן ניווט בדד — כשהמבחן פתוח
+            if (!isActive && nav != null && nav.learningSettings.isQuizCurrentlyOpen)
+              _buildQuizDrawerItem(),
+
             // היסטוריית ניווטים — לא מוצג במצב ניווט פעיל
             if (!isActive) ListTile(
               leading: const Icon(Icons.history, color: Colors.grey),
@@ -580,6 +623,49 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       onTap: () {
         Navigator.pop(context);
         _showScoreBottomSheet();
+      },
+    );
+  }
+
+  Widget _buildQuizDrawerItem() {
+    final user = _currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    if (user.hasSoloQuizValid) {
+      // עבר בהצלחה ב-4 חודשים האחרונים
+      return const ListTile(
+        leading: Icon(Icons.quiz, color: Colors.green),
+        title: Text('מבחן ניווט בדד — בוצע בהצלחה'),
+        enabled: false,
+      );
+    }
+
+    final hasFailed = user.soloQuizPassedAt == null && user.soloQuizScore != null;
+    return ListTile(
+      leading: Icon(
+        Icons.quiz,
+        color: hasFailed ? Colors.red : Colors.purple,
+      ),
+      title: Text(
+        hasFailed ? 'מבחן ניווט בדד — נכשל' : 'מבחן ניווט בדד',
+      ),
+      onTap: () {
+        Navigator.pop(context);
+        final nav = _currentNavigation;
+        if (nav != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SoloQuizScreen(
+                navigation: nav,
+                currentUser: user,
+              ),
+            ),
+          ).then((_) {
+            // רענון משתמש אחרי מבחן
+            _loadState(silent: true);
+          });
+        }
       },
     );
   }

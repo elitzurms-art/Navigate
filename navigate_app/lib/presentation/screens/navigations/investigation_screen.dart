@@ -96,6 +96,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   String? _selectedNavigatorId;
   bool _allNavigatorsMode = false;
 
+  // שמות מנווטים
+  final Map<String, String> _userNames = {};
+
   // ציונים (עריכה מקומית — commander)
   final Map<String, NavigationScore> _scores = {};
   // ציונים אוטומטיים מקוריים (לייחוס)
@@ -342,6 +345,16 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
   Future<void> _loadCommanderData() async {
     final navigatorIds = widget.navigation.routes.keys.toList();
+
+    // טעינת שמות מנווטים
+    final userRepo = UserRepository();
+    for (final navId in navigatorIds) {
+      final user = await userRepo.getUser(navId);
+      if (user != null) {
+        _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
+      }
+    }
+
     int colorIdx = 0;
 
     // טעינת tracks מ-Firestore (המפקד לא מחזיק tracks מקומיים — sync pushOnly)
@@ -576,9 +589,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   String _getNavigatorDisplayName(String navigatorId) {
-    return navigatorId.length > 4
-        ? '...${navigatorId.substring(navigatorId.length - 4)}'
-        : navigatorId;
+    return _userNames[navigatorId] ?? navigatorId;
   }
 
   // ===========================================================================

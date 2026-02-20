@@ -188,6 +188,20 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // /solo_quiz_questions/{questionId} -- Quiz questions (read-only for users)
+    // /solo_quiz_config/{docId} -- Quiz configuration
+    // =========================================================================
+    match /solo_quiz_questions/{questionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isDeveloperOrAdmin();
+    }
+
+    match /solo_quiz_config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isDeveloperOrAdmin();
+    }
+
+    // =========================================================================
     // Legacy flat collections (backward compatibility)
     // =========================================================================
     match /navigation_tracks/{trackId} {

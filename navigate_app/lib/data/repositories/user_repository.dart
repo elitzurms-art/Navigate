@@ -112,6 +112,8 @@ class UserRepository {
           fcmToken: Value(user.fcmToken),
           firebaseUid: Value(user.firebaseUid),
           isApproved: Value(user.isApproved),
+          soloQuizPassedAt: Value(user.soloQuizPassedAt),
+          soloQuizScore: Value(user.soloQuizScore),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         ),
@@ -146,6 +148,8 @@ class UserRepository {
       fcmToken: row.fcmToken,
       firebaseUid: row.firebaseUid,
       isApproved: row.isApproved,
+      soloQuizPassedAt: row.soloQuizPassedAt,
+      soloQuizScore: row.soloQuizScore,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     );

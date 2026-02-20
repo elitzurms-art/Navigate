@@ -65,6 +65,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   // סטטוס מערכת למנווט
   bool _hasGpsPermission = false;
   bool _hasLocationService = false;
+  bool _hasBackgroundLocationPermission = false;
   int _batteryLevel = 0;
   double _gpsAccuracy = -1;
   LatLng? _currentPosition;
@@ -155,9 +156,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     setState(() => _isCheckingSystem = true);
 
     try {
+      // בקשת כל ההרשאות החסרות אוטומטית
+      await _requestAllMissingPermissions();
+
       // בדיקת הרשאות GPS באמצעות GpsService
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
+      _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
 
       // בדיקת דיוק GPS + מיקום נוכחי
       if (_hasGpsPermission && _hasLocationService) {
@@ -252,13 +257,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     try {
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
+      _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
 
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
         _currentPosition = await _gpsService.getCurrentPosition();
-        print('DEBUG SystemCheck navigator: perm=$_hasGpsPermission svc=$_hasLocationService pos=$_currentPosition accuracy=$_gpsAccuracy source=${_gpsService.lastPositionSource}');
+        print('DEBUG SystemCheck navigator: perm=$_hasGpsPermission svc=$_hasLocationService bgPerm=$_hasBackgroundLocationPermission pos=$_currentPosition accuracy=$_gpsAccuracy source=${_gpsService.lastPositionSource}');
       } else {
-        print('DEBUG SystemCheck navigator: GPS skipped — perm=$_hasGpsPermission svc=$_hasLocationService');
+        print('DEBUG SystemCheck navigator: GPS skipped — perm=$_hasGpsPermission svc=$_hasLocationService bgPerm=$_hasBackgroundLocationPermission');
       }
 
       try {
@@ -291,6 +297,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'isConnected': _currentPosition != null,
         'batteryLevel': _batteryLevel,
         'hasGPS': _hasGpsPermission && _hasLocationService,
+        'hasBackgroundLocation': _hasBackgroundLocationPermission,
         'gpsAccuracy': _gpsAccuracy,
         'receptionLevel': _estimateReceptionLevel(),
         'latitude': _currentPosition?.latitude,
@@ -324,7 +331,27 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'notification': await Permission.notification.status,
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
+      'sms': await Permission.sms.status,
     };
+  }
+
+  /// בקשת כל ההרשאות החסרות באופן אוטומטי
+  Future<void> _requestAllMissingPermissions() async {
+    final permissions = [
+      Permission.notification,
+      Permission.location,
+      Permission.locationAlways,
+      Permission.microphone,
+      Permission.phone,
+      Permission.sms,
+    ];
+
+    for (final permission in permissions) {
+      final status = await permission.status;
+      if (!status.isGranted && !status.isPermanentlyDenied) {
+        await permission.request();
+      }
+    }
   }
 
   Future<void> _requestPermissions() async {
@@ -748,6 +775,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _startSystemCheck() async {
+    // בקשת כל ההרשאות החסרות במכשיר המפקד
+    await _requestAllMissingPermissions();
+    await _checkDevicePermissions();
+
     final updatedNav = _currentNavigation.copyWith(
       status: 'system_check',
       updatedAt: DateTime.now(),
@@ -984,6 +1015,15 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               ),
               const SizedBox(width: 8),
 
+              // חיווי מבחן בדד (רק אם requireSoloQuiz)
+              if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
+                _buildMiniIndicator(
+                  icon: Icons.quiz,
+                  color: _getQuizStatusColor(navigatorId),
+                ),
+                const SizedBox(width: 8),
+              ],
+
               // חיווי מפות אופליין
               _buildMiniIndicator(
                 icon: _getMapsIcon(status),
@@ -1015,6 +1055,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           ),
       ],
     );
+  }
+
+  Color _getQuizStatusColor(String navigatorId) {
+    final user = _usersCache[navigatorId];
+    if (user == null) return Colors.grey;
+    if (user.hasSoloQuizValid) return Colors.green;
+    if (user.soloQuizPassedAt != null) return Colors.red; // עבר אבל פג תוקף
+    return Colors.red; // לא ביצע
   }
 
   IconData _getBatteryIcon(NavigatorStatus status) {
@@ -2093,6 +2141,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   Widget _buildNavigatorView() {
     final isBatteryOk = _batteryLevel < 0 ? true : _batteryLevel >= _batteryRedThreshold;
     final isGpsOk = _hasGpsPermission && _hasLocationService;
+    final isBgLocationOk = _hasBackgroundLocationPermission;
     final isGpsAccuracyOk = _gpsAccuracy < 0 || _gpsAccuracy <= 50.0;
 
     Color batteryColor() {
@@ -2146,7 +2195,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   // סטטוס כללי
                   Builder(builder: (context) {
                     final isCellTowerFallback = isGpsOk && _gpsService.lastPositionSource == PositionSource.cellTower;
-                    final allOk = isBatteryOk && isGpsOk;
+                    final allOk = isBatteryOk && isGpsOk && isBgLocationOk;
                     final cardColor = !allOk
                         ? Colors.red[50]
                         : isCellTowerFallback
@@ -2293,6 +2342,78 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
                   const SizedBox(height: 16),
 
+                  // בדיקת GPS ברקע
+                  Card(
+                    child: ListTile(
+                      leading: Icon(
+                        _hasBackgroundLocationPermission
+                            ? Icons.check_circle
+                            : Icons.error,
+                        color: _hasBackgroundLocationPermission
+                            ? Colors.green
+                            : Colors.orange,
+                        size: 40,
+                      ),
+                      title: const Text('GPS ברקע'),
+                      subtitle: Text(
+                        _hasBackgroundLocationPermission
+                            ? 'תקין - GPS יפעל גם כשהאפליקציה ברקע'
+                            : 'לא מאושר - GPS לא יפעל ברקע',
+                        style: TextStyle(
+                          color: _hasBackgroundLocationPermission
+                              ? Colors.green[700]
+                              : Colors.orange[700],
+                        ),
+                      ),
+                      trailing: !_hasBackgroundLocationPermission
+                          ? ElevatedButton(
+                              onPressed: () async {
+                                final result = await Permission.locationAlways.request();
+                                if (!result.isGranted && mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text('ההרשאה לא אושרה — יש לאשר "תמיד" בהגדרות המכשיר'),
+                                      action: SnackBarAction(
+                                        label: 'הגדרות',
+                                        onPressed: openAppSettings,
+                                      ),
+                                    ),
+                                  );
+                                }
+                                _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
+                                if (mounted) setState(() {});
+                              },
+                              child: const Text('אשר'),
+                            )
+                          : null,
+                    ),
+                  ),
+
+                  if (!_hasBackgroundLocationPermission)
+                    Card(
+                      color: Colors.orange[50],
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, color: Colors.orange),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'ללא הרשאת מיקום ברקע, ה-GPS יפסיק לעבוד כשהמסך נכבה או כשעוברים לאפליקציה אחרת',
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: openAppSettings,
+                              child: const Text('הגדרות'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  const SizedBox(height: 16),
+
                   // בדיקת סוללה
                   Card(
                     child: ListTile(
@@ -2355,7 +2476,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   const SizedBox(height: 32),
 
                   // כפתור אישור
-                  if (isBatteryOk && isGpsOk)
+                  if (isBatteryOk && isGpsOk && isBgLocationOk)
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -2624,6 +2745,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'notification': await Permission.notification.status,
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
+      'sms': await Permission.sms.status,
     };
   }
 
@@ -2639,6 +2761,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return 'מיקרופון';
       case 'phone':
         return 'טלפון';
+      case 'sms':
+        return 'SMS';
       default:
         return key;
     }
@@ -2664,6 +2788,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return Permission.microphone;
       case 'phone':
         return Permission.phone;
+      case 'sms':
+        return Permission.sms;
       default:
         return Permission.location;
     }

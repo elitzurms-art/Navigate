@@ -15,6 +15,8 @@ class User extends Equatable {
   final String? fcmToken; // FCM push notification token
   final String? firebaseUid; // Firebase Auth UID (for auth_mapping)
   final bool isApproved; // האם המשתמש מאושר ביחידה
+  final DateTime? soloQuizPassedAt; // מתי עבר מבחן בדד
+  final int? soloQuizScore; // ציון מבחן בדד
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -31,6 +33,8 @@ class User extends Equatable {
     this.fcmToken,
     this.firebaseUid,
     this.isApproved = false,
+    this.soloQuizPassedAt,
+    this.soloQuizScore,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -81,6 +85,13 @@ class User extends Equatable {
   /// האם עוקף onboarding (admin/developer)
   bool get bypassesOnboarding => isAdmin || isDeveloper;
 
+  /// האם מבחן בדד בתוקף (עבר ב-4 חודשים האחרונים)
+  bool get hasSoloQuizValid {
+    if (soloQuizPassedAt == null) return false;
+    final fourMonthsAgo = DateTime.now().subtract(const Duration(days: 120));
+    return soloQuizPassedAt!.isAfter(fourMonthsAgo);
+  }
+
   /// העתקה עם שינויים
   User copyWith({
     String? uid,
@@ -97,6 +108,10 @@ class User extends Equatable {
     String? firebaseUid,
     bool clearFirebaseUid = false,
     bool? isApproved,
+    DateTime? soloQuizPassedAt,
+    bool clearSoloQuizPassedAt = false,
+    int? soloQuizScore,
+    bool clearSoloQuizScore = false,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -113,6 +128,8 @@ class User extends Equatable {
       fcmToken: fcmToken ?? this.fcmToken,
       firebaseUid: clearFirebaseUid ? null : (firebaseUid ?? this.firebaseUid),
       isApproved: isApproved ?? this.isApproved,
+      soloQuizPassedAt: clearSoloQuizPassedAt ? null : (soloQuizPassedAt ?? this.soloQuizPassedAt),
+      soloQuizScore: clearSoloQuizScore ? null : (soloQuizScore ?? this.soloQuizScore),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -135,6 +152,8 @@ class User extends Equatable {
       if (fcmToken != null) 'fcmToken': fcmToken,
       if (firebaseUid != null) 'firebaseUid': firebaseUid,
       'isApproved': isApproved,
+      if (soloQuizPassedAt != null) 'soloQuizPassedAt': soloQuizPassedAt!.toIso8601String(),
+      if (soloQuizScore != null) 'soloQuizScore': soloQuizScore,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -178,6 +197,10 @@ class User extends Equatable {
       firebaseUid: map['firebaseUid'] as String?,
       isApproved: map['isApproved'] as bool? ??
           (unitId != null && unitId.isNotEmpty), // backward compat
+      soloQuizPassedAt: map['soloQuizPassedAt'] != null
+          ? DateTime.parse(map['soloQuizPassedAt'] as String)
+          : null,
+      soloQuizScore: map['soloQuizScore'] as int?,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'] as String)
           : DateTime.now(),
@@ -201,6 +224,8 @@ class User extends Equatable {
     fcmToken,
     firebaseUid,
     isApproved,
+    soloQuizPassedAt,
+    soloQuizScore,
     createdAt,
     updatedAt,
   ];

@@ -1266,6 +1266,8 @@ class SyncManager {
         firebaseUid: Value(data['firebaseUid'] as String?),
         isApproved: Value(_parseBool(data['isApproved']) ??
             (unitId != null && unitId.isNotEmpty)),
+        soloQuizPassedAt: Value(_parseDateTime(data['soloQuizPassedAt'])),
+        soloQuizScore: Value(data['soloQuizScore'] as int?),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),

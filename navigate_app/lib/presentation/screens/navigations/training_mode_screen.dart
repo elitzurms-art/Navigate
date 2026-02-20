@@ -19,6 +19,7 @@ import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../services/auto_map_download_service.dart';
+import '../../../data/repositories/user_repository.dart';
 
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
@@ -77,6 +78,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
 
+  // הגדרות מבחן בדד
+  bool _quizOpenManually = false;
+  bool _autoQuizTimes = false;
+  DateTime _quizDate = DateTime.now();
+  TimeOfDay _quizStartTime = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _quizEndTime = const TimeOfDay(hour: 17, minute: 0);
+
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
   // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
@@ -88,6 +96,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
+
+  // שמות מנווטים
+  final Map<String, String> _userNames = {};
 
   @override
   void initState() {
@@ -144,6 +155,30 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       final parts = ls.learningEndTime!.split(':');
       if (parts.length == 2) {
         _learningEndTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 17,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
+    // מבחן בדד
+    _quizOpenManually = ls.quizOpenManually;
+    _autoQuizTimes = ls.autoQuizTimes;
+    if (ls.quizDate != null) {
+      _quizDate = ls.quizDate!;
+    }
+    if (ls.quizStartTime != null) {
+      final parts = ls.quizStartTime!.split(':');
+      if (parts.length == 2) {
+        _quizStartTime = TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? 8,
+          minute: int.tryParse(parts[1]) ?? 0,
+        );
+      }
+    }
+    if (ls.quizEndTime != null) {
+      final parts = ls.quizEndTime!.split(':');
+      if (parts.length == 2) {
+        _quizEndTime = TimeOfDay(
           hour: int.tryParse(parts[0]) ?? 17,
           minute: int.tryParse(parts[1]) ?? 0,
         );
@@ -238,6 +273,15 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
       }
 
+      // טעינת שמות מנווטים
+      final userRepo = UserRepository();
+      for (final navId in _currentNavigation.routes.keys) {
+        final user = await userRepo.getUser(navId);
+        if (user != null) {
+          _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
+        }
+      }
+
       setState(() {
         _checkpoints = checkpoints;
         _safetyPoints = safetyPoints;
@@ -267,6 +311,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         );
       }
     }
+  }
+
+  String _getNavigatorDisplayName(String navigatorId) {
+    return _userNames[navigatorId] ?? navigatorId;
   }
 
   /// טעינת הניווט העדכני מה-DB
@@ -358,7 +406,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('אישור ציר'),
-        content: Text('האם לאשר את הציר של $navigatorId?'),
+        content: Text('האם לאשר את הציר של ${_getNavigatorDisplayName(navigatorId)}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -383,7 +431,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('הציר של $navigatorId אושר'),
+            content: Text('הציר של ${_getNavigatorDisplayName(navigatorId)} אושר'),
             backgroundColor: Colors.green,
           ),
         );
@@ -402,7 +450,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('פסילת הציר של $navigatorId.\nרשום הערות ותיקונים למנווט:'),
+            Text('פסילת הציר של ${_getNavigatorDisplayName(navigatorId)}.\nרשום הערות ותיקונים למנווט:'),
             const SizedBox(height: 12),
             TextField(
               controller: notesController,
@@ -442,7 +490,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('הציר של $navigatorId נפסל'),
+          content: Text('הציר של ${_getNavigatorDisplayName(navigatorId)} נפסל'),
           backgroundColor: Colors.red,
         ),
       );
@@ -866,6 +914,92 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 }),
               ],
 
+              // הגדרות מבחן בדד (רק אם requireSoloQuiz מופעל)
+              if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
+                const Divider(),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.quiz, color: Colors.purple[700]),
+                    const SizedBox(width: 8),
+                    Text(
+                      'מבחן ניווט בדד',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                SwitchListTile(
+                  title: const Text('פתח ידנית מבחן למנווטים'),
+                  subtitle: const Text('המבחן יופיע בתפריט המנווטים'),
+                  value: _quizOpenManually,
+                  onChanged: (value) {
+                    setState(() => _quizOpenManually = value);
+                  },
+                ),
+
+                SwitchListTile(
+                  title: const Text('הגדר זמני מבחן אוטומטי'),
+                  value: _autoQuizTimes,
+                  onChanged: (value) {
+                    setState(() => _autoQuizTimes = value);
+                  },
+                ),
+
+                if (_autoQuizTimes) ...[
+                  const SizedBox(height: 8),
+                  ListTile(
+                    title: const Text('תאריך מבחן'),
+                    subtitle: Text(
+                      '${_quizDate.day}/${_quizDate.month}/${_quizDate.year}',
+                    ),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _quizDate,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 60)),
+                      );
+                      if (date != null) {
+                        setState(() => _quizDate = date);
+                      }
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('שעת התחלה'),
+                    subtitle: Text(_quizStartTime.format(context)),
+                    trailing: const Icon(Icons.access_time),
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _quizStartTime,
+                      );
+                      if (time != null) {
+                        setState(() => _quizStartTime = time);
+                      }
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('שעת סיום'),
+                    subtitle: Text(_quizEndTime.format(context)),
+                    trailing: const Icon(Icons.access_time),
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _quizEndTime,
+                      );
+                      if (time != null) {
+                        setState(() => _quizEndTime = time);
+                      }
+                    },
+                  ),
+                ],
+              ],
+
               const SizedBox(height: 24),
 
               // כפתור שמירה
@@ -911,6 +1045,16 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           : null,
       learningEndTime: _autoLearningTimes
           ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
+          : null,
+      requireSoloQuiz: _currentNavigation.learningSettings.requireSoloQuiz,
+      quizOpenManually: _quizOpenManually,
+      autoQuizTimes: _autoQuizTimes,
+      quizDate: _autoQuizTimes ? _quizDate : null,
+      quizStartTime: _autoQuizTimes
+          ? '${_quizStartTime.hour}:${_quizStartTime.minute}'
+          : null,
+      quizEndTime: _autoQuizTimes
+          ? '${_quizEndTime.hour}:${_quizEndTime.minute}'
           : null,
     );
 
@@ -1094,6 +1238,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       MaterialPageRoute(
         builder: (_) => _RouteViewScreen(
           navigatorId: navigatorId,
+          navigatorName: _getNavigatorDisplayName(navigatorId),
           referencePoints: referencePoints,
           plannedPathPoints: plannedPathPoints,
           hasPlannedPath: hasPlannedPath,
@@ -1149,7 +1294,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               children: [
                 Expanded(
                   child: Text(
-                    navigatorId,
+                    _getNavigatorDisplayName(navigatorId),
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -1376,7 +1521,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   if (totalMinutes > maxMinutes) maxMinutes = totalMinutes;
 
                   return DataRow(cells: [
-                    DataCell(Text(uid.length > 7 ? uid.substring(0, 7) : uid)),
+                    DataCell(Text(_getNavigatorDisplayName(uid))),
                     DataCell(Text('${route.routeLengthKm.toStringAsFixed(2)} ק"מ')),
                     DataCell(Text('${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש')),
                     DataCell(Text(GeometryUtils.formatNavigationTime(walkMinutes))),
@@ -1453,7 +1598,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     label: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(navigatorId),
+                        Text(_getNavigatorDisplayName(navigatorId)),
                         const SizedBox(width: 6),
                         Icon(chipIcon, size: 14, color: chipColor),
                       ],
@@ -1861,6 +2006,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 /// מסך צפייה בציר מנווט — עם נקודות התחלה/סיום ו-MapControls סטנדרטי
 class _RouteViewScreen extends StatefulWidget {
   final String navigatorId;
+  final String navigatorName;
   final List<LatLng> referencePoints;
   final List<LatLng> plannedPathPoints;
   final bool hasPlannedPath;
@@ -1874,6 +2020,7 @@ class _RouteViewScreen extends StatefulWidget {
 
   const _RouteViewScreen({
     required this.navigatorId,
+    required this.navigatorName,
     required this.referencePoints,
     required this.plannedPathPoints,
     required this.hasPlannedPath,
@@ -1987,7 +2134,7 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('ציר של ${widget.navigatorId}'),
+        title: Text('ציר של ${widget.navigatorName}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
       ),

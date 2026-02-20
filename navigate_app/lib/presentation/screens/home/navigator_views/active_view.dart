@@ -1135,9 +1135,31 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Actions — start / end navigation
   // ===========================================================================
 
+  /// בקשת כל ההרשאות החסרות באופן אוטומטי
+  Future<void> _requestAllMissingPermissions() async {
+    final permissions = [
+      Permission.notification,
+      Permission.location,
+      Permission.locationAlways,
+      Permission.microphone,
+      Permission.phone,
+      Permission.sms,
+    ];
+
+    for (final permission in permissions) {
+      final status = await permission.status;
+      if (!status.isGranted && !status.isPermanentlyDenied) {
+        await permission.request();
+      }
+    }
+  }
+
   Future<void> _startNavigation() async {
     setState(() => _isLoading = true);
     try {
+      // בקשת כל ההרשאות החסרות לפני תחילת ניווט
+      await _requestAllMissingPermissions();
+
       final track = await _trackRepo.startNavigation(
         navigatorUserId: widget.currentUser.uid,
         navigationId: _nav.id,

@@ -24,6 +24,8 @@ class Users extends Table {
   TextColumn get fcmToken => text().nullable()();
   TextColumn get firebaseUid => text().nullable()();
   BoolColumn get isApproved => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get soloQuizPassedAt => dateTime().nullable()();
+  IntColumn get soloQuizScore => integer().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -392,7 +394,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 27;
+  int get schemaVersion => 28;
 
   @override
   MigrationStrategy get migration {
@@ -582,6 +584,10 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 26 && to >= 27) {
           await m.addColumn(users, users.firebaseUid);
+        }
+        if (from <= 27 && to >= 28) {
+          await m.addColumn(users, users.soloQuizPassedAt);
+          await m.addColumn(users, users.soloQuizScore);
         }
       },
     );

@@ -13,6 +13,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
+import '../../../data/repositories/user_repository.dart';
 
 /// מסך למידה למנווט - רק הציר שלו
 class NavigatorTrainingScreen extends StatefulWidget {
@@ -45,6 +46,7 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
   bool _isLoading = false;
   bool _routeApproved = false; // האם הציר אושר
   bool _routeSubmitted = false; // האם הוגש לאישור
+  String _navigatorName = '';
 
   bool _showGG = true;
   double _ggOpacity = 1.0;
@@ -81,6 +83,11 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
       if (widget.navigation.boundaryLayerId != null) {
         boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
       }
+
+      // טעינת שם מנווט
+      final userRepo = UserRepository();
+      final user = await userRepo.getUser(widget.navigatorId);
+      _navigatorName = user?.fullName.isNotEmpty == true ? user!.fullName : widget.navigatorId;
 
       setState(() {
         _checkpoints = checkpoints;
@@ -201,7 +208,7 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
           children: [
             Text(widget.navigation.name),
             Text(
-              'מצב למידה - ${widget.navigatorId}',
+              'מצב למידה - $_navigatorName',
               style: const TextStyle(fontSize: 14),
             ),
           ],

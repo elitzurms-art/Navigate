@@ -107,6 +107,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _showRouteOnMap = false;
   bool _allowManualPosition = false;
 
+  // מבחן בדד
+  bool _requireSoloQuiz = false;
+
   // תקשורת (ווקי טוקי)
   bool _walkieTalkieEnabled = false;
 
@@ -393,6 +396,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _showSelfLocation = nav.showSelfLocation;
     _showRouteOnMap = nav.showRouteOnMap;
     _allowManualPosition = nav.allowManualPosition;
+
+    // מבחן בדד
+    _requireSoloQuiz = nav.learningSettings.requireSoloQuiz;
 
     // תקשורת
     _walkieTalkieEnabled = nav.communicationSettings.walkieTalkieEnabled;
@@ -1255,6 +1261,15 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           children: [
             if (!widget.alertsOnlyMode) ...[
               SwitchListTile(
+                title: const Text('חייב ביצוע מבחן בדד'),
+                subtitle: const Text('מנווטים יידרשו לעבור מבחן ידע לפני ניווט בדד'),
+                value: _requireSoloQuiz,
+                onChanged: (value) {
+                  setState(() => _requireSoloQuiz = value);
+                },
+              ),
+              const Divider(),
+              SwitchListTile(
                 title: const Text('הפעל אימות נקודות אוטומטי'),
                 value: _autoVerification,
                 onChanged: (value) {
@@ -1826,7 +1841,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         hoursAfterMission: _safetyTimeType == 'after_last_mission' ? _hoursAfterMission : null,
       );
 
-      final learningSettings = widget.navigation?.learningSettings ?? const LearningSettings();
+      final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
+          .copyWith(requireSoloQuiz: _requireSoloQuiz);
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,
