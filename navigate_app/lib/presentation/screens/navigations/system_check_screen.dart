@@ -17,6 +17,7 @@ import '../../../services/gps_service.dart';
 import 'dart:async';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../services/auto_map_download_service.dart';
 import '../../../services/voice_service.dart';
@@ -365,10 +366,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       });
 
       if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
-            _mapController.move(LatLng(center.lat, center.lng), 13.0);
+            _mapController.fitCamera(CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(30),
+            ));
           } catch (_) {}
         });
       }
@@ -1447,6 +1451,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               MapWithTypeSelector(
                 showTypeSelector: false,
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCenter: widget.navigation.displaySettings.openingLat != null
                       ? LatLng(

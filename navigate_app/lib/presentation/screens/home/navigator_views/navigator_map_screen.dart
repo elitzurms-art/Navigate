@@ -14,6 +14,7 @@ import '../../../../domain/entities/user.dart';
 import '../../../../services/gps_service.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../../core/map_config.dart';
 
 /// מסך מפה מלא — נפתח מ-drawer בזמן ניווט פעיל
 class NavigatorMapScreen extends StatefulWidget {
@@ -99,6 +100,16 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
           _clusters = clusters;
           _checkpoints = checkpoints;
         });
+        // התמקד בגבול גזרה אם קיים
+        if (boundaries.isNotEmpty && boundaries.first.coordinates.isNotEmpty) {
+          final points = boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+          try {
+            _mapController.fitCamera(CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(30),
+            ));
+          } catch (_) {}
+        }
       }
     } catch (_) {}
   }
@@ -271,6 +282,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
           MapWithTypeSelector(
             mapController: _mapController,
             showTypeSelector: false,
+            initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
             options: MapOptions(
               initialCenter: _initialCenter(),
               initialZoom: _defaultZoom,

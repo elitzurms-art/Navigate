@@ -20,6 +20,7 @@ import '../../../services/route_export_service.dart';
 import '../../../services/route_analysis_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/speed_profile_chart.dart';
 import '../../widgets/route_playback_widget.dart';
 import '../../widgets/navigator_heatmap.dart';
@@ -303,8 +304,11 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     if (_navBoundaries.isNotEmpty) {
       final boundary = _navBoundaries.first;
       if (boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-        _mapController.move(LatLng(center.lat, center.lng), 13.0);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        _mapController.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(30),
+        ));
         return;
       }
     }
@@ -1062,6 +1066,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 child: MapWithTypeSelector(
                   showTypeSelector: false,
                   mapController: _mapController,
+                  initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                   options: MapOptions(
                     initialCenter: const LatLng(32.0853, 34.7818),
                     initialZoom: 13.0,

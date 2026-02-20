@@ -12,6 +12,7 @@ import '../../../domain/entities/safety_point.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 
 /// מסך למידה למנווט - רק הציר שלו
 class NavigatorTrainingScreen extends StatefulWidget {
@@ -89,10 +90,13 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
       });
 
       if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
-            _mapController.move(LatLng(center.lat, center.lng), 13.0);
+            _mapController.fitCamera(CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(30),
+            ));
           } catch (_) {}
         });
       }
@@ -363,6 +367,7 @@ class _NavigatorTrainingScreenState extends State<NavigatorTrainingScreen>
         MapWithTypeSelector(
           showTypeSelector: false,
           mapController: _mapController,
+          initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
           options: MapOptions(
             initialCenter: widget.navigation.displaySettings.openingLat != null
                 ? LatLng(

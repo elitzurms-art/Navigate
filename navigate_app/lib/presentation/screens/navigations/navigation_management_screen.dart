@@ -32,6 +32,7 @@ import '../../widgets/map_with_selector.dart';
 import '../../../data/repositories/extension_request_repository.dart';
 import '../../../domain/entities/extension_request.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 
 /// מסך ניהול ניווט פעיל (למפקד)
@@ -206,8 +207,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       });
 
       if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-        _mapController.move(LatLng(center.lat, center.lng), 13.0);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        _mapController.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(30),
+        ));
       }
 
       // קריאת forcePositionSource גלובלי מ-Firestore
@@ -2047,6 +2051,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               MapWithTypeSelector(
             showTypeSelector: false,
             mapController: _mapController,
+            initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
             options: MapOptions(
               initialCenter: widget.navigation.displaySettings.openingLat != null
                   ? LatLng(

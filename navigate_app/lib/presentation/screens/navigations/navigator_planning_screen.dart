@@ -13,6 +13,7 @@ import '../../../services/auth_service.dart';
 import '../../../services/elevation_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 
 /// מסך תכנון למנווט (סטטוס learning)
 class NavigatorPlanningScreen extends StatefulWidget {
@@ -376,19 +377,22 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
       return const Center(child: Text('אין נקודות להצגה'));
     }
 
-    // חישוב מרכז המפה - מנקודות או מגבול
+    // חישוב מרכז המפה - עדיפות לגבול גזרה
     final pointCheckpoints = _myCheckpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
     LatLng center;
-    if (pointCheckpoints.isNotEmpty) {
+    CameraFit? initialCameraFit;
+    if (_boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty) {
+      final boundaryPoints = _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+      final boundaryBounds = LatLngBounds.fromPoints(boundaryPoints);
+      center = boundaryBounds.center;
+      initialCameraFit = CameraFit.bounds(
+        bounds: boundaryBounds,
+        padding: const EdgeInsets.all(30),
+      );
+    } else if (pointCheckpoints.isNotEmpty) {
       center = LatLng(
         pointCheckpoints.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) / pointCheckpoints.length,
         pointCheckpoints.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) / pointCheckpoints.length,
-      );
-    } else if (_boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty) {
-      final boundaryCoords = _boundaries.first.coordinates;
-      center = LatLng(
-        boundaryCoords.map((c) => c.lat).reduce((a, b) => a + b) / boundaryCoords.length,
-        boundaryCoords.map((c) => c.lng).reduce((a, b) => a + b) / boundaryCoords.length,
       );
     } else {
       center = const LatLng(32.0853, 34.7818); // ברירת מחדל - תל אביב
@@ -417,9 +421,11 @@ class _NavigatorPlanningScreenState extends State<NavigatorPlanningScreen> with 
         MapWithTypeSelector(
           showTypeSelector: false,
           mapController: _mapController,
+          initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
           options: MapOptions(
             initialCenter: center,
             initialZoom: 14.0,
+            initialCameraFit: initialCameraFit,
             onTap: (tapPosition, point) {
               if (_measureMode) {
                 setState(() => _measurePoints.add(point));

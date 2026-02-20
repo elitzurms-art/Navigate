@@ -15,6 +15,7 @@ import '../../../../domain/entities/boundary.dart';
 import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../../core/map_config.dart';
 import '../../../../services/elevation_service.dart';
 
 /// מסך עריכת ציר על המפה — ציור polyline בין נקודות ציון
@@ -504,8 +505,15 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         .map((cp) => cp.coordinates!.toLatLng())
         .toList();
     final allPoints = [...cpPoints, ..._waypoints];
-    final hasBounds = allPoints.length > 1;
-    final bounds = hasBounds ? LatLngBounds.fromPoints(allPoints) : null;
+    // עדיפות לגבול גזרה אם קיים
+    final boundaryPoints = _boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty
+        ? _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+        : <LatLng>[];
+    final boundsPoints = boundaryPoints.isNotEmpty
+        ? boundaryPoints
+        : allPoints;
+    final hasBounds = boundsPoints.length > 1;
+    final bounds = hasBounds ? LatLngBounds.fromPoints(boundsPoints) : null;
     final center = bounds?.center ?? (cpPoints.isNotEmpty ? cpPoints.first : const LatLng(31.5, 34.75));
 
     // markers לנקודות ציון קבועות (עיגול כחול עם מספר)
@@ -789,6 +797,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                 MapWithTypeSelector(
                   mapController: _mapController,
                   showTypeSelector: false,
+                  initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                   options: MapOptions(
                     initialCenter: center,
                     initialZoom: 14.0,

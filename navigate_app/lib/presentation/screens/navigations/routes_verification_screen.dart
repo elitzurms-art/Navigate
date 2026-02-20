@@ -13,6 +13,7 @@ import '../../../services/elevation_service.dart';
 import 'routes_edit_screen.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 
 /// שלב 3 - וידוא צירים
@@ -176,8 +177,11 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       // התמקד במרכז הגבול אם קיים (עטוף ב-try כי המפה עשויה לא להיות מוכנה)
       try {
         if (boundary != null && boundary.coordinates.isNotEmpty) {
-          final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-          _mapController.move(LatLng(center.lat, center.lng), 13.0);
+          final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+          _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(30),
+          ));
         } else if (checkpoints.where((c) => !c.isPolygon && c.coordinates != null).isNotEmpty) {
           final pointCps = checkpoints.where((c) => !c.isPolygon && c.coordinates != null).toList();
           final latitudes = pointCps.map((c) => c.coordinates!.lat).toList();
@@ -637,6 +641,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               MapWithTypeSelector(
                 showTypeSelector: false,
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCenter: widget.navigation.displaySettings.openingLat != null &&
                           widget.navigation.displaySettings.openingLng != null

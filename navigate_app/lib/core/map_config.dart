@@ -84,6 +84,20 @@ class MapConfig {
     }
   }
 
+  /// המרת מחרוזת defaultMap מ-DisplaySettings ל-MapType
+  /// ברירת מחדל: topographic
+  static MapType resolveMapType(String? defaultMap) {
+    switch (defaultMap) {
+      case 'standard':
+        return MapType.standard;
+      case 'satellite':
+        return MapType.satellite;
+      case 'topographic':
+      default:
+        return MapType.topographic;
+    }
+  }
+
   /// תווית בעברית
   String label(MapType type) {
     switch (type) {

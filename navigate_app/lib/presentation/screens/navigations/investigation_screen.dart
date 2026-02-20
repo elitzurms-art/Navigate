@@ -21,6 +21,7 @@ import '../../../services/route_export_service.dart';
 import '../../../services/route_analysis_service.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/speed_profile_chart.dart';
 import '../../widgets/elevation_profile_chart.dart';
 import '../../widgets/route_playback_widget.dart';
@@ -473,8 +474,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         if (_navBoundaries.isNotEmpty) {
           final boundary = _navBoundaries.first;
           if (boundary.coordinates.isNotEmpty) {
-            final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-            _mapController.move(LatLng(center.lat, center.lng), 13.0);
+            final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+            _mapController.fitCamera(CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(30),
+            ));
             return;
           }
         }
@@ -1670,6 +1674,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 child: MapWithTypeSelector(
                   showTypeSelector: true,
                   mapController: _mapController,
+                  initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                   options: MapOptions(
                     initialCenter: const LatLng(32.0853, 34.7818),
                     initialZoom: 13.0,
@@ -3416,6 +3421,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   child: MapWithTypeSelector(
                     showTypeSelector: true,
                     mapController: _mapController,
+                    initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                     options: MapOptions(
                       initialCenter: center,
                       initialZoom: 14.0,

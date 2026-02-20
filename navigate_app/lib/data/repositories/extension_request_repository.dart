@@ -55,21 +55,24 @@ class ExtensionRequestRepository {
   }
 
   /// מנווט: האזנה לבקשות שלו בלבד (real-time)
+  /// הערה: ללא orderBy כדי למנוע צורך בcomposite index — מיון בצד הלקוח
   Stream<List<ExtensionRequest>> watchByNavigator(
     String navigationId,
     String navigatorId,
   ) {
     return _collection(navigationId)
         .where('navigatorId', isEqualTo: navigatorId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      final list = snapshot.docs.map((doc) {
         final data = doc.data();
         data['id'] = doc.id;
         data['navigationId'] = navigationId;
         return ExtensionRequest.fromMap(data);
       }).toList();
+      // מיון בצד הלקוח — החדשה ראשונה
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
     });
   }
 

@@ -14,6 +14,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 
 /// שלב 4 - עריכת צירים (UI משודרג עם מפה, drag & drop, bottom sheet)
 class RoutesEditScreen extends StatefulWidget {
@@ -919,6 +920,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
             children: [
               MapWithTypeSelector(
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCameraFit: CameraFit.bounds(
                     bounds: bounds,

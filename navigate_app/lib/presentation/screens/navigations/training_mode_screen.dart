@@ -15,6 +15,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../services/auto_map_download_service.dart';
@@ -246,10 +247,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       // התמקד במרכז הגבול — דחייה עד שהמפה נבנית
       if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
-            _mapController.move(LatLng(center.lat, center.lng), 13.0);
+            _mapController.fitCamera(CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(30),
+            ));
           } catch (_) {
             // MapController עדיין לא מאותחל — נתעלם
           }
@@ -1099,6 +1103,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           endCheckpoint: endCheckpoint,
           boundary: _boundary,
           safetyPoints: _safetyPoints,
+          defaultMap: widget.navigation.displaySettings.defaultMap,
         ),
       ),
     );
@@ -1473,6 +1478,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               MapWithTypeSelector(
                 showTypeSelector: false,
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCenter: widget.navigation.displaySettings.openingLat != null &&
                           widget.navigation.displaySettings.openingLng != null
@@ -1864,6 +1870,7 @@ class _RouteViewScreen extends StatefulWidget {
   final Checkpoint? endCheckpoint;
   final Boundary? boundary;
   final List<SafetyPoint> safetyPoints;
+  final String? defaultMap;
 
   const _RouteViewScreen({
     required this.navigatorId,
@@ -1876,6 +1883,7 @@ class _RouteViewScreen extends StatefulWidget {
     this.endCheckpoint,
     this.boundary,
     this.safetyPoints = const [],
+    this.defaultMap,
   });
 
   @override
@@ -1988,6 +1996,7 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
           MapWithTypeSelector(
             mapController: _mapController,
             showTypeSelector: false,
+            initialMapType: MapConfig.resolveMapType(widget.defaultMap),
             options: MapOptions(
               initialCenter: widget.center,
               initialZoom: 14.0,

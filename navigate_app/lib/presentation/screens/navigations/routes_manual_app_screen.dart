@@ -15,6 +15,7 @@ import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/map_controls.dart';
+import '../../../core/map_config.dart';
 import 'routes_verification_screen.dart';
 
 /// מסך חלוקה ידנית באפליקציה
@@ -1088,6 +1089,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
             children: [
               MapWithTypeSelector(
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCameraFit: CameraFit.bounds(
                     bounds: bounds,

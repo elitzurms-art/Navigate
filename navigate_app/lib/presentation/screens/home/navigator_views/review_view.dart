@@ -19,6 +19,7 @@ import '../../../../services/route_export_service.dart';
 import '../../../../services/route_analysis_service.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../../core/map_config.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/elevation_profile_chart.dart';
@@ -263,8 +264,11 @@ class _ReviewViewState extends State<ReviewView> {
     if (_boundaries.isNotEmpty) {
       final boundary = _boundaries.first;
       if (boundary.coordinates.isNotEmpty) {
-        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
-        _mapController.move(LatLng(center.lat, center.lng), 13.0);
+        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        _mapController.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(30),
+        ));
         return;
       }
     }
@@ -403,6 +407,7 @@ class _ReviewViewState extends State<ReviewView> {
               MapWithTypeSelector(
                 showTypeSelector: false,
                 mapController: _mapController,
+                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCenter: center,
                   initialZoom: 14.0,
@@ -976,6 +981,7 @@ class _ReviewViewState extends State<ReviewView> {
             deviations: _deviations,
             startPointId: route?.startPointId,
             endPointId: route?.endPointId,
+            defaultMap: widget.navigation.displaySettings.defaultMap,
           );
         },
       ),
@@ -996,6 +1002,7 @@ class _FullscreenReviewMap extends StatefulWidget {
   final List<DeviationSegment> deviations;
   final String? startPointId;
   final String? endPointId;
+  final String? defaultMap;
 
   const _FullscreenReviewMap({
     required this.center,
@@ -1009,6 +1016,7 @@ class _FullscreenReviewMap extends StatefulWidget {
     required this.deviations,
     this.startPointId,
     this.endPointId,
+    this.defaultMap,
   });
 
   @override
@@ -1053,6 +1061,7 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
           MapWithTypeSelector(
             mapController: _mapController,
             showTypeSelector: false,
+            initialMapType: MapConfig.resolveMapType(widget.defaultMap),
             options: MapOptions(
               initialCenter: widget.center,
               initialZoom: 14.0,

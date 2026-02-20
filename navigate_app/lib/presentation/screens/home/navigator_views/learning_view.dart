@@ -27,6 +27,7 @@ import '../../../../domain/entities/boundary.dart';
 import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
+import '../../../../core/map_config.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import 'route_editor_screen.dart';
 
@@ -414,9 +415,14 @@ class _LearningViewState extends State<LearningView>
         : <LatLng>[];
 
     final allPointsForBounds = [...refPoints, ...plannedPathPoints];
-    final bounds = LatLngBounds.fromPoints(
-      allPointsForBounds.length > 1 ? allPointsForBounds : cpPoints,
-    );
+    // עדיפות לגבול גזרה אם קיים, אחרת נקודות ציון/ציר
+    final boundaryPoints = _boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty
+        ? _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+        : <LatLng>[];
+    final boundsPoints = boundaryPoints.isNotEmpty
+        ? boundaryPoints
+        : (allPointsForBounds.length > 1 ? allPointsForBounds : cpPoints);
+    final bounds = LatLngBounds.fromPoints(boundsPoints);
 
     final markers = <Marker>[];
     // marker לנקודת התחלה
@@ -503,11 +509,12 @@ class _LearningViewState extends State<LearningView>
             MapWithTypeSelector(
               mapController: _mapController,
               showTypeSelector: false,
+              initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
               // Fullscreen button is added at the end of the Stack
               options: MapOptions(
                 initialCenter: bounds.center,
                 initialZoom: 14.0,
-                initialCameraFit: allPointsForBounds.length > 1
+                initialCameraFit: boundsPoints.length > 1
                     ? CameraFit.bounds(
                         bounds: bounds,
                         padding: const EdgeInsets.all(40),
@@ -647,6 +654,7 @@ class _LearningViewState extends State<LearningView>
           boundaries: _boundaries,
           safetyPoints: _safetyPoints,
           clusters: _clusters,
+          defaultMap: widget.navigation.displaySettings.defaultMap,
         ),
       ),
     );
@@ -1938,6 +1946,7 @@ class _FullscreenRouteMap extends StatefulWidget {
   final List<Boundary> boundaries;
   final List<SafetyPoint> safetyPoints;
   final List<Cluster> clusters;
+  final String? defaultMap;
 
   const _FullscreenRouteMap({
     required this.refPoints,
@@ -1948,6 +1957,7 @@ class _FullscreenRouteMap extends StatefulWidget {
     required this.boundaries,
     required this.safetyPoints,
     required this.clusters,
+    this.defaultMap,
   });
 
   @override
@@ -1984,6 +1994,7 @@ class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
           MapWithTypeSelector(
             mapController: _mapController,
             showTypeSelector: false,
+            initialMapType: MapConfig.resolveMapType(widget.defaultMap),
             options: MapOptions(
               initialCenter: widget.bounds.center,
               initialZoom: 14.0,

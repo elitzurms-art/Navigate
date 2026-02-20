@@ -175,6 +175,14 @@
         { "fieldPath": "areaId", "order": "ASCENDING" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "extension_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "navigatorId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

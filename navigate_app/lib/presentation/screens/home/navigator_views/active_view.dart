@@ -1120,6 +1120,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (mounted) {
       setState(() => _currentAlertBanner = alert);
       HapticFeedback.heavyImpact();
+      SystemSound.play(SystemSoundType.alert);
     }
 
     // באנר נעלם אחרי 8 שניות
@@ -2275,11 +2276,70 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         // הבקשה האחרונה (לפי createdAt — descending)
         if (active == null) active = req;
       }
+
+      // זיהוי מעבר מ-pending ל-approved/rejected — הצגת התראה למנווט
+      final prev = _activeExtensionRequest;
+      if (prev != null &&
+          active != null &&
+          prev.id == active.id &&
+          prev.status == ExtensionRequestStatus.pending &&
+          active.status != ExtensionRequestStatus.pending) {
+        _showExtensionResponseNotification(active);
+      }
+
       setState(() {
         _activeExtensionRequest = active;
         _totalApprovedExtensionMinutes = totalApproved;
       });
+    }, onError: (e) {
+      print('[ExtensionListener] שגיאה: $e');
     });
+  }
+
+  /// התראה למנווט כשהמפקד מגיב לבקשת הארכה
+  void _showExtensionResponseNotification(ExtensionRequest req) {
+    if (!mounted) return;
+    final isApproved = req.status == ExtensionRequestStatus.approved;
+    final minutes = req.approvedMinutes ?? req.requestedMinutes;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(
+          isApproved ? Icons.check_circle : Icons.cancel,
+          color: isApproved ? Colors.green : Colors.red,
+          size: 48,
+        ),
+        title: Text(
+          isApproved ? 'בקשת הארכה אושרה' : 'בקשת הארכה נדחתה',
+          style: TextStyle(
+            color: isApproved ? Colors.green : Colors.red,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          isApproved
+              ? 'אושרו $minutes דקות הארכה.\nהזמן התווסף אוטומטית.'
+              : 'המפקד דחה את בקשת ההארכה.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isApproved ? Colors.green : Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('הבנתי'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// האם חלון הבקשה פתוח (כל הניווט, או בטווח זמן מוגדר)
@@ -2484,8 +2544,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         requestedMinutes: minutes,
         createdAt: DateTime.now(),
       );
-      await _extensionRepo.create(request);
+      final created = await _extensionRepo.create(request);
+      // עדכון מקומי מיידי — כדי שהכפתור ישתנה מיד לצהוב
       if (mounted) {
+        setState(() => _activeExtensionRequest = created);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('בקשת הארכה נשלחה למפקד'),
