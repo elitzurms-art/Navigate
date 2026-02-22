@@ -47,6 +47,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   bool _isCheckingPermissions = true;
 
   Timer? _periodicTimer;
+  int _checkCount = 0; // סופר בדיקות — דיווח ל-Firestore כל 5 בדיקות (15 שניות)
 
   @override
   void initState() {
@@ -130,14 +131,14 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
     _reportStatusToFirestore();
 
-    // הפעלת בדיקה מחזורית כל 15 שניות
+    // הפעלת בדיקה מחזורית כל 3 שניות (דיווח Firestore כל 5 בדיקות ≈ 15 שניות)
     _periodicTimer ??= Timer.periodic(
-      const Duration(seconds: 15),
+      const Duration(seconds: 3),
       (_) => _checkAndReport(),
     );
   }
 
-  /// בדיקה מחזורית ודיווח ל-Firestore
+  /// בדיקה מחזורית (כל 3 שניות) ודיווח ל-Firestore (כל ~15 שניות)
   Future<void> _checkAndReport() async {
     if (!mounted) return;
     try {
@@ -158,8 +159,18 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         _batteryLevel = -1;
       }
 
+      try {
+        final result = await Connectivity().checkConnectivity();
+        _connectivity = result;
+      } catch (_) {}
+
       if (mounted) setState(() {});
-      _reportStatusToFirestore();
+
+      // דיווח ל-Firestore כל 5 בדיקות (~15 שניות) כדי לא להעמיס
+      _checkCount++;
+      if (_checkCount % 5 == 0) {
+        _reportStatusToFirestore();
+      }
     } catch (e) {
       print('DEBUG SystemCheckView: _checkAndReport error: $e');
     }

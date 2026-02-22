@@ -12,6 +12,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../core/utils/utm_converter.dart';
 import '../../../services/navigation_data_loader.dart';
 import '../../../services/gps_service.dart';
 import 'dart:async';
@@ -61,6 +62,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   Map<String, domain_user.User> _usersCache = {};
   // שמות מנווטים מ-Firestore (fallback כשאין ב-usersCache)
   final Map<String, String> _navigatorNames = {};
+
+  // מנווט ממוקד במפה (עיגול כחול)
+  String? _focusedNavigatorId;
 
   // סטטוס מערכת למנווט
   bool _hasGpsPermission = false;
@@ -473,6 +477,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
             _navigatorStatuses[navigatorId] = NavigatorStatus(
               isConnected: data['isConnected'] as bool? ?? false,
+              hasReported: true,
               batteryLevel: data['batteryLevel'] as int? ?? 0,
               hasGPS: data['hasGPS'] as bool? ?? false,
               receptionLevel: data['receptionLevel'] as int? ?? 0,
@@ -535,6 +540,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
           _navigatorStatuses[navigatorId] = NavigatorStatus(
             isConnected: data['isConnected'] as bool? ?? false,
+            hasReported: true,
             batteryLevel: data['batteryLevel'] as int? ?? 0,
             hasGPS: data['hasGPS'] as bool? ?? false,
             receptionLevel: data['receptionLevel'] as int? ?? 0,
@@ -887,7 +893,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       Text(
-                        '${_navigatorStatuses.values.where((s) => s.isConnected).length} מחוברים',
+                        '${_navigatorStatuses.values.where((s) => s.hasReported).length} מדווחים',
                         style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                       ),
                     ],
@@ -950,10 +956,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             children: [
               // אווטאר
               CircleAvatar(
-                backgroundColor: status.isConnected ? Colors.green[100] : Colors.grey[200],
+                backgroundColor: status.hasReported
+                    ? (status.isConnected ? Colors.green[100] : Colors.orange[100])
+                    : Colors.grey[200],
                 child: Icon(
                   Icons.person,
-                  color: status.isConnected ? Colors.green : Colors.grey,
+                  color: status.hasReported
+                      ? (status.isConnected ? Colors.green : Colors.orange)
+                      : Colors.grey,
                 ),
               ),
               const SizedBox(width: 12),
@@ -973,10 +983,18 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                         style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                     Text(
-                      status.isConnected ? 'מחובר' : 'לא מחובר',
+                      !status.hasReported
+                          ? 'לא דיווח'
+                          : status.isConnected
+                              ? 'מחובר'
+                              : 'מדווח · ללא מיקום',
                       style: TextStyle(
                         fontSize: 12,
-                        color: status.isConnected ? Colors.green : Colors.grey,
+                        color: !status.hasReported
+                            ? Colors.grey
+                            : status.isConnected
+                                ? Colors.green
+                                : Colors.orange,
                       ),
                     ),
                   ],
@@ -986,32 +1004,28 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               // חיווי GPS
               _buildMiniIndicator(
                 icon: status.hasGPS ? Icons.gps_fixed : Icons.gps_off,
-                color: status.isConnected
-                    ? (!status.hasGPS
+                color: !status.hasReported
+                    ? Colors.grey
+                    : !status.hasGPS
                         ? Colors.red
                         : status.positionSource == 'cellTower'
                             ? Colors.orange
-                            : Colors.green)
-                    : Colors.grey,
+                            : Colors.green,
               ),
               const SizedBox(width: 8),
 
               // חיווי סוללה
               _buildMiniIndicator(
                 icon: _getBatteryIcon(status),
-                color: status.isConnected
-                    ? _getBatteryColor(status)
-                    : Colors.grey,
-                label: status.isConnected ? '${status.batteryLevel}%' : null,
+                color: _getBatteryColor(status),
+                label: status.hasReported ? '${status.batteryLevel}%' : null,
               ),
               const SizedBox(width: 8),
 
               // חיווי קליטה
               _buildMiniIndicator(
                 icon: _getReceptionIcon(status),
-                color: status.isConnected
-                    ? _getReceptionColor(status)
-                    : Colors.grey,
+                color: _getReceptionColor(status),
               ),
               const SizedBox(width: 8),
 
@@ -1065,22 +1079,30 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     return Colors.red; // לא ביצע
   }
 
+  String _getQuizStatusText(String navigatorId) {
+    final user = _usersCache[navigatorId];
+    if (user == null) return 'לא זמין';
+    if (user.hasSoloQuizValid) return 'עבר בהצלחה';
+    if (user.soloQuizPassedAt != null) return 'נכשל';
+    return 'לא ביצע';
+  }
+
   IconData _getBatteryIcon(NavigatorStatus status) {
-    if (!status.isConnected) return Icons.battery_unknown;
+    if (!status.hasReported) return Icons.battery_unknown;
     if (status.batteryLevel < _batteryRedThreshold) return Icons.battery_alert;
     if (status.batteryLevel < _batteryOrangeThreshold) return Icons.battery_2_bar;
     return Icons.battery_full;
   }
 
   Color _getBatteryColor(NavigatorStatus status) {
-    if (!status.isConnected) return Colors.grey;
+    if (!status.hasReported) return Colors.grey;
     if (status.batteryLevel < _batteryRedThreshold) return Colors.red;
     if (status.batteryLevel < _batteryOrangeThreshold) return Colors.orange;
     return Colors.green;
   }
 
   IconData _getReceptionIcon(NavigatorStatus status) {
-    if (!status.isConnected) return Icons.signal_cellular_off;
+    if (!status.hasReported) return Icons.signal_cellular_off;
     if (status.receptionLevel <= 0) return Icons.signal_cellular_0_bar;
     if (status.receptionLevel <= 1) return Icons.signal_cellular_alt_1_bar;
     if (status.receptionLevel <= 2) return Icons.signal_cellular_alt_2_bar;
@@ -1089,7 +1111,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Color _getReceptionColor(NavigatorStatus status) {
-    if (!status.isConnected) return Colors.grey;
+    if (!status.hasReported) return Colors.grey;
     if (status.receptionLevel <= 1) return Colors.red;
     if (status.receptionLevel <= 2) return Colors.orange;
     return Colors.green;
@@ -1109,7 +1131,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Color _getMapsColor(NavigatorStatus status) {
-    if (!status.isConnected) return Colors.grey;
+    if (!status.hasReported) return Colors.grey;
     switch (status.mapsStatus) {
       case 'completed':
         return Colors.green;
@@ -1124,166 +1146,230 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   void _showNavigatorDetails(String navigatorId, NavigatorStatus status) {
     final displayName = _getNavigatorDisplayName(navigatorId);
-    final user = _usersCache[navigatorId];
     final hasRoute = widget.navigation.routes.containsKey(navigatorId);
     final route = widget.navigation.routes[navigatorId];
 
+    Timer? refreshTimer;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: status.isConnected ? Colors.green[100] : Colors.grey[200],
-              child: Icon(
-                Icons.person,
-                color: status.isConnected ? Colors.green : Colors.grey,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (builderContext, setDialogState) {
+            // הפעלת טיימר רענון כל 3 שניות (פעם אחת)
+            refreshTimer ??= Timer.periodic(
+              const Duration(seconds: 3),
+              (_) {
+                if (builderContext.mounted) {
+                  setDialogState(() {});
+                }
+              },
+            );
+
+            // קריאת הסטטוס העדכני מה-map החי
+            final s = _navigatorStatuses[navigatorId] ?? status;
+            final user = _usersCache[navigatorId];
+
+            return AlertDialog(
+              title: Row(
                 children: [
-                  Text(displayName, style: const TextStyle(fontSize: 18)),
-                  Text(
-                    navigatorId,
-                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                  CircleAvatar(
+                    backgroundColor: s.hasReported
+                        ? (s.isConnected ? Colors.green[100] : Colors.orange[100])
+                        : Colors.grey[200],
+                    child: Icon(
+                      Icons.person,
+                      color: s.hasReported
+                          ? (s.isConnected ? Colors.green : Colors.orange)
+                          : Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(displayName, style: const TextStyle(fontSize: 18)),
+                        Text(
+                          navigatorId,
+                          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // סטטוס חיבור
-              _buildDetailRow(
-                'חיבור',
-                status.isConnected ? 'מחובר' : 'לא מחובר',
-                Icons.wifi,
-                status.isConnected ? Colors.green : Colors.red,
-              ),
-              const Divider(),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // סטטוס חיבור
+                    _buildDetailRow(
+                      'חיבור',
+                      !s.hasReported
+                          ? 'לא דיווח'
+                          : s.isConnected
+                              ? 'מחובר'
+                              : 'מדווח · ללא מיקום',
+                      Icons.wifi,
+                      !s.hasReported
+                          ? Colors.grey
+                          : s.isConnected
+                              ? Colors.green
+                              : Colors.orange,
+                    ),
+                    const Divider(),
 
-              // GPS
-              _buildDetailRow(
-                'GPS',
-                status.isConnected
-                    ? (!status.hasGPS
-                        ? 'לא פעיל'
-                        : status.positionSource == 'cellTower'
-                            ? 'מערכת חליפית תקינה'
-                            : 'פעיל ותקין')
-                    : 'לא ידוע',
-                status.hasGPS ? Icons.gps_fixed : Icons.gps_off,
-                status.isConnected
-                    ? (!status.hasGPS
-                        ? Colors.red
-                        : status.positionSource == 'cellTower'
-                            ? Colors.orange
-                            : Colors.green)
-                    : Colors.grey,
+                    // GPS
+                    _buildDetailRow(
+                      'GPS',
+                      !s.hasReported
+                          ? 'לא ידוע'
+                          : !s.hasGPS
+                              ? 'לא פעיל'
+                              : s.positionSource == 'cellTower'
+                                  ? 'מערכת חליפית תקינה'
+                                  : 'פעיל ותקין',
+                      s.hasGPS ? Icons.gps_fixed : Icons.gps_off,
+                      !s.hasReported
+                          ? Colors.grey
+                          : !s.hasGPS
+                              ? Colors.red
+                              : s.positionSource == 'cellTower'
+                                  ? Colors.orange
+                                  : Colors.green,
+                    ),
+                    if (s.hasReported && s.hasGPS && s.latitude != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(right: 40),
+                        child: Text(
+                          'מיקום: ${UtmConverter.latLngToUtm(LatLng(s.latitude!, s.longitude!))}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            setState(() => _focusedNavigatorId = navigatorId);
+                            _tabController.animateTo(2); // טאב צפיה/מפה
+                            // התמקדות על המנווט במפה
+                            Future.delayed(const Duration(milliseconds: 300), () {
+                              _mapController.move(
+                                LatLng(s.latitude!, s.longitude!),
+                                16,
+                              );
+                            });
+                          },
+                          icon: const Icon(Icons.my_location, size: 16),
+                          label: const Text('התמקד במפה'),
+                        ),
+                      ),
+                    ],
+                    // דיוק GPS
+                    if (s.gpsAccuracy > 0)
+                      _buildDetailRow(
+                        'דיוק',
+                        '${s.gpsAccuracy.toStringAsFixed(0)} מטר',
+                        Icons.my_location,
+                        s.gpsAccuracy <= 10
+                            ? Colors.green
+                            : s.gpsAccuracy <= 50
+                                ? Colors.orange
+                                : Colors.red,
+                      ),
+                    // מקור מיקום
+                    if (s.hasReported && s.hasGPS)
+                      _buildDetailRow(
+                        'מקור מיקום',
+                        _positionSourceLabel(s.positionSource),
+                        _positionSourceIcon(s.positionSource),
+                        _positionSourceColor(s.positionSource),
+                      ),
+                    const Divider(),
+
+                    // סוללה
+                    _buildDetailRow(
+                      'סוללה',
+                      s.hasReported ? '${s.batteryLevel}%' : 'לא ידוע',
+                      _getBatteryIcon(s),
+                      _getBatteryColor(s),
+                    ),
+                    const Divider(),
+
+                    // קליטה
+                    _buildDetailRow(
+                      'קליטה',
+                      s.hasReported
+                          ? _getReceptionText(s.receptionLevel)
+                          : 'לא ידוע',
+                      _getReceptionIcon(s),
+                      _getReceptionColor(s),
+                    ),
+                    const Divider(),
+
+                    // הרשאות מיקרופון וטלפון
+                    _buildDetailRow(
+                      'מיקרופון',
+                      s.hasMicrophonePermission ? 'מאושר' : 'לא מאושר',
+                      Icons.mic,
+                      s.hasMicrophonePermission ? Colors.green : Colors.red,
+                    ),
+                    _buildDetailRow(
+                      'טלפון',
+                      s.hasPhonePermission ? 'מאושר' : 'לא מאושר',
+                      Icons.phone_android,
+                      s.hasPhonePermission ? Colors.green : Colors.red,
+                    ),
+                    const Divider(),
+
+                    // פרטי משתמש
+                    if (user != null) ...[
+                      _buildDetailRow(
+                        'טלפון',
+                        user.phoneNumber.isNotEmpty ? user.phoneNumber : 'לא זמין',
+                        Icons.phone,
+                        Colors.blue,
+                      ),
+                      const Divider(),
+                    ],
+
+                    // מבחן בדד (רק אם מופעל)
+                    if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
+                      _buildDetailRow(
+                        'מבחן בדד',
+                        _getQuizStatusText(navigatorId),
+                        Icons.quiz,
+                        _getQuizStatusColor(navigatorId),
+                      ),
+                      const Divider(),
+                    ],
+
+                    // ציר מוקצה
+                    _buildDetailRow(
+                      'ציר',
+                      hasRoute
+                          ? '${route!.sequence.length} נקודות (${route.routeLengthKm.toStringAsFixed(2)} ק"מ)'
+                          : 'לא הוקצה ציר',
+                      Icons.route,
+                      hasRoute ? Colors.blue : Colors.grey,
+                    ),
+                  ],
+                ),
               ),
-              if (status.isConnected && status.hasGPS && status.latitude != null) ...[
-                Padding(
-                  padding: const EdgeInsets.only(right: 40),
-                  child: Text(
-                    'מיקום: ${status.latitude!.toStringAsFixed(5)}, ${status.longitude!.toStringAsFixed(5)}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('סגור'),
                 ),
               ],
-              // דיוק GPS
-              if (status.gpsAccuracy > 0)
-                _buildDetailRow(
-                  'דיוק',
-                  '${status.gpsAccuracy.toStringAsFixed(0)} מטר',
-                  Icons.my_location,
-                  status.gpsAccuracy <= 10
-                      ? Colors.green
-                      : status.gpsAccuracy <= 50
-                          ? Colors.orange
-                          : Colors.red,
-                ),
-              // מקור מיקום
-              if (status.isConnected && status.hasGPS)
-                _buildDetailRow(
-                  'מקור מיקום',
-                  _positionSourceLabel(status.positionSource),
-                  _positionSourceIcon(status.positionSource),
-                  _positionSourceColor(status.positionSource),
-                ),
-              const Divider(),
-
-              // סוללה
-              _buildDetailRow(
-                'סוללה',
-                status.isConnected ? '${status.batteryLevel}%' : 'לא ידוע',
-                _getBatteryIcon(status),
-                _getBatteryColor(status),
-              ),
-              const Divider(),
-
-              // קליטה
-              _buildDetailRow(
-                'קליטה',
-                status.isConnected
-                    ? _getReceptionText(status.receptionLevel)
-                    : 'לא ידוע',
-                _getReceptionIcon(status),
-                _getReceptionColor(status),
-              ),
-              const Divider(),
-
-              // הרשאות מיקרופון וטלפון
-              _buildDetailRow(
-                'מיקרופון',
-                status.hasMicrophonePermission ? 'מאושר' : 'לא מאושר',
-                Icons.mic,
-                status.hasMicrophonePermission ? Colors.green : Colors.red,
-              ),
-              _buildDetailRow(
-                'טלפון',
-                status.hasPhonePermission ? 'מאושר' : 'לא מאושר',
-                Icons.phone_android,
-                status.hasPhonePermission ? Colors.green : Colors.red,
-              ),
-              const Divider(),
-
-              // פרטי משתמש
-              if (user != null) ...[
-                _buildDetailRow(
-                  'טלפון',
-                  user.phoneNumber.isNotEmpty ? user.phoneNumber : 'לא זמין',
-                  Icons.phone,
-                  Colors.blue,
-                ),
-                const Divider(),
-              ],
-
-              // ציר מוקצה
-              _buildDetailRow(
-                'ציר',
-                hasRoute
-                    ? '${route!.sequence.length} נקודות (${route.routeLengthKm.toStringAsFixed(2)} ק"מ)'
-                    : 'לא הוקצה ציר',
-                Icons.route,
-                hasRoute ? Colors.blue : Colors.grey,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('סגור'),
-          ),
-        ],
-      ),
-    );
+            );
+          },
+        );
+      },
+    ).then((_) => refreshTimer?.cancel());
   }
 
   String _positionSourceLabel(String source) {
@@ -1426,9 +1512,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     String statusText;
     IconData icon;
 
-    if (!status.isConnected) {
+    if (!status.hasReported) {
       statusColor = Colors.grey;
-      statusText = 'לא מחובר';
+      statusText = 'לא דיווח';
       icon = Icons.power_off;
     } else if (status.batteryLevel < _batteryRedThreshold) {
       statusColor = Colors.red;
@@ -1451,7 +1537,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         leading: Icon(icon, color: statusColor, size: 32),
         title: Text(displayName),
         subtitle: Text(statusText),
-        trailing: status.isConnected
+        trailing: status.hasReported
             ? Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
@@ -1613,6 +1699,25 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     }).toList(),
                   ),
 
+                  // עיגול כחול סביב מנווט ממוקד
+                  if (_focusedNavigatorId != null) ...[
+                    () {
+                      final fs = _navigatorStatuses[_focusedNavigatorId];
+                      if (fs == null || fs.latitude == null) return const MarkerLayer(markers: []);
+                      return CircleLayer(
+                        circles: [
+                          CircleMarker(
+                            point: LatLng(fs.latitude!, fs.longitude!),
+                            radius: 30,
+                            color: Colors.blue.withValues(alpha: 0.15),
+                            borderColor: Colors.blue,
+                            borderStrokeWidth: 3,
+                          ),
+                        ],
+                      );
+                    }(),
+                  ],
+
                   // שכבות מדידה
                   ...MapControls.buildMeasureLayers(_measurePoints),
                 ],
@@ -1693,7 +1798,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Color _getConnectivityColor(NavigatorStatus status) {
-    if (!status.isConnected) return Colors.grey;
+    if (!status.hasReported || !status.isConnected) return Colors.grey;
     if (!status.hasGPS) return Colors.black;
 
     // TODO: בדיקה אם בתוך ג"ג
@@ -1724,20 +1829,20 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   /// לשונית מערכת — סיכום מצב כללי למפקד
   Widget _buildSystemTab() {
     final totalNavigators = _navigatorStatuses.length;
-    final connected = _navigatorStatuses.values.where((s) => s.isConnected).length;
-    final withGps = _navigatorStatuses.values.where((s) => s.isConnected && s.hasGPS).length;
+    final connected = _navigatorStatuses.values.where((s) => s.hasReported).length;
+    final withGps = _navigatorStatuses.values.where((s) => s.hasReported && s.hasGPS).length;
     final lowBattery = _navigatorStatuses.values
-        .where((s) => s.isConnected && s.batteryLevel < _batteryRedThreshold)
+        .where((s) => s.hasReported && s.batteryLevel < _batteryRedThreshold)
         .length;
     final noReception = _navigatorStatuses.values
-        .where((s) => s.isConnected && s.receptionLevel <= 0)
+        .where((s) => s.hasReported && s.receptionLevel <= 0)
         .length;
 
     final mapsReady = _navigatorStatuses.values
-        .where((s) => s.isConnected && s.mapsReady)
+        .where((s) => s.hasReported && s.mapsReady)
         .length;
     final mapsNotReady = _navigatorStatuses.values
-        .where((s) => s.isConnected && !s.mapsReady)
+        .where((s) => s.hasReported && !s.mapsReady)
         .length;
 
     final allOk = connected == totalNavigators &&
@@ -2799,6 +2904,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 /// סטטוס מנווט
 class NavigatorStatus {
   final bool isConnected;
+  final bool hasReported; // האם המנווט דיווח ל-Firestore (להבדיל מ-placeholder)
   final int batteryLevel; // 0-100
   final bool hasGPS;
   final int receptionLevel; // 0-4 (0=אין, 4=מצוין)
@@ -2813,6 +2919,7 @@ class NavigatorStatus {
 
   NavigatorStatus({
     required this.isConnected,
+    this.hasReported = false,
     required this.batteryLevel,
     required this.hasGPS,
     this.receptionLevel = 0,

@@ -47,6 +47,14 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
       final questions = await _quizRepo.getQuestions();
       final passingScore = await _quizRepo.getPassingScore();
 
+      if (questions.isEmpty) {
+        setState(() {
+          _error = 'שאלות טרם הוגדרו — פנה למפקד';
+          _isLoading = false;
+        });
+        return;
+      }
+
       // טעינת תשובות קיימות (אם יש)
       final existing = await _quizRepo.getAnswers(
         navigationId: widget.navigation.id,

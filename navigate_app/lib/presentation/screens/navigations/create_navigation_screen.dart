@@ -116,7 +116,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   // חישוב זמנים
   bool _timeCalcEnabled = true;
   bool _isHeavyLoad = false;
-  bool _isNightNavigation = false;
+  bool _isNightNavigation = true;
   bool _isSummer = true;
   bool _allowExtensionRequests = false;
   String _extensionWindowType = 'all';
@@ -128,26 +128,28 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   // התראות
   bool _alertsEnabled = true;
-  bool _speedAlertEnabled = false;
+  bool _speedAlertEnabled = true;
   int _maxSpeed = 50;
-  bool _noMovementAlertEnabled = false;
+  bool _noMovementAlertEnabled = true;
   int _noMovementMinutes = 10;
-  bool _ggAlertEnabled = false;
+  bool _ggAlertEnabled = true;
   int _ggAlertRange = 100;
-  bool _routesAlertEnabled = false;
+  bool _routesAlertEnabled = true;
   int _routesAlertRange = 50;
-  bool _nbAlertEnabled = false;
+  bool _nbAlertEnabled = true;
   int _nbAlertRange = 50;
-  bool _proximityAlertEnabled = false;
+  bool _proximityAlertEnabled = true;
   int _proximityDistance = 20;
   int _proximityMinTime = 5;
-  bool _batteryAlertEnabled = false;
+  bool _batteryAlertEnabled = true;
   int _batteryPercentage = 20;
-  bool _noReceptionAlertEnabled = false;
+  bool _noReceptionAlertEnabled = true;
   int _noReceptionMinTime = 30;
   bool _healthCheckEnabled = true;
   int _healthCheckIntervalMinutes = 60;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _autoSaveTimer;
+  bool _hasUnsavedChanges = false;
 
   @override
   void initState() {
@@ -270,6 +272,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         _selectedTree = trees.first;
       });
     }
+    _onSettingChanged();
   }
 
   /// כשתת-מסגרת נבחרת/מבוטלת — עדכון המשתתפים
@@ -285,6 +288,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       }
     });
     _loadUsersForSelectedSubFrameworks();
+    _onSettingChanged();
   }
 
   /// בחירת/ביטול כל המשתתפים בתת-מסגרת
@@ -297,6 +301,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         _selectedParticipantIds.removeAll(sfUsers);
       }
     });
+    _onSettingChanged();
   }
 
   /// טעינת משתמשים דינמית לפי תפקיד — מפקדים או מנווטים בהתאם לתת-מסגרת
@@ -504,6 +509,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   @override
   void dispose() {
+    _autoSaveTimer?.cancel();
     _syncSubscription?.cancel();
     _nameController.dispose();
     super.dispose();
@@ -511,7 +517,21 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (widget.navigation != null) {
+          // מצב עריכה: שמירה אוטומטית — תמיד אפשר לחזור
+          Navigator.pop(context, true);
+        } else if (_hasUnsavedChanges) {
+          // מצב יצירה עם שינויים: אזהרה
+          _showBackWarning();
+        } else {
+          Navigator.pop(context);
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(
           widget.alertsOnlyMode
@@ -535,10 +555,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 ),
               ),
             )
-          else
-            IconButton(
-              icon: const Icon(Icons.check),
+          else if (widget.navigation == null)
+            TextButton.icon(
               onPressed: _save,
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: const Text('צור', style: TextStyle(color: Colors.white)),
             ),
         ],
       ),
@@ -584,6 +605,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.navigation),
                       ),
+                      onChanged: (_) => _onSettingChanged(),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'נא להזין שם';
@@ -637,6 +659,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 ],
               ),
             ),
+      ),
     );
   }
 
@@ -681,6 +704,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 if (value != null) {
                   _loadBoundaries(value.id);
                 }
+                _onSettingChanged();
               },
               validator: (value) => value == null ? 'נא לבחור אזור' : null,
             ),
@@ -705,6 +729,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               }).toList(),
               onChanged: (value) {
                 setState(() => _selectedBoundaryId = value);
+                _onSettingChanged();
               },
               validator: (value) => value == null ? 'נא לבחור גבול גזרה' : null,
             ),
@@ -863,6 +888,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                                 _selectedParticipantIds.remove(uid);
                               }
                             });
+                            _onSettingChanged();
                           },
                           dense: true,
                         );
@@ -911,6 +937,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               groupValue: _safetyTimeType,
               onChanged: (value) {
                 setState(() => _safetyTimeType = value!);
+                _onSettingChanged();
               },
             ),
             if (_safetyTimeType == 'hours')
@@ -925,6 +952,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   keyboardType: TextInputType.number,
                   onChanged: (value) {
                     _safetyHours = int.tryParse(value) ?? 2;
+                    _onSettingChanged();
                   },
                 ),
               ),
@@ -934,6 +962,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               groupValue: _safetyTimeType,
               onChanged: (value) {
                 setState(() => _safetyTimeType = value!);
+                _onSettingChanged();
               },
             ),
             if (_safetyTimeType == 'after_last_mission')
@@ -948,6 +977,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   keyboardType: TextInputType.number,
                   onChanged: (value) {
                     _hoursAfterMission = int.tryParse(value) ?? 1;
+                    _onSettingChanged();
                   },
                 ),
               ),
@@ -955,6 +985,41 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         ),
       ),
     );
+  }
+
+  /// סימון שינוי בהגדרות — במצב עריכה: שמירה אוטומטית עם debounce
+  void _onSettingChanged() {
+    _hasUnsavedChanges = true;
+    if (widget.navigation != null) {
+      _autoSaveTimer?.cancel();
+      _autoSaveTimer = Timer(const Duration(seconds: 1), () {
+        if (mounted) _performSave(silent: true);
+      });
+    }
+  }
+
+  /// אזהרת חזרה במצב יצירה עם שינויים שלא נשמרו
+  Future<void> _showBackWarning() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('שינויים לא נשמרו'),
+        content: const Text('יש לך שינויים שלא נשמרו. לצאת בכל זאת?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('יציאה'),
+          ),
+        ],
+      ),
+    );
+    if (result == true && mounted) {
+      Navigator.pop(context);
+    }
   }
 
   List<String> _buildEnabledPositionSources() {
@@ -983,7 +1048,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               subtitle: const Text('הפעלת מערכת קשר קולי בזמן אמת'),
               value: _walkieTalkieEnabled,
               contentPadding: EdgeInsets.zero,
-              onChanged: (value) => setState(() => _walkieTalkieEnabled = value),
+              onChanged: (value) {
+                setState(() => _walkieTalkieEnabled = value);
+                _onSettingChanged();
+              },
             ),
           ],
         ),
@@ -1007,7 +1075,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               title: const Text('חישוב זמנים אוטומטי'),
               subtitle: const Text('חישוב זמני ניווט לפי מהירות הליכה, הפסקות ושעת בטיחות'),
               value: _timeCalcEnabled,
-              onChanged: (v) => setState(() => _timeCalcEnabled = v),
+              onChanged: (v) {
+                setState(() => _timeCalcEnabled = v);
+                _onSettingChanged();
+              },
             ),
             if (_timeCalcEnabled) ...[
               const Divider(),
@@ -1020,7 +1091,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   ButtonSegment(value: true, label: Text('מעל 40%')),
                 ],
                 selected: {_isHeavyLoad},
-                onSelectionChanged: (v) => setState(() => _isHeavyLoad = v.first),
+                onSelectionChanged: (v) {
+                  setState(() => _isHeavyLoad = v.first);
+                  _onSettingChanged();
+                },
               ),
               const SizedBox(height: 16),
               const Text('זמן', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1031,7 +1105,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   ButtonSegment(value: true, label: Text('לילה')),
                 ],
                 selected: {_isNightNavigation},
-                onSelectionChanged: (v) => setState(() => _isNightNavigation = v.first),
+                onSelectionChanged: (v) {
+                  setState(() => _isNightNavigation = v.first);
+                  _onSettingChanged();
+                },
               ),
               const SizedBox(height: 16),
               const Text('עונה', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1042,7 +1119,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   ButtonSegment(value: false, label: Text('חורף')),
                 ],
                 selected: {_isSummer},
-                onSelectionChanged: (v) => setState(() => _isSummer = v.first),
+                onSelectionChanged: (v) {
+                  setState(() => _isSummer = v.first);
+                  _onSettingChanged();
+                },
               ),
               const SizedBox(height: 16),
               Container(
@@ -1069,7 +1149,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 subtitle: const Text('מנווטים יוכלו לבקש זמן נוסף במהלך הניווט'),
                 value: _allowExtensionRequests,
                 contentPadding: EdgeInsets.zero,
-                onChanged: (v) => setState(() => _allowExtensionRequests = v),
+                onChanged: (v) {
+                  setState(() => _allowExtensionRequests = v);
+                  _onSettingChanged();
+                },
               ),
               if (_allowExtensionRequests) ...[
                 const SizedBox(height: 8),
@@ -1081,7 +1164,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     ButtonSegment(value: 'timed', label: Text('זמן מוגדר מסיום')),
                   ],
                   selected: {_extensionWindowType},
-                  onSelectionChanged: (v) => setState(() => _extensionWindowType = v.first),
+                  onSelectionChanged: (v) {
+                    setState(() => _extensionWindowType = v.first);
+                    _onSettingChanged();
+                  },
                 ),
                 if (_extensionWindowType == 'timed') ...[
                   const SizedBox(height: 12),
@@ -1102,7 +1188,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                             value: i,
                             child: Text('$i'),
                           )),
-                          onChanged: (v) => setState(() => _extensionWindowHours = v ?? 0),
+                          onChanged: (v) {
+                            setState(() => _extensionWindowHours = v ?? 0);
+                            _onSettingChanged();
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1118,7 +1207,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                             value: i * 5,
                             child: Text('${i * 5}'),
                           )),
-                          onChanged: (v) => setState(() => _extensionWindowMinutes = v ?? 0),
+                          onChanged: (v) {
+                            setState(() => _extensionWindowMinutes = v ?? 0);
+                            _onSettingChanged();
+                          },
                         ),
                       ),
                     ],
@@ -1162,6 +1254,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   label: '$_gpsUpdateInterval שניות',
                   onChanged: (value) {
                     setState(() => _gpsUpdateInterval = value.round());
+                    _onSettingChanged();
                   },
                 ),
               ),
@@ -1182,6 +1275,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     _enablePdrCellHybrid = true;
                   }
                 });
+                _onSettingChanged();
               },
             ),
             if (!_useAllPositionSources) ...[
@@ -1191,6 +1285,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _enableGps,
                 onChanged: (value) {
                   setState(() => _enableGps = value);
+                  _onSettingChanged();
                 },
               ),
               SwitchListTile(
@@ -1199,6 +1294,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _enableCellTower,
                 onChanged: (value) {
                   setState(() => _enableCellTower = value);
+                  _onSettingChanged();
                 },
               ),
               SwitchListTile(
@@ -1207,6 +1303,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _enablePdr,
                 onChanged: (value) {
                   setState(() => _enablePdr = value);
+                  _onSettingChanged();
                 },
               ),
               SwitchListTile(
@@ -1215,6 +1312,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _enablePdrCellHybrid,
                 onChanged: (value) {
                   setState(() => _enablePdrCellHybrid = value);
+                  _onSettingChanged();
                 },
               ),
             ],
@@ -1224,7 +1322,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               title: const Text('אפשר דקירת מיקום עצמי'),
               subtitle: const Text('כאשר אין GPS ואמצעים חלופיים'),
               value: _allowManualPosition,
-              onChanged: (value) => setState(() => _allowManualPosition = value),
+              onChanged: (value) {
+                setState(() => _allowManualPosition = value);
+                _onSettingChanged();
+              },
             ),
           ],
         ),
@@ -1244,6 +1345,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               value: _showScoresAfterApproval,
               onChanged: (value) {
                 setState(() => _showScoresAfterApproval = value);
+                _onSettingChanged();
               },
             ),
           ],
@@ -1266,6 +1368,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _requireSoloQuiz,
                 onChanged: (value) {
                   setState(() => _requireSoloQuiz = value);
+                  _onSettingChanged();
                 },
               ),
               const Divider(),
@@ -1274,6 +1377,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _autoVerification,
                 onChanged: (value) {
                   setState(() => _autoVerification = value);
+                  _onSettingChanged();
                 },
               ),
             ],
@@ -1286,6 +1390,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 groupValue: _verificationType,
                 onChanged: (value) {
                   setState(() => _verificationType = value!);
+                  _onSettingChanged();
                 },
               ),
               RadioListTile<String>(
@@ -1294,6 +1399,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 groupValue: _verificationType,
                 onChanged: (value) {
                   setState(() => _verificationType = value!);
+                  _onSettingChanged();
                 },
               ),
 
@@ -1310,6 +1416,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     keyboardType: TextInputType.number,
                     onChanged: (value) {
                       _approvalDistance = int.tryParse(value) ?? 20;
+                      _onSettingChanged();
                     },
                   ),
                 ),
@@ -1384,6 +1491,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                                             scorePercentage: _scoreRanges[index].scorePercentage,
                                           );
                                         });
+                                        _onSettingChanged();
                                       }
                                     },
                                   ),
@@ -1413,6 +1521,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                                             scorePercentage: percentage,
                                           );
                                         });
+                                        _onSettingChanged();
                                       }
                                     },
                                   ),
@@ -1431,6 +1540,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                                           setState(() {
                                             _scoreRanges.removeAt(index);
                                           });
+                                          _onSettingChanged();
                                         },
                                       )
                                     : null,
@@ -1454,6 +1564,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                               ));
                               _addRangeToggle = false;
                             });
+                            _onSettingChanged();
                           }
                         },
                       ),
@@ -1471,6 +1582,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _allowOpenMap,
                 onChanged: (value) {
                   setState(() => _allowOpenMap = value);
+                  _onSettingChanged();
                 },
               ),
             ],
@@ -1481,6 +1593,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 value: _showSelfLocation,
                 onChanged: (value) {
                   setState(() => _showSelfLocation = value);
+                  _onSettingChanged();
                 },
               ),
               if (_showSelfLocation)
@@ -1489,6 +1602,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   value: _showRouteOnMap,
                   onChanged: (value) {
                     setState(() => _showRouteOnMap = value);
+                    _onSettingChanged();
                   },
                 ),
             ],
@@ -1500,6 +1614,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               value: _healthCheckEnabled,
               onChanged: (value) {
                 setState(() => _healthCheckEnabled = value);
+                _onSettingChanged();
               },
             ),
             if (_healthCheckEnabled) ...[
@@ -1524,6 +1639,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                           : '$_healthCheckIntervalMinutes דקות',
                       onChanged: (value) {
                         setState(() => _healthCheckIntervalMinutes = value.round());
+                        _onSettingChanged();
                       },
                     ),
                   ],
@@ -1537,6 +1653,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               value: _alertsEnabled,
               onChanged: (value) {
                 setState(() => _alertsEnabled = value);
+                _onSettingChanged();
               },
             ),
 
@@ -1558,6 +1675,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _speedAlertEnabled,
           onChanged: (value) {
             setState(() => _speedAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_speedAlertEnabled)
@@ -1572,6 +1690,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _maxSpeed = int.tryParse(value) ?? 50;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1582,6 +1701,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _noMovementAlertEnabled,
           onChanged: (value) {
             setState(() => _noMovementAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_noMovementAlertEnabled)
@@ -1596,6 +1716,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _noMovementMinutes = int.tryParse(value) ?? 10;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1606,6 +1727,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _ggAlertEnabled,
           onChanged: (value) {
             setState(() => _ggAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_ggAlertEnabled)
@@ -1620,6 +1742,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _ggAlertRange = int.tryParse(value) ?? 100;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1630,6 +1753,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _routesAlertEnabled,
           onChanged: (value) {
             setState(() => _routesAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_routesAlertEnabled)
@@ -1644,6 +1768,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _routesAlertRange = int.tryParse(value) ?? 50;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1654,6 +1779,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _nbAlertEnabled,
           onChanged: (value) {
             setState(() => _nbAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_nbAlertEnabled)
@@ -1668,6 +1794,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _nbAlertRange = int.tryParse(value) ?? 50;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1678,6 +1805,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _proximityAlertEnabled,
           onChanged: (value) {
             setState(() => _proximityAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_proximityAlertEnabled)
@@ -1694,6 +1822,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   keyboardType: TextInputType.number,
                   onChanged: (value) {
                     _proximityDistance = int.tryParse(value) ?? 20;
+                    _onSettingChanged();
                   },
                 ),
                 const SizedBox(height: 8),
@@ -1706,6 +1835,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   keyboardType: TextInputType.number,
                   onChanged: (value) {
                     _proximityMinTime = int.tryParse(value) ?? 5;
+                    _onSettingChanged();
                   },
                 ),
               ],
@@ -1718,6 +1848,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _batteryAlertEnabled,
           onChanged: (value) {
             setState(() => _batteryAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_batteryAlertEnabled)
@@ -1732,6 +1863,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _batteryPercentage = int.tryParse(value) ?? 20;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1742,6 +1874,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           value: _noReceptionAlertEnabled,
           onChanged: (value) {
             setState(() => _noReceptionAlertEnabled = value);
+            _onSettingChanged();
           },
         ),
         if (_noReceptionAlertEnabled)
@@ -1756,6 +1889,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               keyboardType: TextInputType.number,
               onChanged: (value) {
                 _noReceptionMinTime = int.tryParse(value) ?? 30;
+                _onSettingChanged();
               },
             ),
           ),
@@ -1788,6 +1922,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               onChanged: (value) {
                 if (value != null) {
                   setState(() => _defaultMapType = value);
+                  _onSettingChanged();
                 }
               },
             ),
@@ -1801,11 +1936,23 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     );
   }
 
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _save() => _performSave();
+
+  Future<void> _performSave({bool silent = false}) async {
+    if (_isSaving) return;
+
+    // Silent mode (auto-save): skip validation, check required fields
+    if (silent) {
+      if (widget.navigation == null) return;
+      if (_nameController.text.isEmpty || _selectedArea == null ||
+          _selectedBoundaryId == null || _selectedUnit == null ||
+          _selectedTree == null) return;
+    } else {
+      if (!_formKey.currentState!.validate()) return;
+    }
 
     // Validate score ranges
-    if (_autoVerification && _verificationType == 'score_by_distance') {
+    if (!silent && _autoVerification && _verificationType == 'score_by_distance') {
       for (int i = 0; i < _scoreRanges.length; i++) {
         // Validate percentage 0-100
         if (_scoreRanges[i].scorePercentage < 0 || _scoreRanges[i].scorePercentage > 100) {
@@ -2023,7 +2170,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         await _navigationRepository.update(navigation);
       }
 
-      if (mounted) {
+      if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -2049,7 +2196,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('שגיאה בשמירה: $e'),

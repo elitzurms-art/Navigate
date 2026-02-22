@@ -82,20 +82,6 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
             icon: const Icon(Icons.refresh),
             onPressed: _loadAreas,
           ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const CreateAreaScreen(),
-                ),
-              );
-              if (result == true) {
-                _loadAreas();
-              }
-            },
-          ),
         ],
       ),
       body: _isLoading
@@ -130,7 +116,7 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
                 )
               : ListView.builder(
                   itemCount: _areas.length,
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 80),
                   itemBuilder: (context, index) {
                     final area = _areas[index];
                     return Card(
@@ -189,6 +175,20 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
                     );
                   },
                 ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const CreateAreaScreen(),
+            ),
+          );
+          if (result == true) {
+            _loadAreas();
+          }
+        },
+        child: const Icon(Icons.add),
+      ),
     );
   }
 

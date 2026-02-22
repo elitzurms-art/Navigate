@@ -523,7 +523,7 @@ class _NavigationPreparationScreenState
                             ? TextButton.icon(
                                 onPressed: _openDataExport,
                                 icon: const Icon(Icons.file_download, size: 18),
-                                label: const Text('ייצוא צירים'),
+                                label: const Text('ייצוא נתונים'),
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.teal,
                                   padding: const EdgeInsets.symmetric(

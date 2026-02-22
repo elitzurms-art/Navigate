@@ -27,6 +27,7 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
   bool _isDrawing = false;
   bool _isSaving = false;
   bool _measureMode = false;
+  bool _isFullscreen = false;
   final List<LatLng> _measurePoints = [];
 
   @override
@@ -46,10 +47,150 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
     super.dispose();
   }
 
+  Widget _buildMapWidget() {
+    return Stack(
+      children: [
+        MapWithTypeSelector(
+          showTypeSelector: false,
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: const LatLng(32.0853, 34.7818),
+            initialZoom: 13.0,
+            onTap: (tapPosition, point) {
+              if (_measureMode) {
+                setState(() => _measurePoints.add(point));
+                return;
+              }
+              if (_isDrawing) {
+                setState(() {
+                  _boundaryPoints.add(point);
+                });
+              }
+            },
+          ),
+          layers: [
+            if (_boundaryPoints.isNotEmpty)
+              PolygonLayer(
+                polygons: [
+                  Polygon(
+                    points: _boundaryPoints,
+                    color: Colors.blue.withOpacity(0.3),
+                    borderColor: Colors.blue,
+                    borderStrokeWidth: 3,
+                    isFilled: true,
+                  ),
+                ],
+              ),
+            if (_boundaryPoints.isNotEmpty)
+              MarkerLayer(
+                markers: _boundaryPoints.asMap().entries.map((entry) {
+                  return Marker(
+                    point: entry.value,
+                    width: 30,
+                    height: 30,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${entry.key + 1}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ...MapControls.buildMeasureLayers(_measurePoints),
+          ],
+        ),
+        MapControls(
+          mapController: _mapController,
+          measureMode: _measureMode,
+          onMeasureModeChanged: (v) => setState(() {
+            _measureMode = v;
+            if (!v) _measurePoints.clear();
+          }),
+          measurePoints: _measurePoints,
+          onMeasureClear: () => setState(() => _measurePoints.clear()),
+          onMeasureUndo: () => setState(() {
+            if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
+          }),
+          onFullscreen: () => setState(() => _isFullscreen = !_isFullscreen),
+        ),
+        // פקדי ציור במסך מלא
+        if (_isFullscreen)
+          Positioned(
+            bottom: 16,
+            right: 16,
+            left: 16,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _isDrawing = !_isDrawing;
+                      });
+                    },
+                    icon: Icon(_isDrawing ? Icons.stop : Icons.edit_location),
+                    label: Text(_isDrawing ? 'סיים ציור' : 'צייר גבול'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isDrawing ? Colors.orange : Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: _boundaryPoints.isEmpty ? null : () {
+                    setState(() {
+                      _boundaryPoints.clear();
+                    });
+                  },
+                  icon: const Icon(Icons.clear),
+                  label: const Text('נקה'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (_isFullscreen && _isDrawing)
+          Positioned(
+            top: 8,
+            left: 60,
+            right: 60,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'לחץ על המפה להוספת נקודות גבול (${_boundaryPoints.length} נקודות)',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orange),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: _isFullscreen ? null : AppBar(
         title: Text(widget.area == null ? 'אזור חדש' : 'עריכת אזור'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
@@ -75,179 +216,104 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          // טופס פרטי אזור
-          Expanded(
-            flex: 2,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'שם האזור',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.map),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'נא להזין שם אזור';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _descriptionController,
-                      decoration: const InputDecoration(
-                        labelText: 'תיאור',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.description),
-                      ),
-                      maxLines: 3,
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              setState(() {
-                                _isDrawing = !_isDrawing;
-                              });
-                            },
-                            icon: Icon(_isDrawing ? Icons.stop : Icons.edit_location),
-                            label: Text(_isDrawing ? 'סיים ציור' : 'צייר גבול'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _isDrawing ? Colors.orange : Colors.blue,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: _boundaryPoints.isEmpty ? null : () {
-                            setState(() {
-                              _boundaryPoints.clear();
-                            });
-                          },
-                          icon: const Icon(Icons.clear),
-                          label: const Text('נקה'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'נקודות: ${_boundaryPoints.length}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    if (_isDrawing)
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        color: Colors.orange.shade50,
-                        child: const Text(
-                          'לחץ על המפה להוספת נקודות גבול',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.orange),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // מפה
-          Expanded(
-            flex: 3,
-            child: Stack(
+      body: _isFullscreen
+          ? _buildMapWidget()
+          : Column(
               children: [
-                MapWithTypeSelector(
-              showTypeSelector: false,
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: const LatLng(32.0853, 34.7818),
-                initialZoom: 13.0,
-                onTap: (tapPosition, point) {
-                  if (_measureMode) {
-                    setState(() => _measurePoints.add(point));
-                    return;
-                  }
-                  if (_isDrawing) {
-                    setState(() {
-                      _boundaryPoints.add(point);
-                    });
-                  }
-                },
-              ),
-              layers: [
-                if (_boundaryPoints.isNotEmpty)
-                  PolygonLayer(
-                    polygons: [
-                      Polygon(
-                        points: _boundaryPoints,
-                        color: Colors.blue.withOpacity(0.3),
-                        borderColor: Colors.blue,
-                        borderStrokeWidth: 3,
-                        isFilled: true,
-                      ),
-                    ],
-                  ),
-                if (_boundaryPoints.isNotEmpty)
-                  MarkerLayer(
-                    markers: _boundaryPoints.asMap().entries.map((entry) {
-                      return Marker(
-                        point: entry.value,
-                        width: 30,
-                        height: 30,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
+                // טופס פרטי אזור
+                Expanded(
+                  flex: 2,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: _nameController,
+                            decoration: const InputDecoration(
+                              labelText: 'שם האזור',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.map),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'נא להזין שם אזור';
+                              }
+                              return null;
+                            },
                           ),
-                          child: Center(
-                            child: Text(
-                              '${entry.key + 1}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _descriptionController,
+                            decoration: const InputDecoration(
+                              labelText: 'תיאור',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.description),
+                            ),
+                            maxLines: 3,
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isDrawing = !_isDrawing;
+                                    });
+                                  },
+                                  icon: Icon(_isDrawing ? Icons.stop : Icons.edit_location),
+                                  label: Text(_isDrawing ? 'סיים ציור' : 'צייר גבול'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _isDrawing ? Colors.orange : Colors.blue,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                onPressed: _boundaryPoints.isEmpty ? null : () {
+                                  setState(() {
+                                    _boundaryPoints.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.clear),
+                                label: const Text('נקה'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'נקודות: ${_boundaryPoints.length}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          if (_isDrawing)
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              color: Colors.orange.shade50,
+                              child: const Text(
+                                'לחץ על המפה להוספת נקודות גבול',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.orange),
                               ),
                             ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
+                        ],
+                      ),
+                    ),
                   ),
-                ...MapControls.buildMeasureLayers(_measurePoints),
-              ],
-            ),
-                MapControls(
-                  mapController: _mapController,
-                  measureMode: _measureMode,
-                  onMeasureModeChanged: (v) => setState(() {
-                    _measureMode = v;
-                    if (!v) _measurePoints.clear();
-                  }),
-                  measurePoints: _measurePoints,
-                  onMeasureClear: () => setState(() => _measurePoints.clear()),
-                  onMeasureUndo: () => setState(() {
-                    if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
-                  }),
+                ),
+
+                // מפה
+                Expanded(
+                  flex: 3,
+                  child: _buildMapWidget(),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
     );
   }
 

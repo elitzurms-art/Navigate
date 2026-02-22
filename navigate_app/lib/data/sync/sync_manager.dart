@@ -686,33 +686,38 @@ class SyncManager {
         // בדיקה בקבוצות של 10 (מגבלת whereIn של Firestore)
         for (var i = 0; i < reconcilableIds.length; i += 10) {
           final batch = reconcilableIds.skip(i).take(10).toList();
-          final snapshot = await _firestore
-              .collection(collection)
-              .where(FieldPath.documentId, whereIn: batch)
-              .get(const GetOptions(source: Source.server))
-              .timeout(const Duration(seconds: 15));
+          try {
+            final snapshot = await _firestore
+                .collection(collection)
+                .where(FieldPath.documentId, whereIn: batch)
+                .get(const GetOptions(source: Source.server))
+                .timeout(const Duration(seconds: 15));
 
-          final existingIds = snapshot.docs.map((d) => d.id).toSet();
+            final existingIds = snapshot.docs.map((d) => d.id).toSet();
 
-          // הגנה: אם Firestore לא החזירה אף תוצאה ל-batch מלא,
-          // סביר שהשאילתה נכשלה (cache ריק / בעיית רשת) — לא למחוק!
-          if (existingIds.isEmpty && batch.length > 1) {
-            print('SyncManager: Reconcile — Firestore returned 0 results for '
-                '${batch.length} $collection IDs. Skipping batch (possible cache/network issue).');
-            continue;
-          }
-
-          // בדיקה גם ל-soft-delete
-          final activeIds = snapshot.docs
-              .where((d) => (d.data())['deletedAt'] == null)
-              .map((d) => d.id)
-              .toSet();
-
-          for (final localId in batch) {
-            if (!existingIds.contains(localId) || !activeIds.contains(localId)) {
-              await _deleteLocalRecord(collection, localId);
-              print('SyncManager: Reconcile — removed orphan $collection/$localId');
+            // הגנה: אם Firestore לא החזירה אף תוצאה ל-batch מלא,
+            // סביר שהשאילתה נכשלה (cache ריק / בעיית רשת) — לא למחוק!
+            if (existingIds.isEmpty && batch.length > 1) {
+              print('SyncManager: Reconcile — Firestore returned 0 results for '
+                  '${batch.length} $collection IDs. Skipping batch (possible cache/network issue).');
+              continue;
             }
+
+            // בדיקה גם ל-soft-delete
+            final activeIds = snapshot.docs
+                .where((d) => (d.data())['deletedAt'] == null)
+                .map((d) => d.id)
+                .toSet();
+
+            for (final localId in batch) {
+              if (!existingIds.contains(localId) || !activeIds.contains(localId)) {
+                await _deleteLocalRecord(collection, localId);
+                print('SyncManager: Reconcile — removed orphan $collection/$localId');
+              }
+            }
+          } catch (batchError) {
+            // permission-denied — דילוג על batch (למשל ניווטים שהמשתמש לא משתתף בהם)
+            print('SyncManager: Reconcile — skipping batch for $collection: $batchError');
           }
         }
       } catch (e) {
@@ -789,11 +794,20 @@ class SyncManager {
     final metadata = await _db.getSyncMetadata(collection);
     final lastPullAt = metadata?.lastPullAt;
 
-    Query query = _firestore.collection(collection);
+    // שימוש בשאילתה מסוננת לפי הרשאות (unit scope / participants)
+    // כדי להתאים ל-Firestore Security Rules
+    Query query = _buildScopedQuery(collection);
 
     // שאילתה incremental - רק שינויים חדשים
     // מרווח בטיחות של 5 שניות למניעת "בליעת" מסמכים בגלל clock skew
-    if (lastPullAt != null) {
+    // הערה: Firestore לא תומך ב-whereIn/arrayContains בשילוב עם inequality (updatedAt >)
+    // ללא composite index. לכן, עבור קולקשנים מסוננים (users, units, navigations, navigation_trees)
+    // מדלגים על סינון incremental — כמות הנתונים כבר מוגבלת ע"י הסינון.
+    final isScopedCollection = !_isDeveloperOrAdmin &&
+        (collection == 'users' || collection == 'units' ||
+         collection == 'navigations' || collection == 'navigation_trees');
+
+    if (lastPullAt != null && !isScopedCollection) {
       final adjustedPullAt = lastPullAt.subtract(const Duration(seconds: 5));
       query = query.where('updatedAt', isGreaterThan: Timestamp.fromDate(adjustedPullAt));
     }

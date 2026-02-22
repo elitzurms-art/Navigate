@@ -155,6 +155,197 @@ class SoloQuizRepository {
     return null;
   }
 
+  /// זריעת שאלות ברירת מחדל (15 שאלות) + הגדרות מבחן
+  Future<void> seedDefaultQuestions() async {
+    final batch = _firestore.batch();
+
+    final questions = _defaultQuestions;
+    for (final q in questions) {
+      final docRef = _firestore.collection('solo_quiz_questions').doc();
+      batch.set(docRef, q);
+    }
+
+    // הגדרות מבחן
+    batch.set(
+      _firestore.collection('solo_quiz_config').doc('settings'),
+      {'passingScore': 85},
+    );
+
+    await batch.commit();
+  }
+
+  static List<Map<String, dynamic>> get _defaultQuestions => [
+    // === הצהרות מוכנות (5) ===
+    {
+      'order': 1,
+      'type': 'yes_no',
+      'question': 'האם אתה מעיד על עצמך כי רמת הניווט שלך טובה ומעלה?',
+      'options': <String>[],
+      'correctAnswers': [0],
+      'isReadiness': true,
+    },
+    {
+      'order': 2,
+      'type': 'yes_no',
+      'question': 'האם ביכולתך ליישם את תכונות האופי והערכים הבאים: דבקות במשימה, אמינות, אחריות ובטיחות, מקצועיות ומשמעת, רעות, איתנות, קבלת החלטות איכותיות?',
+      'options': <String>[],
+      'correctAnswers': [0],
+      'isReadiness': true,
+    },
+    {
+      'order': 3,
+      'type': 'yes_no',
+      'question': 'האם ביצעת מעל 10 ניווטי לילה?',
+      'options': <String>[],
+      'correctAnswers': [0],
+      'isReadiness': true,
+    },
+    {
+      'order': 4,
+      'type': 'yes_no',
+      'question': 'קראת והבנת את התחקירים?',
+      'options': <String>[],
+      'correctAnswers': [0],
+      'isReadiness': true,
+    },
+    {
+      'order': 5,
+      'type': 'yes_no',
+      'question': 'קראת והבנת את ההוראות?',
+      'options': <String>[],
+      'correctAnswers': [0],
+      'isReadiness': true,
+    },
+    // === שאלות ידע (10) ===
+    {
+      'order': 6,
+      'type': 'single',
+      'question': 'מהי הגישה הנכונה לניווט בדד?',
+      'options': [
+        'ניווט בדד זהה לניווט רגיל, רק לבד',
+        'ניווט בדד דורש פחות הכנה כי אין צוות',
+        'ניווט בדד דורש יתר זהירות, הכנה מקיפה ומודעות מוגברת לבטיחות',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 7,
+      'type': 'single',
+      'question': 'מה הלקח החוזר בשלושת התחקירים?',
+      'options': [
+        'חשיבות הערכת מצב רציפה ודיווח מיידי על כל שינוי',
+        'חשיבות הציוד האישי',
+        'חשיבות הכושר הגופני',
+        'חשיבות הניווט המהיר',
+      ],
+      'correctAnswers': [0],
+      'isReadiness': false,
+    },
+    {
+      'order': 8,
+      'type': 'single',
+      'question': 'מהו מצב הנשק בניווט בדד?',
+      'options': [
+        'שחור/לבן — על פי החלטת אל"מ הגזרה',
+        'תמיד שחור',
+        'תמיד לבן',
+      ],
+      'correctAnswers': [0],
+      'isReadiness': false,
+    },
+    {
+      'order': 9,
+      'type': 'single',
+      'question': 'מהו מרחק הבטיחות המינימלי מכביש?',
+      'options': [
+        '10 מטרים',
+        '25 מטרים',
+        '50 מטרים',
+        '100 מטרים',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 10,
+      'type': 'multiple',
+      'question': 'מהו נוהל הברבור (כשיש קשר)?',
+      'options': [
+        'דיווח למוקד',
+        'מתן סימן היכר מוסכם',
+        'תיאום חילוץ אם נדרש',
+        'הישארות במקום עד להוראה אחרת',
+        'שמירה על קשר רציף',
+      ],
+      'correctAnswers': [0, 1, 2, 3, 4],
+      'isReadiness': false,
+    },
+    {
+      'order': 11,
+      'type': 'single',
+      'question': 'אילו מדדים חובה לבדוק לפני ניווט בדד?',
+      'options': [
+        'דופק בלבד',
+        'חום ודופק',
+        'לחץ דם וחום',
+        'חום, דופק ולחץ דם',
+      ],
+      'correctAnswers': [3],
+      'isReadiness': false,
+    },
+    {
+      'order': 12,
+      'type': 'single',
+      'question': 'כמה ניווטי מאבטח חובה לפני ניווט בדד?',
+      'options': [
+        'עשרה ניווטי לילה מוצלחים',
+        'חמישה ניווטי לילה',
+        'שלושה ניווטי לילה',
+        'ניווט אחד מוצלח מספיק',
+      ],
+      'correctAnswers': [0],
+      'isReadiness': false,
+    },
+    {
+      'order': 13,
+      'type': 'single',
+      'question': 'מנווט שנפגע — מה יעשה?',
+      'options': [
+        'ימשיך לנווט עד הנקודה הבאה',
+        'ידווח דו"ח מצב, ירה ירי נותבים, ישתלט על שטח שולט וישלח דרורית',
+        'ינסה לחזור לבסיס בעצמו',
+        'יחכה בשקט עד שימצאו אותו',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 14,
+      'type': 'single',
+      'question': 'אין קשר מעל שעה — מה יעשה המנווט?',
+      'options': [
+        'יטפס למקום הגבוה ביותר בסביבה וינסה ליצור קשר',
+        'ימשיך לנווט כרגיל',
+        'יחזור לנקודת ההתחלה',
+      ],
+      'correctAnswers': [0],
+      'isReadiness': false,
+    },
+    {
+      'order': 15,
+      'type': 'single',
+      'question': 'תנאי מזג אוויר קשים — מה יעשה המנווט?',
+      'options': [
+        'ימשיך לנווט בקצב מהיר יותר',
+        'יחזור מיד לבסיס',
+        'יעצור במקום מוצל ובטוח וידווח למוקד',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+  ];
+
   /// חישוב ציון מבחן
   int calculateScore(
     List<SoloQuizQuestion> questions,

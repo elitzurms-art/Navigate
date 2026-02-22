@@ -25,6 +25,8 @@ import 'presentation/screens/home/navigator_home_screen.dart';
 import 'presentation/screens/onboarding/choose_unit_screen.dart';
 import 'presentation/screens/onboarding/waiting_for_approval_screen.dart';
 import 'data/repositories/unit_repository.dart';
+import 'services/auth_mapping_service.dart';
+import 'data/repositories/solo_quiz_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -70,6 +72,9 @@ void main() async {
   // כדי לאפשר גישה ל-Firestore (הכללים דורשים isAuthenticated)
   await _ensureFirebaseAuth();
 
+  // זריעת שאלות מבחן בדד (אם חסרות) — רק עבור developer/admin
+  await _seedSoloQuizIfNeeded();
+
   // התחלת סנכרון עם Firebase
   final syncManager = SyncManager();
   await syncManager.start();
@@ -99,8 +104,22 @@ Future<void> _ensureFirebaseAuth() async {
   if (loggedInUid == null || loggedInUid.isEmpty) return;
 
   try {
-    await FirebaseAuth.instance.signInAnonymously();
-    print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid)');
+    final credential = await FirebaseAuth.instance.signInAnonymously();
+    final firebaseUid = credential.user?.uid;
+    print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid, firebaseUid=$firebaseUid)');
+
+    // עדכון auth_mapping כדי ש-Firestore Security Rules יוכלו לזהות את המשתמש
+    if (firebaseUid != null) {
+      final userRepo = UserRepository();
+      final user = await userRepo.getUser(loggedInUid);
+      if (user != null) {
+        await AuthMappingService().updateAuthMapping(firebaseUid, user);
+        // עדכון firebaseUid על המשתמש המקומי
+        if (user.firebaseUid != firebaseUid) {
+          await userRepo.saveUserLocally(user.copyWith(firebaseUid: firebaseUid), queueSync: false);
+        }
+      }
+    }
   } catch (e) {
     print('DEBUG: Anonymous sign-in failed: $e');
   }
@@ -171,6 +190,30 @@ Future<void> _deleteNamelessUsers() async {
     }
   } catch (e) {
     print('DEBUG: _deleteNamelessUsers error: $e');
+  }
+}
+
+/// זריעת שאלות מבחן בדד ל-Firestore — פעם אחת, רק כש-developer/admin מחובר
+Future<void> _seedSoloQuizIfNeeded() async {
+  try {
+    if (FirebaseAuth.instance.currentUser == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final loggedInUid = prefs.getString('logged_in_uid');
+    if (loggedInUid == null) return;
+
+    final user = await UserRepository().getUser(loggedInUid);
+    if (user == null) return;
+    if (user.role != 'developer') return;
+
+    final quizRepo = SoloQuizRepository();
+    final questions = await quizRepo.getQuestions();
+    if (questions.isNotEmpty) return;
+
+    await quizRepo.seedDefaultQuestions();
+    print('DEBUG: Seeded solo quiz questions (${user.role})');
+  } catch (e) {
+    print('DEBUG: _seedSoloQuizIfNeeded error: $e');
   }
 }
 

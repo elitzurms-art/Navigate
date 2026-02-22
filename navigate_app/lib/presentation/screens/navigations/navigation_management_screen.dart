@@ -2123,23 +2123,26 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                       width: 48,
                       height: 48,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.place,
-                            color: cpColor.withValues(alpha: _nzOpacity),
-                            size: 32,
-                          ),
-                          Text(
-                            '${cp.sequenceNumber}$letter',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: cpColor,
+                      child: GestureDetector(
+                        onTap: () => _showCheckpointAssignees(cp, cpColor, letter),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.place,
+                              color: cpColor.withValues(alpha: _nzOpacity),
+                              size: 32,
                             ),
-                          ),
-                        ],
+                            Text(
+                              '${cp.sequenceNumber}$letter',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: cpColor,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   }).toList(),
@@ -2864,6 +2867,84 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       case NavigatorPersonalStatus.waiting:
         return Colors.grey;
     }
+  }
+
+  void _showCheckpointAssignees(Checkpoint cp, Color cpColor, String letter) {
+    // מצא את כל המנווטים שקיבלו את הנקודה הזאת
+    final assignees = <String>[];
+    for (final entry in widget.navigation.routes.entries) {
+      final navigatorId = entry.key;
+      final route = entry.value;
+      if (route.checkpointIds.contains(cp.id) ||
+          route.startPointId == cp.id ||
+          route.endPointId == cp.id) {
+        assignees.add(_userNames[navigatorId] ?? navigatorId);
+      }
+    }
+    // גם נקודות ביניים משותפות
+    for (final entry in widget.navigation.routes.entries) {
+      final navigatorId = entry.key;
+      final route = entry.value;
+      if (route.waypointIds.contains(cp.id) &&
+          !assignees.contains(_userNames[navigatorId] ?? navigatorId)) {
+        assignees.add(_userNames[navigatorId] ?? navigatorId);
+      }
+    }
+
+    final typeName = letter == 'H'
+        ? 'נקודת התחלה'
+        : letter == 'S'
+            ? 'נקודת סיום'
+            : letter == 'B'
+                ? 'נקודת ביניים'
+                : 'נקודה';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.place, color: cpColor, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${cp.name.isNotEmpty ? cp.name : 'נ.צ ${cp.sequenceNumber}'} ($typeName)',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: assignees.isEmpty
+            ? const Text('לא שויכו מנווטים לנקודה זו')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'מנווטים שקיבלו את הנקודה (${assignees.length}):',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  ...assignees.map((name) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.person, size: 18, color: Colors.blueGrey),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text(name)),
+                      ],
+                    ),
+                  )),
+                ],
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('סגור'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
