@@ -409,7 +409,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _securityActive = false;
   }
 
-  /// פסילת מנווט — סימון ב-track + שליחת התראה למפקד
+  /// פסילת מנווט — סיום ניווט + סימון ב-track + שליחת התראה למפקד
   Future<void> _handleDisqualification(ViolationType type) async {
     if (_isDisqualified || _track == null) return;
 
@@ -418,8 +418,42 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _isDisqualified = true;
 
     try {
+      // עצירת GPS + שמירת נקודות אחרונות לפני סיום
+      await _stopGpsTracking();
+
+      // עצירת שירותי ניטור
+      _alertMonitoringService?.stop();
+      _healthCheckService?.dispose();
+      _gpsCheckTimer?.cancel();
+      _statusReportTimer?.cancel();
+      _elapsedTimer?.cancel();
+
+      // סיום הניווט (isActive=false, endedAt=now)
+      await _trackRepo.endNavigation(_track!.id);
+
       // סימון isDisqualified=true ב-track (Drift + Firestore)
       await _trackRepo.disqualifyNavigator(_track!.id);
+
+      // כתיבה ישירה ל-Firestore — לא דרך queue
+      try {
+        final updatedTrack = await _trackRepo.getById(_track!.id);
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .doc(_track!.id)
+            .set({
+          'id': updatedTrack.id,
+          'navigationId': updatedTrack.navigationId,
+          'navigatorUserId': updatedTrack.navigatorUserId,
+          'trackPointsJson': updatedTrack.trackPointsJson,
+          'stabbingsJson': updatedTrack.stabbingsJson,
+          'startedAt': updatedTrack.startedAt.toIso8601String(),
+          'endedAt': updatedTrack.endedAt?.toIso8601String(),
+          'isActive': updatedTrack.isActive,
+          'isDisqualified': updatedTrack.isDisqualified,
+          'manualPositionUsed': updatedTrack.manualPositionUsed,
+          'manualPositionUsedAt': updatedTrack.manualPositionUsedAt?.toIso8601String(),
+        }, SetOptions(merge: true));
+      } catch (_) {}
 
       // שליחת התראה למפקד
       await _securityManager.sendDisqualificationAlert(
@@ -432,7 +466,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     }
 
     if (mounted) {
-      setState(() {}); // רענון UI — _isDisqualified כבר true
+      setState(() {
+        _personalStatus = NavigatorPersonalStatus.finished;
+      });
       HapticFeedback.heavyImpact();
     }
   }

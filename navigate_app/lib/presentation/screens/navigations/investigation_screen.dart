@@ -2055,7 +2055,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 borderRadius: BorderRadius.circular(3),
               ),
               child: Text(
-                punch.id,
+                _getNavigatorDisplayName(punch.navigatorId),
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
               ),
             ),

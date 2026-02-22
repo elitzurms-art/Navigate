@@ -282,6 +282,10 @@ class UserRepository {
       if (updatedUser?.firebaseUid != null) {
         await AuthMappingService().updateMappingForUser(updatedUser!);
       }
+
+      // רענון הקשר SyncManager — listeners יופעלו מחדש עם scope מעודכן (fire-and-forget)
+      // ignore: unawaited_futures
+      _syncManager.refreshUserContext();
     } catch (e) {
       print('DEBUG: Error in setUserUnit: $e');
     }

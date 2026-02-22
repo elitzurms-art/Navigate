@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/sync/sync_manager.dart';
 import '../../../domain/entities/unit.dart';
 import '../../../services/auth_service.dart';
 import 'waiting_for_approval_screen.dart';
@@ -17,33 +20,84 @@ class _ChooseUnitScreenState extends State<ChooseUnitScreen> {
   final UnitRepository _unitRepo = UnitRepository();
   final UserRepository _userRepo = UserRepository();
   final AuthService _authService = AuthService();
+  final SyncManager _syncManager = SyncManager();
 
   List<_UnitWithDepth> _hierarchicalUnits = [];
   bool _isLoading = true;
   String? _error;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
+    // האזנה לשינויי סנכרון — אם יחידות מגיעות מאוחר, טעינה מחדש
+    _syncSubscription = _syncManager.onDataChanged.listen((collection) {
+      if (collection == 'units' && mounted) {
+        _loadUnits();
+      }
+    });
     _loadUnits();
   }
 
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadUnits() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _error = null;
     });
     try {
-      final allUnits = await _unitRepo.getAll();
+      var allUnits = await _unitRepo.getAll();
+
+      // אם DB מקומי ריק — ניסיון טעינה ישירה מ-Firestore
+      if (allUnits.isEmpty) {
+        allUnits = await _loadUnitsFromFirestore();
+      }
+
+      if (!mounted) return;
       setState(() {
         _hierarchicalUnits = _buildHierarchy(allUnits);
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = 'שגיאה בטעינת יחידות';
         _isLoading = false;
       });
+    }
+  }
+
+  /// טעינת יחידות ישירות מ-Firestore כ-fallback
+  Future<List<Unit>> _loadUnitsFromFirestore() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('units')
+          .get()
+          .timeout(const Duration(seconds: 10));
+
+      final units = <Unit>[];
+      for (final doc in snapshot.docs) {
+        try {
+          final data = Map<String, dynamic>.from(doc.data());
+          data['id'] = doc.id;
+          // המרת Timestamp ל-ISO string
+          data.forEach((key, value) {
+            if (value is Timestamp) {
+              data[key] = value.toDate().toIso8601String();
+            }
+          });
+          units.add(Unit.fromMap(data));
+        } catch (_) {}
+      }
+      return units;
+    } catch (e) {
+      return [];
     }
   }
 

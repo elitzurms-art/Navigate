@@ -221,6 +221,30 @@ class SyncManager {
     }
   }
 
+  /// רענון הקשר משתמש + הפעלה מחדש של listeners (לאחר שינוי unitId/role)
+  Future<void> refreshUserContext() async {
+    if (!_isRunning || !_isAuthenticated) return;
+
+    print('SyncManager: Refreshing user context and restarting listeners...');
+
+    // ביטול listeners קיימים
+    for (final sub in _realtimeListeners.values) {
+      await sub.cancel();
+    }
+    _realtimeListeners.clear();
+
+    // טעינת הקשר מעודכן
+    await _loadCurrentUserContext();
+
+    // pull מחדש עם הקשר חדש
+    await pullAll();
+
+    // הפעלת listeners מחדש עם queries מעודכנות
+    _startCollectionRealtimeListeners();
+
+    print('SyncManager: User context refreshed — scope=${_allowedUnitScopeIds.length} units');
+  }
+
   /// האם המשתמש הנוכחי הוא developer או admin
   bool get _isDeveloperOrAdmin =>
       _currentRole == 'developer' || _currentRole == 'admin';

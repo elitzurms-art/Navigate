@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../services/auth_service.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/sync/sync_manager.dart';
@@ -53,14 +54,56 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
     final user = await _authService.getCurrentUser();
     if (user == null || !mounted) return;
 
+    // 1. בדיקה מקומית (מהירה)
     if (user.isApproved) {
-      // אושר — מעבר למסך הבית
       Navigator.of(context).pushReplacementNamed('/home');
+      return;
     } else if (user.unitId == null || user.unitId!.isEmpty) {
-      // נדחה (unitId נמחק) — חזרה לבחירת יחידה
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
       );
+      return;
+    }
+
+    // 2. Fallback — בדיקה ישירה מ-Firestore (במקרה שה-listener מת)
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      if (!doc.exists || doc.data() == null || !mounted) return;
+      final data = doc.data()!;
+
+      final isApproved = data['isApproved'] as bool? ?? false;
+      if (isApproved) {
+        // עדכון DB מקומי + מעבר למסך הבית
+        await _userRepo.saveUserLocally(
+          user.copyWith(isApproved: true, updatedAt: DateTime.now()),
+          queueSync: false,
+        );
+        if (mounted) {
+          Navigator.of(context).pushReplacementNamed('/home');
+        }
+        return;
+      }
+
+      // בדיקת דחייה (unitId הוסר)
+      final firestoreUnitId = data['unitId'] as String?;
+      if (firestoreUnitId == null || firestoreUnitId.isEmpty) {
+        await _userRepo.saveUserLocally(
+          user.copyWith(unitId: '', isApproved: false, updatedAt: DateTime.now()),
+          queueSync: false,
+        );
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
+          );
+        }
+      }
+    } catch (_) {
+      // שגיאת רשת — ייבדק בפולינג הבא
     }
   }
 

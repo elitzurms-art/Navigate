@@ -66,8 +66,8 @@ service cloud.firestore {
     // /units/{unitId} -- Organizational units
     // =========================================================================
     match /units/{unitId} {
-      allow read: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isInUnitScope(unitId));
+      // Any authenticated user can read units (needed for onboarding ChooseUnitScreen)
+      allow read: if isAuthenticated();
       allow create, update, delete: if isAuthenticated() &&
         (isDeveloperOrAdmin() || isInUnitScope(unitId));
 
