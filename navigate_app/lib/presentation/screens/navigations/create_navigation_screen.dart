@@ -86,7 +86,13 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _showScoresAfterApproval = true;
 
   // הגדרות ניווט
-  int _gpsUpdateInterval = 30; // שניות
+  int _gpsUpdateInterval = 5; // דינמי ברירת מחדל
+
+  String get _samplingModeDescription {
+    if (_gpsUpdateInterval <= 2) return 'GPS רציף + PDR — צריכת סוללה גבוהה';
+    if (_gpsUpdateInterval <= 10) return 'איזון מושלם — דגימה כל 5 שניות';
+    return 'חיסכון סוללה — דגימה כל 30 שניות, ללא PDR';
+  }
 
   // הגדרות מיקום
   bool _useAllPositionSources = true;
@@ -125,6 +131,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   // הגדרות תצוגה
   String _defaultMapType = 'topographic'; // ברירת מחדל: טופוגרפית
+  bool _enableVariablesSheet = true; // מילוי דף משתנים דיגיטלי
 
   // התראות
   bool _alertsEnabled = true;
@@ -421,6 +428,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
     // הגדרות תצוגה
     _defaultMapType = nav.displaySettings.defaultMap ?? 'topographic';
+    _enableVariablesSheet = nav.displaySettings.enableVariablesSheet;
 
     // התראות
     _alertsEnabled = nav.alerts.enabled;
@@ -1239,24 +1247,26 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // מרווח דגימת GPS
+            // איכות דגימת מיקום
             ListTile(
-              leading: const Icon(Icons.timer, color: Colors.blue),
-              title: const Text('מרווח דגימת GPS'),
-              subtitle: Text('$_gpsUpdateInterval שניות'),
-              trailing: SizedBox(
-                width: 120,
-                child: Slider(
-                  value: _gpsUpdateInterval.toDouble(),
-                  min: 1,
-                  max: 120,
-                  divisions: 119,
-                  label: '$_gpsUpdateInterval שניות',
-                  onChanged: (value) {
-                    setState(() => _gpsUpdateInterval = value.round());
-                    _onSettingChanged();
-                  },
-                ),
+              leading: const Icon(Icons.location_searching, color: Colors.blue),
+              title: const Text('איכות דגימת מיקום'),
+              subtitle: Text(_samplingModeDescription),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 30, label: Text('חסכוני'), icon: Icon(Icons.battery_saver)),
+                  ButtonSegment(value: 5, label: Text('דינמי'), icon: Icon(Icons.speed)),
+                  ButtonSegment(value: 1, label: Text('מדויק'), icon: Icon(Icons.gps_fixed)),
+                ],
+                selected: {_gpsUpdateInterval <= 2 ? 1 : _gpsUpdateInterval <= 10 ? 5 : 30},
+                onSelectionChanged: (Set<int> sel) {
+                  setState(() => _gpsUpdateInterval = sel.first);
+                  _onSettingChanged();
+                },
               ),
             ),
             const Divider(),
@@ -1930,6 +1940,17 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
             const SizedBox(height: 16),
             const Text('מיקום פתיחת מפה: מחושב אוטומטית ממרכז הג"ג',
               style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
+            const Divider(height: 24),
+            SwitchListTile(
+              title: const Text('מילוי דף משתנים דיגיטלי'),
+              subtitle: const Text('הצגת דף משתנים בשלבי ההכנה'),
+              value: _enableVariablesSheet,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (value) {
+                setState(() => _enableVariablesSheet = value);
+                _onSettingChanged();
+              },
+            ),
           ],
         ),
       ),
@@ -2044,6 +2065,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         defaultMap: _defaultMapType,
         openingLat: openingLat,
         openingLng: openingLng,
+        enableVariablesSheet: _enableVariablesSheet,
       );
 
       // קבלת משתמש נוכחי

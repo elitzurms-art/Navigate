@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/pdr_position_result.dart';
 import 'pdr_engine.dart';
 import 'sensor_platform.dart';
+import 'step_length_estimator.dart';
 
 /// PDR (Pedestrian Dead Reckoning) service — manages sensor lifecycle and position stream.
 ///
@@ -18,6 +19,7 @@ import 'sensor_platform.dart';
 class PdrService {
   final SensorPlatform _sensorPlatform = SensorPlatform();
   final PdrEngine _engine = PdrEngine();
+  final StepLengthEstimator _stepLengthEstimator = StepLengthEstimator();
 
   StreamSubscription<Map<String, dynamic>>? _sensorSubscription;
   final StreamController<PdrPositionResult> _positionController =
@@ -42,6 +44,9 @@ class PdrService {
 
   /// Current heading in degrees.
   double get headingDegrees => _engine.headingDegrees;
+
+  /// Whether the device is currently stationary (ZUPT).
+  bool get isStationary => _engine.isStationary;
 
   /// Start the PDR service — registers sensors and begins listening.
   Future<void> start() async {
@@ -77,6 +82,7 @@ class PdrService {
   /// Full reset — clears anchor, steps, heading.
   void reset() {
     _engine.reset();
+    _stepLengthEstimator.reset();
   }
 
   /// Dispose the service — stops and closes stream.
@@ -92,11 +98,15 @@ class PdrService {
 
     switch (type) {
       case 'step':
-        _engine.onStep();
-        // Emit position on each step
-        final pos = _engine.currentPosition;
-        if (pos != null && !_positionController.isClosed) {
-          _positionController.add(pos);
+        final stepCountBefore = _engine.stepCount;
+        final stepLength = _stepLengthEstimator.onStep();
+        _engine.onStep(stepLength: stepLength);
+        // Only emit position if step was actually processed (not suppressed by ZUPT)
+        if (_engine.stepCount > stepCountBefore) {
+          final pos = _engine.currentPosition;
+          if (pos != null && !_positionController.isClosed) {
+            _positionController.add(pos);
+          }
         }
       case 'gyro':
         final x = (event['x'] as num).toDouble();
@@ -110,8 +120,11 @@ class PdrService {
         final z = (event['z'] as num).toDouble();
         _engine.onMag(x, y, z);
       case 'accel':
-        // Reserved for future Weinberg step length estimation
-        break;
+        final x = (event['x'] as num).toDouble();
+        final y = (event['y'] as num).toDouble();
+        final z = (event['z'] as num).toDouble();
+        _stepLengthEstimator.onAccel(x, y, z);
+        _engine.onAccel(x, y, z);
     }
   }
 }

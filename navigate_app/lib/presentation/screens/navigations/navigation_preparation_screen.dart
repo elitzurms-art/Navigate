@@ -13,6 +13,7 @@ import 'routes_verification_screen.dart';
 import 'training_mode_screen.dart';
 import 'system_check_screen.dart';
 import 'data_export_screen.dart';
+import 'variables_sheet_screen.dart';
 
 /// מסך הכנת ניווט - צ'קליסט שלבים
 class NavigationPreparationScreen extends StatefulWidget {
@@ -287,6 +288,16 @@ class _NavigationPreparationScreenState
           isCommander: true,
           currentUser: _currentUser,
         ),
+      ),
+    );
+    await _reloadNavigation();
+  }
+
+  Future<void> _openVariablesSheet() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => VariablesSheetScreen(navigation: _navigation),
       ),
     );
     await _reloadNavigation();
@@ -672,6 +683,16 @@ class _NavigationPreparationScreenState
                         isActive: _navigation.status == 'system_check',
                         onTap: _openSystemCheck,
                       ),
+                      if (_navigation.displaySettings.enableVariablesSheet) ...[
+                        const SizedBox(height: 10),
+                        _buildStepCard(
+                          stepNumber: 6,
+                          title: 'דף משתנים',
+                          isDone: _navigation.variablesSheet != null,
+                          isMandatory: false,
+                          onTap: _openVariablesSheet,
+                        ),
+                      ],
                     ],
                   ),
                 ),

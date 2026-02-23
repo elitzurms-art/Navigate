@@ -23,7 +23,7 @@ class GpsService {
   bool _pdrInitialized = false;
 
   /// סף דיוק (במטרים) — מתחתיו GPS מספיק טוב, מעליו מנסה fallback
-  static const double _accuracyThreshold = 50.0;
+  static const double _accuracyThreshold = 30.0;
 
   /// OpenCellID API key (free tier)
   static const String _openCellIdApiKey = 'pk.2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d';
@@ -103,6 +103,9 @@ class GpsService {
 
   /// PDR position stream (for external listeners)
   Stream<PdrPositionResult>? get pdrPositionStream => _pdrService?.positionStream;
+
+  /// Whether PDR detects the device is stationary (ZUPT).
+  bool get isPdrStationary => _pdrService?.isStationary ?? false;
 
   /// מיקום PDR+Cell hybrid
   ///
@@ -257,15 +260,17 @@ class GpsService {
       // כפיית GPS — אין fallback
       if (forceSource == 'gps') {
         _lastPositionSource = PositionSource.gps;
-        // Update PDR anchor on good GPS fix
-        if (position.accuracy < 20) {
+        // Update PDR anchor on good GPS fix (ZUPT-aware: stationary allows looser threshold)
+        final anchorThreshold = (_pdrService?.isStationary == true) ? 40.0 : 20.0;
+        if (position.accuracy < anchorThreshold) {
           setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
         }
         return gpsLatLng;
       }
 
-      // Update PDR anchor on good GPS fix
-      if (position.accuracy < 20) {
+      // Update PDR anchor on good GPS fix (ZUPT-aware: stationary allows looser threshold)
+      final anchorThreshold = (_pdrService?.isStationary == true) ? 40.0 : 20.0;
+      if (position.accuracy < anchorThreshold) {
         setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
       }
 
@@ -361,14 +366,16 @@ class GpsService {
 
       // כפיית GPS — אין fallback
       if (forceSource == 'gps') {
-        if (gpsPosition.accuracy < 20) {
+        final anchorThreshold2 = (_pdrService?.isStationary == true) ? 40.0 : 20.0;
+        if (gpsPosition.accuracy < anchorThreshold2) {
           setPdrAnchor(gpsPosition.latitude, gpsPosition.longitude, heading: gpsPosition.heading);
         }
         return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);
       }
 
-      // Update PDR anchor on good GPS fix
-      if (gpsPosition.accuracy < 20) {
+      // Update PDR anchor on good GPS fix (ZUPT-aware)
+      final anchorThreshold2 = (_pdrService?.isStationary == true) ? 40.0 : 20.0;
+      if (gpsPosition.accuracy < anchorThreshold2) {
         setPdrAnchor(gpsPosition.latitude, gpsPosition.longitude, heading: gpsPosition.heading);
       }
 

@@ -1280,6 +1280,8 @@ class SyncManager {
             (data['timeCalculationSettings'] != null ? jsonEncode(data['timeCalculationSettings']) : '{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}')),
         communicationSettingsJson: Value(data['communicationSettingsJson'] as String? ??
             (data['communicationSettings'] != null ? jsonEncode(data['communicationSettings']) : '{"walkieTalkieEnabled":false}')),
+        variablesSheetJson: Value(data['variablesSheetJson'] as String? ??
+            (data['variablesSheet'] != null ? jsonEncode(data['variablesSheet']) : null)),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),

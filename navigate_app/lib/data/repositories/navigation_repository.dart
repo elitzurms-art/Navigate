@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import '../../core/constants/app_constants.dart';
 import '../../domain/entities/navigation.dart' as domain;
 import '../../domain/entities/navigation_settings.dart' as domain;
+import '../../domain/entities/variables_sheet.dart' as domain;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
 
@@ -111,6 +112,9 @@ class NavigationRepository {
               allowManualPosition: Value(navigation.allowManualPosition),
               timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
               communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
+              variablesSheetJson: Value(navigation.variablesSheet != null
+                  ? jsonEncode(navigation.variablesSheet!.toMap())
+                  : null),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -189,6 +193,9 @@ class NavigationRepository {
           allowManualPosition: Value(navigation.allowManualPosition),
           timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
           communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
+          variablesSheetJson: Value(navigation.variablesSheet != null
+              ? jsonEncode(navigation.variablesSheet!.toMap())
+              : null),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -348,6 +355,9 @@ class NavigationRepository {
       timeCalculationSettings: _parseJsonAsMap(data.timeCalculationSettingsJson) != null
           ? domain.TimeCalculationSettings.fromMap(_parseJsonAsMap(data.timeCalculationSettingsJson)!)
           : const domain.TimeCalculationSettings(),
+      variablesSheet: data.variablesSheetJson != null && _parseJsonAsMap(data.variablesSheetJson!) != null
+          ? domain.VariablesSheet.fromMap(_parseJsonAsMap(data.variablesSheetJson!)!)
+          : null,
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)
           : const domain.NavigationPermissions(managers: [], viewers: []),
@@ -832,6 +842,9 @@ class NavigationRepository {
           allowManualPosition: Value(nav.allowManualPosition),
           timeCalculationSettingsJson: Value(jsonEncode(nav.timeCalculationSettings.toMap())),
           communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
+          variablesSheetJson: Value(nav.variablesSheet != null
+              ? jsonEncode(nav.variablesSheet!.toMap())
+              : null),
           permissionsJson: jsonEncode(nav.permissions.toMap()),
           createdAt: nav.createdAt,
           updatedAt: nav.updatedAt,
@@ -959,6 +972,9 @@ class NavigationRepository {
                   activeStartTime: Value(nav.activeStartTime),
                   gpsUpdateIntervalSeconds: nav.gpsUpdateIntervalSeconds,
                   communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
+                  variablesSheetJson: Value(nav.variablesSheet != null
+                      ? jsonEncode(nav.variablesSheet!.toMap())
+                      : null),
                   permissionsJson: jsonEncode(nav.permissions.toMap()),
                   createdAt: nav.createdAt,
                   updatedAt: nav.updatedAt,

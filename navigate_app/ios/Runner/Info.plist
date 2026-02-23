@@ -53,5 +53,7 @@
 	<string>האפליקציה צריכה גישה למיקום ברקע כדי להמשיך מעקב GPS בזמן ניווט פעיל</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>האפליקציה צריכה גישה למיקום לצורך מעקב GPS בזמן ניווט</string>
+	<key>NSMotionUsageDescription</key>
+	<string>האפליקציה צריכה גישה לחיישני תנועה לצורך ניווט מדויק ללא GPS</string>
 </dict>
 </plist>

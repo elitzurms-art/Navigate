@@ -203,6 +203,7 @@ class Navigations extends Table {
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
   TextColumn get timeCalculationSettingsJson => text().withDefault(const Constant('{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}'))();
   TextColumn get communicationSettingsJson => text().withDefault(const Constant('{"walkieTalkieEnabled":false}'))();
+  TextColumn get variablesSheetJson => text().nullable()();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -399,7 +400,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 29;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration {
@@ -600,6 +601,9 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(navigations, navigations.checkpointsPerNavigator);
           await m.addColumn(navigations, navigations.waypointSettingsJson);
           await m.addColumn(navigations, navigations.scoringCriterion);
+        }
+        if (from <= 29 && to >= 30) {
+          await m.addColumn(navigations, navigations.variablesSheetJson);
         }
       },
     );

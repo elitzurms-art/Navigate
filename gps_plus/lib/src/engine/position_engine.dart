@@ -41,22 +41,34 @@ class PositionEngine {
       return null;
     }
 
-    // Estimate distances from RSSI
+    // Filter out towers with invalid/weak signal before processing
+    final validIndices = <int>[];
+    for (var i = 0; i < towers.length; i++) {
+      if (towers[i].rssi >= -115 && towers[i].rssi <= -20) {
+        validIndices.add(i);
+      }
+    }
+    if (validIndices.isEmpty) return null;
+
+    // Estimate distances from RSSI (using valid towers only)
     final distances = <double>[];
     final towerPositions = <LatLng>[];
     final ranges = <int>[];
 
-    for (var i = 0; i < towers.length; i++) {
+    for (final i in validIndices) {
       final distance = _pathLossModel.estimateDistance(
         rssi: towers[i].rssi,
         cellType: towers[i].type,
+        visibleTowerCount: validIndices.length,
       );
       distances.add(distance);
       towerPositions.add(LatLng(locations[i].lat, locations[i].lon));
       ranges.add(locations[i].range);
     }
 
-    if (towers.length >= 3) {
+    final validCount = validIndices.length;
+
+    if (validCount >= 3) {
       // Use trilateration for 3+ towers
       final result = _trilateration.calculate(
         towers: towerPositions,
@@ -68,7 +80,7 @@ class PositionEngine {
           lat: result.position.latitude,
           lon: result.position.longitude,
           accuracyMeters: result.accuracyMeters,
-          towerCount: towers.length,
+          towerCount: validCount,
           algorithm: PositionAlgorithm.trilateration,
           towersUsed: towers,
           timestamp: DateTime.now(),
@@ -92,7 +104,7 @@ class PositionEngine {
       lat: result.position.latitude,
       lon: result.position.longitude,
       accuracyMeters: result.accuracyMeters,
-      towerCount: towers.length,
+      towerCount: validCount,
       algorithm: PositionAlgorithm.weightedCentroid,
       towersUsed: towers,
       timestamp: DateTime.now(),

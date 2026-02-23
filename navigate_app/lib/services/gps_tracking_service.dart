@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
+import 'package:gps_plus/gps_plus.dart';
 import 'package:latlong2/latlong.dart';
 import '../domain/entities/coordinate.dart';
 import 'elevation_service.dart';
 import 'gps_service.dart';
+import 'position_kalman_filter.dart';
+
+enum GpsJammingState { normal, jammed, recovering }
 
 /// שירות מעקב GPS
 class GPSTrackingService {
@@ -13,6 +17,7 @@ class GPSTrackingService {
   List<TrackPoint> _trackPoints = [];
   final GpsService _gpsService = GpsService();
   final ElevationService _elevationService = ElevationService();
+  final PositionKalmanFilter _kalmanFilter = PositionKalmanFilter();
 
   bool _isTracking = false;
   bool get isTracking => _isTracking;
@@ -23,6 +28,41 @@ class GPSTrackingService {
   int _intervalSeconds = 30;
   LatLng? _boundaryCenter;
   int get intervalSeconds => _intervalSeconds;
+
+  // --- Anti-Drift (ZUPT) ---
+  int _stepsSinceLastRecord = 0;
+  DateTime? _lastStepTime;
+  StreamSubscription<PdrPositionResult>? _pdrStepSubscription;
+  static const Duration _stationaryTimeout = Duration(seconds: 5);
+  static const double _driftThresholdMeters = 3.0;
+
+  // --- Gap-Fill (PDR during GPS loss) ---
+  DateTime? _lastGpsFixTime;
+  Timer? _gapDetectionTimer;
+  bool _isGapFilling = false;
+  StreamSubscription<PdrPositionResult>? _gapFillSubscription;
+  static const Duration _gapThreshold = Duration(seconds: 3);
+
+  // --- Jamming State Machine ---
+  GpsJammingState _jammingState = GpsJammingState.normal;
+  GpsJammingState get jammingState => _jammingState;
+  int _consecutiveBadGpsFixes = 0;
+  int _consecutiveGoodGpsFixes = 0;
+  DateTime? _manualCooldownEnd;
+  double? _lastRawGpsLat;
+  double? _lastRawGpsLng;
+  DateTime? _lastRawGpsTimestamp;
+
+  static const double _jammingAccuracyThreshold = 25.0;
+  static const double _maxSpeedMps = 41.67; // 150 km/h
+  static const double _recoveryAccuracyThreshold = 20.0;
+  static const int _requiredBadFixes = 3;
+  static const int _requiredGoodFixes = 3;
+  static const Duration _manualCooldownDuration = Duration(minutes: 5);
+
+  bool get isManualCooldownActive =>
+      _manualCooldownEnd != null && DateTime.now().isBefore(_manualCooldownEnd!);
+  int get recoveryProgress => _consecutiveGoodGpsFixes;
 
   /// מקור מיקום כפוי — 'auto' (ברירת מחדל), 'cellTower', 'gps', 'pdr'
   String _forcePositionSource = 'auto';
@@ -35,6 +75,9 @@ class GPSTrackingService {
   /// מקורות מיקום מותרים (מוגדר per-navigation)
   List<String> _enabledSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'];
 
+  /// Whether the tracker is currently in a GPS gap (PDR gap-fill active).
+  bool get isInGpsGap => _isGapFilling;
+
   /// Stream של מיקומים
   Stream<Position> get positionStream =>
       _positionStream?.stream ?? const Stream.empty();
@@ -44,7 +87,7 @@ class GPSTrackingService {
 
   /// התחלת מעקב GPS
   Future<bool> startTracking({
-    int intervalSeconds = 30,
+    int intervalSeconds = 5,
     LatLng? boundaryCenter,
     String forcePositionSource = 'auto',
     List<String> enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
@@ -59,8 +102,9 @@ class GPSTrackingService {
     _forcePositionSource = forcePositionSource;
     _enabledSources = enabledPositionSources;
 
-    // Initialize PDR if not forcing cellTower-only
-    if (_forcePositionSource != 'cellTower') {
+    // Initialize PDR only for short intervals (≤10s) — above that, PDR
+    // wastes battery on unreliable dead-reckoning calculations.
+    if (_forcePositionSource != 'cellTower' && _intervalSeconds <= 10) {
       await _gpsService.initPdr();
     }
 
@@ -68,6 +112,7 @@ class GPSTrackingService {
     if (_forcePositionSource == 'cellTower') {
       _positionStream = StreamController<Position>.broadcast();
       _trackPoints = [];
+      _kalmanFilter.reset();
       _isTracking = true;
 
       // נקודה ראשונה מאנטנות
@@ -98,6 +143,7 @@ class GPSTrackingService {
     if (_forcePositionSource == 'pdr') {
       _positionStream = StreamController<Position>.broadcast();
       _trackPoints = [];
+      _kalmanFilter.reset();
       _isTracking = true;
 
       try {
@@ -148,6 +194,7 @@ class GPSTrackingService {
 
     _positionStream = StreamController<Position>.broadcast();
     _trackPoints = [];
+    _kalmanFilter.reset();
     _isTracking = true;
 
     // רישום נקודה ראשונה
@@ -158,13 +205,14 @@ class GPSTrackingService {
           timeLimit: const Duration(seconds: 10),
         );
 
-        // Set PDR anchor on good GPS fix
-        if (position.accuracy < 20) {
+        // Set PDR anchor on good GPS fix (ZUPT-aware threshold)
+        final anchorThreshold = _gpsService.isPdrStationary ? 40.0 : 20.0;
+        if (position.accuracy < anchorThreshold) {
           _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
         }
 
         // אם הדיוק נמוך, נסה fallback דרך GPS Plus
-        if (position.accuracy > 50 && _forcePositionSource != 'gps') {
+        if (position.accuracy > 30 && _forcePositionSource != 'gps') {
           final cellPos = await _gpsService.getCurrentPosition(
             boundaryCenter: _boundaryCenter,
             forceSource: _forcePositionSource,
@@ -235,6 +283,19 @@ class GPSTrackingService {
       );
       print('GPS Tracking פעיל (timer mode) - רישום כל $_intervalSeconds שניות');
     }
+
+    // Anti-Drift: subscribe to PDR step stream for step counting
+    // (only when PDR is active — short intervals)
+    if (_intervalSeconds <= 10) {
+      _startStepSubscription();
+    }
+
+    // Gap-Fill: start gap detection (stream mode only — timer mode uses existing fallback)
+    if (_intervalSeconds <= 5 && gpsAvailable) {
+      _lastGpsFixTime = DateTime.now();
+      _startGapDetectionTimer();
+    }
+
     return true;
   }
 
@@ -258,8 +319,13 @@ class GPSTrackingService {
         }
         _lastRecordTime = now;
 
-        // Update PDR anchor on good GPS fix
-        if (position.accuracy < 20) {
+        // Jamming state machine evaluation
+        final shouldUseGps = _processJammingStateMachine(position);
+        if (!shouldUseGps) return; // jammed/recovering/cooldown — gap-fill provides positions
+
+        // GPS good — update PDR anchor + record
+        final anchorThreshold = _gpsService.isPdrStationary ? 40.0 : 20.0;
+        if (position.accuracy < anchorThreshold) {
           _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
         }
 
@@ -285,6 +351,11 @@ class GPSTrackingService {
     _geolocatorStreamSub?.cancel();
     _geolocatorStreamSub = null;
 
+    // Cancel gap detection (will restart if switching to stream mode)
+    _exitGapFillMode();
+    _gapDetectionTimer?.cancel();
+    _gapDetectionTimer = null;
+
     // הפעלה מחדש — cellTower/pdr תמיד timer, אחרת לפי סף 5 שניות
     if (_forcePositionSource == 'cellTower' || _forcePositionSource == 'pdr') {
       _trackingTimer = Timer.periodic(
@@ -294,6 +365,8 @@ class GPSTrackingService {
       print('GPS Tracking interval updated (timer mode, forced $_forcePositionSource) - כל $_intervalSeconds שניות');
     } else if (_intervalSeconds <= 5) {
       _startPositionStream();
+      _lastGpsFixTime = DateTime.now();
+      _startGapDetectionTimer();
       print('GPS Tracking interval updated (stream mode) - כל $_intervalSeconds שניות');
     } else {
       _trackingTimer = Timer.periodic(
@@ -314,16 +387,304 @@ class GPSTrackingService {
     await _geolocatorStreamSub?.cancel();
     _geolocatorStreamSub = null;
 
+    // Cancel anti-drift step subscription
+    await _pdrStepSubscription?.cancel();
+    _pdrStepSubscription = null;
+
+    // Cancel gap-fill
+    _exitGapFillMode();
+    _gapDetectionTimer?.cancel();
+    _gapDetectionTimer = null;
+
     await _positionStream?.close();
     _positionStream = null;
 
     // Stop PDR
     _gpsService.stopPdr();
 
+    // Reset jamming state
+    _jammingState = GpsJammingState.normal;
+    _consecutiveBadGpsFixes = 0;
+    _consecutiveGoodGpsFixes = 0;
+    _manualCooldownEnd = null;
+    _lastRawGpsLat = null;
+    _lastRawGpsLng = null;
+    _lastRawGpsTimestamp = null;
+
     _isTracking = false;
 
     print('GPS Tracking הופסק - נרשמו ${_trackPoints.length} נקודות');
   }
+
+  // ===========================================================================
+  // Anti-Drift (ZUPT) — step counting + stationary detection
+  // ===========================================================================
+
+  /// Subscribe to PDR step stream for step counting (anti-drift).
+  /// If PDR is not available (iOS, no sensors), this is a no-op.
+  void _startStepSubscription() {
+    final pdrStream = _gpsService.pdrPositionStream;
+    if (pdrStream == null) {
+      print('DEBUG GPSTrackingService: PDR not available — anti-drift disabled');
+      return;
+    }
+
+    _pdrStepSubscription = pdrStream.listen((_) {
+      _stepsSinceLastRecord++;
+      _lastStepTime = DateTime.now();
+    });
+    print('DEBUG GPSTrackingService: step subscription active — anti-drift enabled');
+  }
+
+  /// Check if the user is stationary (no steps for >5 seconds).
+  bool get _isStationary {
+    if (_lastStepTime == null) return true;
+    return DateTime.now().difference(_lastStepTime!) > _stationaryTimeout;
+  }
+
+  /// Check if a GPS displacement should be rejected as drift.
+  /// Returns true if the user is stationary and the displacement exceeds threshold.
+  bool _shouldRejectAsDrift(double newLat, double newLng) {
+    if (!_isStationary) return false;
+    if (_trackPoints.isEmpty) return false;
+    if (_stepsSinceLastRecord > 0) return false;
+
+    final lastPoint = _trackPoints.last;
+    final displacement = Geolocator.distanceBetween(
+      lastPoint.coordinate.lat, lastPoint.coordinate.lng,
+      newLat, newLng,
+    );
+
+    if (displacement > _driftThresholdMeters) {
+      print('ZUPT: stationary — skipping GPS drift '
+          '(${displacement.toStringAsFixed(1)}m displacement, 0 steps)');
+      return true;
+    }
+    return false;
+  }
+
+  /// Check if GPS displacement is anomalously large relative to steps taken.
+  /// Returns true if the displacement far exceeds what walking could produce.
+  bool _isVelocityAnomalous(double newLat, double newLng) {
+    if (_trackPoints.isEmpty) return false;
+    if (_stepsSinceLastRecord <= 0) return false; // handled by drift check
+    if (_lastStepTime == null) return false;       // no PDR data
+
+    final lastPoint = _trackPoints.last;
+    final dt = DateTime.now().difference(lastPoint.timestamp).inSeconds;
+    if (dt > 30) return false; // long interval — step data unreliable
+
+    final gpsDisplacement = Geolocator.distanceBetween(
+      lastPoint.coordinate.lat, lastPoint.coordinate.lng,
+      newLat, newLng,
+    );
+
+    // Max expected distance: steps × max step length (1.2m) × safety margin (2.0)
+    final maxExpectedDistance = _stepsSinceLastRecord * 1.2 * 2.0;
+
+    // Reject if GPS displacement is >5× expected walking distance
+    if (gpsDisplacement > maxExpectedDistance && gpsDisplacement > 10.0 &&
+        gpsDisplacement / maxExpectedDistance > 5.0) {
+      print('VELOCITY CHECK: anomalous GPS displacement '
+          '${gpsDisplacement.toStringAsFixed(0)}m vs '
+          '${maxExpectedDistance.toStringAsFixed(0)}m expected '
+          '($_stepsSinceLastRecord steps × 1.2m × 2.0)');
+      return true;
+    }
+    return false;
+  }
+
+  // ===========================================================================
+  // Jamming State Machine — detection, recovery, manual cooldown
+  // ===========================================================================
+
+  /// Evaluate a single GPS fix quality for jamming detection/recovery.
+  /// [forRecovery] uses the stricter threshold (20m vs 50m).
+  bool _isGpsFixGood(Position position, {bool forRecovery = false}) {
+    final accuracyThreshold = forRecovery
+        ? _recoveryAccuracyThreshold
+        : _jammingAccuracyThreshold;
+
+    // Accuracy check
+    if (position.accuracy > accuracyThreshold) return false;
+
+    // Speed check between consecutive raw GPS fixes
+    if (_lastRawGpsLat != null && _lastRawGpsTimestamp != null) {
+      final dt = DateTime.now().difference(_lastRawGpsTimestamp!).inMilliseconds / 1000.0;
+      if (dt > 0.5) {
+        final dist = Geolocator.distanceBetween(
+          _lastRawGpsLat!, _lastRawGpsLng!,
+          position.latitude, position.longitude,
+        );
+        final speed = dist / dt;
+        if (speed > _maxSpeedMps) return false;
+      }
+    }
+
+    // Boundary spoof check (reuse existing 50km threshold)
+    if (_boundaryCenter != null) {
+      final dist = Geolocator.distanceBetween(
+        position.latitude, position.longitude,
+        _boundaryCenter!.latitude, _boundaryCenter!.longitude,
+      );
+      if (dist > 50000) return false;
+    }
+
+    return true;
+  }
+
+  /// Process GPS fix through jamming state machine.
+  /// Returns true if the GPS fix should be used (normal operation).
+  bool _processJammingStateMachine(Position position) {
+    // Track raw GPS for speed calculation
+    _lastRawGpsLat = position.latitude;
+    _lastRawGpsLng = position.longitude;
+    _lastRawGpsTimestamp = DateTime.now();
+
+    // Manual cooldown — suppress all GPS
+    if (isManualCooldownActive) {
+      print('JAMMING: manual cooldown active — ignoring GPS');
+      return false;
+    }
+
+    switch (_jammingState) {
+      case GpsJammingState.normal:
+        if (_isGpsFixGood(position)) {
+          _consecutiveBadGpsFixes = 0;
+          return true;
+        } else {
+          _consecutiveBadGpsFixes++;
+          print('JAMMING: bad GPS fix #$_consecutiveBadGpsFixes/$_requiredBadFixes '
+              '(accuracy=${position.accuracy.toStringAsFixed(1)}m)');
+          if (_consecutiveBadGpsFixes >= _requiredBadFixes) {
+            _jammingState = GpsJammingState.jammed;
+            _consecutiveBadGpsFixes = 0;
+            _enterJammedMode();
+          }
+          return false;
+        }
+
+      case GpsJammingState.jammed:
+        if (_isGpsFixGood(position, forRecovery: true)) {
+          _jammingState = GpsJammingState.recovering;
+          _consecutiveGoodGpsFixes = 1;
+          print('JAMMING: first good fix during jamming — entering recovery (1/$_requiredGoodFixes)');
+          return false; // not yet trusted
+        }
+        return false;
+
+      case GpsJammingState.recovering:
+        if (_isGpsFixGood(position, forRecovery: true)) {
+          _consecutiveGoodGpsFixes++;
+          print('JAMMING: good fix during recovery ($_consecutiveGoodGpsFixes/$_requiredGoodFixes)');
+          if (_consecutiveGoodGpsFixes >= _requiredGoodFixes) {
+            _jammingState = GpsJammingState.normal;
+            _consecutiveGoodGpsFixes = 0;
+            _exitJammedMode();
+            print('JAMMING: recovery complete — returning to normal');
+            return true;
+          }
+          return false;
+        } else {
+          // Bad fix during recovery — back to jammed
+          _jammingState = GpsJammingState.jammed;
+          _consecutiveGoodGpsFixes = 0;
+          print('JAMMING: bad fix during recovery — back to jammed');
+          return false;
+        }
+    }
+  }
+
+  /// Enter jammed mode — activate PDR gap-fill.
+  void _enterJammedMode() {
+    print('JAMMING: entering jammed mode — activating PDR fallback');
+    if (!_isGapFilling) {
+      _enterGapFillMode();
+    }
+  }
+
+  /// Exit jammed mode — deactivate gap-fill, reset GPS timing.
+  void _exitJammedMode() {
+    print('JAMMING: exiting jammed mode — deactivating PDR fallback');
+    _exitGapFillMode();
+    _lastGpsFixTime = DateTime.now(); // prevent gap timer re-trigger
+  }
+
+  // ===========================================================================
+  // Gap-Fill — PDR positions during GPS signal loss
+  // ===========================================================================
+
+  /// Start gap detection timer (stream mode only).
+  void _startGapDetectionTimer() {
+    _gapDetectionTimer?.cancel();
+    _gapDetectionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_lastGpsFixTime == null) return;
+      if (_isGapFilling) return;
+      if (DateTime.now().difference(_lastGpsFixTime!) > _gapThreshold) {
+        _enterGapFillMode();
+      }
+    });
+  }
+
+  /// Enter gap-fill mode: subscribe to PDR stream and emit positions.
+  void _enterGapFillMode() {
+    if (_isGapFilling) return;
+    final pdrStream = _gpsService.pdrPositionStream;
+    if (pdrStream == null) return; // PDR not available — can't gap-fill
+
+    _isGapFilling = true;
+    print('GPS gap detected — entering PDR gap-fill mode');
+
+    _gapFillSubscription = pdrStream.listen((pdrPos) {
+      _recordGapFillPoint(pdrPos);
+    });
+  }
+
+  /// Exit gap-fill mode (GPS returned).
+  void _exitGapFillMode() {
+    if (!_isGapFilling) return;
+    _isGapFilling = false;
+    _gapFillSubscription?.cancel();
+    _gapFillSubscription = null;
+    print('GPS returned — exiting PDR gap-fill mode');
+  }
+
+  /// Record a PDR position during gap-fill (bypasses Kalman filter).
+  void _recordGapFillPoint(PdrPositionResult pdrPos) {
+    final point = TrackPoint(
+      coordinate: Coordinate(
+        lat: pdrPos.lat,
+        lng: pdrPos.lon,
+        utm: _convertToUTM(pdrPos.lat, pdrPos.lon),
+      ),
+      timestamp: DateTime.now(),
+      accuracy: pdrPos.accuracyMeters,
+      heading: pdrPos.headingDegrees,
+      positionSource: 'pdr_gap_fill',
+    );
+
+    _trackPoints.add(point);
+    print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, '
+        '${point.coordinate.lng} [pdr_gap_fill]');
+
+    // Emit on position stream so map updates in real-time
+    _positionStream?.add(Position(
+      latitude: pdrPos.lat,
+      longitude: pdrPos.lon,
+      timestamp: DateTime.now(),
+      accuracy: pdrPos.accuracyMeters,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: pdrPos.headingDegrees,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    ));
+
+    _enrichWithDemElevation(_trackPoints.length - 1, pdrPos.lat, pdrPos.lon);
+  }
+
+  // ===========================================================================
 
   /// רישום מיקום נוכחי
   Future<void> _recordCurrentPosition() async {
@@ -421,10 +782,27 @@ class GPSTrackingService {
         timeLimit: const Duration(seconds: 10),
       );
 
+      // Jamming state machine evaluation (timer mode)
+      final shouldUseGps = _processJammingStateMachine(position);
+      if (!shouldUseGps) {
+        if (_forcePositionSource == 'gps') return;
+        if (!_hasAllowedFallback()) return;
+        // Use PDR/Cell fallback
+        final fallbackPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+        if (fallbackPos != null &&
+            _gpsService.lastPositionSource != PositionSource.gps &&
+            _isSourceAllowed(_gpsService.lastPositionSource.name)) {
+          _recordPointFromLatLng(fallbackPos.latitude, fallbackPos.longitude, -1,
+              positionSource: _gpsService.lastPositionSource.name);
+        }
+        return;
+      }
+
       // כפיית GPS — אין fallback
       if (_forcePositionSource == 'gps') {
-        // Update PDR anchor on good fix
-        if (position.accuracy < 20) {
+        // Update PDR anchor on good fix (ZUPT-aware)
+        final anchorThreshold = _gpsService.isPdrStationary ? 40.0 : 20.0;
+        if (position.accuracy < anchorThreshold) {
           _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
         }
         _recordPoint(position, positionSource: 'gps');
@@ -432,8 +810,9 @@ class GPSTrackingService {
         return;
       }
 
-      // Update PDR anchor on good GPS fix
-      if (position.accuracy < 20) {
+      // Update PDR anchor on good GPS fix (ZUPT-aware)
+      final anchorThreshold = _gpsService.isPdrStationary ? 40.0 : 20.0;
+      if (position.accuracy < anchorThreshold) {
         _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
       }
 
@@ -464,7 +843,7 @@ class GPSTrackingService {
       }
 
       // אם הדיוק נמוך (> 50 מטר), נסה fallback (רק אם יש מקור חלופי מותר)
-      if (position.accuracy > 50 && _hasAllowedFallback()) {
+      if (position.accuracy > 30 && _hasAllowedFallback()) {
         final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
         if (cellPos != null &&
             _gpsService.lastPositionSource != PositionSource.gps &&
@@ -521,16 +900,38 @@ class GPSTrackingService {
         _enabledSources.contains('pdrCellHybrid');
   }
 
-  /// רישום נקודה מ-Position (Geolocator)
+  /// רישום נקודה מ-Position (Geolocator) — מסונן דרך Kalman filter
   void _recordPoint(Position position, {String positionSource = 'gps'}) {
+    // Anti-Drift: reject GPS drift when stationary
+    if (positionSource == 'gps' &&
+        _shouldRejectAsDrift(position.latitude, position.longitude)) {
+      return;
+    }
+
+    // Step-GPS cross-validation: reject anomalous velocity
+    if (positionSource == 'gps' &&
+        _isVelocityAnomalous(position.latitude, position.longitude)) {
+      return;
+    }
+
+    // Update Kalman filter motion state (ZUPT)
+    _kalmanFilter.setMotionState(isStationary: _isStationary);
+
+    final filtered = _kalmanFilter.update(
+      lat: position.latitude,
+      lng: position.longitude,
+      accuracy: position.accuracy,
+      timestamp: DateTime.now(),
+    );
+
     final point = TrackPoint(
       coordinate: Coordinate(
-        lat: position.latitude,
-        lng: position.longitude,
-        utm: _convertToUTM(position.latitude, position.longitude),
+        lat: filtered.lat,
+        lng: filtered.lng,
+        utm: _convertToUTM(filtered.lat, filtered.lng),
       ),
       timestamp: DateTime.now(),
-      accuracy: position.accuracy,
+      accuracy: filtered.accuracy,
       altitude: position.altitude,
       speed: position.speed,
       heading: position.heading,
@@ -540,33 +941,56 @@ class GPSTrackingService {
     _trackPoints.add(point);
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
 
+    // Reset step counter after recording
+    _stepsSinceLastRecord = 0;
+
+    // Update GPS fix time + exit gap-fill mode
+    if (positionSource == 'gps') {
+      _lastGpsFixTime = DateTime.now();
+      _exitGapFillMode();
+    }
+
     // שאילתת גובה DEM ברקע — מדויק יותר מ-GPS altitude
-    _enrichWithDemElevation(_trackPoints.length - 1, position.latitude, position.longitude);
+    _enrichWithDemElevation(_trackPoints.length - 1, filtered.lat, filtered.lng);
   }
 
-  /// רישום נקודה מ-LatLng (GPS Plus fallback)
+  /// רישום נקודה מ-LatLng (GPS Plus fallback) — מסונן דרך Kalman filter
   void _recordPointFromLatLng(
     double lat,
     double lng,
     double accuracy, {
     String positionSource = 'cellTower',
   }) {
+    // Update Kalman filter motion state (ZUPT)
+    _kalmanFilter.setMotionState(isStationary: _isStationary);
+
+    final effectiveAccuracy = accuracy < 0 ? 500.0 : accuracy;
+    final filtered = _kalmanFilter.update(
+      lat: lat,
+      lng: lng,
+      accuracy: effectiveAccuracy,
+      timestamp: DateTime.now(),
+    );
+
     final point = TrackPoint(
       coordinate: Coordinate(
-        lat: lat,
-        lng: lng,
-        utm: _convertToUTM(lat, lng),
+        lat: filtered.lat,
+        lng: filtered.lng,
+        utm: _convertToUTM(filtered.lat, filtered.lng),
       ),
       timestamp: DateTime.now(),
-      accuracy: accuracy,
+      accuracy: filtered.accuracy,
       positionSource: positionSource,
     );
 
     _trackPoints.add(point);
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
 
+    // Reset step counter after recording
+    _stepsSinceLastRecord = 0;
+
     // שאילתת גובה DEM ברקע
-    _enrichWithDemElevation(_trackPoints.length - 1, lat, lng);
+    _enrichWithDemElevation(_trackPoints.length - 1, filtered.lat, filtered.lng);
   }
 
   /// העשרת נקודה בגובה DEM — fire-and-forget
@@ -587,9 +1011,28 @@ class GPSTrackingService {
     }).catchError((_) {});
   }
 
-  /// רישום מיקום ידני (דקירה במפה)
+  /// רישום מיקום ידני (דקירה במפה) — עוקף Kalman filter + מאפס אותו
   void recordManualPosition(double lat, double lng) {
-    _recordPointFromLatLng(lat, lng, -1, positionSource: 'manual');
+    // 1. Record point (bypasses Kalman, as before)
+    final point = TrackPoint(
+      coordinate: Coordinate(lat: lat, lng: lng, utm: _convertToUTM(lat, lng)),
+      timestamp: DateTime.now(),
+      accuracy: -1,
+      positionSource: 'manual',
+    );
+    _trackPoints.add(point);
+    print('רישום נקודה ידנית ${_trackPoints.length}: $lat, $lng [manual]');
+    _enrichWithDemElevation(_trackPoints.length - 1, lat, lng);
+
+    // 2. Reset Kalman filter at manual position
+    _kalmanFilter.forcePosition(lat, lng);
+
+    // 3. Reset PDR anchor
+    _gpsService.setPdrAnchor(lat, lng);
+
+    // 4. Start 5-minute GPS cooldown
+    _manualCooldownEnd = DateTime.now().add(_manualCooldownDuration);
+    print('JAMMING: manual position set — GPS cooldown until $_manualCooldownEnd');
   }
 
   /// המרה ל-UTM (פשוט)
@@ -659,6 +1102,17 @@ class GPSTrackingService {
   /// ניקוי נתונים
   void clear() {
     _trackPoints.clear();
+    _kalmanFilter.reset();
+    _stepsSinceLastRecord = 0;
+    _lastStepTime = null;
+    _lastGpsFixTime = null;
+    _jammingState = GpsJammingState.normal;
+    _consecutiveBadGpsFixes = 0;
+    _consecutiveGoodGpsFixes = 0;
+    _manualCooldownEnd = null;
+    _lastRawGpsLat = null;
+    _lastRawGpsLng = null;
+    _lastRawGpsTimestamp = null;
   }
 }
 

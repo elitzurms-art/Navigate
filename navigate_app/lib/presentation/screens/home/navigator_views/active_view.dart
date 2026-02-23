@@ -80,10 +80,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _overrideShowSelfLocation = false;
   bool _overrideShowRouteOnMap = false;
 
-  // דקירת מיקום ידני
+  // דקירת מיקום ידני — GPS-cycle: כל מחזור GPS→אובדן מאפשר דקירה חדשה
   bool _allowManualPosition = false;
-  bool _manualPositionUsed = false;
+  bool _manualPositionUsed = false;       // נוצל במחזור הנוכחי
   bool _manualPinPending = false;
+  bool _hadGpsFix = false;                // היה GPS תקין בשלב כלשהו
 
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
@@ -96,6 +97,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   Timer? _gpsCheckTimer;
   LatLng? _boundaryCenter;
   bool _gpsBlocked = false;
+  GpsJammingState _jammingState = GpsJammingState.normal;
 
   // דיווח סטטוס ל-system_status (כדי שהמפקד יראה בבדיקת מערכות)
   Timer? _statusReportTimer;
@@ -264,6 +266,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         if (status == NavigatorPersonalStatus.active && track != null) {
           _startTime = track.startedAt;
           _elapsed = DateTime.now().difference(track.startedAt);
+          // GPS-cycle: on reload, don't use DB manualPositionUsed as permanent block
+          // Reset — _checkGpsSource will detect GPS state and allow manual pin if needed
+          _manualPositionUsed = false;
+          _hadGpsFix = false;
           _startElapsedTimer();
           _startSecurity();
           _startGpsTracking();
@@ -599,8 +605,25 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       orElse: () => PositionSource.none,
     );
 
+    // GPS-cycle manual position: detect GPS transitions
+    final bool isGoodGps = source == PositionSource.gps && lastPoint.accuracy >= 0 && lastPoint.accuracy < 100;
+    if (isGoodGps) {
+      if (!_hadGpsFix || _manualPositionUsed) {
+        // GPS returned — reset manual position for next GPS-loss cycle
+        _hadGpsFix = true;
+        _manualPositionUsed = false;
+      }
+    } else if (_hadGpsFix && source != PositionSource.gps && _allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
+      // GPS lost after having it — auto-trigger manual pin if allowed
+      final age = DateTime.now().difference(lastPoint.timestamp);
+      if (age.inSeconds > 10) {
+        _checkAndTriggerManualPin();
+      }
+    }
+
     setState(() {
       _gpsSource = source;
+      _jammingState = _gpsTracker.jammingState;
       // If we have a boundary and GPS source is not GPS, it might be blocked
       _gpsBlocked = _boundaryCenter != null &&
           source != PositionSource.gps &&
@@ -665,6 +688,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         'hasMicrophonePermission': micStatus.isGranted,
         'hasPhonePermission': phoneStatus.isGranted,
         'hasDNDPermission': hasDnd,
+        'gpsJammingState': _gpsTracker.jammingState.name,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -1689,6 +1713,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _buildAlertBanner(_currentAlertBanner!),
         // Status bar with elapsed timer
         _buildActiveStatusBar(),
+        // Jamming state banner
+        _buildJammingBanner(),
         // GPS accuracy banner
         _buildGpsAccuracyBanner(),
         // Disqualification banner
@@ -1749,7 +1775,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                 Icon(Icons.push_pin, size: 14, color: Colors.deepPurple),
                 SizedBox(width: 6),
                 Text(
-                  'מיקום ידני נרשם',
+                  'מיקום ידני נרשם — יתאפס בחזרת GPS',
                   style: TextStyle(fontSize: 12, color: Colors.deepPurple),
                 ),
               ],
@@ -1834,6 +1860,64 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         const SizedBox(height: 95),
       ],
     );
+  }
+
+  Widget _buildJammingBanner() {
+    if (_gpsTracker.isManualCooldownActive) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Colors.deepPurple,
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.pin_drop, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'מיקום ידני — GPS מושהה',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_jammingState == GpsJammingState.jammed) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Colors.red,
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'שיבוש GPS מזוהה — ניווט לפי PDR',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_jammingState == GpsJammingState.recovering) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Colors.orange,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.autorenew, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'GPS מתאושש (${_gpsTracker.recoveryProgress}/3)',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _buildGpsAccuracyBanner() {
@@ -2252,7 +2336,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     Color color;
     IconData? secondIcon;
 
-    if (_gpsBlocked) {
+    if (_jammingState == GpsJammingState.jammed) {
+      icon = Icons.gps_off;
+      label = 'שיבוש GPS';
+      color = Colors.red;
+    } else if (_jammingState == GpsJammingState.recovering) {
+      icon = Icons.gps_not_fixed;
+      label = 'GPS מתאושש';
+      color = Colors.orange;
+    } else if (_gpsTracker.isManualCooldownActive) {
+      icon = Icons.pin_drop;
+      label = 'ידני';
+      color = Colors.deepPurple;
+    } else if (_gpsBlocked) {
       icon = Icons.gps_off;
       label = 'GPS חסום';
       color = Colors.red;

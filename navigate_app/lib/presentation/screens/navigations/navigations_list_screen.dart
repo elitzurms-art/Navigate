@@ -30,6 +30,7 @@ import 'data_loading_screen.dart';
 import 'navigation_preparation_screen.dart';
 import 'data_export_screen.dart';
 import 'navigation_management_screen.dart';
+import 'variables_sheet_screen.dart';
 import '../../../data/repositories/voice_message_repository.dart';
 
 
@@ -1259,6 +1260,16 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
+        items.add(const PopupMenuItem(
+          value: 'variables_sheet',
+          child: Row(
+            children: [
+              Icon(Icons.description, color: Colors.teal),
+              SizedBox(width: 8),
+              Text('דף משתנים'),
+            ],
+          ),
+        ));
         items.add(const PopupMenuDivider());
         items.add(const PopupMenuItem(
           value: 'delete',
@@ -1291,6 +1302,16 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
               Icon(Icons.play_arrow, color: Colors.green),
               SizedBox(width: 8),
               Text('העבר לאימון'),
+            ],
+          ),
+        ));
+        items.add(const PopupMenuItem(
+          value: 'variables_sheet',
+          child: Row(
+            children: [
+              Icon(Icons.description, color: Colors.teal),
+              SizedBox(width: 8),
+              Text('דף משתנים'),
             ],
           ),
         ));
@@ -1559,6 +1580,16 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
       case 'save_navigation':
         _saveNavigationToFile(navigation);
+        break;
+
+      case 'variables_sheet':
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VariablesSheetScreen(navigation: navigation),
+          ),
+        );
+        _loadNavigations();
         break;
 
       case 'delete':

@@ -25,6 +25,8 @@ export 'src/pdr/sensor_platform.dart';
 export 'src/pdr/heading_estimator.dart';
 export 'src/pdr/pdr_engine.dart';
 export 'src/pdr/pdr_service.dart';
+export 'src/pdr/step_length_estimator.dart';
+export 'src/pdr/zupt_detector.dart';
 
 // Main service
 export 'src/cell_location_service.dart';

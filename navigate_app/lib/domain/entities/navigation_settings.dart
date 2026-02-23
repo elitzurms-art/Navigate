@@ -662,6 +662,7 @@ class DisplaySettings extends Equatable {
   final double? openingLng; // קו אורך לפתיחת הניווט
   final Map<String, bool>? activeLayers; // שכבות פעילות
   final Map<String, double>? layerOpacity; // שקיפות שכבות
+  final bool enableVariablesSheet; // מילוי דף משתנים דיגיטלי
 
   const DisplaySettings({
     this.defaultMap,
@@ -669,6 +670,7 @@ class DisplaySettings extends Equatable {
     this.openingLng,
     this.activeLayers,
     this.layerOpacity,
+    this.enableVariablesSheet = true,
   });
 
   DisplaySettings copyWith({
@@ -677,6 +679,7 @@ class DisplaySettings extends Equatable {
     double? openingLng,
     Map<String, bool>? activeLayers,
     Map<String, double>? layerOpacity,
+    bool? enableVariablesSheet,
   }) {
     return DisplaySettings(
       defaultMap: defaultMap ?? this.defaultMap,
@@ -684,6 +687,7 @@ class DisplaySettings extends Equatable {
       openingLng: openingLng ?? this.openingLng,
       activeLayers: activeLayers ?? this.activeLayers,
       layerOpacity: layerOpacity ?? this.layerOpacity,
+      enableVariablesSheet: enableVariablesSheet ?? this.enableVariablesSheet,
     );
   }
 
@@ -694,6 +698,7 @@ class DisplaySettings extends Equatable {
       if (openingLng != null) 'openingLng': openingLng,
       if (activeLayers != null) 'activeLayers': activeLayers,
       if (layerOpacity != null) 'layerOpacity': layerOpacity,
+      'enableVariablesSheet': enableVariablesSheet,
     };
   }
 
@@ -709,6 +714,7 @@ class DisplaySettings extends Equatable {
           ? (map['layerOpacity'] as Map).map(
               (k, v) => MapEntry(k as String, (v as num).toDouble()))
           : null,
+      enableVariablesSheet: map['enableVariablesSheet'] as bool? ?? true,
     );
   }
 
@@ -719,6 +725,7 @@ class DisplaySettings extends Equatable {
         openingLng,
         activeLayers,
         layerOpacity,
+        enableVariablesSheet,
       ];
 }
 

@@ -3,6 +3,7 @@ import 'coordinate.dart';
 import 'narration_entry.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
+import 'variables_sheet.dart';
 
 /// מסלול מוקצה למנווט
 class AssignedRoute extends Equatable {
@@ -329,6 +330,9 @@ class Navigation extends Equatable {
   // Communication (PTT)
   final CommunicationSettings communicationSettings;
 
+  // Variables sheet (דף משתנים)
+  final VariablesSheet? variablesSheet;
+
   // Time calculation
   final TimeCalculationSettings timeCalculationSettings;
 
@@ -383,6 +387,7 @@ class Navigation extends Equatable {
     this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
     this.allowManualPosition = false,
     this.communicationSettings = const CommunicationSettings(),
+    this.variablesSheet,
     this.timeCalculationSettings = const TimeCalculationSettings(),
     required this.permissions,
     required this.createdAt,
@@ -444,6 +449,8 @@ class Navigation extends Equatable {
     List<String>? enabledPositionSources,
     bool? allowManualPosition,
     CommunicationSettings? communicationSettings,
+    VariablesSheet? variablesSheet,
+    bool clearVariablesSheet = false,
     TimeCalculationSettings? timeCalculationSettings,
     NavigationPermissions? permissions,
     DateTime? createdAt,
@@ -494,6 +501,7 @@ class Navigation extends Equatable {
       enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
       allowManualPosition: allowManualPosition ?? this.allowManualPosition,
       communicationSettings: communicationSettings ?? this.communicationSettings,
+      variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
@@ -553,6 +561,7 @@ class Navigation extends Equatable {
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
+      if (variablesSheet != null) 'variablesSheet': variablesSheet!.toMap(),
       // Computed field for Firestore security rules — not stored in Drift
       'participants': {
         ...selectedParticipantIds,
@@ -630,12 +639,15 @@ class Navigation extends Equatable {
       trainingStartTime: _parseDateTimeOrNull(map['trainingStartTime']),
       systemCheckStartTime: _parseDateTimeOrNull(map['systemCheckStartTime']),
       activeStartTime: _parseDateTimeOrNull(map['activeStartTime']),
-      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 30,
+      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 5,
       enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
       communicationSettings: map['communicationSettings'] != null
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
+      variablesSheet: map['variablesSheet'] != null
+          ? VariablesSheet.fromMap(map['variablesSheet'] as Map<String, dynamic>)
+          : null,
       timeCalculationSettings: map['timeCalculationSettings'] != null
           ? TimeCalculationSettings.fromMap(map['timeCalculationSettings'] as Map<String, dynamic>)
           : const TimeCalculationSettings(),
@@ -693,6 +705,7 @@ class Navigation extends Equatable {
     enabledPositionSources,
     allowManualPosition,
     communicationSettings,
+    variablesSheet,
     timeCalculationSettings,
     permissions,
     createdAt,

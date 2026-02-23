@@ -12,14 +12,12 @@ import '../models/cell_tower_info.dart';
 ///  - rssi: received signal strength in dBm
 ///  - n: path loss exponent (environment-dependent)
 class PathLossModel {
-  /// Path loss exponent. Typical values:
-  /// - 2.0: free space / rural
-  /// - 2.7-3.5: urban
-  /// - 3.0: suburban (default)
-  /// - 4.0-6.0: dense urban / indoor
-  final double pathLossExponent;
+  /// Optional fixed path loss exponent override (for tests).
+  /// When null, the exponent is chosen adaptively based on tower density.
+  final double? pathLossExponentOverride;
 
-  const PathLossModel({this.pathLossExponent = 3.0});
+  const PathLossModel({double? pathLossExponent})
+      : pathLossExponentOverride = pathLossExponent;
 
   /// Default transmit power (dBm) for each cell type.
   static double txPowerForType(CellType type) {
@@ -39,12 +37,19 @@ class PathLossModel {
 
   /// Estimates distance in meters from a cell tower based on RSSI.
   ///
+  /// [visibleTowerCount] is used as an environment hint to adaptively choose
+  /// the path loss exponent when no fixed override is set:
+  /// - 5+ towers → 3.8 (dense urban)
+  /// - 3-4 towers → 3.0 (suburban)
+  /// - 1-2 towers → 2.5 (rural / open terrain)
+  ///
   /// Returns the estimated distance, clamped to a minimum of 10m
   /// and a maximum of 50km to avoid unrealistic values.
   double estimateDistance({
     required int rssi,
     required CellType cellType,
     double? txPower,
+    int visibleTowerCount = 3,
   }) {
     final tx = txPower ?? txPowerForType(cellType);
     final rssiDouble = rssi.toDouble();
@@ -52,10 +57,20 @@ class PathLossModel {
     // Clamp RSSI to reasonable range
     final clampedRssi = rssiDouble.clamp(-140.0, -20.0);
 
-    final exponent = (tx - clampedRssi) / (10.0 * pathLossExponent);
+    // Adaptive path loss exponent based on tower density
+    final n = pathLossExponentOverride ?? _adaptiveExponent(visibleTowerCount);
+
+    final exponent = (tx - clampedRssi) / (10.0 * n);
     final distance = pow(10.0, exponent).toDouble();
 
     // Clamp to realistic range
     return distance.clamp(10.0, 50000.0);
+  }
+
+  /// Choose path loss exponent based on visible tower count as environment proxy.
+  static double _adaptiveExponent(int visibleTowerCount) {
+    if (visibleTowerCount >= 5) return 3.8;   // dense urban
+    if (visibleTowerCount >= 3) return 3.0;   // suburban
+    return 2.5;                                // rural / open
   }
 }

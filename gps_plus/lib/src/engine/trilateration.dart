@@ -84,10 +84,43 @@ class Trilateration {
     }
     final rmse = sqrt(residualSum / n);
 
+    // Inflate accuracy for poor tower geometry (PDOP-like factor)
+    final angleSpread = _maxAngleSpread(points, solX, solY);
+    final pdopFactor = angleSpread < 30.0 ? 3.0 : (angleSpread < 60.0 ? 1.5 : 1.0);
+    final adjustedRmse = rmse * pdopFactor;
+
     return TrilaterationResult(
       position: LatLng(lat, lon),
-      accuracyMeters: rmse,
+      accuracyMeters: adjustedRmse,
     );
+  }
+
+  /// Measures the maximum angular spread of towers as seen from the estimated position.
+  /// Returns the spread in degrees (0-360). Low spread means towers are clustered
+  /// in one direction → poor geometry → inflated accuracy.
+  double _maxAngleSpread(List<_Point> points, double cx, double cy) {
+    if (points.length < 2) return 0.0;
+
+    // Compute bearing angles from solution to each tower
+    final angles = <double>[];
+    for (final p in points) {
+      final angle = atan2(p.y - cy, p.x - cx) * (180.0 / pi);
+      angles.add(angle < 0 ? angle + 360.0 : angle);
+    }
+    angles.sort();
+
+    // Find the maximum gap between consecutive angles
+    var maxGap = 0.0;
+    for (var i = 0; i < angles.length - 1; i++) {
+      final gap = angles[i + 1] - angles[i];
+      if (gap > maxGap) maxGap = gap;
+    }
+    // Check wrap-around gap
+    final wrapGap = 360.0 - angles.last + angles.first;
+    if (wrapGap > maxGap) maxGap = wrapGap;
+
+    // Angular spread = 360 - max gap (how spread out the towers are)
+    return 360.0 - maxGap;
   }
 
   /// Solves Ax = b via least squares using normal equations (A^T*A)x = A^T*b.
