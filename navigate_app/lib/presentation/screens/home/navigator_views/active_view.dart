@@ -772,6 +772,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       intervalSeconds: interval,
       boundaryCenter: _boundaryCenter,
       enabledPositionSources: _nav.enabledPositionSources,
+      gpsSpoofingDetectionEnabled: _nav.gpsSpoofingDetectionEnabled,
+      gpsSpoofingMaxDistanceKm: _nav.gpsSpoofingMaxDistanceKm,
     );
     if (!started) {
       print('DEBUG ActiveView: GPS tracking failed to start');

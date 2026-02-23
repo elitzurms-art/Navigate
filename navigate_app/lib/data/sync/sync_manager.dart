@@ -1276,6 +1276,8 @@ class SyncManager {
         enabledPositionSourcesJson: Value(data['enabledPositionSourcesJson'] as String? ??
             (data['enabledPositionSources'] != null ? jsonEncode(data['enabledPositionSources']) : '["gps","cellTower","pdr","pdrCellHybrid"]')),
         allowManualPosition: Value(data['allowManualPosition'] as bool? ?? false),
+        gpsSpoofingDetectionEnabled: Value(data['gpsSpoofingDetectionEnabled'] as bool? ?? true),
+        gpsSpoofingMaxDistanceKm: Value((data['gpsSpoofingMaxDistanceKm'] as num?)?.toInt() ?? 50),
         timeCalculationSettingsJson: Value(data['timeCalculationSettingsJson'] as String? ??
             (data['timeCalculationSettings'] != null ? jsonEncode(data['timeCalculationSettings']) : '{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}')),
         communicationSettingsJson: Value(data['communicationSettingsJson'] as String? ??

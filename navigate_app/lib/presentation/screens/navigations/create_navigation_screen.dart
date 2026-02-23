@@ -74,9 +74,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   Map<String, domain_user.User> _usersCache = {};
   Map<String, List<String>> _subFrameworkUsers = {}; // sfId → userIds (dynamic)
   bool _isLoadingUsers = false;
-  String _safetyTimeType = 'hours'; // hours, after_last_mission
-  int _safetyHours = 2;
-  int _hoursAfterMission = 1;
 
   // הגדרות נקודות
   String _distributionMethod = 'automatic'; // automatic, manual_app, manual_full
@@ -112,6 +109,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _showSelfLocation = false;
   bool _showRouteOnMap = false;
   bool _allowManualPosition = false;
+  bool _gpsSpoofingDetectionEnabled = true;
+  int _gpsSpoofingMaxDistanceKm = 50;
 
   // מבחן בדד
   bool _requireSoloQuiz = false;
@@ -185,7 +184,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       final allUnits = await _unitRepository.getAll();
       final currentUser = await _authService.getCurrentUser();
       final permittedUnits = currentUser != null
-          ? _filterPermittedUnits(allUnits, currentUser.uid)
+          ? _filterPermittedUnits(allUnits, currentUser)
           : <domain_unit.Unit>[];
       setState(() {
         _areas = areas;
@@ -205,13 +204,23 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   /// סינון יחידות שהמשתמש מורשה לנהל
   List<domain_unit.Unit> _filterPermittedUnits(
-      List<domain_unit.Unit> allUnits, String uid) {
+      List<domain_unit.Unit> allUnits, domain_user.User currentUser) {
+    // מפתח רואה הכל
+    if (currentUser.isDeveloper) return allUnits;
+
+    final uid = currentUser.uid;
+
     // מצא יחידות שהמשתמש מנהל ישירות
     final managedIds = <String>{};
     for (final unit in allUnits) {
       if (unit.managerIds.contains(uid)) {
         managedIds.add(unit.id);
       }
+    }
+
+    // הוסף גם את היחידה של המשתמש עצמו
+    if (currentUser.unitId != null && currentUser.unitId!.isNotEmpty) {
+      managedIds.add(currentUser.unitId!);
     }
 
     // הוסף רקורסיבית יחידות ילדים
@@ -373,13 +382,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       _distanceMax = nav.routeLengthKm!.max;
     }
 
-    // זמן בטיחות
-    if (nav.safetyTime != null) {
-      _safetyTimeType = nav.safetyTime!.type;
-      _safetyHours = nav.safetyTime!.hours ?? 2;
-      _hoursAfterMission = nav.safetyTime!.hoursAfterMission ?? 1;
-    }
-
     // הגדרות תחקיר
     _showScoresAfterApproval = nav.reviewSettings.showScoresAfterApproval;
 
@@ -408,6 +410,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _showSelfLocation = nav.showSelfLocation;
     _showRouteOnMap = nav.showRouteOnMap;
     _allowManualPosition = nav.allowManualPosition;
+    _gpsSpoofingDetectionEnabled = nav.gpsSpoofingDetectionEnabled;
+    _gpsSpoofingMaxDistanceKm = nav.gpsSpoofingMaxDistanceKm;
 
     // מבחן בדד
     _requireSoloQuiz = nav.learningSettings.requireSoloQuiz;
@@ -936,59 +940,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               const SizedBox(height: 16),
             ],
 
-            // זמן בטיחות
-            const Text('זמן בטיחות', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            RadioListTile<String>(
-              title: const Text('שעות קבועות'),
-              value: 'hours',
-              groupValue: _safetyTimeType,
-              onChanged: (value) {
-                setState(() => _safetyTimeType = value!);
-                _onSettingChanged();
-              },
-            ),
-            if (_safetyTimeType == 'hours')
-              Padding(
-                padding: const EdgeInsets.only(right: 32),
-                child: TextFormField(
-                  initialValue: _safetyHours.toString(),
-                  decoration: const InputDecoration(
-                    labelText: 'מספר שעות',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (value) {
-                    _safetyHours = int.tryParse(value) ?? 2;
-                    _onSettingChanged();
-                  },
-                ),
-              ),
-            RadioListTile<String>(
-              title: const Text('שעה אחרי זמן משימה אחרון'),
-              value: 'after_last_mission',
-              groupValue: _safetyTimeType,
-              onChanged: (value) {
-                setState(() => _safetyTimeType = value!);
-                _onSettingChanged();
-              },
-            ),
-            if (_safetyTimeType == 'after_last_mission')
-              Padding(
-                padding: const EdgeInsets.only(right: 32),
-                child: TextFormField(
-                  initialValue: _hoursAfterMission.toString(),
-                  decoration: const InputDecoration(
-                    labelText: 'שעות אחרי',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (value) {
-                    _hoursAfterMission = int.tryParse(value) ?? 1;
-                    _onSettingChanged();
-                  },
-                ),
-              ),
           ],
         ),
       ),
@@ -1337,6 +1288,61 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 _onSettingChanged();
               },
             ),
+            const Divider(),
+            SwitchListTile(
+              secondary: const Icon(Icons.security, color: Colors.orange),
+              title: const Text('הפעל מענה להטעיית GPS'),
+              subtitle: const Text('חסימת מיקומים מזויפים רחוקים מגבול הגזרה'),
+              value: _gpsSpoofingDetectionEnabled,
+              onChanged: (value) {
+                setState(() => _gpsSpoofingDetectionEnabled = value);
+                _onSettingChanged();
+              },
+            ),
+            if (_gpsSpoofingDetectionEnabled) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.straighten, size: 20, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    const Text('מרחק ממרכז גבול גזרה (ק״מ)'),
+                    const Spacer(),
+                    SizedBox(
+                      width: 70,
+                      child: TextFormField(
+                        initialValue: _gpsSpoofingMaxDistanceKm.toString(),
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (value) {
+                          final parsed = int.tryParse(value);
+                          if (parsed != null && parsed >= 1 && parsed <= 1000) {
+                            setState(() => _gpsSpoofingMaxDistanceKm = parsed);
+                            _onSettingChanged();
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Slider(
+                value: _gpsSpoofingMaxDistanceKm.toDouble(),
+                min: 1,
+                max: 1000,
+                divisions: 999,
+                label: '$_gpsSpoofingMaxDistanceKm ק״מ',
+                onChanged: (value) {
+                  setState(() => _gpsSpoofingMaxDistanceKm = value.round());
+                  _onSettingChanged();
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -2003,12 +2009,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
     try {
       // יצירת ההגדרות
-      final safetyTime = SafetyTimeSettings(
-        type: _safetyTimeType,
-        hours: _safetyTimeType == 'hours' ? _safetyHours : null,
-        hoursAfterMission: _safetyTimeType == 'after_last_mission' ? _hoursAfterMission : null,
-      );
-
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
           .copyWith(requireSoloQuiz: _requireSoloQuiz);
 
@@ -2113,7 +2113,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         endPoint: null,
         waypointSettings: const WaypointSettings(), // ברירת מחדל: ללא נקודות ביניים
         boundaryLayerId: _selectedBoundaryId,
-        safetyTime: safetyTime,
+        safetyTime: null,
         distributeNow: _distributeNow,
         learningSettings: learningSettings,
         verificationSettings: verificationSettings,
@@ -2134,6 +2134,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         gpsUpdateIntervalSeconds: _gpsUpdateInterval,
         enabledPositionSources: _buildEnabledPositionSources(),
         allowManualPosition: _allowManualPosition,
+        gpsSpoofingDetectionEnabled: _gpsSpoofingDetectionEnabled,
+        gpsSpoofingMaxDistanceKm: _gpsSpoofingMaxDistanceKm,
         timeCalculationSettings: TimeCalculationSettings(
           enabled: _timeCalcEnabled,
           isHeavyLoad: _isHeavyLoad,

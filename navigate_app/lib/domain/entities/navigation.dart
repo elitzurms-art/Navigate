@@ -327,6 +327,10 @@ class Navigation extends Equatable {
   // Manual position
   final bool allowManualPosition;
 
+  // GPS Spoofing detection
+  final bool gpsSpoofingDetectionEnabled;
+  final int gpsSpoofingMaxDistanceKm;
+
   // Communication (PTT)
   final CommunicationSettings communicationSettings;
 
@@ -386,6 +390,8 @@ class Navigation extends Equatable {
     required this.gpsUpdateIntervalSeconds,
     this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
     this.allowManualPosition = false,
+    this.gpsSpoofingDetectionEnabled = true,
+    this.gpsSpoofingMaxDistanceKm = 50,
     this.communicationSettings = const CommunicationSettings(),
     this.variablesSheet,
     this.timeCalculationSettings = const TimeCalculationSettings(),
@@ -448,6 +454,8 @@ class Navigation extends Equatable {
     int? gpsUpdateIntervalSeconds,
     List<String>? enabledPositionSources,
     bool? allowManualPosition,
+    bool? gpsSpoofingDetectionEnabled,
+    int? gpsSpoofingMaxDistanceKm,
     CommunicationSettings? communicationSettings,
     VariablesSheet? variablesSheet,
     bool clearVariablesSheet = false,
@@ -500,6 +508,8 @@ class Navigation extends Equatable {
       gpsUpdateIntervalSeconds: gpsUpdateIntervalSeconds ?? this.gpsUpdateIntervalSeconds,
       enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
       allowManualPosition: allowManualPosition ?? this.allowManualPosition,
+      gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
+      gpsSpoofingMaxDistanceKm: gpsSpoofingMaxDistanceKm ?? this.gpsSpoofingMaxDistanceKm,
       communicationSettings: communicationSettings ?? this.communicationSettings,
       variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
@@ -558,6 +568,8 @@ class Navigation extends Equatable {
       'gpsUpdateIntervalSeconds': gpsUpdateIntervalSeconds,
       'enabledPositionSources': enabledPositionSources,
       'allowManualPosition': allowManualPosition,
+      'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
+      'gpsSpoofingMaxDistanceKm': gpsSpoofingMaxDistanceKm,
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
@@ -642,6 +654,8 @@ class Navigation extends Equatable {
       gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 5,
       enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
+      gpsSpoofingDetectionEnabled: map['gpsSpoofingDetectionEnabled'] as bool? ?? true,
+      gpsSpoofingMaxDistanceKm: (map['gpsSpoofingMaxDistanceKm'] as num?)?.toInt() ?? 50,
       communicationSettings: map['communicationSettings'] != null
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
@@ -704,6 +718,8 @@ class Navigation extends Equatable {
     gpsUpdateIntervalSeconds,
     enabledPositionSources,
     allowManualPosition,
+    gpsSpoofingDetectionEnabled,
+    gpsSpoofingMaxDistanceKm,
     communicationSettings,
     variablesSheet,
     timeCalculationSettings,

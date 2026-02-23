@@ -110,6 +110,8 @@ class NavigationRepository {
               gpsUpdateIntervalSeconds: navigation.gpsUpdateIntervalSeconds,
               enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
               allowManualPosition: Value(navigation.allowManualPosition),
+              gpsSpoofingDetectionEnabled: Value(navigation.gpsSpoofingDetectionEnabled),
+              gpsSpoofingMaxDistanceKm: Value(navigation.gpsSpoofingMaxDistanceKm),
               timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
               communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
               variablesSheetJson: Value(navigation.variablesSheet != null
@@ -191,6 +193,8 @@ class NavigationRepository {
           gpsUpdateIntervalSeconds: Value(navigation.gpsUpdateIntervalSeconds),
           enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
           allowManualPosition: Value(navigation.allowManualPosition),
+          gpsSpoofingDetectionEnabled: Value(navigation.gpsSpoofingDetectionEnabled),
+          gpsSpoofingMaxDistanceKm: Value(navigation.gpsSpoofingMaxDistanceKm),
           timeCalculationSettingsJson: Value(jsonEncode(navigation.timeCalculationSettings.toMap())),
           communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
           variablesSheetJson: Value(navigation.variablesSheet != null
@@ -349,6 +353,8 @@ class NavigationRepository {
           ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
           : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: data.allowManualPosition,
+      gpsSpoofingDetectionEnabled: data.gpsSpoofingDetectionEnabled,
+      gpsSpoofingMaxDistanceKm: data.gpsSpoofingMaxDistanceKm,
       communicationSettings: _parseJsonAsMap(data.communicationSettingsJson) != null
           ? domain.CommunicationSettings.fromMap(_parseJsonAsMap(data.communicationSettingsJson)!)
           : const domain.CommunicationSettings(),
@@ -840,6 +846,8 @@ class NavigationRepository {
           gpsUpdateIntervalSeconds: nav.gpsUpdateIntervalSeconds,
           enabledPositionSourcesJson: Value(jsonEncode(nav.enabledPositionSources)),
           allowManualPosition: Value(nav.allowManualPosition),
+          gpsSpoofingDetectionEnabled: Value(nav.gpsSpoofingDetectionEnabled),
+          gpsSpoofingMaxDistanceKm: Value(nav.gpsSpoofingMaxDistanceKm),
           timeCalculationSettingsJson: Value(jsonEncode(nav.timeCalculationSettings.toMap())),
           communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
           variablesSheetJson: Value(nav.variablesSheet != null
@@ -975,6 +983,8 @@ class NavigationRepository {
                   variablesSheetJson: Value(nav.variablesSheet != null
                       ? jsonEncode(nav.variablesSheet!.toMap())
                       : null),
+                  gpsSpoofingDetectionEnabled: Value(nav.gpsSpoofingDetectionEnabled),
+                  gpsSpoofingMaxDistanceKm: Value(nav.gpsSpoofingMaxDistanceKm),
                   permissionsJson: jsonEncode(nav.permissions.toMap()),
                   createdAt: nav.createdAt,
                   updatedAt: nav.updatedAt,

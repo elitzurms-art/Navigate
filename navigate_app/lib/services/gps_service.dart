@@ -206,6 +206,7 @@ class GpsService {
     bool highAccuracy = true,
     LatLng? boundaryCenter,
     String forceSource = 'auto',
+    double? maxDistanceFromBoundary,
   }) async {
     // כפיית אנטנות — דלג על GPS לחלוטין
     if (forceSource == 'cellTower') {
@@ -283,7 +284,8 @@ class GpsService {
           boundaryCenter.longitude,
         );
 
-        if (distanceFromBoundary > _maxDistanceFromBoundary) {
+        final threshold = maxDistanceFromBoundary ?? _maxDistanceFromBoundary;
+        if (distanceFromBoundary > threshold) {
           print('DEBUG GpsService: GPS likely spoofed/blocked! '
               'Distance from boundary center: ${(distanceFromBoundary / 1000).toStringAsFixed(1)} km');
           // Try PDR+Cell hybrid first, then cell only
@@ -336,6 +338,7 @@ class GpsService {
     bool highAccuracy = true,
     LatLng? boundaryCenter,
     String forceSource = 'auto',
+    double? maxDistanceFromBoundary,
   }) async {
     // כפיית אנטנות
     if (forceSource == 'cellTower') {
@@ -385,7 +388,8 @@ class GpsService {
           gpsPosition.latitude, gpsPosition.longitude,
           boundaryCenter.latitude, boundaryCenter.longitude,
         );
-        if (dist > _maxDistanceFromBoundary) {
+        final threshold = maxDistanceFromBoundary ?? _maxDistanceFromBoundary;
+        if (dist > threshold) {
           final hybridResult = await _getPdrCellHybridPosition();
           if (hybridResult != null) return hybridResult;
           return (position: gpsLatLng, accuracy: gpsPosition.accuracy, source: PositionSource.gps);

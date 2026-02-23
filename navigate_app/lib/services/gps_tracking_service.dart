@@ -27,6 +27,8 @@ class GPSTrackingService {
 
   int _intervalSeconds = 30;
   LatLng? _boundaryCenter;
+  bool _gpsSpoofingDetectionEnabled = true;
+  double _gpsSpoofingMaxDistanceMeters = 50000.0;
   int get intervalSeconds => _intervalSeconds;
 
   // --- Anti-Drift (ZUPT) ---
@@ -91,6 +93,8 @@ class GPSTrackingService {
     LatLng? boundaryCenter,
     String forcePositionSource = 'auto',
     List<String> enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+    bool gpsSpoofingDetectionEnabled = true,
+    int gpsSpoofingMaxDistanceKm = 50,
   }) async {
     if (_isTracking) {
       print('GPS Tracking כבר פעיל');
@@ -101,6 +105,8 @@ class GPSTrackingService {
     _boundaryCenter = boundaryCenter;
     _forcePositionSource = forcePositionSource;
     _enabledSources = enabledPositionSources;
+    _gpsSpoofingDetectionEnabled = gpsSpoofingDetectionEnabled;
+    _gpsSpoofingMaxDistanceMeters = gpsSpoofingMaxDistanceKm * 1000.0;
 
     // Initialize PDR only for short intervals (≤10s) — above that, PDR
     // wastes battery on unreliable dead-reckoning calculations.
@@ -521,13 +527,13 @@ class GPSTrackingService {
       }
     }
 
-    // Boundary spoof check (reuse existing 50km threshold)
-    if (_boundaryCenter != null) {
+    // Boundary spoof check (configurable per-navigation)
+    if (_gpsSpoofingDetectionEnabled && _boundaryCenter != null) {
       final dist = Geolocator.distanceBetween(
         position.latitude, position.longitude,
         _boundaryCenter!.latitude, _boundaryCenter!.longitude,
       );
-      if (dist > 50000) return false;
+      if (dist > _gpsSpoofingMaxDistanceMeters) return false;
     }
 
     return true;
@@ -816,15 +822,15 @@ class GPSTrackingService {
         _gpsService.setPdrAnchor(position.latitude, position.longitude, heading: position.heading);
       }
 
-      // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג
-      if (_boundaryCenter != null) {
+      // בדיקת GPS חסום/מזויף — מרחק ממרכז הג"ג (configurable per-navigation)
+      if (_gpsSpoofingDetectionEnabled && _boundaryCenter != null) {
         final dist = Geolocator.distanceBetween(
           position.latitude,
           position.longitude,
           _boundaryCenter!.latitude,
           _boundaryCenter!.longitude,
         );
-        if (dist > 50000 && _hasAllowedFallback()) {
+        if (dist > _gpsSpoofingMaxDistanceMeters && _hasAllowedFallback()) {
           // GPS likely spoofed — try PDR hybrid / cell towers
           final cellPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
           if (cellPos != null &&

@@ -200,6 +200,8 @@ class Navigations extends Table {
   IntColumn get gpsUpdateIntervalSeconds => integer()();
   TextColumn get enabledPositionSourcesJson => text().withDefault(const Constant('["gps","cellTower","pdr","pdrCellHybrid"]'))();
   BoolColumn get allowManualPosition => boolean().withDefault(const Constant(false))();
+  BoolColumn get gpsSpoofingDetectionEnabled => boolean().withDefault(const Constant(true))();
+  IntColumn get gpsSpoofingMaxDistanceKm => integer().withDefault(const Constant(50))();
   TextColumn get reviewSettingsJson => text().withDefault(const Constant('{"showScoresAfterApproval":true}'))();
   TextColumn get timeCalculationSettingsJson => text().withDefault(const Constant('{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}'))();
   TextColumn get communicationSettingsJson => text().withDefault(const Constant('{"walkieTalkieEnabled":false}'))();
@@ -400,7 +402,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 31;
 
   @override
   MigrationStrategy get migration {
@@ -604,6 +606,10 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 29 && to >= 30) {
           await m.addColumn(navigations, navigations.variablesSheetJson);
+        }
+        if (from <= 30 && to >= 31) {
+          await m.addColumn(navigations, navigations.gpsSpoofingDetectionEnabled);
+          await m.addColumn(navigations, navigations.gpsSpoofingMaxDistanceKm);
         }
       },
     );
