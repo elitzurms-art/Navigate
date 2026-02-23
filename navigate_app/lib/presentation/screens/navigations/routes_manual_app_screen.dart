@@ -103,19 +103,25 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
       // טעינת עץ מבנה
       final tree = await _treeRepo.getById(widget.navigation.treeId);
 
-      // זיהוי מנווטים — דינמי לפי תפקיד
+      // זיהוי מנווטים — מנווטים בלבד (ללא מפקדים/מנהלים)
       List<String> navigators = [];
       if (widget.navigation.selectedParticipantIds.isNotEmpty) {
-        navigators = List.from(widget.navigation.selectedParticipantIds);
+        // סינון לפי תפקיד — רק מנווטים מקבלים צירים
+        for (final uid in widget.navigation.selectedParticipantIds) {
+          final user = await _userRepo.getUser(uid);
+          if (user != null && user.role == 'navigator') {
+            navigators.add(uid);
+          }
+        }
       } else {
         final unitId = widget.navigation.selectedUnitId ?? tree?.unitId;
         if (unitId != null) {
           if (tree != null && widget.navigation.selectedSubFrameworkIds.isNotEmpty) {
             for (final sf in tree.subFrameworks) {
               if (!widget.navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
-              final users = (sf.name.contains('מפקדים') || sf.name.contains('מפקד'))
-                  ? await _userRepo.getCommandersForUnit(unitId)
-                  : await _userRepo.getNavigatorsForUnit(unitId);
+              // דילוג על תת-מסגרות מפקדים — מפקדים לא מקבלים צירים
+              if (sf.name.contains('מפקדים') || sf.name.contains('מפקד')) continue;
+              final users = await _userRepo.getNavigatorsForUnit(unitId);
               navigators.addAll(users.map((u) => u.uid));
             }
           } else {

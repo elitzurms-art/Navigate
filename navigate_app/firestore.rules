@@ -55,7 +55,7 @@ service cloud.firestore {
     // =========================================================================
     match /users/{uid} {
       allow read: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
+        (myAppUid() == uid || isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
       allow create: if isAuthenticated() && myAppUid() == uid;
       allow update: if isAuthenticated() &&
         (myAppUid() == uid || isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));

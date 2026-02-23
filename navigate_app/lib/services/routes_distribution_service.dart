@@ -204,24 +204,31 @@ class RoutesDistributionService {
 
   final UserRepository _userRepository = UserRepository();
 
-  /// מציאת משתתפים — דינמי לפי תפקיד
+  /// מציאת משתתפים — מנווטים בלבד (ללא מפקדים/מנהלים)
   Future<List<String>> _findNavigators(domain.Navigation navigation, NavigationTree tree) async {
-    // 1. אם נבחרו משתתפים ספציפיים — שימוש ישיר (backward compat)
+    // 1. אם נבחרו משתתפים ספציפיים — סינון לפי תפקיד (backward compat)
     if (navigation.selectedParticipantIds.isNotEmpty) {
-      return List.from(navigation.selectedParticipantIds);
+      final navigators = <String>[];
+      for (final uid in navigation.selectedParticipantIds) {
+        final user = await _userRepository.getUser(uid);
+        if (user != null && user.role == 'navigator') {
+          navigators.add(uid);
+        }
+      }
+      return navigators;
     }
 
     final unitId = navigation.selectedUnitId ?? tree.unitId;
     if (unitId == null) return [];
 
-    // 2. אם נבחרו תתי-מסגרות — שליפה דינמית לפי תפקיד
+    // 2. אם נבחרו תתי-מסגרות — דילוג על מסגרות מפקדים, שליפת מנווטים בלבד
     if (navigation.selectedSubFrameworkIds.isNotEmpty) {
       final navigators = <String>[];
       for (final sf in tree.subFrameworks) {
         if (!navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
-        final users = (sf.name.contains('מפקדים') || sf.name.contains('מפקד'))
-            ? await _userRepository.getCommandersForUnit(unitId)
-            : await _userRepository.getNavigatorsForUnit(unitId);
+        // דילוג על תת-מסגרות מפקדים — מפקדים לא מקבלים צירים
+        if (sf.name.contains('מפקדים') || sf.name.contains('מפקד')) continue;
+        final users = await _userRepository.getNavigatorsForUnit(unitId);
         navigators.addAll(users.map((u) => u.uid));
       }
       return navigators;

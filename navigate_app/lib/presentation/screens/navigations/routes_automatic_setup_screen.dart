@@ -179,6 +179,19 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       }
     }
 
+    // שמירת הגדרות לפני החלוקה — כך שהן נשמרות גם אם החלוקה נכשלת או בוטלה
+    final settingsNav = widget.navigation.copyWith(
+      navigationType: _navigationType,
+      executionOrder: _executionOrder,
+      routeLengthKm: domain.RouteLengthRange(min: _minRouteLength, max: _maxRouteLength),
+      checkpointsPerNavigator: _checkpointsPerNavigator,
+      startPoint: _startPointId,
+      endPoint: _endPointId,
+      waypointSettings: WaypointSettings(enabled: _waypointsEnabled, waypoints: _waypoints),
+      updatedAt: DateTime.now(),
+    );
+    await _navRepo.update(settingsNav);
+
     setState(() {
       _isDistributing = true;
       _progressCurrent = 0;

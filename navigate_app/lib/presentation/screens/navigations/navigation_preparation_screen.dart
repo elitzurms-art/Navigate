@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/user.dart';
 import '../../../data/repositories/navigation_repository.dart';
@@ -79,6 +81,92 @@ class _NavigationPreparationScreenState
     }
   }
 
+  // ======== מניעת הפעלה מקבילית ========
+
+  /// בודקת אם יש מצב פעיל ומבקשת אישור לסגירתו
+  Future<bool> _confirmStopActiveMode(String targetLabel) async {
+    final status = _navigation.status;
+    if (status == 'preparation') return true;
+
+    String activeLabel;
+    if (status == 'learning') {
+      activeLabel = 'מצב למידה';
+    } else if (status == 'system_check') {
+      activeLabel = 'בדיקת מערכות';
+    } else {
+      return true;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber, color: Colors.orange, size: 28),
+            const SizedBox(width: 8),
+            Expanded(child: Text('סיום $activeLabel')),
+          ],
+        ),
+        content: Text(
+          'בחירה זו תגרום לסגירת $activeLabel, האם אתה בטוח שברצונך לסיים את $activeLabel?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('סיים והמשך'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return false;
+
+    await _stopActiveMode();
+    return true;
+  }
+
+  /// סוגרת את המצב הפעיל (learning / system_check) ומחזירה ל-preparation
+  Future<void> _stopActiveMode() async {
+    final status = _navigation.status;
+
+    if (status == 'learning') {
+      final updated = _navigation.copyWith(
+        status: 'preparation',
+        trainingStartTime: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      await _repository.update(updated);
+    } else if (status == 'system_check') {
+      // ניקוי system_status docs מ-Firestore
+      try {
+        final statusCollection = FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(_navigation.id)
+            .collection('system_status');
+        final snapshot = await statusCollection.get();
+        for (final doc in snapshot.docs) {
+          await doc.reference.delete();
+        }
+      } catch (e) {
+        print('DEBUG: failed to clean up system_status: $e');
+      }
+
+      final updated = _navigation.copyWith(
+        status: 'preparation',
+        systemCheckStartTime: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      await _repository.update(updated);
+    }
+
+    await _reloadNavigation();
+  }
+
   // ======== בדיקות השלמה ========
 
   bool get _isSettingsDone => true; // תמיד מושלם אם הניווט קיים
@@ -101,6 +189,7 @@ class _NavigationPreparationScreenState
   // ======== פתיחת מסכי שלבים ========
 
   Future<void> _openSettings() async {
+    if (!await _confirmStopActiveMode('הגדרות')) return;
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -114,6 +203,7 @@ class _NavigationPreparationScreenState
   }
 
   Future<void> _openDistribution() async {
+    if (!await _confirmStopActiveMode('חלוקת נקודות')) return;
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -147,6 +237,7 @@ class _NavigationPreparationScreenState
   }
 
   Future<void> _openVerification() async {
+    if (!await _confirmStopActiveMode('עריכת צירים')) return;
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -160,6 +251,10 @@ class _NavigationPreparationScreenState
   }
 
   Future<void> _openLearning() async {
+    // רק אם המצב האחר פעיל — אם כבר ב-learning, נכנסים ישר
+    if (_navigation.status == 'system_check') {
+      if (!await _confirmStopActiveMode('למידה')) return;
+    }
     final isCommander = _currentUser?.hasCommanderPermissions ?? true;
     final result = await Navigator.push(
       context,
@@ -180,6 +275,10 @@ class _NavigationPreparationScreenState
   }
 
   Future<void> _openSystemCheck() async {
+    // רק אם המצב האחר פעיל — אם כבר ב-system_check, נכנסים ישר
+    if (_navigation.status == 'learning') {
+      if (!await _confirmStopActiveMode('בדיקת מערכות')) return;
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -307,6 +406,7 @@ class _NavigationPreparationScreenState
   // ======== העברה למצב אימון ========
 
   Future<void> _moveToTrainingMode() async {
+    if (!await _confirmStopActiveMode('מצב אימון')) return;
     // בדיקת שלבים שלא הושלמו
     final List<String> warnings = [];
 
@@ -547,6 +647,7 @@ class _NavigationPreparationScreenState
                         title: 'למידה',
                         isDone: _isLearningDone,
                         isMandatory: false,
+                        isActive: _navigation.status == 'learning',
                         onTap: _openLearning,
                         extraButton: _isLearningDone
                             ? TextButton.icon(
@@ -568,6 +669,7 @@ class _NavigationPreparationScreenState
                         title: 'בדיקת מערכות',
                         isDone: _isSystemCheckDone,
                         isMandatory: false,
+                        isActive: _navigation.status == 'system_check',
                         onTap: _openSystemCheck,
                       ),
                     ],
@@ -630,6 +732,7 @@ class _NavigationPreparationScreenState
     required bool isDone,
     required bool isMandatory,
     required VoidCallback onTap,
+    bool isActive = false,
     Widget? extraButton,
   }) {
     return Card(
@@ -701,6 +804,25 @@ class _NavigationPreparationScreenState
                               style: TextStyle(
                                 fontSize: 10,
                                 color: Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (isActive) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'פעיל',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
