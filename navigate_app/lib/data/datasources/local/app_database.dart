@@ -180,6 +180,11 @@ class Navigations extends Table {
   TextColumn get executionOrder => text().nullable()();
   TextColumn get boundaryLayerId => text().nullable()();
   TextColumn get routeLengthJson => text().nullable()(); // JSON של טווח מרחק
+  TextColumn get startPoint => text().nullable()(); // נקודת התחלה משותפת
+  TextColumn get endPoint => text().nullable()(); // נקודת סיום משותפת
+  IntColumn get checkpointsPerNavigator => integer().nullable()(); // נקודות למנווט
+  TextColumn get waypointSettingsJson => text().nullable()(); // JSON נקודות ביניים
+  TextColumn get scoringCriterion => text().nullable()(); // קריטריון חלוקה
   BoolColumn get distributeNow => boolean().withDefault(const Constant(false))();
   TextColumn get safetyTimeJson => text().nullable()(); // JSON של זמן בטיחות
   TextColumn get learningSettingsJson => text()(); // JSON של הגדרות למידה
@@ -394,7 +399,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 28;
+  int get schemaVersion => 29;
 
   @override
   MigrationStrategy get migration {
@@ -588,6 +593,13 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 27 && to >= 28) {
           await m.addColumn(users, users.soloQuizPassedAt);
           await m.addColumn(users, users.soloQuizScore);
+        }
+        if (from <= 28 && to >= 29) {
+          await m.addColumn(navigations, navigations.startPoint);
+          await m.addColumn(navigations, navigations.endPoint);
+          await m.addColumn(navigations, navigations.checkpointsPerNavigator);
+          await m.addColumn(navigations, navigations.waypointSettingsJson);
+          await m.addColumn(navigations, navigations.scoringCriterion);
         }
       },
     );

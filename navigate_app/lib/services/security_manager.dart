@@ -88,13 +88,23 @@ class SecurityManager {
         break;
     }
 
-    if (success) {
-      // התחלת ניטור אירועים
-      _deviceSecurity.startMonitoring(
-        onViolation: (type) => _handleViolation(type),
-      );
-      print('✓ ניטור אבטחה פעיל');
+    // הפעלת DND (Android) — לא תלוי ב-Lock Task
+    if (_deviceSecurity.isAndroid) {
+      final hasDnd = await _deviceSecurity.hasDNDPermission();
+      if (hasDnd) {
+        await _deviceSecurity.enableDND();
+        print('🔕 DND הופעל בתחילת ניווט');
+      }
     }
+
+    // התחלת ניטור שיחות (Android + iOS) — לא תלוי ב-Lock Task
+    await _deviceSecurity.startCallMonitoring();
+
+    // התחלת ניטור אירועים
+    _deviceSecurity.startMonitoring(
+      onViolation: (type) => _handleViolation(type),
+    );
+    print('✓ ניטור אבטחה פעיל');
 
     return success;
   }
@@ -104,6 +114,14 @@ class SecurityManager {
     if (!isMonitoring) return;
 
     print('🔓 מפסיק ניטור אבטחה');
+
+    // ביטול DND (Android)
+    if (_deviceSecurity.isAndroid) {
+      await _deviceSecurity.disableDND();
+    }
+
+    // הפסקת ניטור שיחות
+    await _deviceSecurity.stopCallMonitoring();
 
     // עצירת ניטור אירועים
     _deviceSecurity.stopMonitoring();
@@ -165,6 +183,7 @@ class SecurityManager {
       case ViolationType.exitLockTask:
       case ViolationType.exitGuidedAccess:
       case ViolationType.appClosed:
+      case ViolationType.phoneCallAnswered:
         severity = ViolationSeverity.critical;
         break;
       case ViolationType.appBackgrounded:
@@ -317,6 +336,9 @@ class SecurityManager {
       'internet': await _deviceSecurity.isInternetConnected(),
       'guidedAccess': _deviceSecurity.isIOS
           ? await _deviceSecurity.isGuidedAccessEnabled()
+          : true,
+      'dnd': _deviceSecurity.isAndroid
+          ? await _deviceSecurity.hasDNDPermission()
           : true,
     };
   }

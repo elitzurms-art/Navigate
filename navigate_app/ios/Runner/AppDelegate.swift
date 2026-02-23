@@ -1,11 +1,13 @@
 import Flutter
 import UIKit
 import CoreLocation
+import CallKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, CXCallObserverDelegate {
   private var securityChannel: FlutterMethodChannel?
   private var isNavigationActive = false
+  private var callObserver: CXCallObserver?
 
   override func application(
     _ application: UIApplication,
@@ -39,6 +41,28 @@ import CoreLocation
 
       case "stopNavigationMonitoring":
         self.isNavigationActive = false
+        result(true)
+
+      // DND — לא זמין ב-iOS, מחזיר ערכי ברירת מחדל
+      case "hasDNDPermission":
+        result(true) // iOS לא תומך — נחשב כמאושר
+
+      case "isDNDEnabled":
+        result(false)
+
+      case "enableDND":
+        result(false)
+
+      case "disableDND":
+        result(false)
+
+      // Call Monitoring — CallKit
+      case "startCallMonitoring":
+        self.startCallMonitoring()
+        result(true)
+
+      case "stopCallMonitoring":
+        self.stopCallMonitoring()
         result(true)
 
       default:
@@ -100,6 +124,27 @@ import CoreLocation
     return true // TODO: הוסף בדיקה אמיתית
   }
 
+  // ========== Call Monitoring (CallKit) ==========
+
+  private func startCallMonitoring() {
+    stopCallMonitoring()
+    callObserver = CXCallObserver()
+    callObserver?.setDelegate(self, queue: nil)
+  }
+
+  private func stopCallMonitoring() {
+    callObserver?.setDelegate(nil, queue: nil)
+    callObserver = nil
+  }
+
+  /// CXCallObserverDelegate — זיהוי מענה לשיחת טלפון
+  func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
+    if call.hasConnected && !call.hasEnded {
+      // שיחה נענתה (OFFHOOK)
+      securityChannel?.invokeMethod("onCallAnswered", arguments: nil)
+    }
+  }
+
   // ========== Lifecycle Events ==========
 
   @objc private func appDidEnterBackground() {
@@ -132,5 +177,6 @@ import CoreLocation
 
   deinit {
     NotificationCenter.default.removeObserver(self)
+    stopCallMonitoring()
   }
 }

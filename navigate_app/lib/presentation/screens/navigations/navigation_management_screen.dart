@@ -556,9 +556,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           liveData.batteryLevel = batteryRaw.toInt();
         }
 
-        // עדכון הרשאות מיקרופון וטלפון
+        // עדכון הרשאות מיקרופון, טלפון ו-DND
         liveData.hasMicrophonePermission = data['hasMicrophonePermission'] as bool? ?? false;
         liveData.hasPhonePermission = data['hasPhonePermission'] as bool? ?? false;
+        liveData.hasDNDPermission = data['hasDNDPermission'] as bool? ?? false;
 
         final latitude = (data['latitude'] as num?)?.toDouble();
         final longitude = (data['longitude'] as num?)?.toDouble();
@@ -858,6 +859,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             } catch (_) {}
           }
           liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
+          liveData.disqualificationReason = data['disqualificationReason'] as String?;
           continue;
         }
 
@@ -898,8 +900,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           endedAt: endedAt,
         );
 
-        // קריאת isDisqualified מה-track doc
+        // קריאת isDisqualified + סיבה מה-track doc
         liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
+        liveData.disqualificationReason = data['disqualificationReason'] as String?;
 
         // cache trackId + קריאת דריסות מפה (רק אם הוגדר ב-Firestore — אחרת נשאר default מהגדרות הניווט)
         _navigatorTrackIds[navigatorId] = doc.id;
@@ -2464,15 +2467,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           ),
                         ),
                         if (data.isDisqualified)
-                          Container(
-                            margin: const EdgeInsets.only(left: 4),
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(4),
+                          Flexible(
+                            child: Container(
+                              margin: const EdgeInsets.only(left: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                data.disqualificationReason ?? 'נפסל',
+                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            child: const Text('נפסל',
-                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         if (data.isForceCell)
                           const Padding(
@@ -2637,7 +2645,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     borderRadius: BorderRadius.circular(3),
                   ),
                   child: Text(
-                    '${i + 1}-$navName',
+                    () {
+                      final cp = _checkpoints.where((c) => c.id == punch.checkpointId).firstOrNull;
+                      final seqPart = cp != null ? '${cp.sequenceNumber}-' : '';
+                      return '$seqPart$navName (${i + 1})';
+                    }(),
                     style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -3012,6 +3024,36 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           ),
                         ],
                       ),
+                      // באנר סיבת פסילה
+                      if (liveData.isDisqualified) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.red[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red[300]!),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.block, color: Colors.red[700], size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  liveData.disqualificationReason ?? 'נפסל',
+                                  style: TextStyle(
+                                    color: Colors.red[900],
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
                       const Divider(height: 20),
 
                       // 2. סטטוס מכשיר
@@ -3049,6 +3091,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                         ? Colors.orange
                                         : Colors.red)
                                 : Colors.grey,
+                          ),
+                          _deviceChip(
+                            icon: Icons.do_not_disturb_on,
+                            label: liveData.hasDNDPermission ? 'DND' : 'אין DND',
+                            color: liveData.hasDNDPermission ? Colors.green : Colors.red,
                           ),
                           if (widget.navigation.communicationSettings.walkieTalkieEnabled) ...[
                             _deviceChip(
@@ -4341,6 +4388,7 @@ class NavigatorLiveData {
   bool isGpsPlusFix;
   bool isForceCell; // כפיית מקור מיקום אנטנות ע"י מפקד
   bool isDisqualified; // מנווט נפסל (פריצת אבטחה)
+  String? disqualificationReason; // סיבת הפסילה
   LatLng? currentPosition;
   List<TrackPoint> trackPoints;
   List<CheckpointPunch> punches;
@@ -4348,6 +4396,7 @@ class NavigatorLiveData {
   int? batteryLevel; // 0-100%, null = לא ידוע
   bool hasMicrophonePermission;
   bool hasPhonePermission;
+  bool hasDNDPermission;
 
   NavigatorLiveData({
     required this.navigatorId,
@@ -4356,6 +4405,7 @@ class NavigatorLiveData {
     this.isGpsPlusFix = false,
     this.isForceCell = false,
     this.isDisqualified = false,
+    this.disqualificationReason,
     this.currentPosition,
     required this.trackPoints,
     required this.punches,
@@ -4363,6 +4413,7 @@ class NavigatorLiveData {
     this.batteryLevel,
     this.hasMicrophonePermission = false,
     this.hasPhonePermission = false,
+    this.hasDNDPermission = false,
   });
 
   /// מרחק כולל שנעבר בק"מ

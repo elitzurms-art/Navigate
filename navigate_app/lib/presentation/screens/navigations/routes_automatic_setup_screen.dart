@@ -58,31 +58,40 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   @override
   void initState() {
     super.initState();
+    _initializeFromNavigation(widget.navigation);
     _loadData();
-    _initializeFromNavigation();
   }
 
-  void _initializeFromNavigation() {
+  void _initializeFromNavigation(domain.Navigation nav) {
     setState(() {
-      _navigationType = widget.navigation.navigationType ?? 'regular';
-      _executionOrder = widget.navigation.executionOrder ?? 'sequential';
-      if (widget.navigation.routeLengthKm != null) {
-        _minRouteLength = widget.navigation.routeLengthKm!.min;
-        _maxRouteLength = widget.navigation.routeLengthKm!.max;
+      _navigationType = nav.navigationType ?? 'regular';
+      _executionOrder = nav.executionOrder ?? 'sequential';
+      if (nav.routeLengthKm != null) {
+        _minRouteLength = nav.routeLengthKm!.min;
+        _maxRouteLength = nav.routeLengthKm!.max;
       }
-      _checkpointsPerNavigator = widget.navigation.checkpointsPerNavigator ?? 5;
-      _startPointId = widget.navigation.startPoint;
-      _endPointId = widget.navigation.endPoint;
+      _checkpointsPerNavigator = nav.checkpointsPerNavigator ?? 5;
+      _startPointId = nav.startPoint;
+      _endPointId = nav.endPoint;
 
       // נקודות ביניים
-      _waypointsEnabled = widget.navigation.waypointSettings.enabled;
-      _waypoints = List.from(widget.navigation.waypointSettings.waypoints);
+      _waypointsEnabled = nav.waypointSettings.enabled;
+      _waypoints = List.from(nav.waypointSettings.waypoints);
+
+      // קריטריון חלוקה
+      _scoringCriterion = nav.scoringCriterion ?? 'fairness';
     });
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
+      // טעינת ניווט עדכני מה-DB (ולא widget.navigation שעלול להיות ישן)
+      final freshNav = await _navRepo.getById(widget.navigation.id);
+      if (freshNav != null) {
+        _initializeFromNavigation(freshNav);
+      }
+
       // טעינת נקודות ציון מהשכבות הניווטיות (כבר מסוננות לפי גבול גזרה)
       var navCheckpoints = await _navLayerRepo.getCheckpointsByNavigation(
         widget.navigation.id,
@@ -141,6 +150,21 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     }
   }
 
+  Future<void> _saveSettings() async {
+    final settingsNav = widget.navigation.copyWith(
+      navigationType: _navigationType,
+      executionOrder: _executionOrder,
+      routeLengthKm: domain.RouteLengthRange(min: _minRouteLength, max: _maxRouteLength),
+      checkpointsPerNavigator: _checkpointsPerNavigator,
+      startPoint: _startPointId,
+      endPoint: _endPointId,
+      waypointSettings: WaypointSettings(enabled: _waypointsEnabled, waypoints: _waypoints),
+      scoringCriterion: _scoringCriterion,
+      updatedAt: DateTime.now(),
+    );
+    await _navRepo.update(settingsNav);
+  }
+
   Future<void> _distribute() async {
     if (!_formKey.currentState!.validate()) return;
     if (_tree == null) {
@@ -180,17 +204,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     }
 
     // שמירת הגדרות לפני החלוקה — כך שהן נשמרות גם אם החלוקה נכשלת או בוטלה
-    final settingsNav = widget.navigation.copyWith(
-      navigationType: _navigationType,
-      executionOrder: _executionOrder,
-      routeLengthKm: domain.RouteLengthRange(min: _minRouteLength, max: _maxRouteLength),
-      checkpointsPerNavigator: _checkpointsPerNavigator,
-      startPoint: _startPointId,
-      endPoint: _endPointId,
-      waypointSettings: WaypointSettings(enabled: _waypointsEnabled, waypoints: _waypoints),
-      updatedAt: DateTime.now(),
-    );
-    await _navRepo.update(settingsNav);
+    await _saveSettings();
 
     setState(() {
       _isDistributing = true;
@@ -362,7 +376,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       );
     }
 
-    // עדכון ניווט עם הצירים החדשים
+    // שמירת הגדרות + צירים + סטטוס חלוקה
+    await _saveSettings();
     final updatedNavigation = widget.navigation.copyWith(
       routes: routes,
       routesStage: 'verification',
@@ -400,13 +415,20 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('חלוקה אוטומטית'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoading
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _saveSettings();
+        if (context.mounted) Navigator.pop(context);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('חלוקה אוטומטית'),
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+        ),
+        body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _isDistributing
               ? _buildProgressView()
@@ -477,6 +499,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                     ),
                   ),
                 ),
+      ),
     );
   }
 

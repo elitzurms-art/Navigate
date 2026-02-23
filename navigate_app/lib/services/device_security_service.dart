@@ -120,7 +120,86 @@ class DeviceSecurityService {
     }
   }
 
-  /// 4️⃣ ניטור חריגות
+  /// 4️⃣ DND (נא לא להפריע) — Android בלבד
+
+  /// הפעלת מצב נא לא להפריע
+  Future<bool> enableDND() async {
+    if (!isAndroid) return false;
+    try {
+      final result = await _channel.invokeMethod('enableDND');
+      print('🔕 DND הופעל: $result');
+      return result == true;
+    } catch (e) {
+      print('❌ שגיאה בהפעלת DND: $e');
+      return false;
+    }
+  }
+
+  /// ביטול מצב נא לא להפריע
+  Future<bool> disableDND() async {
+    if (!isAndroid) return false;
+    try {
+      final result = await _channel.invokeMethod('disableDND');
+      print('🔔 DND בוטל');
+      return result == true;
+    } catch (e) {
+      print('❌ שגיאה בביטול DND: $e');
+      return false;
+    }
+  }
+
+  /// בדיקה אם DND מופעל כרגע
+  Future<bool> isDNDEnabled() async {
+    try {
+      final result = await _channel.invokeMethod('isDNDEnabled');
+      return result == true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// בדיקה אם יש הרשאת DND
+  Future<bool> hasDNDPermission() async {
+    try {
+      final result = await _channel.invokeMethod('hasDNDPermission');
+      return result == true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// פתיחת הגדרות מערכת לאישור DND
+  Future<void> requestDNDPermission() async {
+    try {
+      await _channel.invokeMethod('requestDNDPermission');
+    } catch (e) {
+      print('❌ שגיאה בפתיחת הגדרות DND: $e');
+    }
+  }
+
+  /// 5️⃣ ניטור שיחות טלפון — Android + iOS
+
+  /// התחלת ניטור שיחות
+  Future<void> startCallMonitoring() async {
+    try {
+      await _channel.invokeMethod('startCallMonitoring');
+      print('📞 ניטור שיחות הופעל');
+    } catch (e) {
+      print('❌ שגיאה בהפעלת ניטור שיחות: $e');
+    }
+  }
+
+  /// הפסקת ניטור שיחות
+  Future<void> stopCallMonitoring() async {
+    try {
+      await _channel.invokeMethod('stopCallMonitoring');
+      print('📞 ניטור שיחות הופסק');
+    } catch (e) {
+      print('❌ שגיאה בהפסקת ניטור שיחות: $e');
+    }
+  }
+
+  /// 6️⃣ ניטור חריגות
 
   /// רישום האזנה לאירועי מערכת
   void startMonitoring({
@@ -145,6 +224,9 @@ class DeviceSecurityService {
           break;
         case 'onGuidedAccessExit':
           onViolation(ViolationType.exitGuidedAccess);
+          break;
+        case 'onCallAnswered':
+          onViolation(ViolationType.phoneCallAnswered);
           break;
       }
     });

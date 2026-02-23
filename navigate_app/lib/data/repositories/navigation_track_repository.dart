@@ -152,7 +152,7 @@ class NavigationTrackRepository {
   }
 
   /// פסילת מנווט — סימון isDisqualified=true ב-Drift + Firestore
-  Future<void> disqualifyNavigator(String trackId) async {
+  Future<void> disqualifyNavigator(String trackId, {String? reason}) async {
     // עדכון ב-Drift
     await (_db.update(_db.navigationTracks)
           ..where((t) => t.id.equals(trackId)))
@@ -160,12 +160,16 @@ class NavigationTrackRepository {
       isDisqualified: Value(true),
     ));
 
-    // עדכון ישיר ב-Firestore
+    // עדכון ישיר ב-Firestore (כולל סיבת פסילה)
     try {
+      final data = <String, dynamic>{'isDisqualified': true};
+      if (reason != null) {
+        data['disqualificationReason'] = reason;
+      }
       await FirebaseFirestore.instance
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
-          .update({'isDisqualified': true});
+          .update(data);
     } catch (_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
     }

@@ -83,6 +83,11 @@ class NavigationRepository {
               routeLengthJson: Value(navigation.routeLengthKm != null
                   ? jsonEncode(navigation.routeLengthKm!.toMap())
                   : null),
+              startPoint: Value(navigation.startPoint),
+              endPoint: Value(navigation.endPoint),
+              checkpointsPerNavigator: Value(navigation.checkpointsPerNavigator),
+              waypointSettingsJson: Value(jsonEncode(navigation.waypointSettings.toMap())),
+              scoringCriterion: Value(navigation.scoringCriterion),
               distributeNow: Value(navigation.distributeNow),
               safetyTimeJson: Value(navigation.safetyTime != null
                   ? jsonEncode(navigation.safetyTime!.toMap())
@@ -156,6 +161,11 @@ class NavigationRepository {
           routeLengthJson: Value(navigation.routeLengthKm != null
               ? jsonEncode(navigation.routeLengthKm!.toMap())
               : null),
+          startPoint: Value(navigation.startPoint),
+          endPoint: Value(navigation.endPoint),
+          checkpointsPerNavigator: Value(navigation.checkpointsPerNavigator),
+          waypointSettingsJson: Value(jsonEncode(navigation.waypointSettings.toMap())),
+          scoringCriterion: Value(navigation.scoringCriterion),
           distributeNow: Value(navigation.distributeNow),
           safetyTimeJson: Value(navigation.safetyTime != null
               ? jsonEncode(navigation.safetyTime!.toMap())
@@ -288,9 +298,15 @@ class NavigationRepository {
               jsonDecode(data.routeLengthJson!) as Map<String, dynamic>,
             )
           : null,
-      checkpointsPerNavigator: null,
-      startPoint: null,
-      endPoint: null,
+      checkpointsPerNavigator: data.checkpointsPerNavigator,
+      startPoint: data.startPoint,
+      endPoint: data.endPoint,
+      waypointSettings: data.waypointSettingsJson != null
+          ? domain.WaypointSettings.fromMap(
+              jsonDecode(data.waypointSettingsJson!) as Map<String, dynamic>,
+            )
+          : const domain.WaypointSettings(),
+      scoringCriterion: data.scoringCriterion,
       distributeNow: data.distributeNow,
       safetyTime: data.safetyTimeJson != null
           ? domain.SafetyTimeSettings.fromMap(
@@ -788,6 +804,11 @@ class NavigationRepository {
           routeLengthJson: Value(nav.routeLengthKm != null
               ? jsonEncode(nav.routeLengthKm!.toMap())
               : null),
+          startPoint: Value(nav.startPoint),
+          endPoint: Value(nav.endPoint),
+          checkpointsPerNavigator: Value(nav.checkpointsPerNavigator),
+          waypointSettingsJson: Value(jsonEncode(nav.waypointSettings.toMap())),
+          scoringCriterion: Value(nav.scoringCriterion),
           distributeNow: Value(nav.distributeNow),
           safetyTimeJson: Value(nav.safetyTime != null
               ? jsonEncode(nav.safetyTime!.toMap())
@@ -910,6 +931,11 @@ class NavigationRepository {
                   routeLengthJson: Value(nav.routeLengthKm != null
                       ? jsonEncode(nav.routeLengthKm!.toMap())
                       : null),
+                  startPoint: Value(nav.startPoint),
+                  endPoint: Value(nav.endPoint),
+                  checkpointsPerNavigator: Value(nav.checkpointsPerNavigator),
+                  waypointSettingsJson: Value(jsonEncode(nav.waypointSettings.toMap())),
+                  scoringCriterion: Value(nav.scoringCriterion),
                   distributeNow: Value(nav.distributeNow),
                   safetyTimeJson: Value(nav.safetyTime != null
                       ? jsonEncode(nav.safetyTime!.toMap())

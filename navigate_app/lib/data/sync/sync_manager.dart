@@ -1236,6 +1236,12 @@ class SyncManager {
         boundaryLayerId: Value(data['boundaryLayerId'] as String?),
         routeLengthJson: Value(data['routeLengthJson'] as String? ??
             (data['routeLengthKm'] != null ? jsonEncode(data['routeLengthKm']) : null)),
+        startPoint: Value(data['startPoint'] as String?),
+        endPoint: Value(data['endPoint'] as String?),
+        checkpointsPerNavigator: Value((data['checkpointsPerNavigator'] as num?)?.toInt()),
+        waypointSettingsJson: Value(data['waypointSettingsJson'] as String? ??
+            (data['waypointSettings'] != null ? jsonEncode(data['waypointSettings']) : null)),
+        scoringCriterion: Value(data['scoringCriterion'] as String?),
         safetyTimeJson: Value(data['safetyTimeJson'] as String? ??
             (data['safetyTime'] != null ? jsonEncode(data['safetyTime']) : null)),
         learningSettingsJson: data['learningSettingsJson'] as String? ??

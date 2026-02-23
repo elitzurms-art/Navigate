@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../services/device_security_service.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/user.dart' as domain_user;
@@ -82,6 +84,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   // הרשאות מכשיר (לטאב הרשאות)
   Map<String, PermissionStatus> _permissionStatuses = {};
+
+  // DND (נא לא להפריע) — Android בלבד
+  bool _hasDNDPermission = false;
+  final DeviceSecurityService _deviceSecurityService = DeviceSecurityService();
 
   // מצב בדיקת מערכות (התחיל/לא)
   late domain.Navigation _currentNavigation;
@@ -184,6 +190,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       // בדיקת הרשאות מכשיר
       await _checkDevicePermissions();
 
+      // בדיקת הרשאת DND (Android בלבד)
+      if (Platform.isAndroid) {
+        _hasDNDPermission = await _deviceSecurityService.hasDNDPermission();
+      } else {
+        _hasDNDPermission = true; // iOS — לא רלוונטי
+      }
+
       // בדיקת סטטוס מפות אופליין + הפעלת הורדה אם לא התחילה
       _checkMapDownloadStatus();
 
@@ -277,6 +290,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         _batteryLevel = -1;
       }
 
+      // עדכון DND (Android)
+      if (Platform.isAndroid) {
+        _hasDNDPermission = await _deviceSecurityService.hasDNDPermission();
+      }
+
       if (mounted) setState(() {});
       _reportStatusToFirestore();
     } catch (e) {
@@ -310,6 +328,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'mapsStatus': _mapDownloadStatus.name,
         'hasMicrophonePermission': _permissionStatuses['microphone']?.isGranted ?? false,
         'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
+        'hasDNDPermission': _hasDNDPermission,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -489,6 +508,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
               hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
               hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
+              hasDNDPermission: data['hasDNDPermission'] as bool? ?? false,
             );
           }
         });
@@ -551,6 +571,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
             hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
             hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
+            hasDNDPermission: data['hasDNDPermission'] as bool? ?? false,
           );
         }
       });
@@ -1322,6 +1343,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       s.hasPhonePermission ? 'מאושר' : 'לא מאושר',
                       Icons.phone_android,
                       s.hasPhonePermission ? Colors.green : Colors.red,
+                    ),
+                    _buildDetailRow(
+                      'DND',
+                      s.hasDNDPermission ? 'מאושר' : 'לא מאושר',
+                      Icons.do_not_disturb_on,
+                      s.hasDNDPermission ? Colors.green : Colors.red,
                     ),
                     const Divider(),
 
@@ -2351,6 +2378,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   if (_permissionStatuses.isNotEmpty)
                     _buildNavigatorPermissionsCard(),
 
+                  // הרשאת DND (Android בלבד)
+                  if (Platform.isAndroid)
+                    _buildDNDPermissionCard(),
+
                   const SizedBox(height: 24),
 
                   // בדיקת מיקום
@@ -2760,6 +2791,68 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     );
   }
 
+  /// כרטיס הרשאת DND — מוצג בתצוגת מנווט (Android בלבד)
+  Widget _buildDNDPermissionCard() {
+    return Card(
+      color: _hasDNDPermission ? Colors.green[50] : Colors.orange[50],
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.do_not_disturb_on,
+                  color: _hasDNDPermission ? Colors.green : Colors.orange,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'נא לא להפריע (DND)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _hasDNDPermission
+                  ? 'ההרשאה מאושרת — שיחות ייחסמו בזמן ניווט'
+                  : 'נדרשת הרשאה לחסימת שיחות בזמן ניווט',
+              style: TextStyle(
+                color: _hasDNDPermission ? Colors.green[700] : Colors.orange[700],
+              ),
+            ),
+            if (!_hasDNDPermission) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    await _deviceSecurityService.requestDNDPermission();
+                    // בדיקה מחדש אחרי חזרה מהגדרות
+                    await Future.delayed(const Duration(seconds: 1));
+                    if (mounted) {
+                      final hasPerm = await _deviceSecurityService.hasDNDPermission();
+                      setState(() => _hasDNDPermission = hasPerm);
+                      _reportStatusToFirestore();
+                    }
+                  },
+                  icon: const Icon(Icons.settings),
+                  label: const Text('פתח הגדרות'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   /// טאב הרשאות למפקד — סקירת הרשאות כלליות
   Widget _buildPermissionsTab() {
     if (_isLoadingPermissions) {
@@ -2829,11 +2922,44 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               ),
             );
           }),
+          // DND (Android בלבד)
+          if (Platform.isAndroid)
+            Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: Icon(
+                  Icons.do_not_disturb_on,
+                  color: _hasDNDPermission ? Colors.green : Colors.red,
+                ),
+                title: const Text('נא לא להפריע (DND)'),
+                subtitle: Text(_hasDNDPermission ? 'מאושר' : 'לא מאושר'),
+                trailing: _hasDNDPermission
+                    ? null
+                    : TextButton(
+                        onPressed: () async {
+                          await _deviceSecurityService.requestDNDPermission();
+                          await Future.delayed(const Duration(seconds: 1));
+                          if (mounted) {
+                            final hasPerm = await _deviceSecurityService.hasDNDPermission();
+                            setState(() => _hasDNDPermission = hasPerm);
+                          }
+                        },
+                        child: const Text('הגדרות'),
+                      ),
+              ),
+            ),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: _loadCommanderPermissions,
+              onPressed: () async {
+                await _loadCommanderPermissions();
+                // רענן גם DND
+                if (Platform.isAndroid) {
+                  final hasPerm = await _deviceSecurityService.hasDNDPermission();
+                  if (mounted) setState(() => _hasDNDPermission = hasPerm);
+                }
+              },
               icon: const Icon(Icons.refresh),
               label: const Text('רענן הרשאות'),
             ),
@@ -2916,6 +3042,7 @@ class NavigatorStatus {
   final String mapsStatus; // 'notStarted', 'downloading', 'completed', 'failed'
   final bool hasMicrophonePermission;
   final bool hasPhonePermission;
+  final bool hasDNDPermission;
 
   NavigatorStatus({
     required this.isConnected,
@@ -2931,6 +3058,7 @@ class NavigatorStatus {
     this.mapsStatus = 'notStarted',
     this.hasMicrophonePermission = false,
     this.hasPhonePermission = false,
+    this.hasDNDPermission = false,
   });
 
   bool get mapsReady => mapsStatus == 'completed';

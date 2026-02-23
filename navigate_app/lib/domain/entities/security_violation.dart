@@ -24,7 +24,10 @@ enum ViolationType {
   gpsDisabled('gps_disabled', 'GPS כבוי'),
 
   /// אינטרנט נותק
-  internetDisconnected('internet_disconnected', 'אינטרנט נותק');
+  internetDisconnected('internet_disconnected', 'אינטרנט נותק'),
+
+  /// מענה לשיחת טלפון
+  phoneCallAnswered('phone_call_answered', 'מענה לשיחת טלפון');
 
   final String code;
   final String displayName;

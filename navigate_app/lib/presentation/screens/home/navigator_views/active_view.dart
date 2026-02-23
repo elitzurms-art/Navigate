@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -70,6 +71,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   int _punchCount = 0;
   bool _securityActive = false;
   bool _isDisqualified = false;
+  String? _disqualificationReason;
   DateTime? _securityStartTime; // grace period — התעלמות מ-Lock Task exit מיד אחרי הפעלה
   List<domain_cp.Checkpoint> _routeCheckpoints = [];
 
@@ -410,12 +412,29 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   /// פסילת מנווט — סיום ניווט + סימון ב-track + שליחת התראה למפקד
+  /// מיפוי סוג חריגה לסיבת פסילה קריאה
+  String _getDisqualificationReason(ViolationType type) {
+    switch (type) {
+      case ViolationType.phoneCallAnswered:
+        return 'מענה לשיחה בזמן ניווט';
+      case ViolationType.exitLockTask:
+      case ViolationType.exitGuidedAccess:
+        return 'יציאה מנעילה בזמן ניווט';
+      case ViolationType.appClosed:
+      case ViolationType.appBackgrounded:
+        return 'התנתקות משתמש בזמן ניווט';
+      default:
+        return 'פריצת אבטחה בזמן ניווט';
+    }
+  }
+
   Future<void> _handleDisqualification(ViolationType type) async {
     if (_isDisqualified || _track == null) return;
 
     // סימון מיידי — מונע race condition עם _saveTrackPoints שרץ במקביל
     // (ללא setState כדי שה-safety net ב-_saveTrackPoints יראה את הערך הנכון מיד)
     _isDisqualified = true;
+    _disqualificationReason = _getDisqualificationReason(type);
 
     try {
       // עצירת GPS + שמירת נקודות אחרונות לפני סיום
@@ -432,7 +451,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       await _trackRepo.endNavigation(_track!.id);
 
       // סימון isDisqualified=true ב-track (Drift + Firestore)
-      await _trackRepo.disqualifyNavigator(_track!.id);
+      await _trackRepo.disqualifyNavigator(_track!.id, reason: _disqualificationReason);
 
       // כתיבה ישירה ל-Firestore — לא דרך queue
       try {
@@ -450,6 +469,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           'endedAt': updatedTrack.endedAt?.toIso8601String(),
           'isActive': updatedTrack.isActive,
           'isDisqualified': updatedTrack.isDisqualified,
+          'disqualificationReason': _disqualificationReason,
           'manualPositionUsed': updatedTrack.manualPositionUsed,
           'manualPositionUsedAt': updatedTrack.manualPositionUsedAt?.toIso8601String(),
         }, SetOptions(merge: true));
@@ -532,17 +552,17 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         print('🚨 ActiveView: Lock Task exit detected on resume — re-enabling + disqualifying');
         await deviceSecurity.enableLockTask();
 
+        await _handleDisqualification(ViolationType.exitLockTask);
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('זוהתה יציאה מנעילת אבטחה — הניווט נפסל'),
+            SnackBar(
+              content: Text(_disqualificationReason ?? 'הניווט נפסל'),
               backgroundColor: Colors.red,
-              duration: Duration(seconds: 5),
+              duration: const Duration(seconds: 5),
             ),
           );
         }
-
-        await _handleDisqualification(ViolationType.exitLockTask);
       }
     } catch (e) {
       print('DEBUG ActiveView: lock task integrity check error: $e');
@@ -628,6 +648,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       final micStatus = await Permission.microphone.status;
       final phoneStatus = await Permission.phone.status;
 
+      // בדיקת DND (Android בלבד)
+      final hasDnd = Platform.isAndroid
+          ? await DeviceSecurityService().hasDNDPermission()
+          : true;
+
       final data = <String, dynamic>{
         'navigatorId': uid,
         'navigatorName': widget.currentUser.fullName,
@@ -639,6 +664,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         'positionSource': _gpsSource.name,
         'hasMicrophonePermission': micStatus.isGranted,
         'hasPhonePermission': phoneStatus.isGranted,
+        'hasDNDPermission': hasDnd,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -1671,17 +1697,20 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             color: Colors.red,
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.block, color: Colors.white, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  'הניווט נפסל — ציון 0',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                const Icon(Icons.block, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    '${_disqualificationReason ?? 'הניווט נפסל'} — ציון 0',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ],
@@ -2089,7 +2118,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                     border: Border.all(color: Colors.red[300]!),
                   ),
                   child: Text(
-                    'פריצת אבטחה — ציון 0',
+                    '${_disqualificationReason ?? 'פריצת אבטחה'} — ציון 0',
                     style: TextStyle(
                       color: Colors.red[900],
                       fontWeight: FontWeight.bold,

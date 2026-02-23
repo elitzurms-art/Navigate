@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:battery_plus/battery_plus.dart';
@@ -9,6 +10,7 @@ import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/user.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../services/gps_service.dart';
+import '../../../../services/device_security_service.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/voice_messages_panel.dart';
 
@@ -30,6 +32,7 @@ class SystemCheckView extends StatefulWidget {
 class _SystemCheckViewState extends State<SystemCheckView> {
   final Battery _battery = Battery();
   final GpsService _gpsService = GpsService();
+  final DeviceSecurityService _deviceSecurityService = DeviceSecurityService();
   VoiceService? _voiceService;
 
   int _batteryLevel = -1; // -1 = לא זמין
@@ -45,6 +48,9 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
   Map<String, PermissionStatus> _permissions = {};
   bool _isCheckingPermissions = true;
+
+  // DND (נא לא להפריע) — Android בלבד
+  bool _hasDNDPermission = false;
 
   Timer? _periodicTimer;
   int _checkCount = 0; // סופר בדיקות — דיווח ל-Firestore כל 5 בדיקות (15 שניות)
@@ -128,6 +134,16 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       if (mounted) setState(() => _isCheckingPermissions = false);
     }
 
+    // בדיקת הרשאת DND (Android בלבד)
+    if (Platform.isAndroid) {
+      try {
+        _hasDNDPermission = await _deviceSecurityService.hasDNDPermission();
+        if (mounted) setState(() {});
+      } catch (_) {}
+    } else {
+      _hasDNDPermission = true; // iOS — לא רלוונטי
+    }
+
     // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
     _reportStatusToFirestore();
 
@@ -164,6 +180,13 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         _connectivity = result;
       } catch (_) {}
 
+      // עדכון DND (Android)
+      if (Platform.isAndroid) {
+        try {
+          _hasDNDPermission = await _deviceSecurityService.hasDNDPermission();
+        } catch (_) {}
+      }
+
       if (mounted) setState(() {});
 
       // דיווח ל-Firestore כל 5 בדיקות (~15 שניות) כדי לא להעמיס
@@ -197,6 +220,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'positionSource': _gpsService.lastPositionSource.name,
         'hasMicrophonePermission': _permissions['microphone']?.isGranted ?? false,
         'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
+        'hasDNDPermission': _hasDNDPermission,
         'updatedAt': FieldValue.serverTimestamp(),
       };
       // רק מעדכן מיקום כשיש — לא דורס עם null
@@ -451,7 +475,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
     if (_permissions.isEmpty) return const SizedBox.shrink();
 
-    final allGranted = _permissions.values.every((s) => s.isGranted);
+    final allGranted = _permissions.values.every((s) => s.isGranted) &&
+        (!Platform.isAndroid || _hasDNDPermission);
 
     return Card(
       color: allGranted ? Colors.green[50] : Colors.orange[50],
@@ -511,6 +536,39 @@ class _SystemCheckViewState extends State<SystemCheckView> {
                           ),
               );
             }),
+            // DND (Android בלבד)
+            if (Platform.isAndroid)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.do_not_disturb_on,
+                  color: _hasDNDPermission ? Colors.green : Colors.red,
+                  size: 22,
+                ),
+                title: const Text('נא לא להפריע (DND)'),
+                subtitle: Text(
+                  _hasDNDPermission ? 'מאושר' : 'לא מאושר',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _hasDNDPermission ? Colors.green[700] : Colors.red[700],
+                  ),
+                ),
+                trailing: _hasDNDPermission
+                    ? null
+                    : TextButton(
+                        onPressed: () async {
+                          await _deviceSecurityService.requestDNDPermission();
+                          await Future.delayed(const Duration(seconds: 1));
+                          if (mounted) {
+                            final hasPerm = await _deviceSecurityService.hasDNDPermission();
+                            setState(() => _hasDNDPermission = hasPerm);
+                            _reportStatusToFirestore();
+                          }
+                        },
+                        child: const Text('הגדרות'),
+                      ),
+              ),
           ],
         ),
       ),

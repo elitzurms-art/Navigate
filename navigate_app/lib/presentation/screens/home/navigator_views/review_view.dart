@@ -582,7 +582,8 @@ class _ReviewViewState extends State<ReviewView> {
                   if (_showPunches && _punches.isNotEmpty)
                     MarkerLayer(
                       markers:
-                          _punches.where((p) => !p.isDeleted).map((p) {
+                          _punches.where((p) => !p.isDeleted).toList().indexed.map((e) {
+                        final (i, p) = e;
                         Color color;
                         IconData icon;
                         if (p.isApproved) {
@@ -614,7 +615,12 @@ class _ReviewViewState extends State<ReviewView> {
                                     borderRadius: BorderRadius.circular(3),
                                   ),
                                   child: Text(
-                                    p.id,
+                                    () {
+                                      final cp = _checkpoints.where((c) => c.sourceId == p.checkpointId).firstOrNull;
+                                      final name = widget.currentUser.fullName;
+                                      final seqPart = cp != null ? '${cp.sequenceNumber}-' : '';
+                                      return '$seqPart$name (${i + 1})';
+                                    }(),
                                     style: const TextStyle(
                                         fontSize: 9,
                                         fontWeight: FontWeight.bold),
@@ -979,6 +985,7 @@ class _ReviewViewState extends State<ReviewView> {
             trackPoints: _trackPoints,
             punches: _punches,
             deviations: _deviations,
+            navigatorName: widget.currentUser.fullName,
             startPointId: route?.startPointId,
             endPointId: route?.endPointId,
             defaultMap: widget.navigation.displaySettings.defaultMap,
@@ -1000,6 +1007,7 @@ class _FullscreenReviewMap extends StatefulWidget {
   final List<TrackPoint> trackPoints;
   final List<CheckpointPunch> punches;
   final List<DeviationSegment> deviations;
+  final String navigatorName;
   final String? startPointId;
   final String? endPointId;
   final String? defaultMap;
@@ -1014,6 +1022,7 @@ class _FullscreenReviewMap extends StatefulWidget {
     required this.trackPoints,
     required this.punches,
     required this.deviations,
+    required this.navigatorName,
     this.startPointId,
     this.endPointId,
     this.defaultMap,
@@ -1237,7 +1246,8 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
               if (_showPunches && widget.punches.isNotEmpty)
                 MarkerLayer(
                   markers:
-                      widget.punches.where((p) => !p.isDeleted).map((p) {
+                      widget.punches.where((p) => !p.isDeleted).toList().indexed.map((e) {
+                    final (i, p) = e;
                     Color color;
                     IconData icon;
                     if (p.isApproved) {
@@ -1269,7 +1279,11 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                                 borderRadius: BorderRadius.circular(3),
                               ),
                               child: Text(
-                                p.id,
+                                () {
+                                  final cp = widget.checkpoints.where((c) => c.sourceId == p.checkpointId).firstOrNull;
+                                  final seqPart = cp != null ? '${cp.sequenceNumber}-' : '';
+                                  return '$seqPart${widget.navigatorName} (${i + 1})';
+                                }(),
                                 style: const TextStyle(
                                     fontSize: 9,
                                     fontWeight: FontWeight.bold),

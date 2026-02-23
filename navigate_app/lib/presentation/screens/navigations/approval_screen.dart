@@ -1327,7 +1327,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     // Punches
     if (_showPunches && data.punches.isNotEmpty) {
       layers.add(MarkerLayer(
-        markers: data.punches.map((p) => _buildPunchMarker(p)).toList(),
+        markers: data.punches.indexed.map((e) => _buildPunchMarker(e.$2, e.$1 + 1)).toList(),
       ));
     }
 
@@ -1372,7 +1372,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     return layers;
   }
 
-  Marker _buildPunchMarker(CheckpointPunch punch) {
+  Marker _buildPunchMarker(CheckpointPunch punch, int punchIndex) {
     Color color;
     IconData icon;
     if (punch.isApproved) {
@@ -1403,7 +1403,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 borderRadius: BorderRadius.circular(3),
               ),
               child: Text(
-                _punchLabel(punch),
+                _punchLabel(punch, punchIndex),
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
               ),
             ),
@@ -1413,11 +1413,11 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     );
   }
 
-  String _punchLabel(CheckpointPunch punch) {
+  String _punchLabel(CheckpointPunch punch, int punchIndex) {
     final name = _getNavigatorDisplayName(punch.navigatorId);
-    final cp = _navCheckpoints.where((c) => c.id == punch.checkpointId).firstOrNull;
-    if (cp != null) return '${cp.sequenceNumber}-$name';
-    return name;
+    final cp = _navCheckpoints.where((c) => c.sourceId == punch.checkpointId).firstOrNull;
+    final seqPart = cp != null ? '${cp.sequenceNumber}-' : '';
+    return '$seqPart$name ($punchIndex)';
   }
 
   Widget _buildMapControls() {

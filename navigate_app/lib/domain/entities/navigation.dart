@@ -285,6 +285,7 @@ class Navigation extends Equatable {
   final String? startPoint; // נקודת התחלה משותפת לכל המנווטים
   final String? endPoint; // נקודת הסיום משותפת לכל המנווטים
   final WaypointSettings waypointSettings; // הגדרות נקודות ביניים משותפות
+  final String? scoringCriterion; // קריטריון חלוקה (fairness, midpoint, uniqueness)
   final String? boundaryLayerId; // גבול גזרה
   final SafetyTimeSettings? safetyTime; // זמן בטיחות
   final bool distributeNow; // האם לחלק נקודות עכשיו
@@ -359,6 +360,7 @@ class Navigation extends Equatable {
     this.startPoint,
     this.endPoint,
     this.waypointSettings = const WaypointSettings(),
+    this.scoringCriterion,
     this.boundaryLayerId,
     this.safetyTime,
     this.distributeNow = false,
@@ -419,6 +421,7 @@ class Navigation extends Equatable {
     String? startPoint,
     String? endPoint,
     WaypointSettings? waypointSettings,
+    String? scoringCriterion,
     String? boundaryLayerId,
     SafetyTimeSettings? safetyTime,
     bool? distributeNow,
@@ -468,6 +471,7 @@ class Navigation extends Equatable {
       startPoint: startPoint ?? this.startPoint,
       endPoint: endPoint ?? this.endPoint,
       waypointSettings: waypointSettings ?? this.waypointSettings,
+      scoringCriterion: scoringCriterion ?? this.scoringCriterion,
       boundaryLayerId: boundaryLayerId ?? this.boundaryLayerId,
       safetyTime: safetyTime ?? this.safetyTime,
       distributeNow: distributeNow ?? this.distributeNow,
@@ -521,6 +525,7 @@ class Navigation extends Equatable {
       if (startPoint != null) 'startPoint': startPoint,
       if (endPoint != null) 'endPoint': endPoint,
       'waypointSettings': waypointSettings.toMap(),
+      if (scoringCriterion != null) 'scoringCriterion': scoringCriterion,
       if (boundaryLayerId != null) 'boundaryLayerId': boundaryLayerId,
       if (safetyTime != null) 'safetyTime': safetyTime!.toMap(),
       'distributeNow': distributeNow,
@@ -590,6 +595,7 @@ class Navigation extends Equatable {
       waypointSettings: map['waypointSettings'] != null
           ? WaypointSettings.fromMap(map['waypointSettings'] as Map<String, dynamic>)
           : const WaypointSettings(),
+      scoringCriterion: map['scoringCriterion'] as String?,
       boundaryLayerId: map['boundaryLayerId'] as String?,
       safetyTime: map['safetyTime'] != null
           ? SafetyTimeSettings.fromMap(map['safetyTime'] as Map<String, dynamic>)
@@ -664,6 +670,7 @@ class Navigation extends Equatable {
     startPoint,
     endPoint,
     waypointSettings,
+    scoringCriterion,
     boundaryLayerId,
     safetyTime,
     distributeNow,

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -16,6 +17,7 @@ import 'data/repositories/user_repository.dart';
 import 'data/sync/sync_manager.dart';
 import 'services/notification_service.dart';
 import 'services/background_location_service.dart';
+import 'services/device_security_service.dart';
 import 'domain/entities/hat_type.dart';
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/auth/register_screen.dart';
@@ -141,6 +143,15 @@ Future<void> _requestMissingPermissions() async {
     if (!status.isGranted && !status.isPermanentlyDenied) {
       final result = await permission.request();
       print('DEBUG: Permission ${permission.toString()} → ${result.name}');
+    }
+  }
+
+  // בקשת הרשאת DND (Android בלבד — דורש פתיחת הגדרות מערכת)
+  if (Platform.isAndroid) {
+    final deviceSecurity = DeviceSecurityService();
+    final hasDnd = await deviceSecurity.hasDNDPermission();
+    if (!hasDnd) {
+      await deviceSecurity.requestDNDPermission();
     }
   }
 }
