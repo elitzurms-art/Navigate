@@ -214,7 +214,7 @@ class SyncManager {
         }
 
         print('SyncManager: User context loaded — uid=$_currentAppUid, role=$_currentRole, '
-            'unitId=$_currentUnitId, scope=${_allowedUnitScopeIds.length} units');
+            'unitId=$_currentUnitId, scope=${_allowedUnitScopeIds.length} units: $_allowedUnitScopeIds');
       }
     } catch (e) {
       print('SyncManager: Error loading user context: $e');
@@ -819,7 +819,8 @@ class SyncManager {
       return;
     }
 
-    print('SyncManager: Pulled ${snapshot.docs.length} documents from $collection');
+    final docIds = snapshot.docs.map((d) => d.id).toList();
+    print('SyncManager: Pulled ${snapshot.docs.length} documents from $collection: $docIds');
 
     final direction = _syncDirections[collection] ?? SyncDirection.bidirectional;
 

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/user.dart';
 import '../../../data/repositories/solo_quiz_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 
-/// מסך מבחן ניווט בדד
+/// מסך מבחן ניווט בדד — שני שלבים: הצהרות מוכנות + מבחן ידע
 class SoloQuizScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final User currentUser;
@@ -23,12 +24,18 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
   final SoloQuizRepository _quizRepo = SoloQuizRepository();
   final UserRepository _userRepo = UserRepository();
 
-  List<SoloQuizQuestion> _questions = [];
+  List<SoloQuizQuestion> _readinessQuestions = [];
+  List<SoloQuizQuestion> _knowledgeQuestions = [];
   Map<String, dynamic> _answers = {};
   int _passingScore = 85;
   bool _isLoading = true;
   bool _isSubmitting = false;
   String? _error;
+
+  /// 0 = שלב מוכנות (שאלה אחת בכל פעם), 1 = שלב ידע (כולן ביחד)
+  int _phase = 0;
+  /// אינדקס השאלה הנוכחית בשלב המוכנות (0–4)
+  int _readinessIndex = 0;
 
   @override
   void initState() {
@@ -43,7 +50,6 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         _error = null;
       });
 
-      // טעינת שאלות + הגדרות
       final questions = await _quizRepo.getQuestions();
       final passingScore = await _quizRepo.getPassingScore();
 
@@ -55,19 +61,40 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         return;
       }
 
+      final readiness = questions.where((q) => q.isReadiness).toList();
+      final knowledge = questions.where((q) => !q.isReadiness).toList();
+
       // טעינת תשובות קיימות (אם יש)
       final existing = await _quizRepo.getAnswers(
         navigationId: widget.navigation.id,
         navigatorId: widget.currentUser.uid,
       );
 
-      setState(() {
-        _questions = questions;
-        _passingScore = passingScore;
-        if (existing != null && existing.completedAt == null) {
-          // יש תשובות שטרם הוגשו — שחזור
-          _answers = Map<String, dynamic>.from(existing.answers);
+      int phase = 0;
+      int readinessIndex = 0;
+      Map<String, dynamic> answers = {};
+
+      if (existing != null && existing.completedAt == null) {
+        answers = Map<String, dynamic>.from(existing.answers);
+
+        // בדיקה אם כל שאלות המוכנות נענו ב"כן"
+        final allReadinessPassed = readiness.every((q) {
+          final answer = answers[q.id];
+          return answer != null && answer == 0; // 0 = כן
+        });
+
+        if (allReadinessPassed) {
+          phase = 1;
         }
+      }
+
+      setState(() {
+        _readinessQuestions = readiness;
+        _knowledgeQuestions = knowledge;
+        _passingScore = passingScore;
+        _answers = answers;
+        _phase = phase;
+        _readinessIndex = readinessIndex;
         _isLoading = false;
       });
     } catch (e) {
@@ -90,9 +117,62 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
     }
   }
 
+  void _onReadinessAnswer(SoloQuizQuestion question, int value) {
+    setState(() => _answers[question.id] = value);
+    _saveAnswersToFirestore();
+  }
+
+  void _showDisqualificationDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.block, color: Colors.red[700], size: 28),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('לא ניתן להמשיך')),
+          ],
+        ),
+        content: const Text(
+          'אינך מתאים לביצוע ניווט בדד — פנה למפקד',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx); // סגירת dialog
+              Navigator.pop(context); // חזרה מהמבחן
+            },
+            child: const Text('סגור'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _advanceReadiness() {
+    final question = _readinessQuestions[_readinessIndex];
+    final selected = _answers[question.id] as int?;
+
+    // בחר "לא" ולחץ הבא — פסילה
+    if (selected == 1) {
+      _showDisqualificationDialog();
+      return;
+    }
+
+    if (_readinessIndex < _readinessQuestions.length - 1) {
+      setState(() => _readinessIndex++);
+    } else {
+      // כל שאלות המוכנות נענו ב"כן" — מעבר לשלב 2
+      setState(() => _phase = 1);
+    }
+  }
+
   Future<void> _submitQuiz() async {
-    // בדיקה שכל השאלות נענו
-    final unanswered = _questions.where((q) => !_answers.containsKey(q.id)).toList();
+    // בדיקה שכל שאלות הידע נענו
+    final unanswered = _knowledgeQuestions
+        .where((q) => !_answers.containsKey(q.id))
+        .toList();
     if (unanswered.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -106,10 +186,10 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final score = _quizRepo.calculateScore(_questions, _answers);
+      final allQuestions = [..._readinessQuestions, ..._knowledgeQuestions];
+      final score = _quizRepo.calculateScore(allQuestions, _answers);
       final passed = score >= _passingScore;
 
-      // שמירה ב-Firestore (quiz_answers)
       await _quizRepo.submitQuiz(
         navigationId: widget.navigation.id,
         navigatorId: widget.currentUser.uid,
@@ -118,7 +198,6 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         passed: passed,
       );
 
-      // עדכון User (אם עבר)
       if (passed) {
         final updatedUser = widget.currentUser.copyWith(
           soloQuizPassedAt: DateTime.now(),
@@ -132,7 +211,6 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
 
       if (!mounted) return;
 
-      // dialog עם תוצאה
       await showDialog(
         context: context,
         barrierDismissible: false,
@@ -164,7 +242,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
               if (!passed) ...[
                 const SizedBox(height: 16),
                 const Text(
-                  'ניתן לנסות שוב כל עוד המבחן פתוח',
+                  'ניתן לנסות שוב',
                   style: TextStyle(color: Colors.grey),
                 ),
               ],
@@ -175,7 +253,14 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
               onPressed: () {
                 Navigator.pop(ctx);
                 if (passed) {
-                  Navigator.pop(context); // חזרה ל-home
+                  Navigator.pop(context);
+                } else {
+                  // איפוס מלא — חזרה לשלב 1
+                  setState(() {
+                    _phase = 0;
+                    _readinessIndex = 0;
+                    _answers = {};
+                  });
                 }
               },
               child: Text(passed ? 'סגור' : 'חזרה למבחן'),
@@ -190,6 +275,17 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
           SnackBar(content: Text('שגיאה בהגשת המבחן: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _openDocumentUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('לא ניתן לפתוח את הקישור')),
+      );
     }
   }
 
@@ -219,18 +315,212 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
                     ],
                   ),
                 )
-              : _questions.isEmpty
-                  ? const Center(child: Text('לא נמצאו שאלות'))
-                  : _buildQuizContent(),
+              : _phase == 0
+                  ? _buildReadinessPhase()
+                  : _buildKnowledgePhase(),
     );
   }
 
-  Widget _buildQuizContent() {
+  // ============================================================
+  // שלב 1 — הצהרות מוכנות (שאלה אחת בכל פעם)
+  // ============================================================
+
+  Widget _buildReadinessPhase() {
+    if (_readinessQuestions.isEmpty) {
+      return const Center(child: Text('לא נמצאו שאלות מוכנות'));
+    }
+
+    final question = _readinessQuestions[_readinessIndex];
+    final selected = _answers[question.id] as int?;
+    final isAnswered = selected != null;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // כותרת שלב
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            color: Colors.blue[50],
+            child: Text(
+              'שלב 1 מתוך 2 — הצהרות מוכנות',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue[800],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+
+          // נקודות התקדמות
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_readinessQuestions.length, (index) {
+                final isCompleted = index < _readinessIndex ||
+                    (index == _readinessIndex && selected == 0);
+                final isCurrent = index == _readinessIndex;
+                return Container(
+                  width: isCurrent ? 14 : 10,
+                  height: isCurrent ? 14 : 10,
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isCompleted
+                        ? Colors.green
+                        : isCurrent
+                            ? Colors.blue
+                            : Colors.grey[300],
+                    border: isCurrent
+                        ? Border.all(color: Colors.blue[700]!, width: 2)
+                        : null,
+                  ),
+                );
+              }),
+            ),
+          ),
+
+          // כרטיס שאלה
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // כותרת סקציה
+                  if (question.sectionTitle != null) ...[
+                    Text(
+                      question.sectionTitle!,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue[800],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
+                  // קישור למסמך
+                  if (question.documentUrl != null) ...[
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          _openDocumentUrl(question.documentUrl!),
+                      icon: const Icon(Icons.description, size: 18),
+                      label: const Text('לחץ לקריאת המסמך'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue[700],
+                        side: BorderSide(color: Colors.blue[300]!),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // טקסט השאלה
+                  Text(
+                    question.question,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // כן / לא
+                  RadioListTile<int>(
+                    title: const Text('כן', style: TextStyle(fontSize: 16)),
+                    value: 0,
+                    groupValue: selected,
+                    onChanged: (value) =>
+                        _onReadinessAnswer(question, value!),
+                    activeColor: Colors.green,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  RadioListTile<int>(
+                    title: const Text('לא', style: TextStyle(fontSize: 16)),
+                    value: 1,
+                    groupValue: selected,
+                    onChanged: (value) =>
+                        _onReadinessAnswer(question, value!),
+                    activeColor: Colors.red,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // כפתור "הבא"
+          SizedBox(
+            height: 48,
+            child: ElevatedButton(
+              onPressed: isAnswered ? _advanceReadiness : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                _readinessIndex < _readinessQuestions.length - 1
+                    ? 'הבא'
+                    : 'המשך למבחן',
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // שלב 2 — מבחן ידע (כל השאלות ביחד)
+  // ============================================================
+
+  Widget _buildKnowledgePhase() {
+    final answeredCount = _knowledgeQuestions
+        .where((q) => _answers.containsKey(q.id))
+        .length;
+
     return Column(
       children: [
+        // כותרת שלב
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          color: Colors.purple[50],
+          child: Text(
+            'שלב 2 מתוך 2 — מבחן ידע',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Colors.purple[800],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+
         // פס התקדמות
         LinearProgressIndicator(
-          value: _answers.length / _questions.length,
+          value: _knowledgeQuestions.isEmpty
+              ? 0
+              : answeredCount / _knowledgeQuestions.length,
           backgroundColor: Colors.grey[200],
           color: Colors.purple,
         ),
@@ -240,7 +530,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '${_answers.length}/${_questions.length} שאלות נענו',
+                '$answeredCount/${_knowledgeQuestions.length} שאלות נענו',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               Text(
@@ -254,17 +544,18 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         // רשימת שאלות
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _questions.length,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            itemCount: _knowledgeQuestions.length,
             itemBuilder: (context, index) {
-              return _buildQuestionCard(_questions[index], index + 1);
+              return _buildQuestionCard(
+                  _knowledgeQuestions[index], index + 1);
             },
           ),
         ),
 
         // כפתור הגשה
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: SizedBox(
             width: double.infinity,
             height: 48,
@@ -274,16 +565,21 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.send),
               label: Text(
                 _isSubmitting ? 'שולח...' : 'שלח מבחן',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
@@ -291,6 +587,10 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
       ],
     );
   }
+
+  // ============================================================
+  // כרטיס שאלה (שלב 2 — ידע)
+  // ============================================================
 
   Widget _buildQuestionCard(SoloQuizQuestion question, int number) {
     final isAnswered = _answers.containsKey(question.id);
@@ -300,7 +600,9 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-          color: isAnswered ? Colors.green.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.3),
+          color: isAnswered
+              ? Colors.green.withValues(alpha: 0.5)
+              : Colors.grey.withValues(alpha: 0.3),
           width: isAnswered ? 2 : 1,
         ),
       ),
@@ -316,14 +618,17 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
                 Container(
                   width: 28,
                   height: 28,
-                  decoration: BoxDecoration(
-                    color: question.isReadiness ? Colors.blue : Colors.purple,
+                  decoration: const BoxDecoration(
+                    color: Colors.purple,
                     shape: BoxShape.circle,
                   ),
                   child: Center(
                     child: Text(
                       '$number',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13),
                     ),
                   ),
                 ),
@@ -331,59 +636,22 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
                 Expanded(
                   child: Text(
                     question.question,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
             ),
-            if (question.isReadiness)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, right: 40),
-                child: Text(
-                  'הצהרת מוכנות',
-                  style: TextStyle(fontSize: 12, color: Colors.blue[600]),
-                ),
-              ),
             const SizedBox(height: 12),
 
             // אפשרויות
-            if (question.type == 'yes_no')
-              _buildYesNoOptions(question)
-            else if (question.type == 'single')
+            if (question.type == 'single')
               _buildSingleOptions(question)
             else if (question.type == 'multiple')
               _buildMultipleOptions(question),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildYesNoOptions(SoloQuizQuestion question) {
-    final selected = _answers[question.id] as int?;
-    return Column(
-      children: [
-        RadioListTile<int>(
-          title: const Text('כן'),
-          value: 0,
-          groupValue: selected,
-          onChanged: (value) {
-            setState(() => _answers[question.id] = value);
-            _saveAnswersToFirestore();
-          },
-          dense: true,
-        ),
-        RadioListTile<int>(
-          title: const Text('לא'),
-          value: 1,
-          groupValue: selected,
-          onChanged: (value) {
-            setState(() => _answers[question.id] = value);
-            _saveAnswersToFirestore();
-          },
-          dense: true,
-        ),
-      ],
     );
   }
 

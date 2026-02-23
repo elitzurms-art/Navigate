@@ -9,6 +9,8 @@ class SoloQuizQuestion {
   final List<String> options;
   final List<int> correctAnswers;
   final bool isReadiness; // הצהרת מוכנות — לא נספרת בציון
+  final String? sectionTitle; // כותרת סקציה מטופס Google Forms
+  final String? documentUrl; // קישור למסמך Google Drive
 
   const SoloQuizQuestion({
     required this.id,
@@ -18,6 +20,8 @@ class SoloQuizQuestion {
     this.options = const [],
     this.correctAnswers = const [],
     this.isReadiness = false,
+    this.sectionTitle,
+    this.documentUrl,
   });
 
   factory SoloQuizQuestion.fromMap(Map<String, dynamic> map, String id) {
@@ -29,6 +33,8 @@ class SoloQuizQuestion {
       options: (map['options'] as List?)?.cast<String>() ?? [],
       correctAnswers: (map['correctAnswers'] as List?)?.cast<int>() ?? [],
       isReadiness: map['isReadiness'] as bool? ?? false,
+      sectionTitle: map['sectionTitle'] as String?,
+      documentUrl: map['documentUrl'] as String?,
     );
   }
 }
@@ -183,6 +189,7 @@ class SoloQuizRepository {
       'options': <String>[],
       'correctAnswers': [0],
       'isReadiness': true,
+      'sectionTitle': 'מוכנות- מקצוע',
     },
     {
       'order': 2,
@@ -191,6 +198,7 @@ class SoloQuizRepository {
       'options': <String>[],
       'correctAnswers': [0],
       'isReadiness': true,
+      'sectionTitle': 'מוכנות- ערכים',
     },
     {
       'order': 3,
@@ -199,6 +207,7 @@ class SoloQuizRepository {
       'options': <String>[],
       'correctAnswers': [0],
       'isReadiness': true,
+      'sectionTitle': 'מוכנות- תרגול',
     },
     {
       'order': 4,
@@ -207,6 +216,8 @@ class SoloQuizRepository {
       'options': <String>[],
       'correctAnswers': [0],
       'isReadiness': true,
+      'sectionTitle': 'מוכנות- בטיחות',
+      'documentUrl': 'https://drive.google.com/file/d/1owMNPaLJeJXuCKUJakFpGDvR8zEwzVri/view',
     },
     {
       'order': 5,
@@ -215,6 +226,8 @@ class SoloQuizRepository {
       'options': <String>[],
       'correctAnswers': [0],
       'isReadiness': true,
+      'sectionTitle': 'הוראות בטיחות',
+      'documentUrl': 'https://drive.google.com/file/d/1oy7gjyW1WKe2KbZ6uUcXwRRsnA3EogWj/view',
     },
     // === שאלות ידע (10) ===
     {

@@ -2055,7 +2055,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 borderRadius: BorderRadius.circular(3),
               ),
               child: Text(
-                _getNavigatorDisplayName(punch.navigatorId),
+                _punchLabel(punch),
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
               ),
             ),
@@ -2063,6 +2063,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         ),
       ),
     );
+  }
+
+  String _punchLabel(CheckpointPunch punch) {
+    final name = _getNavigatorDisplayName(punch.navigatorId);
+    final cp = _navCheckpoints.where((c) => c.id == punch.checkpointId).firstOrNull;
+    if (cp != null) return '${cp.sequenceNumber}-$name';
+    return name;
   }
 
   Widget _buildMapControls() {
