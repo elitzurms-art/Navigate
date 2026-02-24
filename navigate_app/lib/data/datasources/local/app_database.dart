@@ -233,6 +233,7 @@ class NavigationTracks extends Table {
   BoolColumn get overrideShowRouteOnMap => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideAllowManualPosition => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideWalkieTalkieEnabled => boolean().withDefault(const Constant(false))();
+  TextColumn get overrideEnabledPositionSourcesJson => text().nullable()();
   BoolColumn get manualPositionUsed => boolean().withDefault(const Constant(false))();
   DateTimeColumn get manualPositionUsedAt => dateTime().nullable()();
 
@@ -402,7 +403,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration {
@@ -610,6 +611,9 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 30 && to >= 31) {
           await m.addColumn(navigations, navigations.gpsSpoofingDetectionEnabled);
           await m.addColumn(navigations, navigations.gpsSpoofingMaxDistanceKm);
+        }
+        if (from <= 31 && to >= 32) {
+          await m.addColumn(navigationTracks, navigationTracks.overrideEnabledPositionSourcesJson);
         }
       },
     );

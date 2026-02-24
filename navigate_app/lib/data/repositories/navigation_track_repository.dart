@@ -285,6 +285,21 @@ class NavigationTrackRepository {
     } catch (_) {}
   }
 
+  /// עדכון דריסת אמצעי מיקום פר-מנווט (Drift + Firestore)
+  Future<void> updatePositionSourcesOverride(String trackId, {required List<String>? enabledSources}) async {
+    final json = enabledSources != null ? jsonEncode(enabledSources) : null;
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideEnabledPositionSourcesJson: Value(json),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'overrideEnabledPositionSources': enabledSources});
+    } catch (_) {}
+  }
+
   /// עדכון דריסת ווקי טוקי מקומי בלבד (לשימוש מנווט)
   Future<void> updateWalkieTalkieOverrideLocal(String trackId, {required bool enabled}) async {
     await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))

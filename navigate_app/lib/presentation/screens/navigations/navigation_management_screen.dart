@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -107,6 +108,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
   final Map<String, bool> _navigatorOverrideWalkieTalkieEnabled = {};
   final Map<String, int?> _navigatorGpsIntervalOverride = {};
+  final Map<String, List<String>?> _navigatorPositionSourcesOverride = {};
 
   // Voice (PTT)
   VoiceService? _voiceService;
@@ -254,6 +256,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       _navigatorOverrideShowRouteOnMap[navigatorId] = widget.navigation.showRouteOnMap;
       _navigatorOverrideWalkieTalkieEnabled[navigatorId] = widget.navigation.communicationSettings.walkieTalkieEnabled;
       _navigatorGpsIntervalOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
+      _navigatorPositionSourcesOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
 
       // ברירת מחדל טוגלי התראות — כל הסוגים, ברירת מחדל מהגדרות הניווט
       _navigatorAlertOverrides[navigatorId] = {
@@ -920,6 +923,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
         if (data.containsKey('overrideGpsIntervalSeconds')) {
           _navigatorGpsIntervalOverride[navigatorId] = data['overrideGpsIntervalSeconds'] as int?;
+        }
+        if (data.containsKey('overrideEnabledPositionSources')) {
+          final sources = data['overrideEnabledPositionSources'];
+          _navigatorPositionSourcesOverride[navigatorId] = sources is List ? sources.cast<String>() : null;
         }
 
         // קריאת forcePositionSource מה-track doc
@@ -3266,61 +3273,89 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         },
                       ),
 
-                      // 6.5 תדירות GPS
+                      // 6.5 אמצעי מיקום
                       const Divider(height: 16),
-                      const Text('תדירות GPS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const Text('אמצעי מיקום', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 4),
                       () {
-                        final defaultInterval = widget.navigation.gpsUpdateIntervalSeconds;
-                        final currentValue = _navigatorGpsIntervalOverride[navigatorId] ?? defaultInterval;
+                        final defaultSources = widget.navigation.enabledPositionSources;
+                        final overrideSources = _navigatorPositionSourcesOverride[navigatorId];
+                        final effectiveSources = overrideSources ?? defaultSources;
+                        final isOverridden = overrideSources != null;
+
+                        void toggleSource(String source, bool enabled) {
+                          final current = List<String>.from(effectiveSources);
+                          if (enabled) {
+                            if (!current.contains(source)) current.add(source);
+                          } else {
+                            // מניעת כיבוי כל המקורות — GPS חייב להישאר
+                            if (current.length <= 1) return;
+                            current.remove(source);
+                          }
+                          // אם שווה לברירת המחדל — אין צורך בדריסה
+                          final isDefault = listEquals(current..sort(), List<String>.from(defaultSources)..sort());
+                          final newOverride = isDefault ? null : current;
+                          setState(() => _navigatorPositionSourcesOverride[navigatorId] = newOverride);
+                          setSheetState(() {});
+                          final trackId = _navigatorTrackIds[navigatorId];
+                          if (trackId != null) {
+                            NavigationTrackRepository().updatePositionSourcesOverride(trackId, enabledSources: newOverride);
+                          }
+                        }
+
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('$currentValue שניות', style: const TextStyle(fontSize: 13)),
-                            Text('ברירת מחדל: $defaultInterval שניות',
-                                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                            Slider(
-                              value: currentValue.toDouble(),
-                              min: 1,
-                              max: 120,
-                              divisions: 119,
-                              label: '$currentValue',
-                              onChanged: (v) {
-                                setState(() {
-                                  final intVal = v.round();
-                                  _navigatorGpsIntervalOverride[navigatorId] =
-                                      intVal == defaultInterval ? null : intVal;
-                                });
-                                setSheetState(() {});
-                              },
-                              onChangeEnd: (v) {
-                                final intVal = v.round();
-                                final override = intVal == defaultInterval ? null : intVal;
-                                _navigatorGpsIntervalOverride[navigatorId] = override;
-                                final trackId = _navigatorTrackIds[navigatorId];
-                                if (trackId != null) {
-                                  FirebaseFirestore.instance
-                                      .collection(AppConstants.navigationTracksCollection)
-                                      .doc(trackId)
-                                      .update({'overrideGpsIntervalSeconds': override});
-                                }
-                              },
+                            if (isOverridden)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text('דריסה פעילה — שונה מברירת המחדל',
+                                    style: TextStyle(fontSize: 11, color: Colors.orange[700])),
+                              ),
+                            SwitchListTile(
+                              title: const Text('GPS', style: TextStyle(fontSize: 13)),
+                              subtitle: const Text('לוויינים', style: TextStyle(fontSize: 11)),
+                              value: effectiveSources.contains('gps'),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (v) => toggleSource('gps', v),
                             ),
-                            if (_navigatorGpsIntervalOverride[navigatorId] != null)
+                            SwitchListTile(
+                              title: const Text('אנטנות סלולריות', style: TextStyle(fontSize: 13)),
+                              subtitle: const Text('Cell Tower', style: TextStyle(fontSize: 11)),
+                              value: effectiveSources.contains('cellTower'),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (v) => toggleSource('cellTower', v),
+                            ),
+                            SwitchListTile(
+                              title: const Text('PDR', style: TextStyle(fontSize: 13)),
+                              subtitle: const Text('ניווט מתים — צעדים + תאוצה', style: TextStyle(fontSize: 11)),
+                              value: effectiveSources.contains('pdr'),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (v) => toggleSource('pdr', v),
+                            ),
+                            SwitchListTile(
+                              title: const Text('PDR + אנטנות', style: TextStyle(fontSize: 13)),
+                              subtitle: const Text('היברידי — שילוב PDR ואנטנות', style: TextStyle(fontSize: 11)),
+                              value: effectiveSources.contains('pdrCellHybrid'),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (v) => toggleSource('pdrCellHybrid', v),
+                            ),
+                            if (isOverridden)
                               Align(
                                 alignment: AlignmentDirectional.centerEnd,
                                 child: TextButton.icon(
                                   icon: const Icon(Icons.restart_alt, size: 16),
                                   label: const Text('חזרה לברירת מחדל', style: TextStyle(fontSize: 12)),
                                   onPressed: () {
-                                    setState(() => _navigatorGpsIntervalOverride[navigatorId] = null);
+                                    setState(() => _navigatorPositionSourcesOverride[navigatorId] = null);
                                     setSheetState(() {});
                                     final trackId = _navigatorTrackIds[navigatorId];
                                     if (trackId != null) {
-                                      FirebaseFirestore.instance
-                                          .collection(AppConstants.navigationTracksCollection)
-                                          .doc(trackId)
-                                          .update({'overrideGpsIntervalSeconds': null});
+                                      NavigationTrackRepository().updatePositionSourcesOverride(trackId, enabledSources: null);
                                     }
                                   },
                                 ),

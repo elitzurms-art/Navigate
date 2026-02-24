@@ -77,6 +77,16 @@ class GPSTrackingService {
   /// מקורות מיקום מותרים (מוגדר per-navigation)
   List<String> _enabledSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'];
 
+  /// getter למקורות מיקום מותרים (לשימוש בדריסה מרחוק)
+  List<String> get enabledSources => List.unmodifiable(_enabledSources);
+
+  /// עדכון מקורות מיקום מותרים בזמן אמת (דריסה ע"י מפקד)
+  void updateEnabledSources(List<String> newSources) {
+    if (!_isTracking) return;
+    _enabledSources = newSources;
+    print('DEBUG GPSTrackingService: enabledSources updated to: $newSources');
+  }
+
   /// Whether the tracker is currently in a GPS gap (PDR gap-fill active).
   bool get isInGpsGap => _isGapFilling;
 

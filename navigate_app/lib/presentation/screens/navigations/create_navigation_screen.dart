@@ -1306,27 +1306,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   children: [
                     const Icon(Icons.straighten, size: 20, color: Colors.grey),
                     const SizedBox(width: 8),
-                    const Text('מרחק ממרכז גבול גזרה (ק״מ)'),
+                    const Text('מרחק ממרכז גבול גזרה'),
                     const Spacer(),
-                    SizedBox(
-                      width: 70,
-                      child: TextFormField(
-                        initialValue: _gpsSpoofingMaxDistanceKm.toString(),
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null && parsed >= 1 && parsed <= 1000) {
-                            setState(() => _gpsSpoofingMaxDistanceKm = parsed);
-                            _onSettingChanged();
-                          }
-                        },
-                      ),
+                    Text(
+                      '$_gpsSpoofingMaxDistanceKm ק״מ',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),

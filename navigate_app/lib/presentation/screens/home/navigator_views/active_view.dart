@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:battery_plus/battery_plus.dart';
@@ -986,6 +987,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         Duration(seconds: saveInterval),
         (_) => _saveTrackPoints(),
       );
+    }
+
+    // קריאת דריסת אמצעי מיקום
+    final overrideSources = data['overrideEnabledPositionSources'];
+    final List<String> effectiveSources;
+    if (overrideSources is List && overrideSources.isNotEmpty) {
+      effectiveSources = overrideSources.cast<String>();
+    } else {
+      effectiveSources = _nav.enabledPositionSources;
+    }
+    if (!listEquals(effectiveSources, _gpsTracker.enabledSources)) {
+      print('DEBUG ActiveView: position sources override changed to $effectiveSources');
+      _gpsTracker.updateEnabledSources(effectiveSources);
     }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');
