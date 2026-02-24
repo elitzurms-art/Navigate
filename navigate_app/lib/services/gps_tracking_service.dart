@@ -36,7 +36,7 @@ class GPSTrackingService {
   DateTime? _lastStepTime;
   StreamSubscription<PdrPositionResult>? _pdrStepSubscription;
   static const Duration _stationaryTimeout = Duration(seconds: 5);
-  static const double _driftThresholdMeters = 3.0;
+  static const double _driftThresholdMeters = 8.0;
 
   // --- Gap-Fill (PDR during GPS loss) ---
   DateTime? _lastGpsFixTime;
@@ -83,8 +83,40 @@ class GPSTrackingService {
   /// עדכון מקורות מיקום מותרים בזמן אמת (דריסה ע"י מפקד)
   void updateEnabledSources(List<String> newSources) {
     if (!_isTracking) return;
+
+    final gpsWasEnabled = _enabledSources.contains('gps');
     _enabledSources = newSources;
+    final gpsNowEnabled = newSources.contains('gps');
     print('DEBUG GPSTrackingService: enabledSources updated to: $newSources');
+
+    // GPS status didn't change — no mechanism restart needed
+    if (gpsWasEnabled == gpsNowEnabled) return;
+
+    // GPS status changed — restart tracking mechanism
+    _trackingTimer?.cancel();
+    _trackingTimer = null;
+    _geolocatorStreamSub?.cancel();
+    _geolocatorStreamSub = null;
+    _exitGapFillMode();
+    _gapDetectionTimer?.cancel();
+    _gapDetectionTimer = null;
+
+    if (_forcePositionSource == 'cellTower' || _forcePositionSource == 'pdr') {
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds), (timer) => _recordCurrentPosition());
+      return;
+    }
+
+    if (gpsNowEnabled && _intervalSeconds <= 5) {
+      // GPS re-enabled + short interval → stream mode
+      _startPositionStream();
+      _lastGpsFixTime = DateTime.now();
+      _startGapDetectionTimer();
+    } else {
+      // GPS disabled OR long interval → timer mode with fallbacks
+      _trackingTimer = Timer.periodic(
+        Duration(seconds: _intervalSeconds), (timer) => _recordCurrentPosition());
+    }
   }
 
   /// Whether the tracker is currently in a GPS gap (PDR gap-fill active).
@@ -335,6 +367,9 @@ class GPSTrackingService {
         }
         _lastRecordTime = now;
 
+        // Guard: if GPS was disabled after stream started, skip recording
+        if (!_isSourceAllowed('gps')) return;
+
         // Jamming state machine evaluation
         final shouldUseGps = _processJammingStateMachine(position);
         if (!shouldUseGps) return; // jammed/recovering/cooldown — gap-fill provides positions
@@ -461,6 +496,8 @@ class GPSTrackingService {
   /// Check if a GPS displacement should be rejected as drift.
   /// Returns true if the user is stationary and the displacement exceeds threshold.
   bool _shouldRejectAsDrift(double newLat, double newLng) {
+    // Stream mode (≤5s interval) — let Kalman filter handle smoothing
+    if (_intervalSeconds <= 5) return false;
     if (!_isStationary) return false;
     if (_trackPoints.isEmpty) return false;
     if (_stepsSinceLastRecord > 0) return false;
@@ -508,6 +545,95 @@ class GPSTrackingService {
       return true;
     }
     return false;
+  }
+
+  /// General sanity check: reject positions that imply physically impossible speed.
+  bool _isJumpAnomalous(double newLat, double newLng) {
+    if (_trackPoints.isEmpty) return false;
+
+    final lastPoint = _trackPoints.last;
+    final dtSeconds = DateTime.now().difference(lastPoint.timestamp).inSeconds;
+    if (dtSeconds <= 0) return false;
+
+    final displacement = Geolocator.distanceBetween(
+      lastPoint.coordinate.lat, lastPoint.coordinate.lng,
+      newLat, newLng,
+    );
+
+    // Only flag large absolute jumps (>500m) to avoid false positives on GPS jitter
+    if (displacement <= 500) return false;
+
+    // Reject if implied speed > 150 km/h (41.67 m/s)
+    final impliedSpeedMps = displacement / dtSeconds;
+    if (impliedSpeedMps > 41.67) {
+      print('JUMP CHECK: rejecting position — '
+          '${displacement.toStringAsFixed(0)}m in ${dtSeconds}s = '
+          '${(impliedSpeedMps * 3.6).toStringAsFixed(0)} km/h');
+      return true;
+    }
+    return false;
+  }
+
+  /// Sliding window trajectory consistency check.
+  /// Removes outlier points that create two impossible segments
+  /// but whose removal restores a plausible path.
+  void _pruneWindowOutliers() {
+    const double maxSpeedMps = 41.67; // 150 km/h
+    const double minJumpDistance = 800; // meters
+    const int windowSize = 5;
+
+    if (_trackPoints.length < windowSize) return;
+
+    final start = _trackPoints.length - windowSize;
+    final window = _trackPoints.sublist(start);
+
+    int? indexToRemove;
+
+    for (int i = 1; i < window.length - 1; i++) {
+      final prev = window[i - 1];
+      final current = window[i];
+      final next = window[i + 1];
+
+      final d1 = Geolocator.distanceBetween(
+        prev.coordinate.lat, prev.coordinate.lng,
+        current.coordinate.lat, current.coordinate.lng,
+      );
+      final d2 = Geolocator.distanceBetween(
+        current.coordinate.lat, current.coordinate.lng,
+        next.coordinate.lat, next.coordinate.lng,
+      );
+      final dDirect = Geolocator.distanceBetween(
+        prev.coordinate.lat, prev.coordinate.lng,
+        next.coordinate.lat, next.coordinate.lng,
+      );
+
+      final dt1 = current.timestamp.difference(prev.timestamp).inSeconds.abs();
+      final dt2 = next.timestamp.difference(current.timestamp).inSeconds.abs();
+      final dtDirect = next.timestamp.difference(prev.timestamp).inSeconds.abs();
+
+      if (dt1 <= 0 || dt2 <= 0 || dtDirect <= 0) continue;
+
+      final speed1 = d1 / dt1;
+      final speed2 = d2 / dt2;
+      final speedDirect = dDirect / dtDirect;
+
+      final leg1Impossible = speed1 > maxSpeedMps && d1 > minJumpDistance;
+      final leg2Impossible = speed2 > maxSpeedMps && d2 > minJumpDistance;
+      final directPlausible = speedDirect < maxSpeedMps && dDirect < 300;
+
+      if (leg1Impossible && leg2Impossible && directPlausible) {
+        indexToRemove = start + i;
+        break;
+      }
+    }
+
+    if (indexToRemove != null) {
+      final removed = _trackPoints[indexToRemove];
+      print('WINDOW OUTLIER: removing point $indexToRemove '
+          '[${removed.positionSource}] at '
+          '${removed.coordinate.lat}, ${removed.coordinate.lng}');
+      _trackPoints.removeAt(indexToRemove);
+    }
   }
 
   // ===========================================================================
@@ -645,6 +771,8 @@ class GPSTrackingService {
   /// Enter gap-fill mode: subscribe to PDR stream and emit positions.
   void _enterGapFillMode() {
     if (_isGapFilling) return;
+    // Don't gap-fill with PDR if PDR is disabled
+    if (!_enabledSources.contains('pdr') && !_enabledSources.contains('pdrCellHybrid')) return;
     final pdrStream = _gpsService.pdrPositionStream;
     if (pdrStream == null) return; // PDR not available — can't gap-fill
 
@@ -748,6 +876,26 @@ class GPSTrackingService {
         }
       } catch (e) {
         print('PDR fallback (forced) נכשל: $e');
+      }
+      return;
+    }
+
+    // If GPS source disabled — skip GPS acquisition, use fallback directly
+    if (!_isSourceAllowed('gps')) {
+      if (!_hasAllowedFallback()) return;
+      try {
+        final fallbackPos = await _gpsService.getCurrentPosition(
+          boundaryCenter: _boundaryCenter,
+        );
+        if (fallbackPos != null &&
+            _isSourceAllowed(_gpsService.lastPositionSource.name)) {
+          _recordPointFromLatLng(
+            fallbackPos.latitude, fallbackPos.longitude, -1,
+            positionSource: _gpsService.lastPositionSource.name,
+          );
+        }
+      } catch (e) {
+        print('fallback (GPS disabled) failed: $e');
       }
       return;
     }
@@ -875,6 +1023,22 @@ class GPSTrackingService {
         }
       }
 
+      // Guard: skip GPS recording if source disabled by commander
+      if (!_isSourceAllowed('gps')) {
+        if (_hasAllowedFallback()) {
+          try {
+            final fallbackPos = await _gpsService.getCurrentPosition(boundaryCenter: _boundaryCenter);
+            if (fallbackPos != null &&
+                _gpsService.lastPositionSource != PositionSource.gps &&
+                _isSourceAllowed(_gpsService.lastPositionSource.name)) {
+              _recordPointFromLatLng(fallbackPos.latitude, fallbackPos.longitude, -1,
+                  positionSource: _gpsService.lastPositionSource.name);
+            }
+          } catch (_) {}
+        }
+        return;
+      }
+
       _recordPoint(position, positionSource: 'gps');
       _positionStream?.add(position);
     } catch (e) {
@@ -930,6 +1094,11 @@ class GPSTrackingService {
       return;
     }
 
+    // General jump sanity check: reject physically impossible displacements
+    if (_isJumpAnomalous(position.latitude, position.longitude)) {
+      return;
+    }
+
     // Update Kalman filter motion state (ZUPT)
     _kalmanFilter.setMotionState(isStationary: _isStationary);
 
@@ -955,6 +1124,7 @@ class GPSTrackingService {
     );
 
     _trackPoints.add(point);
+    _pruneWindowOutliers();
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
 
     // Reset step counter after recording
@@ -977,6 +1147,11 @@ class GPSTrackingService {
     double accuracy, {
     String positionSource = 'cellTower',
   }) {
+    // General jump sanity check
+    if (_isJumpAnomalous(lat, lng)) {
+      return;
+    }
+
     // Update Kalman filter motion state (ZUPT)
     _kalmanFilter.setMotionState(isStationary: _isStationary);
 
@@ -1000,6 +1175,7 @@ class GPSTrackingService {
     );
 
     _trackPoints.add(point);
+    _pruneWindowOutliers();
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
 
     // Reset step counter after recording
@@ -1037,6 +1213,7 @@ class GPSTrackingService {
       positionSource: 'manual',
     );
     _trackPoints.add(point);
+    _pruneWindowOutliers();
     print('רישום נקודה ידנית ${_trackPoints.length}: $lat, $lng [manual]');
     _enrichWithDemElevation(_trackPoints.length - 1, lat, lng);
 
@@ -1049,6 +1226,10 @@ class GPSTrackingService {
     // 4. Start 5-minute GPS cooldown
     _manualCooldownEnd = DateTime.now().add(_manualCooldownDuration);
     print('JAMMING: manual position set — GPS cooldown until $_manualCooldownEnd');
+
+    // 5. Reset step state
+    _stepsSinceLastRecord = 0;
+    _lastStepTime = null;
   }
 
   /// המרה ל-UTM (פשוט)
@@ -1065,12 +1246,19 @@ class GPSTrackingService {
 
     double total = 0;
     for (int i = 0; i < _trackPoints.length - 1; i++) {
-      total += Geolocator.distanceBetween(
+      final dist = Geolocator.distanceBetween(
         _trackPoints[i].coordinate.lat,
         _trackPoints[i].coordinate.lng,
         _trackPoints[i + 1].coordinate.lat,
         _trackPoints[i + 1].coordinate.lng,
       );
+      // Skip segments implying impossible speed (>150 km/h)
+      final dtSeconds = _trackPoints[i + 1].timestamp
+          .difference(_trackPoints[i].timestamp)
+          .inSeconds
+          .abs();
+      if (dtSeconds > 0 && dist / dtSeconds > 41.67) continue;
+      total += dist;
     }
     return total / 1000; // המרה למטרים לק"מ
   }

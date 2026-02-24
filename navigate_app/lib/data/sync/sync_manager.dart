@@ -360,9 +360,9 @@ class SyncManager {
 
     print('SyncManager: Queued $operation on $collection/$documentId (v$version, priority=$priority)');
 
-    // אם אונליין ועדיפות גבוהה - נסה לסנכרן מיד
+    // אם אונליין ועדיפות גבוהה - נסה לסנכרן מיד (fire-and-forget — הנתונים כבר בתור המקומי)
     if (_isOnline && priority >= SyncPriority.high) {
-      await processSyncQueue();
+      unawaited(processSyncQueue());
     }
   }
 

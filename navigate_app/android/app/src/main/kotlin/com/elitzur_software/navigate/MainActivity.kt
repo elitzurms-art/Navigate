@@ -258,7 +258,7 @@ class MainActivity: FlutterActivity() {
             }
             // שמירת מצב קודם לשחזור
             previousInterruptionFilter = notificationManager.currentInterruptionFilter
-            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS)
             true
         } catch (e: Exception) {
             e.printStackTrace()

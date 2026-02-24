@@ -176,6 +176,7 @@ class NavigatorAlert extends Equatable {
   final String? resolvedBy;
   final int? minutesOverdue; // דקות מעבר לזמן המוגדר (לבדיקת תקינות)
   final String? navigatorName; // שם המנווט (לתצוגה בהתראה)
+  final Map<String, bool>? barburChecklist; // צ'קליסט נוהל ברבור (barbur alerts only)
 
   const NavigatorAlert({
     required this.id,
@@ -189,6 +190,7 @@ class NavigatorAlert extends Equatable {
     this.resolvedBy,
     this.minutesOverdue,
     this.navigatorName,
+    this.barburChecklist,
   });
 
   Map<String, dynamic> toMap() {
@@ -206,6 +208,7 @@ class NavigatorAlert extends Equatable {
       if (resolvedBy != null) 'resolvedBy': resolvedBy,
       if (minutesOverdue != null) 'minutesOverdue': minutesOverdue,
       if (navigatorName != null) 'navigatorName': navigatorName,
+      if (barburChecklist != null) 'barburChecklist': barburChecklist,
     };
   }
 
@@ -228,9 +231,12 @@ class NavigatorAlert extends Equatable {
       resolvedBy: map['resolvedBy'] as String?,
       minutesOverdue: map['minutesOverdue'] as int?,
       navigatorName: map['navigatorName'] as String?,
+      barburChecklist: map['barburChecklist'] != null
+          ? Map<String, bool>.from(map['barburChecklist'] as Map)
+          : null,
     );
   }
 
   @override
-  List<Object?> get props => [id, navigationId, navigatorId, type, timestamp];
+  List<Object?> get props => [id, navigationId, navigatorId, type, timestamp, barburChecklist];
 }

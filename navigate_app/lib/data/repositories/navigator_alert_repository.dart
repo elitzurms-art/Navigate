@@ -121,4 +121,44 @@ class NavigatorAlertRepository {
     final active = await getActiveByNavigation(navigationId);
     return active.length;
   }
+
+  /// עדכון צ'קליסט ברבור (Firestore only)
+  Future<void> updateBarburChecklist(String navigationId, String alertId, Map<String, bool> checklist) async {
+    try {
+      await _alertsCollection(navigationId).doc(alertId).update({
+        'barburChecklist': checklist,
+      });
+    } catch (e) {
+      print('DEBUG NavigatorAlertRepository: error updating barbur checklist: $e');
+    }
+  }
+
+  /// קבלת התראת ברבור פעילה למנווט (לשחזור state אחרי restart)
+  Future<NavigatorAlert?> getActiveBarburAlert(String navigationId, String navigatorId) async {
+    try {
+      final snapshot = await _alertsCollection(navigationId)
+          .where('navigatorId', isEqualTo: navigatorId)
+          .where('type', isEqualTo: AlertType.barbur.code)
+          .where('isActive', isEqualTo: true)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isEmpty) return null;
+      return NavigatorAlert.fromMap(snapshot.docs.first.data());
+    } catch (e) {
+      print('DEBUG NavigatorAlertRepository: error getting active barbur alert: $e');
+      return null;
+    }
+  }
+
+  /// האזנה בזמן אמת להתראה ספציפית (לשימוש מנווט — מעקב אחרי צ'קליסט ברבור)
+  Stream<NavigatorAlert?> watchAlert(String navigationId, String alertId) {
+    return _alertsCollection(navigationId)
+        .doc(alertId)
+        .snapshots()
+        .map((doc) {
+      if (!doc.exists || doc.data() == null) return null;
+      return NavigatorAlert.fromMap(doc.data()!);
+    });
+  }
 }

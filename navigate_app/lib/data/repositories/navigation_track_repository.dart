@@ -367,22 +367,21 @@ class NavigationTrackRepository {
       isActive: Value(false),
     ));
 
-    // איפוס ב-Firestore
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: navigationId)
-          .get();
-
+    // איפוס ב-Firestore — fire-and-forget (לא חוסם UI)
+    FirebaseFirestore.instance
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .get()
+        .then((snapshot) {
       for (final doc in snapshot.docs) {
-        await doc.reference.update({
+        doc.reference.update({
           'endedAt': null,
           'isActive': false,
         });
       }
-    } catch (_) {
+    }).catchError((_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
-    }
+    });
   }
 
   /// גזירת סטטוס אישי מרשומת track

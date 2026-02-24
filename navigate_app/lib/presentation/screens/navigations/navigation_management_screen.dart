@@ -120,9 +120,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Set<String> _shownExtensionPopups = {}; // מניעת popup כפול
   Timer? _extensionSnoozeTimer;
 
-  // כפיית מקור מיקום גלובלי
-  String _globalForcePositionSource = 'auto';
-
   // מרכוז מפה
   CenteringMode _centeringMode = CenteringMode.off;
   String? _centeredNavigatorId; // null = מרכוז עצמי
@@ -216,19 +213,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ));
       }
 
-      // קריאת forcePositionSource גלובלי מ-Firestore
-      try {
-        final navDoc = await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(widget.navigation.id)
-            .get();
-        final navData = navDoc.data();
-        if (navData != null && navData['forcePositionSource'] is String) {
-          setState(() {
-            _globalForcePositionSource = navData['forcePositionSource'] as String;
-          });
-        }
-      } catch (_) {}
     } catch (e) {
       setState(() => _isLoading = false);
     }
@@ -623,11 +607,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         if (newAlerts.isNotEmpty) {
           HapticFeedback.heavyImpact();
         }
-        // חלון קופץ להתראות חירום ותקינות חדשות
+        // חלון קופץ להתראות חירום, תקינות, וברבור חדשות
         for (final alert in newAlerts) {
           if (alert.type == AlertType.emergency ||
               alert.type == AlertType.healthCheckExpired) {
             _showAlertDialog(alert);
+          } else if (alert.type == AlertType.barbur) {
+            _showBarburProtocolDialog(alert);
           }
         }
       },
@@ -827,6 +813,281 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
+  // ===========================================================================
+  // Barbur Protocol Dialog — נוהל ברבור
+  // ===========================================================================
+
+  void _showBarburProtocolDialog(NavigatorAlert alert) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return StreamBuilder<NavigatorAlert?>(
+          stream: _alertRepo.watchAlert(alert.navigationId, alert.id),
+          initialData: alert,
+          builder: (ctx, snapshot) {
+            final liveAlert = snapshot.data;
+            if (liveAlert == null || !liveAlert.isActive) {
+              // ההתראה נסגרה (ע"י המנווט)
+              return AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 28),
+                    SizedBox(width: 8),
+                    Text('נוהל ברבור הסתיים'),
+                  ],
+                ),
+                content: Text('${alert.navigatorName ?? alert.navigatorId} סיים את נוהל ברבור.'),
+                actions: [
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('סגור'),
+                  ),
+                ],
+              );
+            }
+
+            final checklist = Map<String, bool>.from(liveAlert.barburChecklist ?? {
+              'returnToAxis': false,
+              'goToHighPoint': false,
+              'openMap': false,
+              'showLocation': false,
+            });
+            final navigatorId = liveAlert.navigatorId;
+            final completedCount = checklist.values.where((v) => v).length;
+            final allDone = completedCount == 4;
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.report_problem, color: Colors.orange, size: 28),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('נוהל ברבור', style: TextStyle(color: Colors.orange)),
+                        Text(
+                          liveAlert.navigatorName ?? navigatorId,
+                          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: allDone ? Colors.green : Colors.orange,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '$completedCount/4',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // שלב א — חזרה בציר
+                    CheckboxListTile(
+                      title: const Text('א) חזרה בציר הניווט לנקודה מוכרת'),
+                      subtitle: const Text('אימות ידני', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      value: checklist['returnToAxis'] ?? false,
+                      activeColor: Colors.green,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) {
+                        checklist['returnToAxis'] = v ?? false;
+                        _alertRepo.updateBarburChecklist(alert.navigationId, alert.id, checklist);
+                      },
+                    ),
+                    // שלב ב — עלייה למקום גבוה
+                    CheckboxListTile(
+                      title: const Text('ב) עלייה למקום גבוה'),
+                      subtitle: const Text('אימות ידני', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      value: checklist['goToHighPoint'] ?? false,
+                      activeColor: Colors.green,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) {
+                        checklist['goToHighPoint'] = v ?? false;
+                        _alertRepo.updateBarburChecklist(alert.navigationId, alert.id, checklist);
+                      },
+                    ),
+                    // שלב ג — פתיחת מפה
+                    CheckboxListTile(
+                      title: const Text('ג) פתיחת מפה'),
+                      subtitle: Text(
+                        checklist['openMap'] == true ? 'מפה פתוחה למנווט' : 'יפתח מפה למנווט',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: checklist['openMap'] == true ? Colors.green : Colors.grey,
+                        ),
+                      ),
+                      value: checklist['openMap'] ?? false,
+                      activeColor: Colors.green,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) {
+                        checklist['openMap'] = v ?? false;
+                        // אם מכבים מפה — גם לכבות מיקום
+                        if (!(v ?? false)) {
+                          checklist['showLocation'] = false;
+                        }
+                        _alertRepo.updateBarburChecklist(alert.navigationId, alert.id, checklist);
+                        // עדכון דריסות מפה בפועל
+                        _navigatorOverrideAllowOpenMap[navigatorId] = v ?? false;
+                        if (!(v ?? false)) {
+                          _navigatorOverrideShowSelfLocation[navigatorId] = false;
+                        }
+                        _updateNavigatorMapOverrides(navigatorId);
+                        setState(() {});
+                      },
+                    ),
+                    // שלב ד — הצגת מיקום (רק אם מפה פתוחה)
+                    CheckboxListTile(
+                      title: const Text('ד) הצגת מיקום עצמי'),
+                      subtitle: Text(
+                        checklist['showLocation'] == true ? 'מיקום מוצג למנווט' : 'יציג מיקום למנווט',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: checklist['showLocation'] == true ? Colors.green : Colors.grey,
+                        ),
+                      ),
+                      value: checklist['showLocation'] ?? false,
+                      activeColor: Colors.green,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (checklist['openMap'] ?? false) ? (v) {
+                        checklist['showLocation'] = v ?? false;
+                        _alertRepo.updateBarburChecklist(alert.navigationId, alert.id, checklist);
+                        // עדכון דריסת מיקום
+                        _navigatorOverrideShowSelfLocation[navigatorId] = v ?? false;
+                        _updateNavigatorMapOverrides(navigatorId);
+                        setState(() {});
+                      } : null,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('מזער'),
+                ),
+                if (allDone)
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _finishBarburProtocol(liveAlert);
+                    },
+                    icon: const Icon(Icons.check_circle),
+                    label: const Text('סיום נוהל'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _finishBarburProtocol(NavigatorAlert alert) async {
+    final navigatorId = alert.navigatorId;
+
+    // שאלת המשך: האם לסגור את המפה?
+    final revertOverrides = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('סיום נוהל ברבור'),
+        content: const Text('האם לסגור את המפה והמיקום למנווט?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('השאר פתוח'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+            child: const Text('סגור מפה'),
+          ),
+        ],
+      ),
+    );
+
+    // סגירת ההתראה
+    await _resolveAlert(alert);
+
+    // ביטול דריסות מפה אם נבחר
+    if (revertOverrides == true) {
+      _navigatorOverrideAllowOpenMap[navigatorId] = false;
+      _navigatorOverrideShowSelfLocation[navigatorId] = false;
+      _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+      await _updateNavigatorMapOverrides(navigatorId);
+      if (mounted) setState(() {});
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('נוהל ברבור הסתיים'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  List<Widget> _buildNavigatorBarburSection(String navigatorId) {
+    final barburAlert = _activeAlerts.where(
+      (a) => a.type == AlertType.barbur && a.navigatorId == navigatorId,
+    ).toList();
+    if (barburAlert.isEmpty) return [];
+
+    final alert = barburAlert.first;
+    final checklist = alert.barburChecklist ?? {};
+    final completedCount = checklist.values.where((v) => v).length;
+
+    return [
+      const SizedBox(height: 8),
+      GestureDetector(
+        onTap: () => _showBarburProtocolDialog(alert),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.orange),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.report_problem, color: Colors.orange, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'נוהל ברבור פעיל ($completedCount/4)',
+                  style: const TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              const Icon(Icons.open_in_new, color: Colors.orange, size: 16),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
   void _updateNavigatorDataFromFirestore(QuerySnapshot snapshot) {
     if (!mounted) return;
 
@@ -929,10 +1190,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           _navigatorPositionSourcesOverride[navigatorId] = sources is List ? sources.cast<String>() : null;
         }
 
-        // קריאת forcePositionSource מה-track doc
-        final trackForceSource = data['forcePositionSource'] as String?;
-        liveData.isForceCell = (trackForceSource == 'cellTower') ||
-            (trackForceSource == null && _globalForcePositionSource == 'cellTower');
       }
     });
   }
@@ -1074,6 +1331,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.personalStatus = NavigatorPersonalStatus.waiting;
             data.trackPoints = [];
             data.currentPosition = null;
+            data.resetAt = DateTime.now();
           }
         });
 
@@ -1147,6 +1405,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.trackPoints = [];
             data.punches = [];
             data.currentPosition = null;
+            data.resetAt = DateTime.now();
           }
         });
 
@@ -1266,9 +1525,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           case 'reset':
             _resetNavigatorNavigation(navigatorId);
             break;
-          case 'force_cell':
-            _toggleNavigatorForceCell(navigatorId);
-            break;
           case 'undo_disqualify':
             _undoDisqualification(navigatorId);
             break;
@@ -1301,28 +1557,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
-        // כפיית אנטנות — active/noReception
-        if (status == NavigatorPersonalStatus.active ||
-            status == NavigatorPersonalStatus.noReception)
-          PopupMenuItem(
-            value: 'force_cell',
-            child: Row(
-              children: [
-                Icon(
-                  data.isForceCell ? Icons.gps_fixed : Icons.cell_tower,
-                  color: data.isForceCell ? Colors.green : Colors.orange,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  data.isForceCell ? 'ביטול כפיית אנטנות' : 'כפה אנטנות',
-                  style: TextStyle(
-                    color: data.isForceCell ? Colors.green : Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-          ),
         // אפס ניווט — active/finished/noReception
         const PopupMenuItem(
           value: 'reset',
@@ -1348,117 +1582,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ),
       ],
     );
-  }
-
-  // ===========================================================================
-  // Force Position Source — כפיית מקור מיקום
-  // ===========================================================================
-
-  Future<void> _toggleGlobalForcePositionSource() async {
-    final newSource = _globalForcePositionSource == 'cellTower' ? 'auto' : 'cellTower';
-
-    try {
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .update({'forcePositionSource': newSource});
-
-      setState(() => _globalForcePositionSource = newSource);
-
-      // עדכון כל המנווטים הפעילים
-      if (newSource == 'cellTower') {
-        for (final entry in _navigatorData.entries) {
-          if (entry.value.personalStatus == NavigatorPersonalStatus.active ||
-              entry.value.personalStatus == NavigatorPersonalStatus.noReception) {
-            entry.value.isForceCell = true;
-          }
-        }
-      } else {
-        // חזרה ל-auto — רק מי שאין לו override אישי
-        for (final entry in _navigatorData.entries) {
-          entry.value.isForceCell = false;
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newSource == 'cellTower'
-                ? 'כפיית מיקום אנטנות הופעלה לכל המנווטים'
-                : 'מיקום אנטנות כפוי בוטל — חזרה לאוטומטי'),
-            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בעדכון מצב מיקום: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _toggleNavigatorForceCell(String navigatorId) async {
-    final data = _navigatorData[navigatorId];
-    if (data == null) return;
-
-    final newSource = data.isForceCell ? 'auto' : 'cellTower';
-
-    try {
-      // מציאת track פעיל של המנווט
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('navigatorUserId', isEqualTo: navigatorId)
-          .where('isActive', isEqualTo: true)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('לא נמצא track פעיל למנווט'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return;
-      }
-
-      await snapshot.docs.first.reference.update({
-        'forcePositionSource': newSource,
-      });
-
-      setState(() {
-        data.isForceCell = newSource == 'cellTower';
-      });
-
-      if (mounted) {
-        final name = _userNames[navigatorId] ?? navigatorId;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newSource == 'cellTower'
-                ? 'כפיית אנטנות הופעלה ל-$name'
-                : 'כפיית אנטנות בוטלה ל-$name'),
-            backgroundColor: newSource == 'cellTower' ? Colors.orange : Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בעדכון מצב מיקום: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _finishAllNavigation() async {
@@ -1927,20 +2050,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ),
         actions: [
           IconButton(
-            icon: Icon(
-              _globalForcePositionSource == 'cellTower'
-                  ? Icons.cell_tower
-                  : Icons.gps_fixed,
-              color: _globalForcePositionSource == 'cellTower'
-                  ? Colors.orange
-                  : Colors.white,
-            ),
-            tooltip: _globalForcePositionSource == 'cellTower'
-                ? 'מצב אנטנות כפוי — לחץ לביטול'
-                : 'כפה מיקום אנטנות לכל המנווטים',
-            onPressed: _toggleGlobalForcePositionSource,
-          ),
-          IconButton(
             icon: const Icon(Icons.stop_circle),
             tooltip: 'סיום ניווט כללי',
             onPressed: _finishAllNavigation,
@@ -2012,8 +2121,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     _mapLegendItem('סיים', Colors.blue),
                     _mapLegendItem('ללא קליטה', Colors.orange),
                     _mapLegendItem('התרעה', Colors.red),
-                    if (_globalForcePositionSource == 'cellTower')
-                      _mapLegendItem('אנטנות כפוי', Colors.orange),
                   ],
                 ),
               ),
@@ -2489,11 +2596,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                               ),
                             ),
                           ),
-                        if (data.isForceCell)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.cell_tower, color: Colors.orange, size: 18),
-                          ),
                         if (data.hasActiveAlert)
                           const Padding(
                             padding: EdgeInsets.only(left: 4),
@@ -2519,7 +2621,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           ),
                           _statChip(
                             Icons.timer,
-                            _formatDuration(data.elapsedTime),
+                            _formatDuration(
+                              data.resetAt != null
+                                ? DateTime.now().difference(data.resetAt!)
+                                : (widget.navigation.activeStartTime != null
+                                    ? DateTime.now().difference(widget.navigation.activeStartTime!)
+                                    : data.elapsedTime),
+                            ),
                           ),
                           if (totalCheckpoints > 0)
                             _statChip(
@@ -2851,7 +2959,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Color _getNavigatorStatusColor(NavigatorLiveData data) {
     if (data.hasActiveAlert) return Colors.red;
-    if (data.isForceCell) return Colors.orange;
     switch (data.personalStatus) {
       case NavigatorPersonalStatus.active:
         return data.isGpsPlusFix ? Colors.yellow.shade700 : Colors.green;
@@ -3060,6 +3167,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           ),
                         ),
                       ],
+
+                      // באנר ברבור פעיל (אם יש)
+                      ..._buildNavigatorBarburSection(navigatorId),
 
                       const Divider(height: 20),
 
@@ -3371,7 +3481,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       _detailRow('מהירות נוכחית', '${liveData.currentSpeedKmh.toStringAsFixed(1)} קמ"ש'),
                       _detailRow('מהירות ממוצעת', '${liveData.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
                       _detailRow('מרחק שנעבר', '${liveData.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
-                      _detailRow('זמן ניווט', _formatDuration(liveData.elapsedTime)),
+                      _detailRow('זמן ניווט', _formatDuration(
+                        liveData.resetAt != null
+                          ? DateTime.now().difference(liveData.resetAt!)
+                          : (widget.navigation.activeStartTime != null
+                              ? DateTime.now().difference(widget.navigation.activeStartTime!)
+                              : liveData.elapsedTime),
+                      )),
                       _detailRow('נקודות GPS', '${liveData.trackPoints.length}'),
                       if (liveData.lastUpdate != null)
                         _detailRow('עדכון אחרון', '${_formatTimeSince(liveData.timeSinceLastUpdate)} לפני'),
@@ -3831,6 +3947,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Widget _buildAlertsBanner() {
     final emergencyCount = _activeAlerts.where((a) => a.type == AlertType.emergency).length;
     final healthCount = _activeAlerts.where((a) => a.type == AlertType.healthCheckExpired).length;
+    final barburCount = _activeAlerts.where((a) => a.type == AlertType.barbur).length;
     final extensionCount = _extensionRequests.where((r) => r.status == ExtensionRequestStatus.pending).length;
 
     return GestureDetector(
@@ -3841,6 +3958,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ).toList();
         if (urgent.isNotEmpty) {
           _showAlertDialog(urgent.first);
+        } else if (barburCount > 0) {
+          final barburAlert = _activeAlerts.firstWhere((a) => a.type == AlertType.barbur);
+          _showBarburProtocolDialog(barburAlert);
         } else if (extensionCount > 0) {
           _tabController.animateTo(3); // טאב התראות
         }
@@ -3848,11 +3968,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        color: emergencyCount > 0 ? Colors.red : (extensionCount > 0 ? Colors.purple : Colors.orange),
+        color: emergencyCount > 0 ? Colors.red : (barburCount > 0 ? Colors.orange : (extensionCount > 0 ? Colors.purple : Colors.orange)),
         child: Row(
           children: [
             Icon(
-              emergencyCount > 0 ? Icons.emergency : (extensionCount > 0 ? Icons.timer : Icons.timer_off),
+              emergencyCount > 0 ? Icons.emergency : (barburCount > 0 ? Icons.report_problem : (extensionCount > 0 ? Icons.timer : Icons.timer_off)),
               color: Colors.white,
               size: 20,
             ),
@@ -3861,6 +3981,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               child: Text(
                 [
                   if (emergencyCount > 0) '$emergencyCount חירום',
+                  if (barburCount > 0) '$barburCount ברבור',
                   if (healthCount > 0) '$healthCount תקינות',
                   if (extensionCount > 0) '$extensionCount הארכה',
                 ].join(' | '),
@@ -4051,6 +4172,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   Widget _buildAlertCard(NavigatorAlert alert) {
+    // כרטיס מיוחד לברבור
+    if (alert.type == AlertType.barbur) {
+      return _buildBarburAlertCard(alert);
+    }
+
     final alertColor = _getAlertColor(alert.type);
     final elapsed = DateTime.now().difference(alert.timestamp);
     final elapsedText = elapsed.inMinutes < 60
@@ -4104,6 +4230,89 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             );
           }
         },
+      ),
+    );
+  }
+
+  Widget _buildBarburAlertCard(NavigatorAlert alert) {
+    final checklist = alert.barburChecklist ?? {};
+    final completedCount = checklist.values.where((v) => v).length;
+    final elapsed = DateTime.now().difference(alert.timestamp);
+    final elapsedText = elapsed.inMinutes < 60
+        ? '${elapsed.inMinutes} דק\' '
+        : '${elapsed.inHours} שע\' ${elapsed.inMinutes % 60} דק\' ';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Colors.orange, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.orange.withValues(alpha: 0.15),
+                  child: const Text('⚠️', style: TextStyle(fontSize: 20)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'נוהל ברבור',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange, fontSize: 15),
+                      ),
+                      Text(alert.navigatorName ?? alert.navigatorId),
+                      Text('לפני $elapsedText', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$completedCount/4',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // פס התקדמות
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: completedCount / 4,
+                backgroundColor: Colors.orange.withValues(alpha: 0.2),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.orange),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _showBarburProtocolDialog(alert),
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: const Text('פתח נוהל'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange,
+                    side: const BorderSide(color: Colors.orange),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4421,7 +4630,6 @@ class NavigatorLiveData {
   NavigatorPersonalStatus personalStatus;
   bool hasActiveAlert;
   bool isGpsPlusFix;
-  bool isForceCell; // כפיית מקור מיקום אנטנות ע"י מפקד
   bool isDisqualified; // מנווט נפסל (פריצת אבטחה)
   String? disqualificationReason; // סיבת הפסילה
   LatLng? currentPosition;
@@ -4432,13 +4640,13 @@ class NavigatorLiveData {
   bool hasMicrophonePermission;
   bool hasPhonePermission;
   bool hasDNDPermission;
+  DateTime? resetAt; // set when navigator is reset/restarted
 
   NavigatorLiveData({
     required this.navigatorId,
     required this.personalStatus,
     this.hasActiveAlert = false,
     this.isGpsPlusFix = false,
-    this.isForceCell = false,
     this.isDisqualified = false,
     this.disqualificationReason,
     this.currentPosition,
@@ -4449,6 +4657,7 @@ class NavigatorLiveData {
     this.hasMicrophonePermission = false,
     this.hasPhonePermission = false,
     this.hasDNDPermission = false,
+    this.resetAt,
   });
 
   /// מרחק כולל שנעבר בק"מ

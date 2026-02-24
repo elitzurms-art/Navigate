@@ -38,6 +38,15 @@ class VoiceService {
   Stream<Duration> get playbackPosition => _playbackPositionController.stream;
 
   VoiceService() {
+    // הגדרת audio context עם USAGE_ALARM כדי לעקוף DND
+    _player.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        usageType: AndroidUsageType.alarm,
+        contentType: AndroidContentType.speech,
+        audioFocus: AndroidAudioFocus.gainTransient,
+      ),
+    ));
+
     _player.onPositionChanged.listen((position) {
       _playbackPositionController.add(position);
     });
