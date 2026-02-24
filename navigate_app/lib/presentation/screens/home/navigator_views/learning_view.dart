@@ -114,10 +114,11 @@ class _LearningViewState extends State<LearningView>
     final service = AutoMapDownloadService();
     final navId = widget.navigation.id;
 
-    // דילוג אם כבר הוצג, הושלם, או מוריד כרגע
+    // דילוג אם כבר הוצג, או שההורדה בכל סטטוס חוץ מ-notStarted/failed
+    final status = service.getStatus(navId);
     if (service.hasBeenPrompted(navId)) return;
-    if (service.getStatus(navId) == MapDownloadStatus.completed) return;
-    if (service.isDownloading(navId)) return;
+    if (status != MapDownloadStatus.notStarted &&
+        status != MapDownloadStatus.failed) return;
 
     service.markPrompted(navId);
 

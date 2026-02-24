@@ -334,7 +334,8 @@ class RoutesDistributionService {
       if (cp != null) waypointCps.add(cp);
     }
 
-    final bool needsSharing = pool.length < N * K;
+    final bool needsSharing = pool.length < N * K ||
+        params.scoringCriterion == 'doubleCheck'; // doubleCheck דורש חפיפה מכוונת
 
     // --- שלב 2: חיפוש Monte Carlo (ייחודי) ---
     _InternalDistribution? bestDistribution;
@@ -1001,6 +1002,22 @@ class RoutesDistributionService {
         // מקסימום ייחודיות — נקודות שונות לכל מנווט
         // שונות משנית, העיקר ייחודיות
         return totalUniqueCheckpoints * 1000.0 + inRangeBonus + partialInRangeBonus - variance * 10;
+
+      case 'doubleCheck':
+        // אימות כפול — כל נקודה נבדקת ע"י בדיוק 2 מנווטים
+        final allIds = distribution.values.expand((r) => r.checkpointIds).toList();
+        final frequency = <String, int>{};
+        for (final id in allIds) {
+          frequency[id] = (frequency[id] ?? 0) + 1;
+        }
+        // נקודות שמופיעות בדיוק ב-2 צירים = מושלם
+        final doubleChecked = frequency.values.where((c) => c == 2).length;
+        // נקודות שמופיעות רק ב-1 ציר = לא מאומתות
+        final singleOnly = frequency.values.where((c) => c == 1).length;
+        // נקודות שמופיעות ב-3+ צירים = בזבוז
+        final overChecked = frequency.values.where((c) => c > 2).length;
+        return doubleChecked * 1500.0 - singleOnly * 500.0 - overChecked * 300.0
+            + inRangeBonus + partialInRangeBonus - variance * 50;
 
       default:
         return -variance * 1000 + inRangeBonus + partialInRangeBonus + uniqueBonus;

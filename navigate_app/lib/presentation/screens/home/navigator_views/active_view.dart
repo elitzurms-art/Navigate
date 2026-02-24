@@ -1446,27 +1446,33 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       return;
     }
 
-    // קבלת מיקום GPS נוכחי
-    final posResult = await _gpsService.getCurrentPositionWithAccuracy(
-      boundaryCenter: _boundaryCenter,
-    );
-    if (posResult == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('לא ניתן לקבל מיקום GPS'),
-            backgroundColor: Colors.red,
-          ),
-        );
+    // עדיפות למיקום Kalman מסונן מהמעקב הפעיל — מדויק יותר מ-GPS גולמי
+    Coordinate currentCoord;
+    if (_gpsTracker.isTracking && _gpsTracker.trackPoints.isNotEmpty) {
+      final lastFiltered = _gpsTracker.trackPoints.last;
+      currentCoord = lastFiltered.coordinate;
+    } else {
+      // fallback — מעקב לא פעיל, שימוש ב-GPS ישיר
+      final posResult = await _gpsService.getCurrentPositionWithAccuracy(
+        boundaryCenter: _boundaryCenter,
+      );
+      if (posResult == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('לא ניתן לקבל מיקום GPS'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
       }
-      return;
+      currentCoord = Coordinate(
+        lat: posResult.position.latitude,
+        lng: posResult.position.longitude,
+        utm: '',
+      );
     }
-
-    final currentCoord = Coordinate(
-      lat: posResult.position.latitude,
-      lng: posResult.position.longitude,
-      utm: '',
-    );
 
     // מציאת הנקודה הקרובה ביותר מציר המנווט
     domain_cp.Checkpoint? nearestCp;

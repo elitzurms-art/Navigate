@@ -585,6 +585,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               groupValue: _scoringCriterion,
               onChanged: (value) => setState(() => _scoringCriterion = value!),
             ),
+            RadioListTile<String>(
+              title: const Text('אימות כפול'),
+              subtitle: const Text('כל נקודה נבדקת ע"י 2 מנווטים שונים'),
+              value: 'doubleCheck',
+              groupValue: _scoringCriterion,
+              onChanged: (value) => setState(() => _scoringCriterion = value!),
+            ),
           ],
         ),
       ),

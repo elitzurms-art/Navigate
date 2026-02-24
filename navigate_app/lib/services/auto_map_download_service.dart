@@ -7,6 +7,7 @@ import '../core/utils/geometry_utils.dart';
 import '../data/repositories/boundary_repository.dart';
 import '../data/repositories/navigation_repository.dart';
 import '../domain/entities/navigation.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'tile_cache_service.dart';
 import 'map_download_notification_service.dart';
 import 'background_location_service.dart';
@@ -93,19 +94,32 @@ class AutoMapDownloadService with WidgetsBindingObserver {
   bool _ownsForegroundService = false;
 
   /// הפעלת foreground service אם לא רץ — כדי שההורדה תמשיך עם מסך כבוי/אפליקציה ברקע
+  /// אם GPS tracking כבר רץ (BackgroundLocationService) — פשוט נרכב על השירות הקיים
   Future<void> _ensureForegroundService() async {
-    final bgService = BackgroundLocationService();
-    if (!bgService.isRunning) {
-      await bgService.start();
-      _ownsForegroundService = true;
-      print('DEBUG AutoMapDownload: started foreground service for download');
+    // אם GPS foreground service כבר רץ — לא צריך להפעיל, התהליך כבר חי
+    if (BackgroundLocationService().isRunning) return;
+
+    try {
+      final result = await FlutterForegroundTask.startService(
+        notificationTitle: 'מוריד מפות אופליין',
+        notificationText: 'ההורדה מתבצעת ברקע...',
+        callback: _mapDownloadServiceCallback,
+      );
+      if (result is ServiceRequestSuccess) {
+        _ownsForegroundService = true;
+        print('DEBUG AutoMapDownload: started foreground service for download');
+      }
+    } catch (e) {
+      print('DEBUG AutoMapDownload: failed to start foreground service: $e');
     }
   }
 
   /// עצירת foreground service רק אם אנחנו הפעלנו אותו (לא GPS tracking)
   Future<void> _releaseForegroundService() async {
     if (_ownsForegroundService) {
-      await BackgroundLocationService().stop();
+      try {
+        await FlutterForegroundTask.stopService();
+      } catch (_) {}
       _ownsForegroundService = false;
       print('DEBUG AutoMapDownload: stopped foreground service after download');
     }
@@ -432,4 +446,21 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       _lifecycleRegistered = false;
     }
   }
+}
+
+// TaskHandler מינימלי להורדת מפות — רק שומר את התהליך חי, לא מפעיל GPS
+@pragma('vm:entry-point')
+void _mapDownloadServiceCallback() {
+  FlutterForegroundTask.setTaskHandler(_MapDownloadTaskHandler());
+}
+
+class _MapDownloadTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {}
 }

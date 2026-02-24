@@ -296,6 +296,14 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
       final activePunches = punches.where((p) => !p.isDeleted).toList();
 
+      final verifiedCount = score != null
+          ? score.checkpointScores.values.where((cs) => cs.approved).length
+          : 0;
+      final plannedTimeMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+        routeLengthKm: route.routeLengthKm,
+        settings: widget.navigation.timeCalculationSettings,
+      );
+
       _navigatorDataMap[navId] = _NavigatorData(
         navigatorId: navId,
         trackPoints: trackPoints,
@@ -309,6 +317,8 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         avgSpeedKmh: avgSpeedKmh,
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
+        verifiedCount: verifiedCount,
+        plannedTimeMinutes: plannedTimeMinutes,
         color: color,
         isDisqualified: track?.isDisqualified ?? false,
       );
@@ -1835,7 +1845,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
               style: TextStyle(fontWeight: FontWeight.bold))),
           DataColumn(label: Text('מהירות\nממוצעת',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-          DataColumn(label: Text('נ.צ.\nשנדקרו',
+          DataColumn(label: Text('כמות\nדקירות',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(label: Text('נ.צ.\nשאומתו',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
           DataColumn(label: Text('ציון',
               style: TextStyle(fontWeight: FontWeight.bold))),
@@ -1875,14 +1887,27 @@ class _ApprovalScreenState extends State<ApprovalScreen>
             DataCell(Text(data.actualDistanceKm > 0
                 ? '${data.actualDistanceKm.toStringAsFixed(1)} ק"מ'
                 : '-')),
-            DataCell(Text(data.totalDuration.inSeconds > 0
-                ? _formatDuration(data.totalDuration)
-                : '-')),
+            DataCell(data.totalDuration.inSeconds > 0
+                ? (data.plannedTimeMinutes > 0
+                    ? Text(
+                        '${_formatDuration(data.totalDuration)}/${_formatDuration(Duration(minutes: data.plannedTimeMinutes))}',
+                        style: TextStyle(
+                          color: data.totalDuration.inMinutes < data.plannedTimeMinutes
+                              ? Colors.green
+                              : Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      )
+                    : Text(_formatDuration(data.totalDuration)))
+                : const Text('-')),
             DataCell(Text(data.avgSpeedKmh > 0
                 ? '${data.avgSpeedKmh.toStringAsFixed(1)} קמ"ש'
                 : '-')),
             DataCell(
                 Text('${data.checkpointsHit}/${data.totalCheckpoints}')),
+            DataCell(data.score != null
+                ? Text('${data.verifiedCount}/${data.totalCheckpoints}')
+                : const Text('-', style: TextStyle(color: Colors.grey))),
             DataCell(score != null
                 ? Container(
                     padding: const EdgeInsets.symmetric(
@@ -2395,6 +2420,8 @@ class _NavigatorData {
   final double avgSpeedKmh;
   final int checkpointsHit;
   final int totalCheckpoints;
+  final int verifiedCount;
+  final int plannedTimeMinutes;
   final Color color;
   final bool isDisqualified;
 
@@ -2411,6 +2438,8 @@ class _NavigatorData {
     required this.avgSpeedKmh,
     required this.checkpointsHit,
     required this.totalCheckpoints,
+    required this.verifiedCount,
+    required this.plannedTimeMinutes,
     required this.color,
     this.isDisqualified = false,
   });

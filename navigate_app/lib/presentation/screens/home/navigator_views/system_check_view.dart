@@ -69,10 +69,11 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     final navId = widget.navigation.id;
     final promptKey = '${navId}_systemcheck';
 
-    // דילוג אם כבר הוצג בבדיקת מערכות, הושלם, או מוריד כרגע
+    // דילוג אם כבר הוצג, או שההורדה בכל סטטוס חוץ מ-notStarted/failed
+    final status = service.getStatus(navId);
     if (service.hasBeenPrompted(promptKey)) return;
-    if (service.getStatus(navId) == MapDownloadStatus.completed) return;
-    if (service.isDownloading(navId)) return;
+    if (status != MapDownloadStatus.notStarted &&
+        status != MapDownloadStatus.failed) return;
 
     service.markPrompted(promptKey);
 
