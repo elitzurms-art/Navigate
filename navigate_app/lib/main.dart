@@ -16,6 +16,7 @@ import 'data/repositories/navigation_tree_repository.dart';
 import 'data/repositories/user_repository.dart';
 import 'data/sync/sync_manager.dart';
 import 'services/notification_service.dart';
+import 'services/map_download_notification_service.dart';
 import 'services/background_location_service.dart';
 import 'services/device_security_service.dart';
 import 'domain/entities/hat_type.dart';
@@ -53,6 +54,9 @@ void main() async {
 
   // אתחול cache אריחי מפה (חייב לפני MapConfig)
   await TileCacheService().initialize();
+
+  // אתחול שירות התראות הורדת מפות
+  await MapDownloadNotificationService().initialize();
 
   // אתחול שירות גובה אופליין
   await ElevationService().initialize();
@@ -136,6 +140,7 @@ Future<void> _requestMissingPermissions() async {
     Permission.microphone,
     Permission.phone,
     Permission.sms,
+    Permission.activityRecognition,
   ];
 
   for (final permission in permissions) {

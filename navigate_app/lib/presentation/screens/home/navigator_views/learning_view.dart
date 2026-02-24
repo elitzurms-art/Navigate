@@ -28,6 +28,7 @@ import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
+import '../../../../services/auto_map_download_service.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import 'route_editor_screen.dart';
 
@@ -105,6 +106,59 @@ class _LearningViewState extends State<LearningView>
     _loadCheckpoints();
     _loadDisplayNames();
     _loadMapLayers();
+    _promptMapDownload();
+  }
+
+  /// הצגת דיאלוג הורדת מפות אופליין — פעם אחת בלבד
+  void _promptMapDownload() {
+    final service = AutoMapDownloadService();
+    final navId = widget.navigation.id;
+
+    // דילוג אם כבר הוצג, הושלם, או מוריד כרגע
+    if (service.hasBeenPrompted(navId)) return;
+    if (service.getStatus(navId) == MapDownloadStatus.completed) return;
+    if (service.isDownloading(navId)) return;
+
+    service.markPrompted(navId);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('הורדת מפות אופליין'),
+          content: const Text(
+            'האם להוריד מפות אופליין עבור הניווט?\n'
+            'ההורדה תתבצע ברקע ותופיע כהתראה.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('לא כעת'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('הורד'),
+            ),
+          ],
+        ),
+      ).then((approved) {
+        if (approved == true) {
+          service.markApproved(navId);
+          service.onStatusMessage = (message, {bool isError = false}) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(message),
+                backgroundColor: isError ? Colors.red : Colors.blue,
+                duration: Duration(seconds: isError ? 4 : 3),
+              ),
+            );
+          };
+          service.triggerDownload(widget.navigation);
+        }
+      });
+    });
   }
 
   @override

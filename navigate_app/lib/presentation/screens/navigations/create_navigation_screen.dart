@@ -1994,7 +1994,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     try {
       // יצירת ההגדרות
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
-          .copyWith(requireSoloQuiz: _requireSoloQuiz);
+          .copyWith(requireSoloQuiz: _requireSoloQuiz, quizOpenManually: false);
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,

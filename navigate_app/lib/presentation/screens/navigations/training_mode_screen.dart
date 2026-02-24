@@ -18,7 +18,6 @@ import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
-import '../../../services/auto_map_download_service.dart';
 import '../../../data/repositories/user_repository.dart';
 
 /// מסך מצב למידה לניווט
@@ -337,14 +336,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _navigationListener = _navRepo.watchNavigation(widget.navigation.id).listen(
       (nav) {
         if (!mounted || nav == null) return;
-        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס, הגדרות למידה)
+        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+        // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
         if (_currentNavigation.routes != nav.routes ||
-            _currentNavigation.status != nav.status ||
-            _currentNavigation.learningSettings != nav.learningSettings) {
+            _currentNavigation.status != nav.status) {
           setState(() {
             _currentNavigation = nav;
             _learningStarted = nav.status == 'learning';
-            _initLearningSettings();
           });
         }
       },
@@ -381,14 +379,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       data['id'] = snapshot.id;
       final nav = domain.Navigation.fromMap(data);
 
-      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס, הגדרות למידה)
+      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
+      // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
       if (_currentNavigation.routes != nav.routes ||
-          _currentNavigation.status != nav.status ||
-          _currentNavigation.learningSettings != nav.learningSettings) {
+          _currentNavigation.status != nav.status) {
         setState(() {
           _currentNavigation = nav;
           _learningStarted = nav.status == 'learning';
-          _initLearningSettings();
         });
         // עדכון DB מקומי כדי לשמור על סנכרון Drift
         await _navRepo.upsertLocalFromFirestore(nav);
@@ -499,22 +496,70 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
 
   Future<void> _startLearning() async {
-    final updatedNav = _currentNavigation.copyWith(
-      status: 'learning',
-      updatedAt: DateTime.now(),
-    );
-    await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
-    _triggerAutoMapDownload(updatedNav);
+    if (_learningStarted) return;
 
-    if (mounted) {
-      setState(() => _learningStarted = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('מצב למידה הופעל — המנווטים יראו את המסך שלהם'),
-          backgroundColor: Colors.blue,
+    // הצגת עיגול טעינה
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('מפעיל מצב למידה...'),
+              ],
+            ),
+          ),
         ),
+      ),
+    );
+
+    try {
+      final updatedNav = _currentNavigation.copyWith(
+        status: 'learning',
+        updatedAt: DateTime.now(),
       );
+      await _navRepo.update(updatedNav);
+      _currentNavigation = updatedNav;
+
+      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(updatedNav.id)
+            .set({
+          'status': 'learning',
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (_) {
+        // best-effort — תור הסנכרון הוא ה-fallback
+      }
+
+      if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
+        setState(() => _learningStarted = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('מצב למידה הופעל — המנווטים יראו את המסך שלהם'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהפעלת למידה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -556,22 +601,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       Navigator.pop(context, true);
     }
-  }
-
-  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
-  void _triggerAutoMapDownload(domain.Navigation navigation) {
-    final service = AutoMapDownloadService();
-    service.onStatusMessage = (message, {bool isError = false}) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Colors.red : Colors.blue,
-          duration: Duration(seconds: isError ? 4 : 3),
-        ),
-      );
-    };
-    service.triggerDownload(navigation);
   }
 
   Future<void> _deleteNavigation() async {
@@ -738,6 +767,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 value: _enableLearningWithPhones,
                 onChanged: (value) {
                   setState(() => _enableLearningWithPhones = value);
+                  _autoSaveLearningSettings();
                 },
               ),
 
@@ -747,6 +777,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _showAllCheckpoints,
                   onChanged: (value) {
                     setState(() => _showAllCheckpoints = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
                 SwitchListTile(
@@ -754,6 +785,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _showNavigationDetails,
                   onChanged: (value) {
                     setState(() => _showNavigationDetails = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
                 if (_showNavigationDetails)
@@ -762,6 +794,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     value: _showMissionTimes,
                     onChanged: (value) {
                       setState(() => _showMissionTimes = value);
+                      _autoSaveLearningSettings();
                     },
                   ),
                 SwitchListTile(
@@ -769,6 +802,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _showLearningRoutes,
                   onChanged: (value) {
                     setState(() => _showLearningRoutes = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
                 SwitchListTile(
@@ -776,6 +810,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _allowRouteEditing,
                   onChanged: (value) {
                     setState(() => _allowRouteEditing = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
                 SwitchListTile(
@@ -783,6 +818,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _allowRouteNarration,
                   onChanged: (value) {
                     setState(() => _allowRouteNarration = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
               ],
@@ -794,6 +830,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 value: _autoLearningTimes,
                 onChanged: (value) {
                   setState(() => _autoLearningTimes = value);
+                  _autoSaveLearningSettings();
                 },
               ),
 
@@ -814,6 +851,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     );
                     if (date != null) {
                       setState(() => _learningDate = date);
+                      _autoSaveLearningSettings();
                     }
                   },
                 ),
@@ -828,6 +866,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     );
                     if (time != null) {
                       setState(() => _learningStartTime = time);
+                      _autoSaveLearningSettings();
                     }
                   },
                 ),
@@ -842,6 +881,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     );
                     if (time != null) {
                       setState(() => _learningEndTime = time);
+                      _autoSaveLearningSettings();
                     }
                   },
                 ),
@@ -938,6 +978,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _quizOpenManually,
                   onChanged: (value) {
                     setState(() => _quizOpenManually = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
 
@@ -946,6 +987,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   value: _autoQuizTimes,
                   onChanged: (value) {
                     setState(() => _autoQuizTimes = value);
+                    _autoSaveLearningSettings();
                   },
                 ),
 
@@ -966,6 +1008,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       );
                       if (date != null) {
                         setState(() => _quizDate = date);
+                        _autoSaveLearningSettings();
                       }
                     },
                   ),
@@ -980,6 +1023,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       );
                       if (time != null) {
                         setState(() => _quizStartTime = time);
+                        _autoSaveLearningSettings();
                       }
                     },
                   ),
@@ -994,6 +1038,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       );
                       if (time != null) {
                         setState(() => _quizEndTime = time);
+                        _autoSaveLearningSettings();
                       }
                     },
                   ),
@@ -1001,27 +1046,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               ],
 
               const SizedBox(height: 24),
-
-              // כפתור שמירה
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _saveLearningSettings,
-                  icon: const Icon(Icons.save),
-                  label: const Text(
-                    'שמור הגדרות',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 48),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -1029,7 +1053,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  Future<void> _saveLearningSettings() async {
+  /// שמירה אוטומטית של הגדרות למידה — נקראת אחרי כל שינוי
+  Future<void> _autoSaveLearningSettings() async {
     final newSettings = LearningSettings(
       enabledWithPhones: _enableLearningWithPhones,
       showAllCheckpoints: _showAllCheckpoints,
@@ -1058,37 +1083,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           : null,
     );
 
-    if (newSettings == _currentNavigation.learningSettings) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('אין שינויים לשמור')),
-        );
-      }
-      return;
-    }
-
-    // אזהרה אם הלמידה כבר פעילה
-    if (_learningStarted) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('הלמידה כבר פעילה'),
-          content: const Text('השינויים ייכנסו לתוקף מיידי. האם להמשיך?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('ביטול'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: TextButton.styleFrom(foregroundColor: Colors.orange),
-              child: const Text('שמור בכל זאת'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
+    if (newSettings == _currentNavigation.learningSettings) return;
 
     try {
       final updatedNav = _currentNavigation.copyWith(
@@ -1096,26 +1091,12 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         updatedAt: DateTime.now(),
       );
       await _navRepo.update(updatedNav);
-      setState(() => _currentNavigation = updatedNav);
+      if (mounted) {
+        setState(() => _currentNavigation = updatedNav);
+      }
       _scheduleAutoLearning();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('הגדרות הלמידה נשמרו בהצלחה'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בשמירה: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      print('DEBUG TrainingMode: auto-save error: $e');
     }
   }
 

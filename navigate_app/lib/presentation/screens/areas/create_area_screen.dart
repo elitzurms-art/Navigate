@@ -29,6 +29,7 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
   bool _measureMode = false;
   bool _isFullscreen = false;
   final List<LatLng> _measurePoints = [];
+  int? _selectedPointIndex;
 
   @override
   void initState() {
@@ -47,6 +48,32 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
     super.dispose();
   }
 
+  void _deletePoint(int index) {
+    setState(() {
+      _boundaryPoints.removeAt(index);
+      _selectedPointIndex = null;
+    });
+  }
+
+  void _insertMidpoint(int afterIndex) {
+    final a = _boundaryPoints[afterIndex];
+    final b = _boundaryPoints[(afterIndex + 1) % _boundaryPoints.length];
+    final mid = LatLng(
+      (a.latitude + b.latitude) / 2,
+      (a.longitude + b.longitude) / 2,
+    );
+    setState(() {
+      final insertIndex = afterIndex + 1;
+      if (insertIndex >= _boundaryPoints.length) {
+        _boundaryPoints.add(mid);
+        _selectedPointIndex = _boundaryPoints.length - 1;
+      } else {
+        _boundaryPoints.insert(insertIndex, mid);
+        _selectedPointIndex = insertIndex;
+      }
+    });
+  }
+
   Widget _buildMapWidget() {
     return Stack(
       children: [
@@ -59,6 +86,13 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
             onTap: (tapPosition, point) {
               if (_measureMode) {
                 setState(() => _measurePoints.add(point));
+                return;
+              }
+              if (_selectedPointIndex != null) {
+                setState(() {
+                  _boundaryPoints[_selectedPointIndex!] = point;
+                  _selectedPointIndex = null;
+                });
                 return;
               }
               if (_isDrawing) {
@@ -81,26 +115,73 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
                   ),
                 ],
               ),
+            // נקודות אמצע — כפתורי "+" להוספת נקודה חדשה
+            if (_boundaryPoints.length >= 3)
+              MarkerLayer(
+                markers: List.generate(_boundaryPoints.length, (i) {
+                  final a = _boundaryPoints[i];
+                  final b = _boundaryPoints[(i + 1) % _boundaryPoints.length];
+                  final midLat = (a.latitude + b.latitude) / 2;
+                  final midLng = (a.longitude + b.longitude) / 2;
+                  return Marker(
+                    point: LatLng(midLat, midLng),
+                    width: 22,
+                    height: 22,
+                    child: GestureDetector(
+                      onTap: () => _insertMidpoint(i),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: const Center(
+                          child: Icon(Icons.add, size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
             if (_boundaryPoints.isNotEmpty)
               MarkerLayer(
                 markers: _boundaryPoints.asMap().entries.map((entry) {
+                  final isSelected = _selectedPointIndex == entry.key;
                   return Marker(
                     point: entry.value,
-                    width: 30,
-                    height: 30,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.blue,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '${entry.key + 1}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                    width: isSelected ? 34 : 30,
+                    height: isSelected ? 34 : 30,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (_selectedPointIndex == entry.key) {
+                            _selectedPointIndex = null;
+                          } else {
+                            _selectedPointIndex = entry.key;
+                          }
+                        });
+                      },
+                      onLongPress: () => _deletePoint(entry.key),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.green : Colors.blue,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isSelected ? Colors.greenAccent : Colors.white,
+                            width: isSelected ? 3 : 2,
+                          ),
+                          boxShadow: isSelected
+                              ? [BoxShadow(color: Colors.green.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)]
+                              : null,
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${entry.key + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -152,6 +233,7 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
                 ElevatedButton.icon(
                   onPressed: _boundaryPoints.isEmpty ? null : () {
                     setState(() {
+                      _selectedPointIndex = null;
                       _boundaryPoints.clear();
                     });
                   },
@@ -165,7 +247,7 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
               ],
             ),
           ),
-        if (_isFullscreen && _isDrawing)
+        if (_isFullscreen && (_isDrawing || _selectedPointIndex != null))
           Positioned(
             top: 8,
             left: 60,
@@ -173,13 +255,34 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.orange.shade50,
+                color: _selectedPointIndex != null ? Colors.green.shade50 : Colors.orange.shade50,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                'לחץ על המפה להוספת נקודות גבול (${_boundaryPoints.length} נקודות)',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.orange),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      _selectedPointIndex != null
+                          ? 'לחץ על המפה להזיז נקודה ${_selectedPointIndex! + 1}'
+                          : 'לחץ על המפה להוספת נקודות גבול (${_boundaryPoints.length} נקודות)',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _selectedPointIndex != null ? Colors.green[700] : Colors.orange,
+                        fontWeight: _selectedPointIndex != null ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                  if (_selectedPointIndex != null)
+                    GestureDetector(
+                      onTap: () => setState(() => _selectedPointIndex = null),
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Icon(Icons.close, size: 18, color: Colors.green[700]),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -275,6 +378,7 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
                               ElevatedButton.icon(
                                 onPressed: _boundaryPoints.isEmpty ? null : () {
                                   setState(() {
+                                    _selectedPointIndex = null;
                                     _boundaryPoints.clear();
                                   });
                                 },
@@ -291,14 +395,34 @@ class _CreateAreaScreenState extends State<CreateAreaScreen> {
                             'נקודות: ${_boundaryPoints.length}',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
-                          if (_isDrawing)
+                          if (_isDrawing || _selectedPointIndex != null)
                             Container(
                               padding: const EdgeInsets.all(8),
-                              color: Colors.orange.shade50,
-                              child: const Text(
-                                'לחץ על המפה להוספת נקודות גבול',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.orange),
+                              color: _selectedPointIndex != null ? Colors.green.shade50 : Colors.orange.shade50,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      _selectedPointIndex != null
+                                          ? 'לחץ על המפה להזיז נקודה ${_selectedPointIndex! + 1}'
+                                          : 'לחץ על המפה להוספת נקודות גבול',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: _selectedPointIndex != null ? Colors.green[700] : Colors.orange,
+                                        fontWeight: _selectedPointIndex != null ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ),
+                                  if (_selectedPointIndex != null)
+                                    GestureDetector(
+                                      onTap: () => setState(() => _selectedPointIndex = null),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(right: 4),
+                                        child: Icon(Icons.close, size: 18, color: Colors.green[700]),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                         ],

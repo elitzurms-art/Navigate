@@ -21,6 +21,7 @@ export 'src/database/tower_data_downloader.dart';
 
 // PDR (Pedestrian Dead Reckoning)
 export 'src/models/pdr_position_result.dart';
+export 'src/pdr/activity_classifier.dart';
 export 'src/pdr/sensor_platform.dart';
 export 'src/pdr/heading_estimator.dart';
 export 'src/pdr/pdr_engine.dart';

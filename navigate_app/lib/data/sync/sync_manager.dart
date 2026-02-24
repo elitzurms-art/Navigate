@@ -943,14 +943,6 @@ class SyncManager {
           break;
         case AppConstants.navigationsCollection:
           await _upsertNavigation(documentId, serverData);
-          // הורדת מפות אוטומטית כשניווט במצב למידה/בדיקת מערכות/ממתין
-          final autoDownloadStatuses = {'learning', 'system_check', 'waiting'};
-          if (autoDownloadStatuses.contains(serverData['status'])) {
-            final nav = await NavigationRepository().getById(documentId);
-            if (nav != null) {
-              unawaited(AutoMapDownloadService().triggerDownload(nav));
-            }
-          }
           break;
         default:
           print('SyncManager: No local upsert handler for collection $collection');

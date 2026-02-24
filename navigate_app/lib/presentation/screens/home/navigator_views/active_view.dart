@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/coordinate.dart';
@@ -68,6 +69,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   NavigatorPersonalStatus _personalStatus = NavigatorPersonalStatus.waiting;
   NavigationTrack? _track;
   bool _isLoading = true;
+  bool _isStarting = false;
 
   int _punchCount = 0;
   bool _securityActive = false;
@@ -111,13 +113,14 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Alert monitoring
   AlertMonitoringService? _alertMonitoringService;
 
-  // באנר התראה למנווט
+  // באנר התראה למנווט + צפצוף חזק (alarm channel — עובד גם ב-DND)
   NavigatorAlert? _currentAlertBanner;
   Timer? _alertBannerTimer;
+  late final AudioPlayer _alertPlayer;
 
   // Voice (PTT)
   VoiceService? _voiceService;
-  bool _overrideWalkieTalkieEnabled = false;
+  bool? _overrideWalkieTalkieEnabled;
 
   // בקשות הארכה
   final ExtensionRequestRepository _extensionRepo = ExtensionRequestRepository();
@@ -132,6 +135,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
+  bool _trackJustCreated = false; // grace flag — track נוצר מקומית, טרם סונכרן ל-Firestore
 
   // טיימר זמן שחלף
   Timer? _elapsedTimer;
@@ -149,6 +153,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _alertPlayer = AudioPlayer();
+    _alertPlayer.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        usageType: AndroidUsageType.alarm,
+        contentType: AndroidContentType.sonification,
+        audioFocus: AndroidAudioFocus.gainTransient,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.duckOthers},
+      ),
+    ));
+    _allowManualPosition = widget.navigation.allowManualPosition;
     _loadTrackState();
   }
 
@@ -183,6 +200,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     BackgroundLocationService().stop(); // safety net
     _gpsService.dispose();
     _voiceService?.dispose();
+    _alertPlayer.dispose();
     _extensionListener?.cancel();
     _barburAlertListener?.cancel();
     super.dispose();
@@ -386,9 +404,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         // grace period קצר (6 שניות) — מונע false positive מיד אחרי startLockTask()
         if (_securityStartTime != null &&
             DateTime.now().difference(_securityStartTime!).inSeconds < 6) {
-          print('DEBUG ActiveView: onLockTaskExit in grace period — re-enabling silently');
-          await DeviceSecurityService().enableLockTask();
-          return;
+          print('DEBUG ActiveView: onLockTaskExit in grace period — ignoring');
+          return;  // Don't call enableLockTask() — it would show the dialog again
         }
         // מחוץ ל-grace period — הפעלה מחדש + פסילה
         print('🚨 ActiveView: Lock Task exit detected — re-enabling + disqualifying');
@@ -479,13 +496,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           'navigatorUserId': updatedTrack.navigatorUserId,
           'trackPointsJson': updatedTrack.trackPointsJson,
           'stabbingsJson': updatedTrack.stabbingsJson,
-          'startedAt': updatedTrack.startedAt.toIso8601String(),
-          'endedAt': updatedTrack.endedAt?.toIso8601String(),
+          'startedAt': updatedTrack.startedAt.toUtc().toIso8601String(),
+          'endedAt': updatedTrack.endedAt?.toUtc().toIso8601String(),
           'isActive': updatedTrack.isActive,
           'isDisqualified': updatedTrack.isDisqualified,
           'disqualificationReason': _disqualificationReason,
           'manualPositionUsed': updatedTrack.manualPositionUsed,
-          'manualPositionUsedAt': updatedTrack.manualPositionUsedAt?.toIso8601String(),
+          'manualPositionUsedAt': updatedTrack.manualPositionUsedAt?.toUtc().toIso8601String(),
         }, SetOptions(merge: true));
       } catch (_) {}
 
@@ -624,7 +641,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     } else if (_hadGpsFix && source != PositionSource.gps && _allowManualPosition && !_manualPositionUsed && !_manualPinPending) {
       // GPS lost after having it — auto-trigger manual pin if allowed
       final age = DateTime.now().difference(lastPoint.timestamp);
-      if (age.inSeconds > 10) {
+      if (age.inSeconds > 60) {
         _checkAndTriggerManualPin();
       }
     }
@@ -869,12 +886,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       if (!mounted) return;
 
       if (!snapshot.exists) {
+        if (_trackJustCreated) {
+          // track נוצר מקומית וטרם סונכרן ל-Firestore — לא מדובר במחיקת מפקד
+          return;
+        }
         // המפקד מחק את ה-track — איפוס (תמיד, גם אחרי סיום)
         _performRemoteReset();
         return;
       }
+      // Doc exists — track סונכרן בהצלחה
+      _trackJustCreated = false;
 
       final data = snapshot.data();
+      print('DEBUG ActiveView: track doc snapshot — overrideWalkieTalkieEnabled=${data?['overrideWalkieTalkieEnabled']}, personalStatus=$_personalStatus');
       if (data == null) return;
 
       // בדיקת ביטול פסילה — רלוונטי בכל מצב (פעיל או סיים)
@@ -967,9 +991,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       }
 
     // קריאת דריסת ווקי טוקי
-    final newWalkieTalkieEnabled = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
+    final newWalkieTalkieEnabled = data['overrideWalkieTalkieEnabled'] as bool?;
     if (newWalkieTalkieEnabled != _overrideWalkieTalkieEnabled) {
+      print('DEBUG ActiveView: walkieTalkie override changed: $_overrideWalkieTalkieEnabled → $newWalkieTalkieEnabled (nav default=${widget.navigation.communicationSettings.walkieTalkieEnabled})');
       _overrideWalkieTalkieEnabled = newWalkieTalkieEnabled;
+      // עדכון Drift מקומי — מונע דריסה ב-_saveTrackPoints (בדומה לדריסות מפה)
+      if (_track != null && newWalkieTalkieEnabled != null) {
+        try {
+          await _trackRepo.updateWalkieTalkieOverrideLocal(
+            _track!.id,
+            enabled: newWalkieTalkieEnabled,
+          );
+        } catch (_) {}
+      }
       if (mounted) setState(() {});
     }
 
@@ -1193,8 +1227,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _alertBannerTimer?.cancel();
     if (mounted) {
       setState(() => _currentAlertBanner = alert);
-      HapticFeedback.heavyImpact();
-      SystemSound.play(SystemSoundType.alert);
+      _playAlertFeedback();
     }
 
     // באנר נעלם אחרי 8 שניות
@@ -1203,6 +1236,23 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         setState(() => _currentAlertBanner = null);
       }
     });
+  }
+
+  /// צפצוף חזק + רטט — 3 פעימות (alarm channel עוקף DND)
+  Future<void> _playAlertFeedback() async {
+    for (int i = 0; i < 3; i++) {
+      HapticFeedback.heavyImpact();
+      try {
+        await _alertPlayer.stop();
+        await _alertPlayer.play(AssetSource('sounds/alert_beep.wav'));
+      } catch (_) {
+        // fallback — אם הקובץ לא נטען
+        SystemSound.play(SystemSoundType.alert);
+      }
+      if (i < 2) {
+        await Future.delayed(const Duration(milliseconds: 400));
+      }
+    }
   }
 
   // ===========================================================================
@@ -1218,6 +1268,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       Permission.microphone,
       Permission.phone,
       Permission.sms,
+      Permission.activityRecognition,
     ];
 
     for (final permission in permissions) {
@@ -1229,32 +1280,46 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _startNavigation() async {
+    if (_isStarting) return;
+    _isStarting = true;
     setState(() => _isLoading = true);
     try {
-      // בקשת כל ההרשאות החסרות לפני תחילת ניווט
+      // 1. בקשת כל ההרשאות החסרות לפני תחילת ניווט
       await _requestAllMissingPermissions();
 
+      // 2. יצירת track — הפעולה המרכזית
       final track = await _trackRepo.startNavigation(
         navigatorUserId: widget.currentUser.uid,
         navigationId: _nav.id,
       );
-
       _startTime = track.startedAt;
-
-      // הפעלת שירותים
-      await _startSecurity();
-
-      // שמירת ה-track ב-state לפני GPS כדי ש-_saveTrackPoints יוכל לגשת אליו
       _track = track;
 
-      // סנכרון מיידי ל-Firestore — כדי שהמפקד יראה את המנווט כ"פעיל" גם ללא GPS
-      await _trackRepo.syncTrackToFirestore(track);
+      // 3. הפעלת אבטחה (Lock Task + DND + ניטור שיחות)
+      await _startSecurity();
 
-      await _startGpsTracking();
+      // 4. מעבר למצב active מיידית — שירותים לא-קריטיים ברקע
+      _trackJustCreated = true; // grace: track עדיין לא ב-Firestore
+      setState(() {
+        _personalStatus = NavigatorPersonalStatus.active;
+        _elapsed = Duration.zero;
+        _isLoading = false;
+      });
+      _startElapsedTimer();
 
-      // שמירה מיידית של הנקודה הראשונה (אם יש) ל-Drift + סנכרון ל-Firestore
-      await _saveTrackPoints();
+      // 5. סנכרון ל-Firestore — fire and forget
+      _trackRepo.syncTrackToFirestore(track).catchError((e) {
+        print('DEBUG ActiveView: sync error (non-blocking): $e');
+      });
 
+      // 6. GPS + שמירת נקודה ראשונה — fire and forget
+      _startGpsTracking().then((_) {
+        _saveTrackPoints();
+      }).catchError((e) {
+        print('DEBUG ActiveView: GPS start error: $e');
+      });
+
+      // 7. שירותים נלווים
       _startGpsSourceCheck();
       _startStatusReporting();
       _startHealthCheck();
@@ -1262,24 +1327,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _startTrackDocListener();
       _startExtensionListener();
 
-      // דקירת מיקום ידני — בדיקה אחרי 3 שניות
-      if (widget.navigation.allowManualPosition || _allowManualPosition) {
-        Future.delayed(const Duration(seconds: 3), () {
-          if (mounted && _gpsTracker.trackPoints.isEmpty) {
-            _checkAndTriggerManualPin();
-          }
-        });
-      }
-
-      setState(() {
-        _track = track;
-        _personalStatus = NavigatorPersonalStatus.active;
-        _elapsed = Duration.zero;
-        _isLoading = false;
-      });
-
-      _startElapsedTimer();
+      // דקירת מיקום ידני — מופעל רק בשני מקרים:
+      // 1. אחרי איבוד GPS של 60+ שניות (ב-_checkGpsSource)
+      // 2. לחיצה ידנית של המנווט על הבאנר
     } catch (e) {
+      // מגיע לכאן רק אם הרשאות, יצירת track, או אבטחה נכשלו
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1289,6 +1341,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ),
         );
       }
+    } finally {
+      _isStarting = false;
     }
   }
 
@@ -2026,7 +2080,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ),
         ),
         // ווקי טוקי
-        if (widget.navigation.communicationSettings.walkieTalkieEnabled || _overrideWalkieTalkieEnabled) ...[
+        if (_overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled) ...[
           Builder(builder: (context) {
             _voiceService ??= VoiceService();
             return VoiceMessagesPanel(

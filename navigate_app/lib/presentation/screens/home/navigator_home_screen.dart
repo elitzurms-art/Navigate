@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../../data/sync/sync_manager.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import '../../../services/scoring_service.dart';
@@ -13,7 +14,6 @@ import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/app_constants.dart';
-import '../../../services/auto_map_download_service.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../onboarding/choose_unit_screen.dart';
 import '../onboarding/waiting_for_approval_screen.dart';
@@ -37,6 +37,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   final AuthService _authService = AuthService();
   final SessionService _sessionService = SessionService();
   final NavigationRepository _navigationRepo = NavigationRepository();
+  final SyncManager _syncManager = SyncManager();
 
   final ScoringService _scoringService = ScoringService();
 
@@ -54,11 +55,18 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   Timer? _pollTimer;
   Timer? _scorePollTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
+  StreamSubscription<String>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadState();
+    // האזנה לשינויים מ-SyncManager (כשניווט חדש מגיע מ-Firestore)
+    _syncSubscription = _syncManager.onDataChanged.listen((collection) {
+      if (collection == 'navigations' && mounted) {
+        _loadState(silent: true);
+      }
+    });
     // סקר כל 60 שניות כ-fallback (Firestore listener הוא העיקרי)
     _pollTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       _loadState(silent: true);
@@ -70,6 +78,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _pollTimer?.cancel();
     _scorePollTimer?.cancel();
     _navigationListener?.cancel();
+    _syncSubscription?.cancel();
     super.dispose();
   }
 
@@ -87,23 +96,6 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         }
         // עדכון local DB בלי sync חזרה
         _navigationRepo.upsertLocalFromFirestore(nav);
-        // הורדת מפות אוטומטית כשעוברים למצב למידה/בדיקת מערכות/ממתין
-        final autoDownloadStatuses = {'learning', 'system_check', 'waiting'};
-        if (autoDownloadStatuses.contains(nav.status) &&
-            (_currentNavigation == null || !autoDownloadStatuses.contains(_currentNavigation!.status))) {
-          final service = AutoMapDownloadService();
-          service.onStatusMessage = (message, {bool isError = false}) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(message),
-                backgroundColor: isError ? Colors.red : Colors.blue,
-                duration: Duration(seconds: isError ? 4 : 3),
-              ),
-            );
-          };
-          service.triggerDownload(nav);
-        }
         // עדכון UI אם הסטטוס או הנתונים השתנו
         if (_currentNavigation == null ||
             _currentNavigation!.status != nav.status ||
@@ -212,6 +204,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         _startNavigationListener(bestNav.id);
       }
 
+      if (!mounted) return;
       setState(() {
         _currentNavigation = bestNav;
         _state = statusToScreenState(bestNav!.status);

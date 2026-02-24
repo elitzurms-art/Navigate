@@ -168,7 +168,7 @@ class MainActivity: FlutterActivity() {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 startLockTask()
-                wasInLockTaskMode = true
+                // wasInLockTaskMode will be set in onResume() based on actual state
                 true
             } else {
                 false
@@ -219,7 +219,7 @@ class MainActivity: FlutterActivity() {
                     arrayOf(packageName)
                 )
                 startLockTask()
-                wasInLockTaskMode = true
+                // wasInLockTaskMode will be set in onResume() based on actual state
                 true
             } else {
                 false

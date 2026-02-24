@@ -210,6 +210,11 @@ class PositionKalmanFilter {
   /// Moving: adaptive noise based on GPS accuracy.
   void setMotionState({required bool isStationary}) {
     _isStationary = isStationary;
+    if (isStationary) {
+      // Zero velocity — prevents accumulated jitter velocity from drifting prediction
+      _x[2] = 0;
+      _x[3] = 0;
+    }
     _updateQ();
   }
 

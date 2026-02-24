@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../models/pdr_position_result.dart';
+import 'activity_classifier.dart';
 import 'pdr_engine.dart';
 import 'sensor_platform.dart';
 import 'step_length_estimator.dart';
@@ -20,6 +21,7 @@ class PdrService {
   final SensorPlatform _sensorPlatform = SensorPlatform();
   final PdrEngine _engine = PdrEngine();
   final StepLengthEstimator _stepLengthEstimator = StepLengthEstimator();
+  final ActivityClassifier _activityClassifier = ActivityClassifier();
 
   StreamSubscription<Map<String, dynamic>>? _sensorSubscription;
   final StreamController<PdrPositionResult> _positionController =
@@ -47,6 +49,9 @@ class PdrService {
 
   /// Whether the device is currently stationary (ZUPT).
   bool get isStationary => _engine.isStationary;
+
+  /// Current classified activity type (standing / walking / running).
+  PdrActivityType get currentActivity => _activityClassifier.currentActivity;
 
   /// Start the PDR service — registers sensors and begins listening.
   Future<void> start() async {
@@ -79,10 +84,11 @@ class PdrService {
     print('DEBUG PdrService: anchor set at $lat, $lon (steps reset)');
   }
 
-  /// Full reset — clears anchor, steps, heading.
+  /// Full reset — clears anchor, steps, heading, activity.
   void reset() {
     _engine.reset();
     _stepLengthEstimator.reset();
+    _activityClassifier.reset();
   }
 
   /// Dispose the service — stops and closes stream.
@@ -98,8 +104,10 @@ class PdrService {
 
     switch (type) {
       case 'step':
+        _activityClassifier.onStep();
+        final activity = _activityClassifier.currentActivity;
         final stepCountBefore = _engine.stepCount;
-        final stepLength = _stepLengthEstimator.onStep();
+        final stepLength = _stepLengthEstimator.onStep(activityType: activity);
         _engine.onStep(stepLength: stepLength);
         // Only emit position if step was actually processed (not suppressed by ZUPT)
         if (_engine.stepCount > stepCountBefore) {
@@ -124,6 +132,7 @@ class PdrService {
         final y = (event['y'] as num).toDouble();
         final z = (event['z'] as num).toDouble();
         _stepLengthEstimator.onAccel(x, y, z);
+        _activityClassifier.onAccel(x, y, z);
         _engine.onAccel(x, y, z);
     }
   }

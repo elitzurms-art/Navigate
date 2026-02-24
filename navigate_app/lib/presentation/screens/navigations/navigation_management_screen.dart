@@ -407,6 +407,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.personalStatus = status;
             data.hasActiveAlert = hasAlert;
 
+            // זמני התחלה/סיום מה-track המקומי (לפני שה-Firestore listener מעדכן)
+            if (track != null) {
+              data.trackStartedAt = track.startedAt;
+              data.trackEndedAt = track.endedAt;
+            }
+
             // עדכון נקודות רק אם יש נתונים חדשים (לא לדרוס Firestore data בריק)
             if (points.isNotEmpty) {
               data.trackPoints = points;
@@ -1163,6 +1169,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           isActive: isActive,
           endedAt: endedAt,
         );
+        liveData.trackEndedAt = endedAt;
 
         // קריאת isDisqualified + סיבה מה-track doc
         liveData.isDisqualified = data['isDisqualified'] as bool? ?? false;
@@ -1188,6 +1195,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         if (data.containsKey('overrideEnabledPositionSources')) {
           final sources = data['overrideEnabledPositionSources'];
           _navigatorPositionSourcesOverride[navigatorId] = sources is List ? sources.cast<String>() : null;
+        }
+
+        // זמן התחלה אישי של המנווט
+        final startedAtRaw = data['startedAt'];
+        if (startedAtRaw is Timestamp) {
+          liveData.trackStartedAt = startedAtRaw.toDate();
+        } else if (startedAtRaw is String) {
+          liveData.trackStartedAt = DateTime.tryParse(startedAtRaw);
         }
 
       }
@@ -1331,6 +1346,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.personalStatus = NavigatorPersonalStatus.waiting;
             data.trackPoints = [];
             data.currentPosition = null;
+            data.trackStartedAt = null;
+            data.trackEndedAt = null;
             data.resetAt = DateTime.now();
           }
         });
@@ -1405,6 +1422,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.trackPoints = [];
             data.punches = [];
             data.currentPosition = null;
+            data.trackStartedAt = null;
+            data.trackEndedAt = null;
             data.resetAt = DateTime.now();
           }
         });
@@ -2622,11 +2641,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           _statChip(
                             Icons.timer,
                             _formatDuration(
-                              data.resetAt != null
-                                ? DateTime.now().difference(data.resetAt!)
-                                : (widget.navigation.activeStartTime != null
-                                    ? DateTime.now().difference(widget.navigation.activeStartTime!)
-                                    : data.elapsedTime),
+                              () {
+                                // מנווט שעדיין לא התחיל — אפס
+                                if (data.trackStartedAt == null) return Duration.zero;
+                                final endTime = data.trackEndedAt ?? DateTime.now();
+                                final diff = endTime.difference(data.trackStartedAt!);
+                                return diff.isNegative ? Duration.zero : diff;
+                              }(),
                             ),
                           ),
                           if (totalCheckpoints > 0)
@@ -3482,11 +3503,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       _detailRow('מהירות ממוצעת', '${liveData.averageSpeedKmh.toStringAsFixed(1)} קמ"ש'),
                       _detailRow('מרחק שנעבר', '${liveData.totalDistanceKm.toStringAsFixed(2)} ק"מ'),
                       _detailRow('זמן ניווט', _formatDuration(
-                        liveData.resetAt != null
-                          ? DateTime.now().difference(liveData.resetAt!)
-                          : (widget.navigation.activeStartTime != null
-                              ? DateTime.now().difference(widget.navigation.activeStartTime!)
-                              : liveData.elapsedTime),
+                        () {
+                          // מנווט שעדיין לא התחיל — אפס
+                          if (liveData.trackStartedAt == null) return Duration.zero;
+                          final endTime = liveData.trackEndedAt ?? DateTime.now();
+                          final diff = endTime.difference(liveData.trackStartedAt!);
+                          return diff.isNegative ? Duration.zero : diff;
+                        }(),
                       )),
                       _detailRow('נקודות GPS', '${liveData.trackPoints.length}'),
                       if (liveData.lastUpdate != null)
@@ -4641,6 +4664,8 @@ class NavigatorLiveData {
   bool hasPhonePermission;
   bool hasDNDPermission;
   DateTime? resetAt; // set when navigator is reset/restarted
+  DateTime? trackStartedAt; // זמן התחלה אישי של המנווט (מה-track doc)
+  DateTime? trackEndedAt; // זמן סיום אישי של המנווט (מה-track doc)
 
   NavigatorLiveData({
     required this.navigatorId,
@@ -4658,6 +4683,8 @@ class NavigatorLiveData {
     this.hasPhonePermission = false,
     this.hasDNDPermission = false,
     this.resetAt,
+    this.trackStartedAt,
+    this.trackEndedAt,
   });
 
   /// מרחק כולל שנעבר בק"מ

@@ -76,17 +76,8 @@ class _DataLoadingScreenState extends State<DataLoadingScreen>
       });
     }
 
-    if (isCached && lastSync != null) {
-      // נתונים קיימים - נשאל אם להשתמש ב-cache או לרענן
-      if (mounted) {
-        setState(() {
-          _loadCompleted = true;
-        });
-      }
-    } else {
-      // אין נתונים - מתחילים טעינה
-      await _startLoading(forceRefresh: false);
-    }
+    // תמיד טוענים נתונים מחדש — forceRefresh אם יש cache
+    await _startLoading(forceRefresh: isCached);
   }
 
   /// התחלת טעינת נתונים

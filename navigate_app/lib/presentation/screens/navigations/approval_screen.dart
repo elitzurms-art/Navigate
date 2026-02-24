@@ -53,6 +53,9 @@ const _kNavigatorColors = [
   Color(0xFF795548),
 ];
 
+/// מצב הצגת נקודות ציון
+enum NzDisplayMode { navigatorOnly, participatingOnly, allCheckpoints }
+
 /// מסך אישור ניווט וחישוב ציונים
 class ApprovalScreen extends StatefulWidget {
   final domain.Navigation navigation;
@@ -105,6 +108,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   // שכבות מפה
   bool _showGG = true;
   bool _showNZ = true;
+  NzDisplayMode _nzMode = NzDisplayMode.navigatorOnly;
   bool _showNB = false;
   bool _showPlanned = true;
   bool _showRoutes = true;
@@ -312,6 +316,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
     _selectedNavigatorId =
         navigatorIds.isNotEmpty ? navigatorIds.first : null;
+
   }
 
   void _centerMapOnData() {
@@ -1095,7 +1100,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                       ..._buildAllNavigatorsRouteLayers()
                     else
                       ..._buildSingleNavigatorRouteLayers(),
-                    if (_showNZ) ..._buildCheckpointMarkers(_navCheckpoints),
+                    if (_showNZ) ..._buildCheckpointMarkers(_getCheckpointsForDisplay()),
                     ...MapControls.buildMeasureLayers(_measurePoints),
                   ],
                 ),
@@ -1184,6 +1189,88 @@ class _ApprovalScreenState extends State<ApprovalScreen>
             .toList(),
       ),
     ];
+  }
+
+  /// מחזיר נקודות ציון מסוננות לפי מצב התצוגה הנבחר
+  List<nav.NavCheckpoint> _getCheckpointsForDisplay() {
+    switch (_nzMode) {
+      case NzDisplayMode.navigatorOnly:
+        // במצב כל המנווטים — fallback למשתתפות
+        if (_allNavigatorsMode) {
+          return _collectParticipatingCheckpoints();
+        }
+        final data = _selectedNavigatorId != null
+            ? _navigatorDataMap[_selectedNavigatorId]
+            : null;
+        if (data == null) return [];
+        // routeCheckpoints כולל רק נקודות ביניים — צריך גם H/S
+        final route = _currentNavigation.routes[_selectedNavigatorId];
+        final result = <nav.NavCheckpoint>[...data.routeCheckpoints];
+        if (route != null) {
+          _addStartEndCheckpoints(result, route.startPointId, route.endPointId);
+        }
+        return result;
+      case NzDisplayMode.participatingOnly:
+        return _collectParticipatingCheckpoints();
+      case NzDisplayMode.allCheckpoints:
+        return _navCheckpoints;
+    }
+  }
+
+  /// אוסף את כל נקודות הציון המשתתפות בניווט (מכל המנווטים)
+  List<nav.NavCheckpoint> _collectParticipatingCheckpoints() {
+    final ids = <String>{};
+    final result = <nav.NavCheckpoint>[];
+    for (final data in _navigatorDataMap.values) {
+      for (final cp in data.routeCheckpoints) {
+        if (ids.add(cp.id)) result.add(cp);
+      }
+      final route = _currentNavigation.routes[data.navigatorId];
+      if (route != null) {
+        _addStartEndCheckpoints(result, route.startPointId, route.endPointId);
+      }
+    }
+    return result;
+  }
+
+  /// מוסיף נקודות התחלה/סיום מ-_navCheckpoints לרשימה (אם לא כבר קיימות)
+  void _addStartEndCheckpoints(List<nav.NavCheckpoint> result, String? startId, String? endId) {
+    final existingIds = result.map((c) => c.id).toSet();
+    for (final id in [startId, endId]) {
+      if (id == null) continue;
+      final match = _navCheckpoints.where((c) =>
+        c.id == id || c.sourceId == id
+      ).firstOrNull;
+      if (match != null && !existingIds.contains(match.id)) {
+        result.add(match);
+        existingIds.add(match.id);
+      }
+    }
+  }
+
+  /// בורר מצב הצגת נקודות ציון — 3 chips
+  Widget _buildNzModeSelector() {
+    const modes = [
+      (NzDisplayMode.navigatorOnly, 'מנווט נבחר'),
+      (NzDisplayMode.participatingOnly, 'משתתפות בניווט'),
+      (NzDisplayMode.allCheckpoints, 'כל הנקודות'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 2,
+        children: modes.map((m) => ChoiceChip(
+          label: Text(m.$2, style: const TextStyle(fontSize: 10)),
+          selected: _nzMode == m.$1,
+          onSelected: (_) => setState(() => _nzMode = m.$1),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: EdgeInsets.zero,
+        )).toList(),
+      ),
+    );
   }
 
   List<Widget> _buildCheckpointMarkers(List<nav.NavCheckpoint> checkpoints) {
@@ -1450,6 +1537,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 id: 'nz', label: 'נקודות ציון', color: Colors.blue,
                 visible: _showNZ, onVisibilityChanged: (_) {},
                 opacity: _nzOpacity, onOpacityChanged: (_) {},
+                child: _buildNzModeSelector(),
               ),
               MapLayerConfig(
                 id: 'nb', label: 'נקודות בטיחות', color: _kSafetyColor,
@@ -1492,7 +1580,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 ..._buildAllNavigatorsRouteLayers()
               else
                 ..._buildSingleNavigatorRouteLayers(),
-              if (visibility['nz'] == true) ..._buildCheckpointMarkers(_navCheckpoints),
+              if (visibility['nz'] == true) ..._buildCheckpointMarkers(_getCheckpointsForDisplay()),
             ],
           ),
         ));
@@ -1507,6 +1595,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           id: 'nz', label: 'נקודות ציון', color: Colors.blue,
           visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v),
           opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+          child: _buildNzModeSelector(),
         ),
         MapLayerConfig(
           id: 'nb', label: 'נקודות בטיחות', color: _kSafetyColor,

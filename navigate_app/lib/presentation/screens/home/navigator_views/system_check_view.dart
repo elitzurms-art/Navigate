@@ -11,6 +11,7 @@ import '../../../../domain/entities/user.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../services/gps_service.dart';
 import '../../../../services/device_security_service.dart';
+import '../../../../services/auto_map_download_service.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/voice_messages_panel.dart';
 
@@ -59,6 +60,67 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   void initState() {
     super.initState();
     _runChecks();
+    _promptMapDownload();
+  }
+
+  /// הצגת דיאלוג הורדת מפות אופליין — מוצג גם אם הוצג בלמידה (מפתח נפרד)
+  void _promptMapDownload() {
+    final service = AutoMapDownloadService();
+    final navId = widget.navigation.id;
+    final promptKey = '${navId}_systemcheck';
+
+    // דילוג אם כבר הוצג בבדיקת מערכות, הושלם, או מוריד כרגע
+    if (service.hasBeenPrompted(promptKey)) return;
+    if (service.getStatus(navId) == MapDownloadStatus.completed) return;
+    if (service.isDownloading(navId)) return;
+
+    service.markPrompted(promptKey);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // הודעה שונה אם המשתמש כבר אישר פעם אבל לא הושלם
+      final previouslyApproved = service.isApproved(navId);
+      final message = previouslyApproved
+          ? 'ההורדה הקודמת לא הושלמה.\nהאם להוריד מפות אופליין מחדש?'
+          : 'האם להוריד מפות אופליין עבור הניווט?\nההורדה תתבצע ברקע ותופיע כהתראה.';
+
+      showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('הורדת מפות אופליין'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('לא כעת'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('הורד'),
+            ),
+          ],
+        ),
+      ).then((approved) {
+        if (approved == true) {
+          service.markApproved(navId);
+          if (previouslyApproved) {
+            service.resetForManualDownload(navId);
+          }
+          service.onStatusMessage = (message, {bool isError = false}) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(message),
+                backgroundColor: isError ? Colors.red : Colors.blue,
+                duration: Duration(seconds: isError ? 4 : 3),
+              ),
+            );
+          };
+          service.triggerDownload(widget.navigation);
+        }
+      });
+    });
   }
 
   @override
@@ -123,6 +185,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'notification': await Permission.notification.status,
         'microphone': await Permission.microphone.status,
         'phone': await Permission.phone.status,
+        'activityRecognition': await Permission.activityRecognition.status,
       };
       if (mounted) {
         setState(() {
@@ -306,6 +369,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       case 'notification': return 'התראות';
       case 'microphone': return 'מיקרופון';
       case 'phone': return 'טלפון';
+      case 'activityRecognition': return 'חיישני תנועה (צעדים)';
       default: return key;
     }
   }
@@ -325,6 +389,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       case 'notification': return Permission.notification;
       case 'microphone': return Permission.microphone;
       case 'phone': return Permission.phone;
+      case 'activityRecognition': return Permission.activityRecognition;
       default: return Permission.location;
     }
   }

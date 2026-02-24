@@ -22,7 +22,6 @@ import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
-import '../../../services/auto_map_download_service.dart';
 import '../../../services/voice_service.dart';
 import '../../widgets/voice_messages_panel.dart';
 
@@ -76,11 +75,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   double _gpsAccuracy = -1;
   LatLng? _currentPosition;
   bool _isCheckingSystem = false;
-
-  // סטטוס מפות אופליין למנווט
-  MapDownloadStatus _mapDownloadStatus = MapDownloadStatus.notStarted;
-  double _mapDownloadProgress = 0.0;
-  Timer? _mapStatusTimer;
 
   // הרשאות מכשיר (לטאב הרשאות)
   Map<String, PermissionStatus> _permissionStatuses = {};
@@ -197,9 +191,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         _hasDNDPermission = true; // iOS — לא רלוונטי
       }
 
-      // בדיקת סטטוס מפות אופליין + הפעלת הורדה אם לא התחילה
-      _checkMapDownloadStatus();
-
       setState(() => _isCheckingSystem = false);
 
       // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
@@ -210,62 +201,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         const Duration(seconds: 15),
         (_) => _checkAndReportStatus(),
       );
-
-      // polling סטטוס מפות כל 5 שניות (עדכון UI מהיר בזמן הורדה)
-      _mapStatusTimer ??= Timer.periodic(
-        const Duration(seconds: 5),
-        (_) => _checkMapDownloadStatus(),
-      );
     } catch (e) {
       setState(() => _isCheckingSystem = false);
     }
-  }
-
-  /// בדיקת סטטוס הורדת מפות + הפעלה אוטומטית
-  void _checkMapDownloadStatus() {
-    final service = AutoMapDownloadService();
-    final navId = _currentNavigation.id;
-
-    final newStatus = service.getStatus(navId);
-    final newProgress = service.getProgress(navId);
-
-    // הפעלת הורדה אוטומטית אם לא התחילה
-    if (newStatus == MapDownloadStatus.notStarted) {
-      _triggerAutoMapDownload(_currentNavigation);
-    }
-
-    if (newStatus != _mapDownloadStatus || newProgress != _mapDownloadProgress) {
-      if (mounted) {
-        setState(() {
-          _mapDownloadStatus = newStatus;
-          _mapDownloadProgress = newProgress;
-        });
-        // עדכון Firestore עם סטטוס מפות חדש
-        _reportStatusToFirestore();
-      }
-    }
-  }
-
-  /// הורדה ידנית מחדש
-  Future<void> _startManualMapDownload() async {
-    final service = AutoMapDownloadService();
-    service.resetForManualDownload(_currentNavigation.id);
-    service.onStatusMessage = (message, {bool isError = false}) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Colors.red : Colors.blue,
-          duration: Duration(seconds: isError ? 4 : 3),
-        ),
-      );
-    };
-    setState(() {
-      _mapDownloadStatus = MapDownloadStatus.downloading;
-      _mapDownloadProgress = 0.0;
-    });
-    await service.triggerDownload(_currentNavigation);
-    _checkMapDownloadStatus();
   }
 
   /// בדיקה מחזורית ודיווח (מנווט)
@@ -325,7 +263,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
         'positionSource': _gpsService.lastPositionSource.name,
-        'mapsStatus': _mapDownloadStatus.name,
         'hasMicrophonePermission': _permissionStatuses['microphone']?.isGranted ?? false,
         'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
         'hasDNDPermission': _hasDNDPermission,
@@ -355,6 +292,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
       'sms': await Permission.sms.status,
+      'activityRecognition': await Permission.activityRecognition.status,
     };
   }
 
@@ -367,6 +305,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       Permission.microphone,
       Permission.phone,
       Permission.sms,
+      Permission.activityRecognition,
     ];
 
     for (final permission in permissions) {
@@ -397,7 +336,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _systemStatusListener?.cancel();
     _statusPollTimer?.cancel();
     _navigatorCheckTimer?.cancel();
-    _mapStatusTimer?.cancel();
     _voiceService?.dispose();
     super.dispose();
   }
@@ -802,42 +740,75 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _startSystemCheck() async {
+    if (_systemCheckStarted) return;
+
     // בקשת כל ההרשאות החסרות במכשיר המפקד
     await _requestAllMissingPermissions();
     await _checkDevicePermissions();
 
-    final updatedNav = _currentNavigation.copyWith(
-      status: 'system_check',
-      updatedAt: DateTime.now(),
+    // הצגת עיגול טעינה
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('מפעיל בדיקת מערכות...'),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
-    await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
-    _triggerAutoMapDownload(updatedNav);
-    if (mounted) {
-      setState(() => _systemCheckStarted = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('בדיקת מערכות הופעלה — המנווטים יראו את המסך שלהם'),
-          backgroundColor: Colors.blue,
-        ),
-      );
-    }
-  }
 
-  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
-  void _triggerAutoMapDownload(domain.Navigation navigation) {
-    final service = AutoMapDownloadService();
-    service.onStatusMessage = (message, {bool isError = false}) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Colors.red : Colors.blue,
-          duration: Duration(seconds: isError ? 4 : 3),
-        ),
+    try {
+      final updatedNav = _currentNavigation.copyWith(
+        status: 'system_check',
+        updatedAt: DateTime.now(),
       );
-    };
-    service.triggerDownload(navigation);
+      await _navRepo.update(updatedNav);
+      _currentNavigation = updatedNav;
+
+      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(updatedNav.id)
+            .set({
+          'status': 'system_check',
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (_) {
+        // best-effort — תור הסנכרון הוא ה-fallback
+      }
+
+      if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
+        setState(() => _systemCheckStarted = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('בדיקת מערכות הופעלה — המנווטים יראו את המסך שלהם'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהפעלת בדיקת מערכות: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _finishSystemCheck() async {
@@ -2604,11 +2575,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       ),
                     ),
 
-                  const SizedBox(height: 16),
-
-                  // בדיקת מפות אופליין
-                  _buildMapDownloadCard(),
-
                   const SizedBox(height: 32),
 
                   // כפתור אישור
@@ -2643,100 +2609,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                   }),
               ],
             ),
-      ),
-    );
-  }
-
-  /// כרטיס סטטוס הורדת מפות אופליין
-  Widget _buildMapDownloadCard() {
-    IconData icon;
-    Color color;
-    String statusText;
-    Widget? trailing;
-
-    switch (_mapDownloadStatus) {
-      case MapDownloadStatus.completed:
-        icon = Icons.check_circle;
-        color = Colors.green;
-        statusText = 'מפות אופליין הורדו בהצלחה';
-        break;
-      case MapDownloadStatus.downloading:
-        icon = Icons.cloud_download;
-        color = Colors.blue;
-        final pct = (_mapDownloadProgress * 100).toStringAsFixed(0);
-        statusText = 'מוריד מפות אופליין... $pct%';
-        trailing = SizedBox(
-          width: 48,
-          height: 48,
-          child: CircularProgressIndicator(
-            value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
-            strokeWidth: 3,
-            color: Colors.blue,
-          ),
-        );
-        break;
-      case MapDownloadStatus.failed:
-        icon = Icons.error;
-        color = Colors.red;
-        statusText = 'הורדת מפות נכשלה';
-        trailing = ElevatedButton(
-          onPressed: _startManualMapDownload,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('הורד שוב'),
-        );
-        break;
-      case MapDownloadStatus.notStarted:
-        icon = Icons.cloud_off;
-        color = Colors.orange;
-        statusText = 'מפות אופליין לא הורדו';
-        trailing = ElevatedButton(
-          onPressed: _startManualMapDownload,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('הורד'),
-        );
-        break;
-      case MapDownloadStatus.interrupted:
-        icon = Icons.pause_circle_filled;
-        color = Colors.orange;
-        final pct = (_mapDownloadProgress * 100).toStringAsFixed(0);
-        statusText = 'הורדת מפות הופסקה ($pct%) — ימשיך אוטומטית';
-        trailing = SizedBox(
-          width: 48,
-          height: 48,
-          child: CircularProgressIndicator(
-            value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
-            strokeWidth: 3,
-            color: Colors.orange,
-          ),
-        );
-        break;
-    }
-
-    return Card(
-      child: ListTile(
-        leading: Icon(icon, color: color, size: 40),
-        title: const Text('מפות אופליין'),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(statusText, style: TextStyle(color: color)),
-            if (_mapDownloadStatus == MapDownloadStatus.downloading)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: LinearProgressIndicator(
-                  value: _mapDownloadProgress > 0 ? _mapDownloadProgress : null,
-                  color: Colors.blue,
-                ),
-              ),
-          ],
-        ),
-        trailing: trailing,
       ),
     );
   }
@@ -2977,6 +2849,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
       'sms': await Permission.sms.status,
+      'activityRecognition': await Permission.activityRecognition.status,
     };
   }
 
@@ -2994,6 +2867,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return 'טלפון';
       case 'sms':
         return 'SMS';
+      case 'activityRecognition':
+        return 'חיישני תנועה (צעדים)';
       default:
         return key;
     }
@@ -3021,6 +2896,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return Permission.phone;
       case 'sms':
         return Permission.sms;
+      case 'activityRecognition':
+        return Permission.activityRecognition;
       default:
         return Permission.location;
     }

@@ -107,6 +107,10 @@ class GpsService {
   /// Whether PDR detects the device is stationary (ZUPT).
   bool get isPdrStationary => _pdrService?.isStationary ?? false;
 
+  /// Current classified activity type from PDR sensor pipeline.
+  PdrActivityType get currentActivity =>
+      _pdrService?.currentActivity ?? PdrActivityType.standing;
+
   /// מיקום PDR+Cell hybrid
   ///
   /// אם שניהם זמינים — weighted average לפי accuracy.

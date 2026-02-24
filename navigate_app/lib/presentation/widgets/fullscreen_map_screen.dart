@@ -58,6 +58,7 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
       onOpacityChanged: c.opacity != null
           ? (v) => setState(() => _opacity[c.id] = v)
           : null,
+      child: c.child,
     )).toList();
   }
 

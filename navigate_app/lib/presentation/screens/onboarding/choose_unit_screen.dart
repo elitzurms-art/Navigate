@@ -85,6 +85,8 @@ class _ChooseUnitScreenState extends State<ChooseUnitScreen> {
       for (final doc in snapshot.docs) {
         try {
           final data = Map<String, dynamic>.from(doc.data());
+          // דילוג על יחידות שנמחקו (soft-delete)
+          if (data['deletedAt'] != null) continue;
           data['id'] = doc.id;
           // המרת Timestamp ל-ISO string
           data.forEach((key, value) {

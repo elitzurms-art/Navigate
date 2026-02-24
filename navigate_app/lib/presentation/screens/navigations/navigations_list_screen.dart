@@ -17,7 +17,6 @@ import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import '../../../services/route_export_service.dart';
-import '../../../services/auto_map_download_service.dart';
 import 'create_navigation_screen.dart';
 import 'training_mode_screen.dart';
 import 'system_check_screen.dart';
@@ -683,7 +682,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
-    _triggerAutoMapDownload(updatedNavigation);
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner
@@ -833,7 +831,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
-    _triggerAutoMapDownload(updatedNavigation);
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner
@@ -948,7 +945,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
-      _triggerAutoMapDownload(updated);
 
       // יצירת חדר ווקי טוקי אם מופעל
       if (updated.communicationSettings.walkieTalkieEnabled) {
@@ -996,6 +992,20 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
     if (needsDataLoading && _currentUser != null) {
       final isCommander = _currentUser!.hasCommanderPermissions;
+
+      // מפקד בניווט פעיל → ישר למסך ניהול (בלי טעינת נתונים)
+      if (navigation.status == 'active' && isCommander) {
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => NavigationManagementScreen(navigation: navigation),
+          ),
+        );
+        if (result == true || result == 'deleted') {
+          _loadNavigations();
+        }
+        return;
+      }
 
       await Navigator.push(
         context,
@@ -1694,7 +1704,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
-      _triggerAutoMapDownload(updated);
 
       // יצירת חדר ווקי טוקי אם מופעל
       if (updated.communicationSettings.walkieTalkieEnabled) {
@@ -2207,33 +2216,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         ),
       ],
     );
-  }
-
-  /// מחוון שלב צירים (progress indicator)
-  /// הפעלת הורדת מפות אוטומטית עם SnackBar למשתמש
-  void _triggerAutoMapDownload(domain.Navigation navigation) {
-    final service = AutoMapDownloadService();
-    service.onStatusMessage = (message, {bool isError = false}) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: isError ? Colors.red : Colors.blue,
-          duration: Duration(seconds: isError ? 4 : 3),
-        ),
-      );
-    };
-    service.triggerDownload(navigation).then((result) {
-      if (!mounted) return;
-      if (result == AutoDownloadResult.boundaryNotSynced) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('גבול הגזרה לא סונכרן עדיין — מפות ירדו אוטומטית כשיתעדכן'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    });
   }
 
   Widget _buildRoutesStageIndicator(domain.Navigation navigation) {

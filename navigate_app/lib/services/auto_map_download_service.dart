@@ -8,6 +8,8 @@ import '../data/repositories/boundary_repository.dart';
 import '../data/repositories/navigation_repository.dart';
 import '../domain/entities/navigation.dart';
 import 'tile_cache_service.dart';
+import 'map_download_notification_service.dart';
+import 'background_location_service.dart';
 
 /// תוצאת ניסיון הורדה
 enum AutoDownloadResult {
@@ -23,11 +25,11 @@ enum MapDownloadStatus {
   downloading,
   completed,
   failed,
-  interrupted, // הורדה הופסקה (אפליקציה ברקע) — תמשיך אוטומטית
+  interrupted, // הורדה הופסקה — תמשיך אוטומטית
 }
 
 /// הורדת מפות אוטומטית כשניווט עובר למצב למידה — singleton
-/// מאזין ל-lifecycle של האפליקציה ומחדש הורדות שהופסקו
+/// משתמש ב-foreground service כדי שההורדה תמשיך גם כשהמסך כבוי
 class AutoMapDownloadService with WidgetsBindingObserver {
   static final AutoMapDownloadService _instance =
       AutoMapDownloadService._internal();
@@ -49,7 +51,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
   /// שמירת ניווטים להמשך הורדה אחרי חזרה מרקע
   final _navigationCache = <String, Navigation>{};
 
-  /// completer פעיל לכל ניווט — לביטול נקי כשהאפליקציה עוברת לרקע
+  /// completer פעיל לכל ניווט — לביטול נקי
   final _activeCompleters = <String, Completer<void>>{};
 
   /// מונה epoch למניעת race conditions בין הורדות ישנות לחדשות
@@ -59,6 +61,55 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
   /// callback להודעות UI (SnackBar) — מוגדר ע"י המסך הפעיל
   void Function(String message, {bool isError})? onStatusMessage;
+
+  // ─── Prompt / Approval tracking ───
+
+  /// ניווטים שכבר הוצג להם דיאלוג הורדה (מפתח = navId או navId_systemcheck)
+  final _promptedKeys = <String>{};
+
+  /// ניווטים שהמשתמש אישר הורדה
+  final _approvedNavIds = <String>{};
+
+  /// האם הדיאלוג כבר הוצג עבור מפתח זה
+  bool hasBeenPrompted(String key) => _promptedKeys.contains(key);
+
+  /// סימון שהדיאלוג הוצג
+  void markPrompted(String key) => _promptedKeys.add(key);
+
+  /// סימון שהמשתמש אישר הורדה
+  void markApproved(String navId) => _approvedNavIds.add(navId);
+
+  /// האם המשתמש אישר הורדה
+  bool isApproved(String navId) => _approvedNavIds.contains(navId);
+
+  /// אחוז אחרון שדווח ל-notification (throttling)
+  int _lastNotifiedPercent = -1;
+
+  final _notificationService = MapDownloadNotificationService();
+
+  // ─── Foreground service — שומר את התהליך חי ברקע ───
+
+  /// האם אנחנו הפעלנו את ה-foreground service (ולא ה-GPS tracking)
+  bool _ownsForegroundService = false;
+
+  /// הפעלת foreground service אם לא רץ — כדי שההורדה תמשיך עם מסך כבוי/אפליקציה ברקע
+  Future<void> _ensureForegroundService() async {
+    final bgService = BackgroundLocationService();
+    if (!bgService.isRunning) {
+      await bgService.start();
+      _ownsForegroundService = true;
+      print('DEBUG AutoMapDownload: started foreground service for download');
+    }
+  }
+
+  /// עצירת foreground service רק אם אנחנו הפעלנו אותו (לא GPS tracking)
+  Future<void> _releaseForegroundService() async {
+    if (_ownsForegroundService) {
+      await BackgroundLocationService().stop();
+      _ownsForegroundService = false;
+      print('DEBUG AutoMapDownload: stopped foreground service after download');
+    }
+  }
 
   // ─── Lifecycle observer ───
 
@@ -78,29 +129,21 @@ class AutoMapDownloadService with WidgetsBindingObserver {
     }
   }
 
-  /// כשהאפליקציה עוברת לרקע — מבטל הורדות פעילות ומסמן כ-interrupted
+  /// כשהאפליקציה עוברת לרקע — ההורדה ממשיכה בזכות ה-foreground service
   void _onAppPaused() {
-    if (_activeDownloads.isEmpty) return;
-
-    print('DEBUG AutoMapDownload: app paused — cancelling ${_activeDownloads.length} active downloads');
-    for (final navId in _activeDownloads.keys.toList()) {
-      _activeDownloads[navId]?.cancel();
-      _downloadStatus[navId] = MapDownloadStatus.interrupted;
-      // הגדלת epoch כדי שה-triggerDownload הישן יזהה שהוא לא רלוונטי
-      _downloadEpoch[navId] = (_downloadEpoch[navId] ?? 0) + 1;
-      // שחרור completer כדי שה-await לא יתקע
-      final completer = _activeCompleters[navId];
-      if (completer != null && !completer.isCompleted) {
-        completer.complete();
-      }
+    if (_activeDownloads.isNotEmpty) {
+      print('DEBUG AutoMapDownload: app paused — download continues via foreground service');
     }
-    _activeDownloads.clear();
-    _activeCompleters.clear();
   }
 
-  /// כשהאפליקציה חוזרת לפעילות — מחדש הורדות שהופסקו
+  /// כשהאפליקציה חוזרת — אם ההורדה הופסקה (OS הרג), ננסה לחדש
   void _onAppResumed() {
-    // עיכוב קצר כדי שהרשת תתייצב
+    if (_activeDownloads.isNotEmpty) {
+      // עדיין רץ — הכל טוב
+      return;
+    }
+
+    // בדיקה אם יש הורדות שהופסקו (OS הרג את ה-service)
     Future.delayed(const Duration(seconds: 2), () {
       final toResume = _navigationCache.entries
           .where((e) =>
@@ -114,6 +157,8 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       print('DEBUG AutoMapDownload: app resumed — resuming ${toResume.length} interrupted downloads');
       for (final nav in toResume) {
         onStatusMessage?.call('ממשיך הורדת מפות אופליין...');
+        final pct = ((_downloadProgress[nav.id] ?? 0.0) * 100).round();
+        _notificationService.showProgress(pct, 100);
         triggerDownload(nav);
       }
     });
@@ -168,6 +213,9 @@ class AutoMapDownloadService with WidgetsBindingObserver {
         return AutoDownloadResult.boundaryNotSynced;
       }
 
+      // הפעלת foreground service כדי שההורדה תמשיך ברקע
+      await _ensureForegroundService();
+
       // לא מוסיפים ל-_triggeredNavIds עד שההורדה באמת מושלמת
       _downloadStatus[navigation.id] = MapDownloadStatus.downloading;
       _downloadProgress[navigation.id] ??= 0.0;
@@ -209,7 +257,15 @@ class AutoMapDownloadService with WidgetsBindingObserver {
         print('DEBUG AutoMapDownload: resuming download for nav ${navigation.id}');
       }
 
-      int completedTiles = 0;
+      // הצגת notification — ממשיך מהאחוז השמור אם זה resume
+      final savedProgress = _downloadProgress[navigation.id] ?? 0.0;
+      final initialPct = isResume ? (savedProgress * 100).round() : 0;
+      _lastNotifiedPercent = initialPct;
+      _notificationService.showProgress(initialPct, 100);
+
+      // אתחול מונה אריחים — ב-resume, אריחים שכבר ב-cache ידולגו מהר ע"י FMTC
+      // אבל ה-notification מתחיל מהאחוז השמור כדי שלא יקפוץ ל-0%
+      int completedTiles = isResume ? (savedProgress * totalTiles).round() : 0;
       bool wasInterrupted = false;
 
       for (int i = 0; i < mapTypes.length; i++) {
@@ -241,6 +297,14 @@ class AutoMapDownloadService with WidgetsBindingObserver {
                 (progress.percentageProgress / 100 * tileCount).round();
             _downloadProgress[navigation.id] =
                 totalTiles > 0 ? currentTiles / totalTiles : 0.0;
+
+            // עדכון notification כל ~2% שינוי
+            final pct = ((_downloadProgress[navigation.id] ?? 0.0) * 100).round();
+            if ((pct - _lastNotifiedPercent).abs() >= 2) {
+              _lastNotifiedPercent = pct;
+              _notificationService.showProgress(pct, 100);
+            }
+
             if (progress.percentageProgress % 25 < 1) {
               print(
                   'DEBUG AutoMapDownload: $label ${progress.percentageProgress.toStringAsFixed(0)}%');
@@ -267,19 +331,20 @@ class AutoMapDownloadService with WidgetsBindingObserver {
         await completer.future;
         _activeCompleters.remove(navigation.id);
 
-        // בדיקה אם ה-epoch השתנה (האפליקציה עברה לרקע וחזרה)
+        // בדיקה אם ה-epoch השתנה (ביטול ידני)
         if ((_downloadEpoch[navigation.id] ?? 0) != myEpoch) {
           print('DEBUG AutoMapDownload: epoch changed — aborting stale download run');
+          await _releaseForegroundService();
           return AutoDownloadResult.started;
         }
 
-        // בדיקה אם סומן כ-interrupted ע"י _onAppPaused
+        // בדיקה אם סומן כ-interrupted
         if (_downloadStatus[navigation.id] == MapDownloadStatus.interrupted) {
           wasInterrupted = true;
         }
 
         if (wasInterrupted) {
-          print('DEBUG AutoMapDownload: download interrupted — will resume when app returns');
+          print('DEBUG AutoMapDownload: download interrupted — will resume when possible');
           break;
         }
       }
@@ -288,7 +353,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
       if (wasInterrupted) {
         _downloadStatus[navigation.id] = MapDownloadStatus.interrupted;
-        // לא מוסיף ל-_triggeredNavIds — מאפשר re-trigger בחזרה מרקע
+        // לא משחרר foreground service — resume ינסה שוב
         return AutoDownloadResult.started;
       }
 
@@ -300,13 +365,16 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       _downloadEpoch.remove(navigation.id);
       print('DEBUG AutoMapDownload: all downloads complete for nav ${navigation.id}');
       onStatusMessage?.call('הורדת מפות אופליין הושלמה');
+      _notificationService.showCompleted();
+      await _releaseForegroundService();
       return AutoDownloadResult.started;
     } catch (e) {
       print('DEBUG AutoMapDownload: error: $e — will retry later');
       _activeDownloads.remove(navigation.id);
-      // לא מוסיף ל-_triggeredNavIds — מאפשר retry
-      _downloadStatus[navigation.id] = MapDownloadStatus.interrupted;
+      _downloadStatus[navigation.id] = MapDownloadStatus.failed;
       onStatusMessage?.call('שגיאה בהורדת מפות — ינסה שוב', isError: true);
+      _notificationService.showFailed();
+      await _releaseForegroundService();
       return AutoDownloadResult.started;
     }
   }
@@ -321,6 +389,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
   }
 
   /// נקרא כשגבול סונכרן מ-Firestore — בודק אם יש ניווטים שממתינים לו
+  /// רק מפעיל הורדה לניווטים שהמשתמש אישר
   Future<void> onBoundarySynced(String boundaryId) async {
     final pendingNavIds = _pendingBoundaryNavs.remove(boundaryId);
     if (pendingNavIds == null || pendingNavIds.isEmpty) return;
@@ -329,6 +398,9 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
     final navRepo = NavigationRepository();
     for (final navId in pendingNavIds) {
+      // רק ניווטים שהמשתמש אישר הורדה
+      if (!_approvedNavIds.contains(navId)) continue;
+
       final nav = await navRepo.getById(navId);
       final retryStatuses = {'learning', 'system_check', 'waiting'};
       if (nav != null && retryStatuses.contains(nav.status)) {
@@ -349,6 +421,8 @@ class AutoMapDownloadService with WidgetsBindingObserver {
     if (completer != null && !completer.isCompleted) {
       completer.complete();
     }
+    _notificationService.dismiss();
+    _releaseForegroundService();
   }
 
   /// שחרור observer — נקרא כשהאפליקציה נסגרת

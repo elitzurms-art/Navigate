@@ -36,7 +36,6 @@ class GPSTrackingService {
   DateTime? _lastStepTime;
   StreamSubscription<PdrPositionResult>? _pdrStepSubscription;
   static const Duration _stationaryTimeout = Duration(seconds: 5);
-  static const double _driftThresholdMeters = 8.0;
 
   // --- Gap-Fill (PDR during GPS loss) ---
   DateTime? _lastGpsFixTime;
@@ -55,11 +54,11 @@ class GPSTrackingService {
   double? _lastRawGpsLng;
   DateTime? _lastRawGpsTimestamp;
 
-  static const double _jammingAccuracyThreshold = 25.0;
+  static const double _jammingAccuracyThreshold = 35.0;
   static const double _maxSpeedMps = 41.67; // 150 km/h
-  static const double _recoveryAccuracyThreshold = 20.0;
+  static const double _recoveryAccuracyThreshold = 35.0;
   static const int _requiredBadFixes = 3;
-  static const int _requiredGoodFixes = 3;
+  static const int _requiredGoodFixes = 2;
   static const Duration _manualCooldownDuration = Duration(minutes: 5);
 
   bool get isManualCooldownActive =>
@@ -334,9 +333,7 @@ class GPSTrackingService {
 
     // Anti-Drift: subscribe to PDR step stream for step counting
     // (only when PDR is active — short intervals)
-    if (_intervalSeconds <= 10) {
-      _startStepSubscription();
-    }
+    _startStepSubscription();
 
     // Gap-Fill: start gap detection (stream mode only — timer mode uses existing fallback)
     if (_intervalSeconds <= 5 && gpsAvailable) {
@@ -493,27 +490,17 @@ class GPSTrackingService {
     return DateTime.now().difference(_lastStepTime!) > _stationaryTimeout;
   }
 
-  /// Check if a GPS displacement should be rejected as drift.
-  /// Returns true if the user is stationary and the displacement exceeds threshold.
+  /// Check if a GPS fix should be rejected as drift.
+  /// When stationary with no steps, ALL GPS is jitter — reject unconditionally.
   bool _shouldRejectAsDrift(double newLat, double newLng) {
-    // Stream mode (≤5s interval) — let Kalman filter handle smoothing
-    if (_intervalSeconds <= 5) return false;
+    // GPS recovery bypass — ZUPT לא צריך לחסום התאוששות
+    if (_jammingState != GpsJammingState.normal) return false;
     if (!_isStationary) return false;
     if (_trackPoints.isEmpty) return false;
     if (_stepsSinceLastRecord > 0) return false;
 
-    final lastPoint = _trackPoints.last;
-    final displacement = Geolocator.distanceBetween(
-      lastPoint.coordinate.lat, lastPoint.coordinate.lng,
-      newLat, newLng,
-    );
-
-    if (displacement > _driftThresholdMeters) {
-      print('ZUPT: stationary — skipping GPS drift '
-          '(${displacement.toStringAsFixed(1)}m displacement, 0 steps)');
-      return true;
-    }
-    return false;
+    // Stationary + no steps → ALL GPS is jitter, reject unconditionally
+    return true;
   }
 
   /// Check if GPS displacement is anomalously large relative to steps taken.
@@ -795,6 +782,7 @@ class GPSTrackingService {
 
   /// Record a PDR position during gap-fill (bypasses Kalman filter).
   void _recordGapFillPoint(PdrPositionResult pdrPos) {
+    final activity = _gpsService.currentActivity;
     final point = TrackPoint(
       coordinate: Coordinate(
         lat: pdrPos.lat,
@@ -805,6 +793,7 @@ class GPSTrackingService {
       accuracy: pdrPos.accuracyMeters,
       heading: pdrPos.headingDegrees,
       positionSource: 'pdr_gap_fill',
+      activityType: activity.name,
     );
 
     _trackPoints.add(point);
@@ -1109,6 +1098,7 @@ class GPSTrackingService {
       timestamp: DateTime.now(),
     );
 
+    final activity = _gpsService.currentActivity;
     final point = TrackPoint(
       coordinate: Coordinate(
         lat: filtered.lat,
@@ -1121,11 +1111,12 @@ class GPSTrackingService {
       speed: position.speed,
       heading: position.heading,
       positionSource: positionSource,
+      activityType: activity.name,
     );
 
     _trackPoints.add(point);
     _pruneWindowOutliers();
-    print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
+    print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource] [${activity.name}]');
 
     // Reset step counter after recording
     _stepsSinceLastRecord = 0;
@@ -1163,6 +1154,7 @@ class GPSTrackingService {
       timestamp: DateTime.now(),
     );
 
+    final activity = _gpsService.currentActivity;
     final point = TrackPoint(
       coordinate: Coordinate(
         lat: filtered.lat,
@@ -1172,11 +1164,12 @@ class GPSTrackingService {
       timestamp: DateTime.now(),
       accuracy: filtered.accuracy,
       positionSource: positionSource,
+      activityType: activity.name,
     );
 
     _trackPoints.add(point);
     _pruneWindowOutliers();
-    print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource]');
+    print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, ${point.coordinate.lng} [$positionSource] [${activity.name}]');
 
     // Reset step counter after recording
     _stepsSinceLastRecord = 0;
@@ -1198,6 +1191,7 @@ class GPSTrackingService {
           speed: old.speed,
           heading: old.heading,
           positionSource: old.positionSource,
+          activityType: old.activityType,
         );
       }
     }).catchError((_) {});
@@ -1205,6 +1199,23 @@ class GPSTrackingService {
 
   /// רישום מיקום ידני (דקירה במפה) — עוקף Kalman filter + מאפס אותו
   void recordManualPosition(double lat, double lng) {
+    // 0. Trim track history that is impossibly far from the manual position.
+    //    When GPS was wrong (e.g., Georgia instead of Israel), those points
+    //    create false lines on the map. Remove them working backwards.
+    const double trimThresholdMeters = 5000; // 5 km
+    while (_trackPoints.isNotEmpty) {
+      final last = _trackPoints.last;
+      final dist = Geolocator.distanceBetween(
+        last.coordinate.lat, last.coordinate.lng,
+        lat, lng,
+      );
+      if (dist > trimThresholdMeters) {
+        _trackPoints.removeLast();
+      } else {
+        break;
+      }
+    }
+
     // 1. Record point (bypasses Kalman, as before)
     final point = TrackPoint(
       coordinate: Coordinate(lat: lat, lng: lng, utm: _convertToUTM(lat, lng)),
@@ -1329,6 +1340,7 @@ class TrackPoint {
   final double? speed;
   final double? heading;
   final String positionSource;
+  final String? activityType;
 
   TrackPoint({
     required this.coordinate,
@@ -1338,6 +1350,7 @@ class TrackPoint {
     this.speed,
     this.heading,
     this.positionSource = 'gps',
+    this.activityType,
   });
 
   Map<String, dynamic> toMap() {
@@ -1351,6 +1364,7 @@ class TrackPoint {
       if (speed != null) 'speed': speed,
       if (heading != null) 'heading': heading,
       'positionSource': positionSource,
+      if (activityType != null) 'activityType': activityType,
     };
   }
 
@@ -1367,6 +1381,7 @@ class TrackPoint {
       speed: map['speed'] as double?,
       heading: map['heading'] as double?,
       positionSource: map['positionSource'] as String? ?? 'gps',
+      activityType: map['activityType'] as String?,
     );
   }
 }

@@ -270,9 +270,7 @@ class _NavigationPreparationScreenState
       if (mounted) Navigator.pop(context, 'deleted');
       return;
     }
-    if (result == true) {
-      await _reloadNavigation();
-    }
+    await _reloadNavigation();
   }
 
   Future<void> _openSystemCheck() async {

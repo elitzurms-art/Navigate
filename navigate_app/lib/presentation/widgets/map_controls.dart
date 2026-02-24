@@ -22,6 +22,7 @@ class MapLayerConfig {
   final double? opacity;
   final ValueChanged<bool> onVisibilityChanged;
   final ValueChanged<double>? onOpacityChanged;
+  final Widget? child;
 
   const MapLayerConfig({
     required this.id,
@@ -31,6 +32,7 @@ class MapLayerConfig {
     this.opacity,
     required this.onVisibilityChanged,
     this.onOpacityChanged,
+    this.child,
   });
 }
 
@@ -691,6 +693,9 @@ class _MapControlsState extends State<MapControls> {
                 ],
               ),
             ),
+          // תוכן מותאם אישית — מוצג כשהשכבה מופעלת
+          if (layer.visible && layer.child != null)
+            layer.child!,
         ],
       ),
     );

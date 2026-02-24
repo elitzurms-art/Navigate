@@ -56,6 +56,9 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
 
     // 1. בדיקה מקומית (מהירה)
     if (user.isApproved) {
+      // רענון הקשר SyncManager — listeners ייבנו מחדש עם scope מעודכן
+      await _syncManager.refreshUserContext();
+      if (!mounted) return;
       Navigator.of(context).pushReplacementNamed('/home');
       return;
     } else if (user.unitId == null || user.unitId!.isEmpty) {
@@ -83,6 +86,8 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
           user.copyWith(isApproved: true, updatedAt: DateTime.now()),
           queueSync: false,
         );
+        // רענון הקשר SyncManager — listeners ייבנו מחדש עם scope מעודכן
+        await _syncManager.refreshUserContext();
         if (mounted) {
           Navigator.of(context).pushReplacementNamed('/home');
         }

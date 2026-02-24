@@ -34,6 +34,7 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
   bool _isLoading = false;
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+  int? _selectedPointIndex;
 
   @override
   void initState() {
@@ -70,13 +71,19 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
 
   void _addPoint(LatLng point) {
     setState(() {
-      _polygonPoints.add(point);
+      if (_selectedPointIndex != null) {
+        _polygonPoints[_selectedPointIndex!] = point;
+        _selectedPointIndex = null;
+      } else {
+        _polygonPoints.add(point);
+      }
     });
   }
 
   void _undoLastPoint() {
     if (_polygonPoints.isNotEmpty) {
       setState(() {
+        _selectedPointIndex = null;
         _polygonPoints.removeLast();
       });
     }
@@ -84,7 +91,34 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
 
   void _clearPoints() {
     setState(() {
+      _selectedPointIndex = null;
       _polygonPoints.clear();
+    });
+  }
+
+  void _deletePoint(int index) {
+    setState(() {
+      _polygonPoints.removeAt(index);
+      _selectedPointIndex = null;
+    });
+  }
+
+  void _insertMidpoint(int afterIndex) {
+    final a = _polygonPoints[afterIndex];
+    final b = _polygonPoints[(afterIndex + 1) % _polygonPoints.length];
+    final mid = LatLng(
+      (a.latitude + b.latitude) / 2,
+      (a.longitude + b.longitude) / 2,
+    );
+    setState(() {
+      final insertIndex = afterIndex + 1;
+      if (insertIndex >= _polygonPoints.length) {
+        _polygonPoints.add(mid);
+        _selectedPointIndex = _polygonPoints.length - 1;
+      } else {
+        _polygonPoints.insert(insertIndex, mid);
+        _selectedPointIndex = insertIndex;
+      }
     });
   }
 
@@ -209,14 +243,33 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
               color: Colors.grey[200],
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 20, color: Colors.grey[700]),
+                  Icon(
+                    _selectedPointIndex != null ? Icons.open_with : Icons.touch_app,
+                    size: 20,
+                    color: _selectedPointIndex != null ? Colors.green[700] : Colors.grey[700],
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'נקודות: ${_polygonPoints.length} (לחץ על המפה להוסיף)',
-                      style: TextStyle(color: Colors.grey[700]),
+                      _selectedPointIndex != null
+                          ? 'לחץ על המפה להזיז נקודה ${_selectedPointIndex! + 1}'
+                          : _polygonPoints.isEmpty
+                              ? 'לחץ על המפה להוסיף נקודות'
+                              : 'נקודות: ${_polygonPoints.length}',
+                      style: TextStyle(
+                        color: _selectedPointIndex != null ? Colors.green[700] : Colors.grey[700],
+                        fontWeight: _selectedPointIndex != null ? FontWeight.bold : FontWeight.normal,
+                      ),
                     ),
                   ),
+                  if (_selectedPointIndex != null)
+                    IconButton(
+                      icon: Icon(Icons.close, size: 20, color: Colors.green[700]),
+                      onPressed: () => setState(() => _selectedPointIndex = null),
+                      tooltip: 'בטל בחירה',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
                   if (_polygonPoints.isNotEmpty) ...[
                     IconButton(
                       icon: const Icon(Icons.undo, size: 20),
@@ -279,26 +332,73 @@ class _EditBoundaryScreenState extends State<EditBoundaryScreen> {
                             ),
                           ],
                         ),
+                      // נקודות אמצע — כפתורי "+" להוספת נקודה חדשה
+                      if (_polygonPoints.length >= 3)
+                        MarkerLayer(
+                          markers: List.generate(_polygonPoints.length, (i) {
+                            final a = _polygonPoints[i];
+                            final b = _polygonPoints[(i + 1) % _polygonPoints.length];
+                            final midLat = (a.latitude + b.latitude) / 2;
+                            final midLng = (a.longitude + b.longitude) / 2;
+                            return Marker(
+                              point: LatLng(midLat, midLng),
+                              width: 22,
+                              height: 22,
+                              child: GestureDetector(
+                                onTap: () => _insertMidpoint(i),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.withValues(alpha: 0.5),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 1.5),
+                                  ),
+                                  child: const Center(
+                                    child: Icon(Icons.add, size: 14, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
                       if (_polygonPoints.isNotEmpty)
                         MarkerLayer(
                           markers: _polygonPoints.asMap().entries.map((entry) {
+                            final isSelected = _selectedPointIndex == entry.key;
                             return Marker(
                               point: entry.value,
-                              width: 30,
-                              height: 30,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    '${entry.key + 1}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
+                              width: isSelected ? 34 : 30,
+                              height: isSelected ? 34 : 30,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    if (_selectedPointIndex == entry.key) {
+                                      _selectedPointIndex = null;
+                                    } else {
+                                      _selectedPointIndex = entry.key;
+                                    }
+                                  });
+                                },
+                                onLongPress: () => _deletePoint(entry.key),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: isSelected ? Colors.green : Colors.black,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: isSelected ? Colors.greenAccent : Colors.white,
+                                      width: isSelected ? 3 : 2,
+                                    ),
+                                    boxShadow: isSelected
+                                        ? [BoxShadow(color: Colors.green.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)]
+                                        : null,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${entry.key + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
                                 ),

@@ -140,12 +140,12 @@ class NavigationTrackRepository {
         'navigatorUserId': track.navigatorUserId,
         'trackPointsJson': track.trackPointsJson,
         'stabbingsJson': track.stabbingsJson,
-        'startedAt': track.startedAt.toIso8601String(),
-        'endedAt': track.endedAt?.toIso8601String(),
+        'startedAt': track.startedAt.toUtc().toIso8601String(),
+        'endedAt': track.endedAt?.toUtc().toIso8601String(),
         'isActive': track.isActive,
         'isDisqualified': track.isDisqualified,
         'manualPositionUsed': track.manualPositionUsed,
-        'manualPositionUsedAt': track.manualPositionUsedAt?.toIso8601String(),
+        'manualPositionUsedAt': track.manualPositionUsedAt?.toUtc().toIso8601String(),
       },
       priority: SyncPriority.high,
     );
@@ -282,7 +282,10 @@ class NavigationTrackRepository {
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
           .update({'overrideWalkieTalkieEnabled': enabled});
-    } catch (_) {}
+      print('DEBUG updateWalkieTalkieOverride: SUCCESS trackId=$trackId, enabled=$enabled');
+    } catch (e) {
+      print('DEBUG updateWalkieTalkieOverride: FAILED trackId=$trackId, enabled=$enabled, error=$e');
+    }
   }
 
   /// עדכון דריסת אמצעי מיקום פר-מנווט (Drift + Firestore)
@@ -320,7 +323,7 @@ class NavigationTrackRepository {
       await FirebaseFirestore.instance
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
-          .update({'manualPositionUsed': true, 'manualPositionUsedAt': now.toIso8601String()});
+          .update({'manualPositionUsed': true, 'manualPositionUsedAt': now.toUtc().toIso8601String()});
     } catch (_) {}
   }
 
