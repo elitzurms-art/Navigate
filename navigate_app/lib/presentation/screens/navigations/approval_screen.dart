@@ -180,12 +180,18 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       if (!widget.isNavigator) {
         await _loadCommanderData();
         _computeAnalysis();
-        _centerMapOnData();
       }
     } catch (e) {
       print('DEBUG ApprovalScreen: Error loading data: $e');
     }
-    if (mounted) setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+      if (!widget.isNavigator) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _centerMapOnData();
+        });
+      }
+    }
   }
 
   Future<void> _loadCommanderData() async {

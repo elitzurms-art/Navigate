@@ -961,69 +961,56 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             const SizedBox(height: 12),
 
             // שדות לפי סוג
-            if (waypoint.placementType == 'distance')
-              TextFormField(
-                initialValue: waypoint.afterDistanceKm?.toString() ?? '5.0',
+            if (waypoint.placementType == 'distance') ...[
+              Text(
+                'לעבור בה אחרי ${waypoint.afterDistanceMinKm?.toStringAsFixed(1) ?? "2.0"}-${waypoint.afterDistanceMaxKm?.toStringAsFixed(1) ?? "5.0"} ק"מ',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              RangeSlider(
+                min: 0.0,
+                max: _maxRouteLength,
+                divisions: (_maxRouteLength * 10).toInt().clamp(1, 1000),
+                values: RangeValues(
+                  (waypoint.afterDistanceMinKm ?? 2.0).clamp(0.0, _maxRouteLength),
+                  (waypoint.afterDistanceMaxKm ?? 5.0).clamp(0.0, _maxRouteLength),
+                ),
+                labels: RangeLabels(
+                  (waypoint.afterDistanceMinKm ?? 2.0).toStringAsFixed(1),
+                  (waypoint.afterDistanceMaxKm ?? 5.0).toStringAsFixed(1),
+                ),
+                onChanged: (values) {
+                  _updateWaypointDistanceRange(index, values.start, values.end);
+                },
+              ),
+            ] else if (waypoint.placementType == 'between_checkpoints')
+              DropdownButtonFormField<int>(
+                value: (waypoint.afterCheckpointIndex ?? -1).clamp(-1, _checkpointsPerNavigator - 1),
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
-                  labelText: 'לעבור בה אחרי',
-                  suffixText: 'ק"מ',
+                  labelText: 'מיקום',
                   filled: true,
                   fillColor: Colors.white,
                 ),
-                keyboardType: TextInputType.number,
+                items: List.generate(_checkpointsPerNavigator + 1, (i) {
+                  final gapIndex = i - 1; // -1..K-1
+                  final String label;
+                  if (gapIndex == -1) {
+                    label = 'בין התחלה לנקודה 1';
+                  } else if (gapIndex == _checkpointsPerNavigator - 1) {
+                    label = 'בין נקודה $_checkpointsPerNavigator לסיום';
+                  } else {
+                    label = 'בין נקודה ${gapIndex + 1} לנקודה ${gapIndex + 2}';
+                  }
+                  return DropdownMenuItem(
+                    value: gapIndex,
+                    child: Text(label),
+                  );
+                }),
                 onChanged: (value) {
-                  final km = double.tryParse(value);
-                  if (km != null) {
-                    _updateWaypointDistance(index, km);
+                  if (value != null) {
+                    _updateWaypointGap(index, value);
                   }
                 },
-              )
-            else if (waypoint.placementType == 'between_checkpoints')
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      initialValue: waypoint.afterCheckpointIndex != null
-                          ? (waypoint.afterCheckpointIndex! + 1).toString()
-                          : '',
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'אחרי נ.צ. מס׳',
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      keyboardType: TextInputType.number,
-                      onChanged: (value) {
-                        final num = int.tryParse(value);
-                        if (num != null && num > 0) {
-                          _updateWaypointAfter(index, num - 1);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      initialValue: waypoint.beforeCheckpointIndex != null
-                          ? (waypoint.beforeCheckpointIndex! + 1).toString()
-                          : '',
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'לפני נ.צ. מס׳',
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      keyboardType: TextInputType.number,
-                      onChanged: (value) {
-                        final num = int.tryParse(value);
-                        if (num != null && num > 0) {
-                          _updateWaypointBefore(index, num - 1);
-                        }
-                      },
-                    ),
-                  ),
-                ],
               ),
           ],
         ),
@@ -1037,7 +1024,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       _waypoints.add(WaypointCheckpoint(
         checkpointId: _checkpoints.first.id,
         placementType: 'distance',
-        afterDistanceKm: 5.0,
+        afterDistanceMinKm: 2.0,
+        afterDistanceMaxKm: 5.0,
       ));
     });
   }
@@ -1061,31 +1049,27 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       _waypoints[index] = WaypointCheckpoint(
         checkpointId: current.checkpointId,
         placementType: type,
-        afterDistanceKm: type == 'distance' ? (current.afterDistanceKm ?? 5.0) : null,
-        afterCheckpointIndex: type == 'between_checkpoints' ? (current.afterCheckpointIndex ?? 0) : null,
-        beforeCheckpointIndex: type == 'between_checkpoints' ? (current.beforeCheckpointIndex ?? 1) : null,
+        afterDistanceMinKm: type == 'distance' ? (current.afterDistanceMinKm ?? 2.0) : null,
+        afterDistanceMaxKm: type == 'distance' ? (current.afterDistanceMaxKm ?? 5.0) : null,
+        afterCheckpointIndex: type == 'between_checkpoints' ? (current.afterCheckpointIndex ?? -1) : null,
       );
     });
   }
 
-  void _updateWaypointDistance(int index, double km) {
+  void _updateWaypointDistanceRange(int index, double minKm, double maxKm) {
     setState(() {
       final current = _waypoints[index];
-      _waypoints[index] = current.copyWith(afterDistanceKm: km);
+      _waypoints[index] = current.copyWith(
+        afterDistanceMinKm: minKm,
+        afterDistanceMaxKm: maxKm,
+      );
     });
   }
 
-  void _updateWaypointAfter(int index, int afterIndex) {
+  void _updateWaypointGap(int index, int gapIndex) {
     setState(() {
       final current = _waypoints[index];
-      _waypoints[index] = current.copyWith(afterCheckpointIndex: afterIndex);
-    });
-  }
-
-  void _updateWaypointBefore(int index, int beforeIndex) {
-    setState(() {
-      final current = _waypoints[index];
-      _waypoints[index] = current.copyWith(beforeCheckpointIndex: beforeIndex);
+      _waypoints[index] = current.copyWith(afterCheckpointIndex: gapIndex);
     });
   }
 

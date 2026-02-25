@@ -52,6 +52,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   bool _perNavigatorShowSelfLocation = false;
   bool _perNavigatorShowRouteOnMap = false;
 
+  bool _reverseRevealShown = false;
+
   Timer? _pollTimer;
   Timer? _scorePollTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
@@ -100,11 +102,22 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         if (_currentNavigation == null ||
             _currentNavigation!.status != nav.status ||
             _currentNavigation!.updatedAt != nav.updatedAt) {
+          final previousStatus = _currentNavigation?.status;
           setState(() {
             _currentNavigation = nav;
             _state = statusToScreenState(nav.status);
           });
           _loadNavigatorScore();
+
+          // ניווט הפוך — הצגת דיאלוג חשיפה במעבר ל-waiting
+          if (nav.navigationType == 'reverse' &&
+              nav.status == 'waiting' &&
+              previousStatus != 'waiting' &&
+              previousStatus != 'active' &&
+              !_reverseRevealShown) {
+            _reverseRevealShown = true;
+            _showReverseRevealDialog();
+          }
         }
       },
       onError: (e) {
@@ -209,6 +222,16 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         _currentNavigation = bestNav;
         _state = statusToScreenState(bestNav!.status);
       });
+
+      // ניווט הפוך — חשיפה אם נפתח ישירות ב-waiting (cold start)
+      if (bestNav.navigationType == 'reverse' &&
+          bestNav.status == 'waiting' &&
+          !_reverseRevealShown) {
+        _reverseRevealShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showReverseRevealDialog();
+        });
+      }
 
       // טעינת ציון אם בשלב תחקור/אישור
       _loadNavigatorScore();
@@ -1038,6 +1061,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   }
 
   Widget _buildWaitingView() {
+    final isReverse = _currentNavigation?.navigationType == 'reverse';
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1061,6 +1085,35 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                   color: Colors.grey[600],
                 ),
           ),
+          if (isReverse) ...[
+            const SizedBox(height: 16),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 32),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange[300]!),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.swap_vert, color: Colors.orange[700], size: 20),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'ניווט הפוך — הציר האמיתי הפוך מהלמידה',
+                      style: TextStyle(
+                        color: Colors.orange[800],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             'בדיקת המערכות הושלמה. ממתין להפעלת הניווט',
@@ -1069,6 +1122,34 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           ),
           const SizedBox(height: 32),
           const CircularProgressIndicator(),
+        ],
+      ),
+    );
+  }
+
+  /// דיאלוג חשיפת ניווט הפוך — מוצג במעבר ל-waiting
+  void _showReverseRevealDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.swap_vert, color: Colors.orange[700], size: 28),
+            const SizedBox(width: 8),
+            const Text('ניווט הפוך'),
+          ],
+        ),
+        content: const Text(
+          'הציר שהוצג לך בשלב הלמידה היה בסדר הפוך.\n\n'
+          'הסדר האמיתי של הנקודות הוא הפוך ממה שלמדת — '
+          'כלומר, הנקודה האחרונה שראית היא הראשונה, והראשונה היא האחרונה.',
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי'),
+          ),
         ],
       ),
     );

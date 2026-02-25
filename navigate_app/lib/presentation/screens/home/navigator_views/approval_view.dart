@@ -188,12 +188,15 @@ class _ApprovalViewState extends State<ApprovalView> {
 
       // ניתוח מסלול
       _computeAnalysis();
-
-      _centerMap();
     } catch (e) {
       print('DEBUG ApprovalView: Error loading data: $e');
     }
-    if (mounted) setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _centerMap();
+      });
+    }
   }
 
   void _computeAnalysis() {

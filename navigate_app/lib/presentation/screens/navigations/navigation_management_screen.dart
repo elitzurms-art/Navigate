@@ -1631,17 +1631,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     if (confirmed != true) return;
 
-    try {
-      // הצגת loading
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('עוצר את כל המנווטים...'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+    // הצגת עיגול טעינה
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+    }
 
+    try {
       // שאילתת Firestore — כל ה-tracks הפעילים של הניווט הזה
       final snapshot = await FirebaseFirestore.instance
           .collection(AppConstants.navigationTracksCollection)
@@ -1666,15 +1665,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
 
-      // עדכון UI — כל המנווטים לסטטוס "הסתיים"
-      if (mounted) {
-        setState(() {
-          for (final entry in _navigatorData.entries) {
-            entry.value.personalStatus = NavigatorPersonalStatus.finished;
-          }
-        });
-      }
-
       // עדכון סטטוס ניווט — ישירות לתחקור (ללא שלב אישור נפרד)
       final updatedNavigation = widget.navigation.copyWith(
         status: 'review',
@@ -1684,7 +1674,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       await _navRepo.update(updatedNavigation);
 
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context); // סגירת עיגול טעינה
+        Navigator.pop(context, true); // חזרה לרשימה עם סימון לרענון
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('הניווט הסתיים - מעבר לתחקור'),
@@ -1694,6 +1685,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // סגירת עיגול טעינה
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('שגיאה בסיום ניווט כללי: $e'),
@@ -1911,8 +1903,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         );
 
         pairs.add(_NavigatorPairDistance(
-          navigatorA: a.key,
-          navigatorB: b.key,
+          navigatorA: _userNames[a.key] ?? a.key,
+          navigatorB: _userNames[b.key] ?? b.key,
           distanceMeters: dist,
         ));
       }
@@ -2155,7 +2147,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         label: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(data.navigatorId),
+                            Text(_userNames[data.navigatorId] ?? data.navigatorId),
                             const SizedBox(width: 4),
                             Icon(
                               Icons.circle,
@@ -2222,7 +2214,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               if (_showNZ)
                 MarkerLayer(
                   markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
-                    // זיהוי סוג נקודה: התחלה / סיום / ביניים
+                    // זיהוי סוג נקודה: התחלה / סיום / ביניים (עם fallback להגדרות ניווט)
                     final startIds = <String>{};
                     final endIds = <String>{};
                     final waypointIds = <String>{};
@@ -2231,8 +2223,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       if (route.endPointId != null) endIds.add(route.endPointId!);
                       waypointIds.addAll(route.waypointIds);
                     }
-                    for (final wp in widget.navigation.waypointSettings.waypoints) {
-                      waypointIds.add(wp.checkpointId);
+                    // fallback — הגדרות ניווט (לפני חלוקת צירים)
+                    if (widget.navigation.startPoint != null) startIds.add(widget.navigation.startPoint!);
+                    if (widget.navigation.endPoint != null) endIds.add(widget.navigation.endPoint!);
+                    if (widget.navigation.waypointSettings.enabled) {
+                      for (final wp in widget.navigation.waypointSettings.waypoints) {
+                        waypointIds.add(wp.checkpointId);
+                      }
                     }
 
                     final isStart = startIds.contains(cp.id) || cp.isStart;
@@ -2595,7 +2592,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            navigatorId,
+                            _userNames[navigatorId] ?? navigatorId,
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -3147,7 +3144,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(navigatorId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                Text(_userNames[navigatorId] ?? navigatorId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                                 Text(liveData.personalStatus.displayName, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
                               ],
                             ),

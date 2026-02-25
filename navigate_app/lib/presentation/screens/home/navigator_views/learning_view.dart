@@ -88,6 +88,8 @@ class _LearningViewState extends State<LearningView>
   Checkpoint? _startCheckpoint;
   Checkpoint? _endCheckpoint;
 
+  bool get _isReverseNavigation => _currentNavigation.navigationType == 'reverse';
+
   /// סיפור דרך — state
   List<NarrationEntry> _narrationEntries = [];
 
@@ -250,9 +252,17 @@ class _LearningViewState extends State<LearningView>
         endCp = await _checkpointRepo.getById(route.endPointId!);
       }
 
+      // ניווט הפוך — היפוך סדר תצוגה (הנתונים השמורים נשארים כמות שהם)
+      final displayList = _isReverseNavigation ? loaded.reversed.toList() : loaded;
+      if (_isReverseNavigation) {
+        final tempStart = startCp;
+        startCp = endCp;
+        endCp = tempStart;
+      }
+
       if (mounted) {
         setState(() {
-          _routeCheckpoints = loaded;
+          _routeCheckpoints = displayList;
           _startCheckpoint = startCp;
           _endCheckpoint = endCp;
           _checkpointsLoaded = true;
@@ -1168,10 +1178,15 @@ class _LearningViewState extends State<LearningView>
     if (route == null) return;
 
     _confirmAndReplace('סיפור דרך ידני', () {
+      // ניווט הפוך — שימוש ברצף הפוך לתצוגה
+      final effectiveSequence = _isReverseNavigation
+          ? route.sequence.reversed.toList()
+          : route.sequence;
+
       // יצירת שורות ריקות עם שמות נקודות בלבד
       final entries = <NarrationEntry>[];
-      for (int i = 0; i < route.sequence.length; i++) {
-        final cpId = route.sequence[i];
+      for (int i = 0; i < effectiveSequence.length; i++) {
+        final cpId = effectiveSequence[i];
         final cp = _routeCheckpoints.length > i ? _routeCheckpoints[i] : null;
         final pointName = cp?.name ?? cpId;
 
@@ -1180,7 +1195,7 @@ class _LearningViewState extends State<LearningView>
           pointName: pointName,
           action: i == 0
               ? 'התחלה'
-              : i == route.sequence.length - 1
+              : i == effectiveSequence.length - 1
                   ? 'סיום'
                   : 'מעבר',
         ));

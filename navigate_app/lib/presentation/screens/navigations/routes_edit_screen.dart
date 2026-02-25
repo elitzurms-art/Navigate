@@ -97,31 +97,39 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
         )).toList();
       }
 
-      // אתחול מ-routes קיימים
+      // אתחול מ-routes קיימים — סינון מפקדים/מנהלים (מנווטים בלבד מקבלים צירים)
       final routes = widget.navigation.routes;
-      final navigatorIds = routes.keys.toList();
+      final allRouteIds = routes.keys.toList();
 
-      // טעינת פרטי משתמשים
+      // טעינת פרטי משתמשים + סינון לפי תפקיד
       final usersCache = <String, User>{};
-      for (final uid in navigatorIds) {
+      final navigatorIds = <String>[];
+      for (final uid in allRouteIds) {
         final user = await _userRepo.getUser(uid);
         if (user != null) {
+          if (user.role != 'navigator') continue; // דילוג על מפקדים/מנהלים
           usersCache[uid] = user;
         }
+        navigatorIds.add(uid); // אם user==null — לא ניתן לדעת תפקיד, מציגים
       }
 
-      // אתחול הקצאות מנווטים מ-routes קיימים
+      // אתחול הקצאות מנווטים מ-routes קיימים (רק מנווטים מסוננים)
       final navigatorCheckpoints = <String, List<String>>{};
       String? startPointId;
       String? endPointId;
       List<String> intermediatePointIds = [];
+      final navigatorIdSet = navigatorIds.toSet();
 
       for (final entry in routes.entries) {
-        navigatorCheckpoints[entry.key] = List.from(entry.value.checkpointIds);
+        // שליפת start/end/waypoints מכל ציר (כולל מפקדים — לקריאה בלבד)
         startPointId ??= entry.value.startPointId;
         endPointId ??= entry.value.endPointId;
         if (entry.value.waypointIds.isNotEmpty && intermediatePointIds.isEmpty) {
           intermediatePointIds = List.from(entry.value.waypointIds);
+        }
+        // הקצאת נקודות רק למנווטים מסוננים
+        if (navigatorIdSet.contains(entry.key)) {
+          navigatorCheckpoints[entry.key] = List.from(entry.value.checkpointIds);
         }
       }
 
@@ -166,7 +174,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
   String _getNavigatorName(String uid) {
     final user = _usersCache[uid];
-    if (user != null) return '${user.fullName} (${user.uid})';
+    if (user != null && user.fullName.isNotEmpty) return user.fullName;
     return uid;
   }
 

@@ -1249,69 +1249,17 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
     switch (navigation.status) {
       case 'preparation':
-        // שלב הכנה - עריכת הגדרות, העברה לאימון, מחיקה
-        items.add(const PopupMenuItem(
-          value: 'edit',
-          child: Row(
-            children: [
-              Icon(Icons.edit, color: Colors.blue),
-              SizedBox(width: 8),
-              Text('ערוך הגדרות'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuItem(
-          value: 'start_training',
-          child: Row(
-            children: [
-              Icon(Icons.play_arrow, color: Colors.green),
-              SizedBox(width: 8),
-              Text('העבר לאימון'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuItem(
-          value: 'variables_sheet',
-          child: Row(
-            children: [
-              Icon(Icons.description, color: Colors.teal),
-              SizedBox(width: 8),
-              Text('דף משתנים'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuDivider());
-        items.add(const PopupMenuItem(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(Icons.delete, color: Colors.red),
-              SizedBox(width: 8),
-              Text('מחק', style: TextStyle(color: Colors.red)),
-            ],
-          ),
-        ));
-        break;
-
       case 'ready':
-        // מוכן - עריכת הגדרות, העברה לאימון, מחיקה
+      case 'learning':
+      case 'system_check':
+        // הכנות ולמידה — שמירת ניווט + דף משתנים
         items.add(const PopupMenuItem(
-          value: 'edit',
+          value: 'save_navigation',
           child: Row(
             children: [
-              Icon(Icons.edit, color: Colors.blue),
+              Icon(Icons.save, color: Colors.blue),
               SizedBox(width: 8),
-              Text('ערוך הגדרות'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuItem(
-          value: 'start_training',
-          child: Row(
-            children: [
-              Icon(Icons.play_arrow, color: Colors.green),
-              SizedBox(width: 8),
-              Text('העבר לאימון'),
+              Text('שמירת ניווט'),
             ],
           ),
         ));
@@ -1325,81 +1273,10 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ],
           ),
         ));
-        items.add(const PopupMenuDivider());
-        items.add(const PopupMenuItem(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(Icons.delete, color: Colors.red),
-              SizedBox(width: 8),
-              Text('מחק', style: TextStyle(color: Colors.red)),
-            ],
-          ),
-        ));
-        break;
-
-      case 'learning':
-        // למידה - השהייה, סיום, בדיקת מערכות
-        items.add(const PopupMenuItem(
-          value: 'pause_training',
-          child: Row(
-            children: [
-              Icon(Icons.pause_circle, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('השהה למידה'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuItem(
-          value: 'end_training',
-          child: Row(
-            children: [
-              Icon(Icons.stop_circle, color: Colors.red),
-              SizedBox(width: 8),
-              Text('סיים למידה'),
-            ],
-          ),
-        ));
-        items.add(const PopupMenuItem(
-          value: 'system_check',
-          child: Row(
-            children: [
-              Icon(Icons.verified_user, color: Colors.purple),
-              SizedBox(width: 8),
-              Text('בדיקת מערכות'),
-            ],
-          ),
-        ));
-        break;
-
-      case 'system_check':
-        // בדיקת מערכות - חזרה למוכן
-        items.add(const PopupMenuItem(
-          value: 'back_to_ready',
-          child: Row(
-            children: [
-              Icon(Icons.undo, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('חזרה למוכן'),
-            ],
-          ),
-        ));
-        if (navigation.routes.isNotEmpty) {
-          items.add(const PopupMenuItem(
-            value: 'export_routes_updated',
-            child: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.deepOrange),
-                SizedBox(width: 8),
-                Text('ייצוא צירים'),
-              ],
-            ),
-          ));
-        }
         break;
 
       case 'waiting':
-        // ממתין — מפקד יכול להתחיל, להחזיר להכנה, לערוך או למחוק
+        // אימון — התחל ניווט, החזר להכנה, שמירת ניווט
         if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
           items.add(const PopupMenuItem(
             value: 'start_navigation',
@@ -1422,23 +1299,12 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
             ),
           ));
           items.add(const PopupMenuItem(
-            value: 'edit',
+            value: 'save_navigation',
             child: Row(
               children: [
-                Icon(Icons.edit, color: Colors.blue),
+                Icon(Icons.save, color: Colors.blue),
                 SizedBox(width: 8),
-                Text('הגדרות ניווט'),
-              ],
-            ),
-          ));
-          items.add(const PopupMenuDivider());
-          items.add(const PopupMenuItem(
-            value: 'delete',
-            child: Row(
-              children: [
-                Icon(Icons.delete, color: Colors.red),
-                SizedBox(width: 8),
-                Text('מחק', style: TextStyle(color: Colors.red)),
+                Text('שמירת ניווט'),
               ],
             ),
           ));
@@ -1447,6 +1313,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
       case 'approval':
       case 'review':
+        // תחקור — חזרה להכנה + שמירת ניווט
         if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
           items.add(const PopupMenuItem(
             value: 'back_to_preparation',
@@ -1465,17 +1332,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
                 Icon(Icons.save, color: Colors.blue),
                 SizedBox(width: 8),
                 Text('שמירת ניווט'),
-              ],
-            ),
-          ));
-          items.add(const PopupMenuDivider());
-          items.add(const PopupMenuItem(
-            value: 'delete',
-            child: Row(
-              children: [
-                Icon(Icons.delete_forever, color: Colors.red),
-                SizedBox(width: 8),
-                Text('מחיקת ניווט', style: TextStyle(color: Colors.red)),
               ],
             ),
           ));

@@ -227,12 +227,15 @@ class _ReviewViewState extends State<ReviewView> {
 
       // ניתוח מסלול
       _computeAnalysis();
-
-      _centerMap();
     } catch (e) {
       print('DEBUG ReviewView: Error loading data: $e');
     }
-    if (mounted) setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _centerMap();
+      });
+    }
   }
 
   void _computeAnalysis() {

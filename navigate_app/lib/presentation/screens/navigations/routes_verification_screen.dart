@@ -8,6 +8,8 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../domain/entities/safety_point.dart';
+import '../../../domain/entities/user.dart';
+import '../../../data/repositories/user_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../services/elevation_service.dart';
 import 'routes_edit_screen.dart';
@@ -58,22 +60,52 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   // נקודות משותפות
   Set<String> _sharedCheckpointIds = {};
 
+  // מטמון שמות מנווטים + רשימת מנווטים מסוננת (בלי מפקדים)
+  final Map<String, User> _usersCache = {};
+  late Map<String, domain.AssignedRoute> _filteredRoutes;
+
   @override
   void initState() {
     super.initState();
+    _filteredRoutes = Map.of(widget.navigation.routes); // ברירת מחדל — הכל
     _tabController = TabController(length: 2, vsync: this);
     _loadCheckpoints();
-    // בחר את כל המנווטים כברירת מחדל
-    for (final navigatorId in widget.navigation.routes.keys) {
-      _selectedNavigators[navigatorId] = true;
-    }
+    _loadNavigatorNames();
     // חישוב נקודות משותפות
     _calculateSharedCheckpoints();
   }
 
+  Future<void> _loadNavigatorNames() async {
+    final userRepo = UserRepository();
+    final filtered = <String, domain.AssignedRoute>{};
+    for (final entry in widget.navigation.routes.entries) {
+      final user = await userRepo.getUser(entry.key);
+      if (user != null) {
+        _usersCache[entry.key] = user;
+        // סינון מפקדים/מנהלים — רק מנווטים מקבלים צירים
+        if (user.role != 'navigator') continue;
+      }
+      filtered[entry.key] = entry.value;
+    }
+    if (mounted) {
+      setState(() {
+        _filteredRoutes = filtered;
+        _selectedNavigators = {
+          for (final uid in _filteredRoutes.keys) uid: true,
+        };
+      });
+    }
+  }
+
+  String _getNavigatorName(String uid) {
+    final user = _usersCache[uid];
+    if (user != null && user.fullName.isNotEmpty) return user.fullName;
+    return uid;
+  }
+
   void _calculateSharedCheckpoints() {
     final checkpointCount = <String, int>{};
-    for (final route in widget.navigation.routes.values) {
+    for (final route in _filteredRoutes.values) {
       for (final cpId in route.checkpointIds) {
         checkpointCount[cpId] = (checkpointCount[cpId] ?? 0) + 1;
       }
@@ -85,7 +117,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   }
 
   Future<void> _computeRouteElevations() async {
-    for (final entry in widget.navigation.routes.entries) {
+    for (final entry in _filteredRoutes.entries) {
       final navId = entry.key;
       final route = entry.value;
       if (route.plannedPath.isEmpty) continue;
@@ -208,7 +240,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
 
   /// נקודת התחלה (H) — מחפש בצירים ואז fallback להגדרות ניווט
   String? get _startPointId {
-    for (final route in widget.navigation.routes.values) {
+    for (final route in _filteredRoutes.values) {
       if (route.startPointId != null) return route.startPointId;
     }
     return widget.navigation.startPoint;
@@ -216,7 +248,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
 
   /// נקודת סיום (S) — מחפש בצירים ואז fallback להגדרות ניווט
   String? get _endPointId {
-    for (final route in widget.navigation.routes.values) {
+    for (final route in _filteredRoutes.values) {
       if (route.endPointId != null) return route.endPointId;
     }
     return widget.navigation.endPoint;
@@ -225,7 +257,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   /// איסוף כל מזהי waypoints מכל הצירים
   Set<String> get _allWaypointIds {
     final ids = <String>{};
-    for (final route in widget.navigation.routes.values) {
+    for (final route in _filteredRoutes.values) {
       ids.addAll(route.waypointIds);
     }
     // גם מהגדרות ה-navigation
@@ -487,7 +519,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   }
 
   Widget _buildRoutesTable() {
-    final routes = widget.navigation.routes;
+    final routes = _filteredRoutes;
     if (routes.isEmpty) {
       return const Center(
         child: Text('אין צירים'),
@@ -544,7 +576,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 padding: const EdgeInsets.all(8),
                 child: Row(
                   children: [
-                    Expanded(child: Text(navigatorId)),
+                    Expanded(child: Text(_getNavigatorName(navigatorId))),
                     if (hasShared)
                       Icon(Icons.people, size: 14, color: Colors.orange[700]),
                   ],
@@ -616,11 +648,11 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: widget.navigation.routes.keys.map((navigatorId) {
+              children: _filteredRoutes.keys.map((navigatorId) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: FilterChip(
-                    label: Text(navigatorId),
+                    label: Text(_getNavigatorName(navigatorId)),
                     selected: _selectedNavigators[navigatorId] ?? false,
                     onSelected: (selected) {
                       setState(() {
@@ -944,7 +976,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
 
-    for (final entry in widget.navigation.routes.entries) {
+    for (final entry in _filteredRoutes.entries) {
       final navigatorId = entry.key;
       final route = entry.value;
 

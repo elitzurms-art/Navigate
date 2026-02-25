@@ -60,25 +60,27 @@ class _SimpleCheckpoint {
 class _SimpleWaypoint {
   final String checkpointId;
   final String placementType;
-  final double? afterDistanceKm;
+  final double? afterDistanceMinKm;
+  final double? afterDistanceMaxKm;
   final int? afterCheckpointIndex;
-  final int? beforeCheckpointIndex;
 
   _SimpleWaypoint({
     required this.checkpointId,
     required this.placementType,
-    this.afterDistanceKm,
+    this.afterDistanceMinKm,
+    this.afterDistanceMaxKm,
     this.afterCheckpointIndex,
-    this.beforeCheckpointIndex,
   });
 
   factory _SimpleWaypoint.fromMap(Map<String, dynamic> map) {
+    // תאימות לאחור: afterDistanceKm ישן → min=max=afterDistanceKm
+    final oldDistance = (map['afterDistanceKm'] as num?)?.toDouble();
     return _SimpleWaypoint(
       checkpointId: map['checkpointId'] as String,
       placementType: map['placementType'] as String,
-      afterDistanceKm: (map['afterDistanceKm'] as num?)?.toDouble(),
+      afterDistanceMinKm: (map['afterDistanceMinKm'] as num?)?.toDouble() ?? oldDistance,
+      afterDistanceMaxKm: (map['afterDistanceMaxKm'] as num?)?.toDouble() ?? oldDistance,
       afterCheckpointIndex: map['afterCheckpointIndex'] as int?,
-      beforeCheckpointIndex: map['beforeCheckpointIndex'] as int?,
     );
   }
 }
@@ -206,7 +208,7 @@ class RoutesDistributionService {
 
   /// מציאת משתתפים — מנווטים בלבד (ללא מפקדים/מנהלים)
   Future<List<String>> _findNavigators(domain.Navigation navigation, NavigationTree tree) async {
-    // 1. אם נבחרו משתתפים ספציפיים — סינון לפי תפקיד (backward compat)
+    // 1. אם נבחרו משתתפים ספציפיים — סינון לפי תפקיד
     if (navigation.selectedParticipantIds.isNotEmpty) {
       final navigators = <String>[];
       for (final uid in navigation.selectedParticipantIds) {
@@ -223,15 +225,27 @@ class RoutesDistributionService {
 
     // 2. אם נבחרו תתי-מסגרות — דילוג על מסגרות מפקדים, שליפת מנווטים בלבד
     if (navigation.selectedSubFrameworkIds.isNotEmpty) {
-      final navigators = <String>[];
+      final navigatorSet = <String>{};
       for (final sf in tree.subFrameworks) {
         if (!navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
-        // דילוג על תת-מסגרות מפקדים — מפקדים לא מקבלים צירים
-        if (sf.name.contains('מפקדים') || sf.name.contains('מפקד')) continue;
-        final users = await _userRepository.getNavigatorsForUnit(unitId);
-        navigators.addAll(users.map((u) => u.uid));
+        // דילוג על תת-מסגרות קבועות (מפקדים/מנהלת) — מפקדים לא מקבלים צירים
+        if (sf.isFixed) continue;
+        // שימוש ב-userIds של התת-מסגרת (לא כל היחידה)
+        if (sf.userIds.isNotEmpty) {
+          // סינון נוסף: רק מנווטים (הגנה כפולה)
+          for (final uid in sf.userIds) {
+            final user = await _userRepository.getUser(uid);
+            if (user != null && user.role == 'navigator') {
+              navigatorSet.add(uid);
+            }
+          }
+        } else {
+          // fallback: אם אין userIds בתת-מסגרת — שליפה מהיחידה
+          final users = await _userRepository.getNavigatorsForUnit(unitId);
+          navigatorSet.addAll(users.map((u) => u.uid));
+        }
       }
-      return navigators;
+      return navigatorSet.toList();
     }
 
     // 3. fallback — כל המנווטים ביחידה
@@ -314,11 +328,6 @@ class RoutesDistributionService {
     final K = params.checkpointsPerNavigator;
     final N = navigators.length;
 
-    // סינון נקודות התחלה/סיום מהפול
-    final pool = checkpoints
-        .where((cp) => cp.id != params.startPointId && cp.id != params.endPointId)
-        .toList();
-
     // מציאת נקודות התחלה/סיום
     final startCp = params.startPointId != null
         ? checkpoints.where((cp) => cp.id == params.startPointId).firstOrNull
@@ -327,12 +336,11 @@ class RoutesDistributionService {
         ? checkpoints.where((cp) => cp.id == params.endPointId).firstOrNull
         : null;
 
-    // מציאת waypoint checkpoints
-    final waypointCps = <_SimpleCheckpoint>[];
-    for (final wp in waypoints) {
-      final cp = checkpoints.where((c) => c.id == wp.checkpointId).firstOrNull;
-      if (cp != null) waypointCps.add(cp);
-    }
+    // סינון נקודות התחלה/סיום/waypoints מהפול — waypoints הם חובה כמו התחלה/סיום
+    final waypointCpIds = waypoints.map((wp) => wp.checkpointId).toSet();
+    final pool = checkpoints
+        .where((cp) => cp.id != params.startPointId && cp.id != params.endPointId && !waypointCpIds.contains(cp.id))
+        .toList();
 
     // Phase 1: בניית מטריצת מרחקים פעם אחת — כל הנקודות הייחודיות
     final allPoints = <_SimpleCheckpoint>[];
@@ -640,8 +648,8 @@ class RoutesDistributionService {
         }
       }
 
-      // אופטימיזציית רצף
-      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix);
+      // אופטימיזציית רצף (כולל הכנסת waypoints)
+      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
 
       // בניית ציר מלא עם waypoints
       final fullResult = _buildRouteWithWaypoints(
@@ -998,7 +1006,7 @@ class RoutesDistributionService {
     double maxRoute,
     Map<String, Map<String, double>> distMatrix,
   ) {
-    final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix);
+    final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
     final result = _buildRouteWithWaypoints(
       chunk: chunk,
       sequence: sequence,
@@ -1042,19 +1050,26 @@ class RoutesDistributionService {
     );
   }
 
-  /// אופטימיזציית רצף: nearest-neighbor TSP + 2-opt improvement
+  /// אופטימיזציית רצף: nearest-neighbor TSP + הכנסת waypoints + 2-opt (דילוג על waypoints)
   static List<_SimpleCheckpoint> _optimizeSequence(
     List<_SimpleCheckpoint> chunk,
     _SimpleCheckpoint? startCp,
     _SimpleCheckpoint? endCp,
     String executionOrder,
-    Map<String, Map<String, double>> distMatrix,
-  ) {
+    Map<String, Map<String, double>> distMatrix, [
+    List<_SimpleWaypoint> waypoints = const [],
+    List<_SimpleCheckpoint> allCheckpoints = const [],
+  ]) {
     if (chunk.length <= 1 || executionOrder != 'sequential') {
-      return List.from(chunk);
+      // גם אם אין אופטימיזציה, עדיין מכניסים waypoints
+      final result = List<_SimpleCheckpoint>.from(chunk);
+      if (waypoints.isNotEmpty) {
+        _insertWaypointsIntoSequence(result, startCp, endCp, waypoints, allCheckpoints, distMatrix);
+      }
+      return result;
     }
 
-    // שלב 1: Nearest-neighbor מנקודת ההתחלה
+    // שלב 1: Nearest-neighbor מנקודת ההתחלה (רק checkpoints רגילים)
     final remaining = List<_SimpleCheckpoint>.from(chunk);
     final result = <_SimpleCheckpoint>[];
 
@@ -1077,7 +1092,16 @@ class RoutesDistributionService {
       result.add(current);
     }
 
-    // שלב 2: 2-opt improvement — שיפור הרצף ע"י היפוך סגמנטים
+    // שלב 2: הכנסת waypoints לפני 2-opt
+    final waypointIdSet = <String>{};
+    if (waypoints.isNotEmpty) {
+      _insertWaypointsIntoSequence(result, startCp, endCp, waypoints, allCheckpoints, distMatrix);
+      for (final wp in waypoints) {
+        waypointIdSet.add(wp.checkpointId);
+      }
+    }
+
+    // שלב 3: 2-opt improvement — דילוג על waypoints (נשארים במקום)
     if (result.length >= 3) {
       bool improved = true;
       int passes = 0;
@@ -1085,7 +1109,20 @@ class RoutesDistributionService {
         improved = false;
         passes++;
         for (int i = 0; i < result.length - 1; i++) {
+          // דילוג על waypoints
+          if (waypointIdSet.contains(result[i].id)) continue;
           for (int j = i + 1; j < result.length; j++) {
+            if (waypointIdSet.contains(result[j].id)) continue;
+            // בדיקה שאין waypoint בתוך הסגמנט
+            bool hasWaypointInSegment = false;
+            for (int k = i + 1; k < j; k++) {
+              if (waypointIdSet.contains(result[k].id)) {
+                hasWaypointInSegment = true;
+                break;
+              }
+            }
+            if (hasWaypointInSegment) continue;
+
             double saving = 0;
 
             // קצה לפני הסגמנט
@@ -1126,7 +1163,74 @@ class RoutesDistributionService {
     return result;
   }
 
-  /// בניית ציר מלא עם waypoints
+  /// הכנסת waypoints לתוך רצף קיים (in-place)
+  static void _insertWaypointsIntoSequence(
+    List<_SimpleCheckpoint> sequence,
+    _SimpleCheckpoint? startCp,
+    _SimpleCheckpoint? endCp,
+    List<_SimpleWaypoint> waypoints,
+    List<_SimpleCheckpoint> allCheckpoints,
+    Map<String, Map<String, double>> distMatrix,
+  ) {
+    for (final wp in waypoints) {
+      final wpCp = allCheckpoints.where((c) => c.id == wp.checkpointId).firstOrNull;
+      if (wpCp == null) continue;
+      // דילוג אם זהה להתחלה/סיום (כבר מופיעים בציר)
+      if (startCp != null && wpCp.id == startCp.id) continue;
+      if (endCp != null && wpCp.id == endCp.id) continue;
+      // דילוג אם כבר ברצף (למניעת כפילות)
+      if (sequence.any((c) => c.id == wpCp.id)) continue;
+
+      if (wp.placementType == 'distance' && wp.afterDistanceMinKm != null && wp.afterDistanceMaxKm != null) {
+        // הכנסה לפי טווח מרחק — מחפש מיקום אופטימלי בטווח [min, max]
+        final minDist = wp.afterDistanceMinKm!;
+        final maxDist = wp.afterDistanceMaxKm!;
+        final midDist = (minDist + maxDist) / 2;
+
+        // בניית רצף מלא עם start/end לחישוב מרחק מצטבר
+        final fullSeq = <_SimpleCheckpoint>[];
+        if (startCp != null) fullSeq.add(startCp);
+        fullSeq.addAll(sequence);
+        if (endCp != null) fullSeq.add(endCp);
+
+        final startOffset = startCp != null ? 1 : 0;
+
+        double cumDistance = 0;
+        int bestInsertIndex = -1;
+        double bestScore = double.infinity;
+
+        for (int i = 0; i < fullSeq.length - 1; i++) {
+          cumDistance += _dist(fullSeq[i].id, fullSeq[i + 1].id, distMatrix);
+          if (cumDistance >= minDist && cumDistance <= maxDist) {
+            final score = (cumDistance - midDist).abs();
+            if (score < bestScore) {
+              bestScore = score;
+              bestInsertIndex = i + 1 - startOffset;
+            }
+          }
+          if (cumDistance > maxDist && bestInsertIndex == -1) {
+            // עברנו את הטווח בלי למצוא — הכנס כאן
+            bestInsertIndex = i + 1 - startOffset;
+            break;
+          }
+        }
+
+        if (bestInsertIndex >= 0 && bestInsertIndex <= sequence.length) {
+          sequence.insert(bestInsertIndex.clamp(0, sequence.length), wpCp);
+        } else {
+          // fallback: הכנס לפני הסוף
+          sequence.insert(sequence.length, wpCp);
+        }
+      } else if (wp.placementType == 'between_checkpoints') {
+        // הכנסה לפי אינדקס gap: -1 = לפני נקודה 1, 0 = אחרי נקודה 1, וכו'
+        final gapIndex = wp.afterCheckpointIndex ?? -1;
+        final insertAt = gapIndex + 1; // -1→0, 0→1, 1→2, ...
+        sequence.insert(insertAt.clamp(0, sequence.length), wpCp);
+      }
+    }
+  }
+
+  /// בניית ציר מלא — הרצף כבר כולל waypoints מ-_optimizeSequence
   static Map<String, dynamic> _buildRouteWithWaypoints({
     required List<_SimpleCheckpoint> chunk,
     required List<_SimpleCheckpoint> sequence,
@@ -1136,50 +1240,18 @@ class RoutesDistributionService {
     required List<_SimpleCheckpoint> allCheckpoints,
     required Map<String, Map<String, double>> distMatrix,
   }) {
-    // בניית רצף בסיסי: start → sequence → end
+    // בניית רצף מלא: start → sequence (כולל waypoints) → end
     final fullSequence = <_SimpleCheckpoint>[];
     if (startCp != null) fullSequence.add(startCp);
     fullSequence.addAll(sequence);
     if (endCp != null) fullSequence.add(endCp);
 
-    // הכנסת waypoints
-    final waypointIds = <String>[];
-    if (waypoints.isNotEmpty) {
-      for (final wp in waypoints) {
-        final wpCp = allCheckpoints.where((c) => c.id == wp.checkpointId).firstOrNull;
-        if (wpCp == null) continue;
-
-        waypointIds.add(wp.checkpointId);
-
-        if (wp.placementType == 'distance' && wp.afterDistanceKm != null) {
-          // הכנסה לפי מרחק
-          double cumDistance = 0;
-          int insertIndex = -1;
-          for (int i = 0; i < fullSequence.length - 1; i++) {
-            cumDistance += _dist(fullSequence[i].id, fullSequence[i + 1].id, distMatrix);
-            if (cumDistance >= wp.afterDistanceKm!) {
-              insertIndex = i + 1;
-              break;
-            }
-          }
-          if (insertIndex > 0 && insertIndex <= fullSequence.length) {
-            fullSequence.insert(insertIndex, wpCp);
-          } else {
-            // אם לא הגענו למרחק, הכנס לפני הסוף
-            final endIndex = endCp != null ? fullSequence.length - 1 : fullSequence.length;
-            fullSequence.insert(endIndex, wpCp);
-          }
-        } else if (wp.placementType == 'between_checkpoints') {
-          // הכנסה בין נקודות ספציפיות
-          final afterIdx = wp.afterCheckpointIndex ?? 0;
-          final startOffset = startCp != null ? 1 : 0;
-          final insertAt = startOffset + afterIdx + 1;
-          if (insertAt <= fullSequence.length) {
-            fullSequence.insert(insertAt.clamp(0, fullSequence.length), wpCp);
-          }
-        }
-      }
-    }
+    // איסוף waypoint IDs מהרצף
+    final waypointIdSet = waypoints.map((wp) => wp.checkpointId).toSet();
+    final waypointIds = sequence
+        .where((cp) => waypointIdSet.contains(cp.id))
+        .map((cp) => cp.id)
+        .toList();
 
     // חישוב אורך מלא
     double totalLength = 0;
@@ -1290,7 +1362,7 @@ class RoutesDistributionService {
         chunk.add(pool[chunk.length % pool.length]);
       }
 
-      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix);
+      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
       final result = _buildRouteWithWaypoints(
         chunk: chunk,
         sequence: sequence,

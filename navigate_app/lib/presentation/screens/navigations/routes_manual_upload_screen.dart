@@ -44,13 +44,16 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
     try {
       final allUsers = await _userRepo.getAll();
       final selectedIds = widget.navigation.selectedParticipantIds;
+      List<app_user.User> users;
+      if (selectedIds.isNotEmpty) {
+        users = allUsers.where((u) => selectedIds.contains(u.uid)).toList();
+      } else {
+        users = allUsers;
+      }
+      // סינון לפי תפקיד — רק מנווטים מקבלים צירים (לא מפקדים/מנהלים)
+      users = users.where((u) => u.role == 'navigator').toList();
       setState(() {
-        if (selectedIds.isNotEmpty) {
-          _participants =
-              allUsers.where((u) => selectedIds.contains(u.uid)).toList();
-        } else {
-          _participants = allUsers;
-        }
+        _participants = users;
         _loadingParticipants = false;
       });
     } catch (e) {

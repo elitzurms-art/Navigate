@@ -851,34 +851,35 @@ class WaypointCheckpoint extends Equatable {
   final String checkpointId; // מזהה נקודת הציון
   final String placementType; // 'distance' או 'between_checkpoints'
 
-  // עבור placementType == 'distance'
-  final double? afterDistanceKm; // לעבור בה אחרי מרחק מסוים
+  // עבור placementType == 'distance' — טווח מרחק
+  final double? afterDistanceMinKm; // טווח מינימום
+  final double? afterDistanceMaxKm; // טווח מקסימום
 
   // עבור placementType == 'between_checkpoints'
-  final int? afterCheckpointIndex; // לעבור בה אחרי נקודת ציון מסוימת (0-based)
-  final int? beforeCheckpointIndex; // לעבור בה לפני נקודת ציון מסוימת (0-based)
+  // -1 = בין התחלה לנקודה 1, 0 = בין נקודה 1 לנקודה 2, וכו'
+  final int? afterCheckpointIndex;
 
   const WaypointCheckpoint({
     required this.checkpointId,
     required this.placementType,
-    this.afterDistanceKm,
+    this.afterDistanceMinKm,
+    this.afterDistanceMaxKm,
     this.afterCheckpointIndex,
-    this.beforeCheckpointIndex,
   });
 
   WaypointCheckpoint copyWith({
     String? checkpointId,
     String? placementType,
-    double? afterDistanceKm,
+    double? afterDistanceMinKm,
+    double? afterDistanceMaxKm,
     int? afterCheckpointIndex,
-    int? beforeCheckpointIndex,
   }) {
     return WaypointCheckpoint(
       checkpointId: checkpointId ?? this.checkpointId,
       placementType: placementType ?? this.placementType,
-      afterDistanceKm: afterDistanceKm ?? this.afterDistanceKm,
+      afterDistanceMinKm: afterDistanceMinKm ?? this.afterDistanceMinKm,
+      afterDistanceMaxKm: afterDistanceMaxKm ?? this.afterDistanceMaxKm,
       afterCheckpointIndex: afterCheckpointIndex ?? this.afterCheckpointIndex,
-      beforeCheckpointIndex: beforeCheckpointIndex ?? this.beforeCheckpointIndex,
     );
   }
 
@@ -886,24 +887,27 @@ class WaypointCheckpoint extends Equatable {
     return {
       'checkpointId': checkpointId,
       'placementType': placementType,
-      if (afterDistanceKm != null) 'afterDistanceKm': afterDistanceKm,
+      if (afterDistanceMinKm != null) 'afterDistanceMinKm': afterDistanceMinKm,
+      if (afterDistanceMaxKm != null) 'afterDistanceMaxKm': afterDistanceMaxKm,
       if (afterCheckpointIndex != null) 'afterCheckpointIndex': afterCheckpointIndex,
-      if (beforeCheckpointIndex != null) 'beforeCheckpointIndex': beforeCheckpointIndex,
     };
   }
 
   factory WaypointCheckpoint.fromMap(Map<String, dynamic> map) {
+    // תאימות לאחור: afterDistanceKm ישן → min=max=afterDistanceKm
+    final oldDistance = (map['afterDistanceKm'] as num?)?.toDouble();
     return WaypointCheckpoint(
       checkpointId: map['checkpointId'] as String,
       placementType: map['placementType'] as String,
-      afterDistanceKm: map['afterDistanceKm'] as double?,
+      afterDistanceMinKm: (map['afterDistanceMinKm'] as num?)?.toDouble() ?? oldDistance,
+      afterDistanceMaxKm: (map['afterDistanceMaxKm'] as num?)?.toDouble() ?? oldDistance,
       afterCheckpointIndex: map['afterCheckpointIndex'] as int?,
-      beforeCheckpointIndex: map['beforeCheckpointIndex'] as int?,
+      // beforeCheckpointIndex ישן — מתעלם
     );
   }
 
   @override
-  List<Object?> get props => [checkpointId, placementType, afterDistanceKm, afterCheckpointIndex, beforeCheckpointIndex];
+  List<Object?> get props => [checkpointId, placementType, afterDistanceMinKm, afterDistanceMaxKm, afterCheckpointIndex];
 }
 
 /// הגדרות נקודות ביניים

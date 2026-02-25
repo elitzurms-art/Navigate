@@ -117,13 +117,25 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         final unitId = widget.navigation.selectedUnitId ?? tree?.unitId;
         if (unitId != null) {
           if (tree != null && widget.navigation.selectedSubFrameworkIds.isNotEmpty) {
+            final navigatorSet = <String>{};
             for (final sf in tree.subFrameworks) {
               if (!widget.navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
-              // דילוג על תת-מסגרות מפקדים — מפקדים לא מקבלים צירים
-              if (sf.name.contains('מפקדים') || sf.name.contains('מפקד')) continue;
-              final users = await _userRepo.getNavigatorsForUnit(unitId);
-              navigators.addAll(users.map((u) => u.uid));
+              // דילוג על תת-מסגרות קבועות (מפקדים/מנהלת)
+              if (sf.isFixed) continue;
+              // שימוש ב-userIds של התת-מסגרת
+              if (sf.userIds.isNotEmpty) {
+                for (final uid in sf.userIds) {
+                  final user = await _userRepo.getUser(uid);
+                  if (user != null && user.role == 'navigator') {
+                    navigatorSet.add(uid);
+                  }
+                }
+              } else {
+                final users = await _userRepo.getNavigatorsForUnit(unitId);
+                navigatorSet.addAll(users.map((u) => u.uid));
+              }
             }
+            navigators = navigatorSet.toList();
           } else {
             final users = await _userRepo.getNavigatorsForUnit(unitId);
             navigators = users.map((u) => u.uid).toList();
@@ -200,7 +212,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
 
   String _getNavigatorName(String uid) {
     final user = _usersCache[uid];
-    if (user != null) return '${user.fullName} (${user.uid})';
+    if (user != null && user.fullName.isNotEmpty) return user.fullName;
     return uid;
   }
 
