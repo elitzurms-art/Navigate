@@ -35,6 +35,7 @@ import '../../../domain/entities/extension_request.dart';
 import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// מסך ניהול ניווט פעיל (למפקד)
 class NavigationManagementScreen extends StatefulWidget {
@@ -3058,29 +3059,55 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
           ],
         ),
-        content: assignees.isEmpty
-            ? const Text('לא שויכו מנווטים לנקודה זו')
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'מנווטים שקיבלו את הנקודה (${assignees.length}):',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  ...assignees.map((name) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.person, size: 18, color: Colors.blueGrey),
-                        const SizedBox(width: 6),
-                        Expanded(child: Text(name)),
-                      ],
-                    ),
-                  )),
-                ],
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (assignees.isEmpty)
+              const Text('לא שויכו מנווטים לנקודה זו')
+            else ...[
+              Text(
+                'מנווטים שקיבלו את הנקודה (${assignees.length}):',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
+              const SizedBox(height: 8),
+              ...assignees.map((name) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person, size: 18, color: Colors.blueGrey),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(name)),
+                  ],
+                ),
+              )),
+            ],
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
+            const Text('נווט לנקודה:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _navigateToCheckpoint(cp, 'waze'),
+                    icon: const Icon(Icons.navigation, size: 18),
+                    label: const Text('Waze'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _navigateToCheckpoint(cp, 'google_maps'),
+                    icon: const Icon(Icons.map, size: 18),
+                    label: const Text('Google Maps'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -3089,6 +3116,40 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _navigateToCheckpoint(Checkpoint cp, String app) async {
+    double? lat;
+    double? lng;
+    if (cp.coordinates != null) {
+      lat = cp.coordinates!.lat;
+      lng = cp.coordinates!.lng;
+    } else if (cp.polygonCoordinates != null && cp.polygonCoordinates!.isNotEmpty) {
+      // עבור פוליגון — מרכז הנקודות
+      lat = cp.polygonCoordinates!.map((c) => c.lat).reduce((a, b) => a + b) / cp.polygonCoordinates!.length;
+      lng = cp.polygonCoordinates!.map((c) => c.lng).reduce((a, b) => a + b) / cp.polygonCoordinates!.length;
+    }
+    if (lat == null || lng == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('אין קואורדינטות לנקודה זו')),
+        );
+      }
+      return;
+    }
+    final Uri uri;
+    if (app == 'waze') {
+      uri = Uri.parse('https://waze.com/ul?ll=$lat,$lng&navigate=yes');
+    } else {
+      uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
+    }
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('לא ניתן לפתוח ${app == 'waze' ? 'Waze' : 'Google Maps'}')),
+        );
+      }
+    }
   }
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {

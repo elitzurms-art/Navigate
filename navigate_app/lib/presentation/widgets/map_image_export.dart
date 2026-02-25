@@ -18,17 +18,31 @@ class MapImageExport {
     double pixelRatio = 2.0,
   }) async {
     try {
+      // הפעלת מצב צילום — עוטף ב-RepaintBoundary
+      final wrapperState = repaintBoundaryKey.currentContext
+          ?.findAncestorStateOfType<MapCaptureWrapperState>();
+      if (wrapperState != null) {
+        wrapperState.enableCaptureMode();
+        await WidgetsBinding.instance.endOfFrame;
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
       final boundary = repaintBoundaryKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
       if (boundary == null) {
-        _showError(context, 'לא ניתן לצלם את המפה');
+        wrapperState?.disableCaptureMode();
+        if (context.mounted) _showError(context, 'לא ניתן לצלם את המפה');
         return null;
       }
 
       final image = await boundary.toImage(pixelRatio: pixelRatio);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      // כיבוי מצב צילום
+      wrapperState?.disableCaptureMode();
+
       if (byteData == null) {
-        _showError(context, 'שגיאה בהמרת התמונה');
+        if (context.mounted) _showError(context, 'שגיאה בהמרת התמונה');
         return null;
       }
 
@@ -50,6 +64,11 @@ class MapImageExport {
 
       return result;
     } catch (e) {
+      // כיבוי מצב צילום במקרה של שגיאה
+      final wrapperState = repaintBoundaryKey.currentContext
+          ?.findAncestorStateOfType<MapCaptureWrapperState>();
+      wrapperState?.disableCaptureMode();
+
       if (context.mounted) _showError(context, 'שגיאה: $e');
       return null;
     }
@@ -62,8 +81,9 @@ class MapImageExport {
   }
 }
 
-/// ווידג'ט עוטף ל-RepaintBoundary — עוטף את המפה לצילום מסך
-class MapCaptureWrapper extends StatelessWidget {
+/// ווידג'ט עוטף למפה — ללא RepaintBoundary כברירת מחדל.
+/// RepaintBoundary נוסף רק בזמן צילום מסך כדי לא לחסום רנדור תקין של המפה.
+class MapCaptureWrapper extends StatefulWidget {
   final GlobalKey captureKey;
   final Widget child;
 
@@ -74,11 +94,29 @@ class MapCaptureWrapper extends StatelessWidget {
   });
 
   @override
+  State<MapCaptureWrapper> createState() => MapCaptureWrapperState();
+}
+
+class MapCaptureWrapperState extends State<MapCaptureWrapper> {
+  bool _captureMode = false;
+
+  void enableCaptureMode() {
+    if (mounted) setState(() => _captureMode = true);
+  }
+
+  void disableCaptureMode() {
+    if (mounted) setState(() => _captureMode = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      key: captureKey,
-      child: child,
-    );
+    if (_captureMode) {
+      return RepaintBoundary(
+        key: widget.captureKey,
+        child: widget.child,
+      );
+    }
+    return widget.child;
   }
 }
 

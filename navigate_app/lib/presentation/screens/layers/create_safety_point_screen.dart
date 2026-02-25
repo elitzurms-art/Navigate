@@ -413,7 +413,7 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                             markers: _checkpoints
                                 .where((cp) => !cp.isPolygon && cp.coordinates != null)
                                 .map((cp) {
-                              final markerColor = cp.color == 'blue' ? Colors.blue : Colors.green;
+                              final markerColor = Checkpoint.flutterColor(cp.color);
                               return Marker(
                                 point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                                 width: 28,
@@ -443,7 +443,7 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                             polygons: _checkpoints
                                 .where((cp) => cp.isPolygon && cp.polygonCoordinates != null)
                                 .map((cp) {
-                              final color = cp.color == 'blue' ? Colors.blue : Colors.green;
+                              final color = Checkpoint.flutterColor(cp.color);
                               return Polygon(
                                 points: cp.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
                                 color: color.withOpacity(0.15 * _nzOpacity),

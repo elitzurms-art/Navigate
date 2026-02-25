@@ -298,7 +298,7 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
         if (_showNZ && _checkpoints.isNotEmpty)
           MarkerLayer(
             markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((checkpoint) {
-              final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
+              final markerColor = Checkpoint.flutterColor(checkpoint.color);
               return Marker(
                 point: LatLng(
                   checkpoint.coordinates!.lat,
@@ -434,7 +434,7 @@ class _LearningNavigationsScreenState extends State<LearningNavigationsScreen> {
                   if (visibility['nz'] == true && _checkpoints.isNotEmpty)
                     MarkerLayer(
                       markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((checkpoint) {
-                        final markerColor = checkpoint.color == 'green' ? Colors.green : Colors.blue;
+                        final markerColor = Checkpoint.flutterColor(checkpoint.color);
                         return Marker(
                           point: LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng),
                           width: 36,

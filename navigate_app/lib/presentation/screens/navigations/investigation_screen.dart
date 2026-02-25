@@ -211,9 +211,6 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
       // חישוב ניתוח
       _computeAnalysis();
-
-      // Center map on boundary or checkpoints
-      _centerMapOnData();
     } catch (e) {
       print('DEBUG InvestigationScreen: Error loading data: $e');
     }
@@ -348,14 +345,16 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   Future<void> _loadCommanderData() async {
-    final navigatorIds = widget.navigation.routes.keys.toList();
-
-    // טעינת שמות מנווטים
+    // סינון מפקדים — מציגים רק מנווטים
     final userRepo = UserRepository();
-    for (final navId in navigatorIds) {
-      final user = await userRepo.getUser(navId);
+    final navigatorIds = <String>[];
+    for (final id in widget.navigation.routes.keys) {
+      final user = await userRepo.getUser(id);
       if (user != null) {
-        _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
+        _userNames[id] = user.fullName.isNotEmpty ? user.fullName : id;
+        if (user.role == 'navigator') {
+          navigatorIds.add(id);
+        }
       }
     }
 
@@ -485,34 +484,32 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   void _centerMapOnData() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      try {
-        if (_navBoundaries.isNotEmpty) {
-          final boundary = _navBoundaries.first;
-          if (boundary.coordinates.isNotEmpty) {
-            final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
-            _mapController.fitCamera(CameraFit.bounds(
-              bounds: LatLngBounds.fromPoints(points),
-              padding: const EdgeInsets.all(30),
-            ));
-            return;
-          }
+    if (!mounted) return;
+    try {
+      if (_navBoundaries.isNotEmpty) {
+        final boundary = _navBoundaries.first;
+        if (boundary.coordinates.isNotEmpty) {
+          final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+          _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(30),
+          ));
+          return;
         }
-        final pointCps = _navCheckpoints
-            .where((c) => !c.isPolygon && c.coordinates != null)
-            .toList();
-        if (pointCps.isNotEmpty) {
-          final lat =
-              pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
-                  pointCps.length;
-          final lng =
-              pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
-                  pointCps.length;
-          _mapController.move(LatLng(lat, lng), 14.0);
-        }
-      } catch (_) {}
-    });
+      }
+      final pointCps = _navCheckpoints
+          .where((c) => !c.isPolygon && c.coordinates != null)
+          .toList();
+      if (pointCps.isNotEmpty) {
+        final lat =
+            pointCps.map((c) => c.coordinates!.lat).reduce((a, b) => a + b) /
+                pointCps.length;
+        final lng =
+            pointCps.map((c) => c.coordinates!.lng).reduce((a, b) => a + b) /
+                pointCps.length;
+        _mapController.move(LatLng(lat, lng), 14.0);
+      }
+    } catch (_) {}
   }
 
   // ===========================================================================
@@ -1693,6 +1690,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   options: MapOptions(
                     initialCenter: const LatLng(32.0853, 34.7818),
                     initialZoom: 13.0,
+                    onMapReady: _centerMapOnData,
                     onTap: (tapPosition, point) {
                       if (_measureMode) {
                         setState(() => _measurePoints.add(point));

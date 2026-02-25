@@ -19,20 +19,30 @@ class UtmConverter {
 
     // חילוץ Easting ו-Northing
     final easting = double.parse(utmString.substring(0, 6));
-    final northing = double.parse(utmString.substring(6, 12));
+    var northing = double.parse(utmString.substring(6, 12));
+
+    // שחזור ספרה מובילה — מוסכמה צה"לית (6 ספרות בלבד)
+    // באזור 36 (ישראל), northing מלא ≈ 3,300,000–3,800,000 → ספרה מובילה = 3
+    if (isNorthern && northing < 1000000 && zone == 36) {
+      northing += 3000000;
+    }
 
     return _utmToLatLng(easting, northing, zone, isNorthern);
   }
 
   /// המרת LatLng (GPS) ל-UTM
   ///
-  /// מחזיר מחרוזת UTM של 12 ספרות
+  /// מחזיר מחרוזת UTM של 12 ספרות (6 easting + 6 northing)
+  /// משתמש במוסכמה צה"לית: 6 ספרות אחרונות בלבד (חותך ספרות מובילות)
   static String latLngToUtm(LatLng latLng, {int zone = 36}) {
     final result = _latLngToUtm(latLng.latitude, latLng.longitude, zone);
 
-    // עיגול לשלמים והמרה למחרוזת בת 12 תווים
-    final eastingStr = result['easting']!.round().toString().padLeft(6, '0');
-    final northingStr = result['northing']!.round().toString().padLeft(6, '0');
+    // 6 ספרות אחרונות — מוסכמה צה"לית (northing בישראל = 7 ספרות, חותכים את הספרה המובילה)
+    final easting6 = result['easting']!.round() % 1000000;
+    final northing6 = result['northing']!.round() % 1000000;
+
+    final eastingStr = easting6.toString().padLeft(6, '0');
+    final northingStr = northing6.toString().padLeft(6, '0');
 
     return eastingStr + northingStr;
   }

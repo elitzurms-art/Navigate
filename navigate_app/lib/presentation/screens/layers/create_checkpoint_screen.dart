@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../domain/entities/area.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
@@ -12,6 +13,7 @@ import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/cluster_repository.dart';
 import '../../../services/auth_service.dart';
+import '../../../core/utils/utm_converter.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -27,13 +29,10 @@ class CreateCheckpointScreen extends StatefulWidget {
 
 class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _sequenceController = TextEditingController();
-  final _latController = TextEditingController();
-  final _lngController = TextEditingController();
-  final _utmController = TextEditingController();
-  final _labelController = TextEditingController();
+  final _eastingController = TextEditingController();
+  final _northingController = TextEditingController();
 
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
@@ -41,11 +40,9 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   final ClusterRepository _clusterRepo = ClusterRepository();
 
   String _selectedType = 'checkpoint';
-  String _selectedColor = 'blue';
   String _geometryType = 'point'; // 'point' או 'polygon'
   LatLng? _selectedLocation;
   final List<LatLng> _polygonVertices = []; // קודקודי הפוליגון
-  final List<String> _labels = [];
   final MapController _mapController = MapController();
   bool _isSaving = false;
   bool _showOtherLayers = true;
@@ -70,6 +67,8 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
   bool get _isPolygonMode => _geometryType == 'polygon';
+
+  Color get _typeColor => Checkpoint.flutterColorForType(_selectedType);
 
   @override
   void initState() {
@@ -97,14 +96,47 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
 
   @override
   void dispose() {
-    _nameController.dispose();
     _descriptionController.dispose();
     _sequenceController.dispose();
-    _latController.dispose();
-    _lngController.dispose();
-    _utmController.dispose();
-    _labelController.dispose();
+    _eastingController.dispose();
+    _northingController.dispose();
     super.dispose();
+  }
+
+  void _updateLocationFromUtm() {
+    final easting = _eastingController.text;
+    final northing = _northingController.text;
+    if (easting.length == 6 && northing.length == 6 &&
+        int.tryParse(easting) != null && int.tryParse(northing) != null) {
+      try {
+        final utmString = easting + northing;
+        final latLng = UtmConverter.utmToLatLng(utmString);
+        setState(() {
+          _selectedLocation = latLng;
+          _mapController.move(latLng, 14);
+        });
+      } catch (_) {}
+    }
+  }
+
+  void _updateUtmFromLocation(LatLng point) {
+    try {
+      final utmString = UtmConverter.latLngToUtm(point);
+      if (utmString.length == 12) {
+        _eastingController.text = utmString.substring(0, 6);
+        _northingController.text = utmString.substring(6, 12);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _openGoogleMaps() async {
+    if (_selectedLocation == null) return;
+    final url = Uri.parse(
+      'https://www.google.com/maps?q=${_selectedLocation!.latitude},${_selectedLocation!.longitude}',
+    );
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
   }
 
   @override
@@ -148,23 +180,6 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // שם הנקודה
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'שם הנקודה',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.label),
-              ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'נא להזין שם';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-
             // תיאור
             TextFormField(
               controller: _descriptionController,
@@ -190,8 +205,16 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                 if (value == null || value.isEmpty) {
                   return 'נא להזין מספר';
                 }
-                if (int.tryParse(value) == null) {
+                final num = int.tryParse(value);
+                if (num == null) {
                   return 'יש להזין מספר תקין';
+                }
+                // בדיקת ייחודיות מספר סידורי באזור
+                final duplicate = _existingCheckpoints.any(
+                  (cp) => cp.sequenceNumber == num,
+                );
+                if (duplicate) {
+                  return 'מספר סידורי $num כבר קיים באזור זה';
                 }
                 return null;
               },
@@ -218,97 +241,24 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                 });
               },
             ),
-            const SizedBox(height: 16),
-
-            // צבע הנקודה
-            DropdownButtonFormField<String>(
-              value: _selectedColor,
-              decoration: const InputDecoration(
-                labelText: 'צבע',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.palette),
-              ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'blue',
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: Colors.blue,
-                        radius: 10,
-                      ),
-                      SizedBox(width: 8),
-                      Text('כחול'),
-                    ],
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: 'green',
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: Colors.green,
-                        radius: 10,
-                      ),
-                      SizedBox(width: 8),
-                      Text('ירוק'),
-                    ],
-                  ),
-                ),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _selectedColor = value!;
-                });
-              },
-            ),
-            const SizedBox(height: 24),
-
-            // תוויות/תאי שטח
-            Text(
-              'תוויות ותאי שטח',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
             const SizedBox(height: 8),
+            // תצוגת צבע אוטומטי
             Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _labelController,
-                    decoration: const InputDecoration(
-                      labelText: 'הוסף תווית',
-                      border: OutlineInputBorder(),
-                      hintText: 'לדוגמה: תא-1, מגזר-A',
-                    ),
-                    onSubmitted: (_) => _addLabel(),
-                  ),
+                CircleAvatar(
+                  backgroundColor: _typeColor,
+                  radius: 10,
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: _addLabel,
-                  icon: const Icon(Icons.add),
-                  label: const Text('הוסף'),
+                Text(
+                  'צבע: ${_getColorName(Checkpoint.colorForType(_selectedType))}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            if (_labels.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _labels.map((label) {
-                  return Chip(
-                    label: Text(label),
-                    deleteIcon: const Icon(Icons.close, size: 18),
-                    onDeleted: () {
-                      setState(() {
-                        _labels.remove(label);
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
 
             // בחירת סוג גאומטריה
             Text(
@@ -336,8 +286,8 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                   // איפוס בחירת מיקום בעת מעבר בין מצבים
                   _selectedLocation = null;
                   _polygonVertices.clear();
-                  _latController.clear();
-                  _lngController.clear();
+                  _eastingController.clear();
+                  _northingController.clear();
                 });
               },
             ),
@@ -372,8 +322,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                           } else {
                             setState(() {
                               _selectedLocation = point;
-                              _latController.text = point.latitude.toStringAsFixed(6);
-                              _lngController.text = point.longitude.toStringAsFixed(6);
+                              _updateUtmFromLocation(point);
                             });
                           }
                         },
@@ -419,7 +368,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                   opacity: _nzOpacity,
                                   child: Icon(
                                     Icons.place,
-                                    color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                    color: Checkpoint.flutterColor(cp.color).withOpacity(0.6),
                                     size: 30,
                                   ),
                                 ),
@@ -432,7 +381,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                             polygons: _existingCheckpoints
                                 .where((cp) => cp.isPolygon && cp.polygonCoordinates != null)
                                 .map((cp) {
-                              final color = cp.color == 'blue' ? Colors.blue : Colors.green;
+                              final color = Checkpoint.flutterColor(cp.color);
                               return Polygon(
                                 points: cp.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
                                 color: color.withOpacity(0.15 * _nzOpacity),
@@ -456,7 +405,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                   opacity: _nbOpacity,
                                   child: Icon(
                                     Icons.warning,
-                                    color: _getSeverityColor(sp.severity).withOpacity(0.6),
+                                    color: Colors.red.withOpacity(0.6),
                                     size: 30,
                                   ),
                                 ),
@@ -473,7 +422,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                 height: 40,
                                 child: Icon(
                                   Icons.place,
-                                  color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                                  color: _typeColor,
                                   size: 40,
                                 ),
                               ),
@@ -486,9 +435,8 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                 ? [
                                     Polygon(
                                       points: _polygonVertices,
-                                      color: (_selectedColor == 'blue' ? Colors.blue : Colors.green)
-                                          .withOpacity(0.2),
-                                      borderColor: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                                      color: _typeColor.withOpacity(0.2),
+                                      borderColor: _typeColor,
                                       borderStrokeWidth: 2.5,
                                       isFilled: true,
                                     ),
@@ -501,7 +449,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                               polylines: [
                                 Polyline(
                                   points: _polygonVertices,
-                                  color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                                  color: _typeColor,
                                   strokeWidth: 2.5,
                                 ),
                               ],
@@ -517,7 +465,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                                 height: 24,
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: _selectedColor == 'blue' ? Colors.blue : Colors.green,
+                                    color: _typeColor,
                                     shape: BoxShape.circle,
                                     border: Border.all(color: Colors.white, width: 2),
                                   ),
@@ -613,35 +561,27 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
               ),
               const SizedBox(height: 16),
 
-              // קואורדינטות ידניות (רק במצב נקודה)
+              // שדות UTM (רק במצב נקודה)
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
-                      controller: _latController,
+                      controller: _eastingController,
                       decoration: const InputDecoration(
-                        labelText: 'קו רוחב (Lat)',
+                        labelText: 'מזרחה (Easting)',
                         border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.grid_on),
                       ),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (value) {
-                        final lat = double.tryParse(value);
-                        final lng = double.tryParse(_lngController.text);
-                        if (lat != null && lng != null) {
-                          setState(() {
-                            _selectedLocation = LatLng(lat, lng);
-                            _mapController.move(_selectedLocation!, 12);
-                          });
-                        }
-                      },
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      onChanged: (_) => _updateLocationFromUtm(),
                       validator: (value) {
-                        if (!_isPolygonMode) {
-                          if (value == null || value.isEmpty) {
-                            return 'נדרש';
-                          }
-                          if (double.tryParse(value) == null) {
-                            return 'מספר לא תקין';
-                          }
+                        if (_isPolygonMode || _selectedLocation != null) return null;
+                        if (value == null || value.isEmpty) {
+                          return 'נדרש (או לחץ על המפה)';
+                        }
+                        if (value.length != 6 || int.tryParse(value) == null) {
+                          return '6 ספרות';
                         }
                         return null;
                       },
@@ -650,30 +590,22 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextFormField(
-                      controller: _lngController,
+                      controller: _northingController,
                       decoration: const InputDecoration(
-                        labelText: 'קו אורך (Lng)',
+                        labelText: 'צפונה (Northing)',
                         border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.grid_on),
                       ),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (value) {
-                        final lat = double.tryParse(_latController.text);
-                        final lng = double.tryParse(value);
-                        if (lat != null && lng != null) {
-                          setState(() {
-                            _selectedLocation = LatLng(lat, lng);
-                            _mapController.move(_selectedLocation!, 12);
-                          });
-                        }
-                      },
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      onChanged: (_) => _updateLocationFromUtm(),
                       validator: (value) {
-                        if (!_isPolygonMode) {
-                          if (value == null || value.isEmpty) {
-                            return 'נדרש';
-                          }
-                          if (double.tryParse(value) == null) {
-                            return 'מספר לא תקין';
-                          }
+                        if (_isPolygonMode || _selectedLocation != null) return null;
+                        if (value == null || value.isEmpty) {
+                          return 'נדרש (או לחץ על המפה)';
+                        }
+                        if (value.length != 6 || int.tryParse(value) == null) {
+                          return '6 ספרות';
                         }
                         return null;
                       },
@@ -681,18 +613,26 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
 
-              // UTM (אופציונלי)
-              TextFormField(
-                controller: _utmController,
-                decoration: const InputDecoration(
-                  labelText: 'UTM (אופציונלי)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.grid_on),
-                  hintText: 'לדוגמה: 36R 123456 7654321',
+              // קישור לגוגל מפות
+              if (_selectedLocation != null)
+                InkWell(
+                  onTap: _openGoogleMaps,
+                  child: Row(
+                    children: [
+                      Icon(Icons.map, color: Colors.blue[700], size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        'פתח בגוגל מפות',
+                        style: TextStyle(
+                          color: Colors.blue[700],
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
               const SizedBox(height: 16),
 
               // כפתור למיקום נוכחי
@@ -708,15 +648,6 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
     );
   }
 
-  void _addLabel() {
-    if (_labelController.text.isNotEmpty) {
-      setState(() {
-        _labels.add(_labelController.text);
-        _labelController.clear();
-      });
-    }
-  }
-
   Future<void> _useCurrentLocation() async {
     // TODO: שימוש ב-GPS Service לקבלת מיקום נוכחי
     ScaffoldMessenger.of(context).showSnackBar(
@@ -729,6 +660,12 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
 
   Future<void> _saveCheckpoint() async {
     if (!_formKey.currentState!.validate()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('יש לתקן את השדות המסומנים'),
+          backgroundColor: Colors.orange,
+        ),
+      );
       return;
     }
 
@@ -764,20 +701,23 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
         throw Exception('משתמש לא מחובר');
       }
 
+      final utmString = _eastingController.text + _northingController.text;
+      final autoColor = Checkpoint.colorForType(_selectedType);
+
       final checkpoint = Checkpoint(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         areaId: widget.area.id,
-        name: _nameController.text,
+        name: '',
         description: _descriptionController.text,
         type: _selectedType,
-        color: _selectedColor,
+        color: autoColor,
         geometryType: _geometryType,
         sequenceNumber: int.parse(_sequenceController.text),
         coordinates: !_isPolygonMode
             ? Coordinate(
                 lat: _selectedLocation!.latitude,
                 lng: _selectedLocation!.longitude,
-                utm: _utmController.text.isEmpty ? '' : _utmController.text,
+                utm: utmString,
               )
             : null,
         polygonCoordinates: _isPolygonMode
@@ -789,19 +729,19 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                     ))
                 .toList()
             : null,
-        labels: _labels,
+        labels: const [],
         createdBy: currentUser.uid,
         createdAt: DateTime.now(),
       );
 
-      final repository = CheckpointRepository();
-      await repository.create(checkpoint);
+      await _checkpointRepo.create(checkpoint);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('נקודת ציון נוצרה בהצלחה'),
+          SnackBar(
+            content: Text('הנקודה נשמרה — #${checkpoint.sequenceNumber}'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
           ),
         );
         Navigator.pop(context, true);
@@ -810,7 +750,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שגיאה ביצירה: $e'),
+            content: Text('שגיאה בשמירה: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -822,8 +762,18 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
     }
   }
 
-  /// צבע נקודת בטיחות — תמיד אדום
-  Color _getSeverityColor(String severity) {
-    return Colors.red;
+  String _getColorName(String colorString) {
+    switch (colorString) {
+      case 'blue':
+        return 'כחול';
+      case 'green':
+        return 'ירוק';
+      case 'red':
+        return 'אדום';
+      case 'yellow':
+        return 'צהוב';
+      default:
+        return colorString;
+    }
   }
 }

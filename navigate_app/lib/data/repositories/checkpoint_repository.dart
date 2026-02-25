@@ -105,6 +105,7 @@ class CheckpointRepository {
           geometryType: Value(checkpoint.geometryType),
           lat: Value(checkpoint.coordinates?.lat ?? 0.0),
           lng: Value(checkpoint.coordinates?.lng ?? 0.0),
+          utm: Value(checkpoint.coordinates?.utm ?? ''),
           coordinatesJson: Value(
             checkpoint.polygonCoordinates != null
                 ? jsonEncode(checkpoint.polygonCoordinates!.map((c) => c.toMap()).toList())
@@ -151,6 +152,49 @@ class CheckpointRepository {
   /// מחיקת כל נקודות הציון של שטח מסוים (מקומי בלבד — לא מוחק מ-Firestore)
   Future<int> deleteByArea(String areaId) async {
     return await (_db.delete(_db.checkpoints)..where((t) => t.areaId.equals(areaId))).go();
+  }
+
+  /// תיקון מספרים סידוריים כפולים באזור
+  Future<void> deduplicateSequenceNumbers(String areaId) async {
+    final checkpoints = await (_db.select(_db.checkpoints)
+          ..where((c) => c.areaId.equals(areaId))
+          ..orderBy([
+            (c) => OrderingTerm(expression: c.sequenceNumber),
+            (c) => OrderingTerm(expression: c.createdAt),
+          ]))
+        .get();
+
+    final seen = <int>{};
+    int nextAvailable = 1;
+
+    for (final cp in checkpoints) {
+      if (!seen.contains(cp.sequenceNumber)) {
+        seen.add(cp.sequenceNumber);
+        continue;
+      }
+      // כפול — מצא את המספר הבא הפנוי
+      while (seen.contains(nextAvailable)) {
+        nextAvailable++;
+      }
+      seen.add(nextAvailable);
+
+      // עדכון מקומי
+      await (_db.update(_db.checkpoints)
+            ..where((c) => c.id.equals(cp.id)))
+          .write(CheckpointsCompanion(sequenceNumber: Value(nextAvailable)));
+
+      // סנכרון
+      final domainCp = _toDomain(cp).copyWith(sequenceNumber: nextAvailable);
+      await _syncManager.queueOperation(
+        collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
+        documentId: cp.id,
+        operation: 'update',
+        data: domainCp.toMap(),
+        priority: SyncPriority.normal,
+      );
+
+      nextAvailable++;
+    }
   }
 
   /// המרה מטבלה לישות דומיין

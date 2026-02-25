@@ -328,7 +328,7 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
                                 opacity: _nzOpacity,
                                 child: Icon(
                                   Icons.place,
-                                  color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                  color: Checkpoint.flutterColor(cp.color).withOpacity(0.6),
                                   size: 24,
                                 ),
                               ),

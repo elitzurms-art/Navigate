@@ -381,7 +381,7 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                                 opacity: _nzOpacity,
                                 child: Icon(
                                   Icons.place,
-                                  color: (cp.color == 'blue' ? Colors.blue : Colors.green).withOpacity(0.6),
+                                  color: Checkpoint.flutterColor(cp.color).withOpacity(0.6),
                                   size: 24,
                                 ),
                               ),
@@ -394,7 +394,7 @@ class _CreateBoundaryScreenState extends State<CreateBoundaryScreen> {
                           polygons: _checkpoints
                               .where((cp) => cp.isPolygon && cp.polygonCoordinates != null)
                               .map((cp) {
-                            final color = cp.color == 'blue' ? Colors.blue : Colors.green;
+                            final color = Checkpoint.flutterColor(cp.color);
                             return Polygon(
                               points: cp.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
                               color: color.withOpacity(0.15 * _nzOpacity),

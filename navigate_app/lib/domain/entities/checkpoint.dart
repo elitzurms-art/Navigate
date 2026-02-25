@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:flutter/material.dart';
 import 'coordinate.dart';
 
 /// ישות נקודת ציון (שכבת NZ)
@@ -42,6 +43,42 @@ class Checkpoint extends Equatable {
     required this.createdBy,
     required this.createdAt,
   });
+
+  /// צבע מחרוזת לפי סוג נקודה
+  static String colorForType(String type) {
+    switch (type) {
+      case 'start':
+        return 'green';
+      case 'end':
+        return 'red';
+      case 'mandatory_passage':
+        return 'yellow';
+      case 'checkpoint':
+      default:
+        return 'blue';
+    }
+  }
+
+  /// צבע Flutter לפי סוג נקודה
+  static Color flutterColorForType(String type) {
+    return flutterColor(colorForType(type));
+  }
+
+  /// המרת מחרוזת צבע ל-Color (תומך ב-4 צבעים + fallback)
+  static Color flutterColor(String colorString) {
+    switch (colorString) {
+      case 'blue':
+        return Colors.blue;
+      case 'green':
+        return Colors.green;
+      case 'red':
+        return Colors.red;
+      case 'yellow':
+        return Colors.amber;
+      default:
+        return Colors.blue;
+    }
+  }
 
   /// האם זו נקודת התחלה
   bool get isStart => type == 'start';

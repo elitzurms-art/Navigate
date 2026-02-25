@@ -191,12 +191,7 @@ class _ApprovalViewState extends State<ApprovalView> {
     } catch (e) {
       print('DEBUG ApprovalView: Error loading data: $e');
     }
-    if (mounted) {
-      setState(() => _isLoading = false);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _centerMap();
-      });
-    }
+    if (mounted) setState(() => _isLoading = false);
   }
 
   void _computeAnalysis() {
@@ -222,31 +217,34 @@ class _ApprovalViewState extends State<ApprovalView> {
   }
 
   void _centerMap() {
-    if (_boundaries.isNotEmpty) {
-      final boundary = _boundaries.first;
-      if (boundary.coordinates.isNotEmpty) {
-        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
-        _mapController.fitCamera(CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(30),
-        ));
-        return;
+    if (!mounted) return;
+    try {
+      if (_boundaries.isNotEmpty) {
+        final boundary = _boundaries.first;
+        if (boundary.coordinates.isNotEmpty) {
+          final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+          _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(30),
+          ));
+          return;
+        }
       }
-    }
-    final pointCps = _checkpoints
-        .where((c) => !c.isPolygon && c.coordinates != null)
-        .toList();
-    if (pointCps.isNotEmpty) {
-      final lat = pointCps
-              .map((c) => c.coordinates!.lat)
-              .reduce((a, b) => a + b) /
-          pointCps.length;
-      final lng = pointCps
-              .map((c) => c.coordinates!.lng)
-              .reduce((a, b) => a + b) /
-          pointCps.length;
-      _mapController.move(LatLng(lat, lng), 14.0);
-    }
+      final pointCps = _checkpoints
+          .where((c) => !c.isPolygon && c.coordinates != null)
+          .toList();
+      if (pointCps.isNotEmpty) {
+        final lat = pointCps
+                .map((c) => c.coordinates!.lat)
+                .reduce((a, b) => a + b) /
+            pointCps.length;
+        final lng = pointCps
+                .map((c) => c.coordinates!.lng)
+                .reduce((a, b) => a + b) /
+            pointCps.length;
+        _mapController.move(LatLng(lat, lng), 14.0);
+      }
+    } catch (_) {}
   }
 
   void _onExport() {
@@ -334,6 +332,7 @@ class _ApprovalViewState extends State<ApprovalView> {
                 options: MapOptions(
                   initialCenter: center,
                   initialZoom: 14.0,
+                  onMapReady: _centerMap,
                   onTap: (tapPosition, point) {
                     if (_measureMode) {
                       setState(() => _measurePoints.add(point));

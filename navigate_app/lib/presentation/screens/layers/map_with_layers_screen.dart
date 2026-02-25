@@ -128,8 +128,7 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
               if (_showNZ && _checkpoints.isNotEmpty)
                 MarkerLayer(
                   markers: _checkpoints.map((checkpoint) {
-                    final isNavigatorCheckpoint = checkpoint.color == 'blue';
-                    final markerColor = isNavigatorCheckpoint ? Colors.blue : Colors.green;
+                    final markerColor = Checkpoint.flutterColor(checkpoint.color);
                     if (checkpoint.isPolygon || checkpoint.coordinates == null) {
                       return const Marker(point: LatLng(0, 0), child: SizedBox.shrink());
                     }

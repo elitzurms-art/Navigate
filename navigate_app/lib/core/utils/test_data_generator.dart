@@ -1,12 +1,30 @@
 import 'dart:math';
 import '../../domain/entities/checkpoint.dart';
 import '../../domain/entities/coordinate.dart';
-import '../../domain/entities/boundary.dart';
 import '../../data/repositories/checkpoint_repository.dart';
 
 /// מחלקת עזר ליצירת נתוני בדיקה
 class TestDataGenerator {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
+
+  /// חישוב מספרים סידוריים פנויים (ממלא פערים ואז ממשיך)
+  List<int> _getAvailableNumbers(Set<int> existingNumbers, int count) {
+    final available = <int>[];
+    final maxExisting = existingNumbers.isEmpty ? 0 : existingNumbers.reduce(max);
+
+    // סריקת פערים 1..maxExisting
+    for (int n = 1; n <= maxExisting && available.length < count; n++) {
+      if (!existingNumbers.contains(n)) {
+        available.add(n);
+      }
+    }
+    // המשך אחרי המקסימום
+    int next = maxExisting + 1;
+    while (available.length < count) {
+      available.add(next++);
+    }
+    return available;
+  }
 
   /// יצירת נקודות ציון אקראיות בתוך גבול נתון
   Future<void> createCheckpointsInBoundary({
@@ -15,6 +33,11 @@ class TestDataGenerator {
     required List<Coordinate> boundaryCoordinates,
   }) async {
     print('מתחיל יצירת $count נקודות ציון...');
+
+    // טעינת נקודות קיימות לחישוב מספרים פנויים
+    final existing = await _checkpointRepo.getByArea(areaId);
+    final existingNumbers = existing.map((c) => c.sequenceNumber).toSet();
+    final availableNumbers = _getAvailableNumbers(existingNumbers, count);
 
     // חישוב bounding box של הגבול
     double minLat = boundaryCoordinates.first.lat;
@@ -32,7 +55,6 @@ class TestDataGenerator {
     print('Bounding box: lat $minLat - $maxLat, lng $minLng - $maxLng');
 
     final random = Random();
-    final colors = ['blue', 'green'];
     final types = ['checkpoint', 'mandatory_passage'];
     int created = 0;
 
@@ -44,26 +66,28 @@ class TestDataGenerator {
 
       // בדיקה אם הנקודה בתוך הפוליגון
       if (_isPointInPolygon(lat, lng, boundaryCoordinates)) {
+        final seqNum = availableNumbers[created];
+        final type = types[random.nextInt(types.length)];
         final checkpoint = Checkpoint(
           id: '${DateTime.now().millisecondsSinceEpoch}_$created',
           areaId: areaId,
-          name: 'נ.צ ${created + 1}',
-          description: 'נקודת ציון ${created + 1} - נוצרה אוטומטית לבדיקה',
-          type: types[random.nextInt(types.length)],
-          color: colors[random.nextInt(colors.length)],
+          name: '',
+          description: '',
+          type: type,
+          color: Checkpoint.colorForType(type),
           coordinates: Coordinate(
             lat: lat,
             lng: lng,
             utm: _convertToUTM(lat, lng),
           ),
-          sequenceNumber: created + 1,
+          sequenceNumber: seqNum,
           createdBy: '',
           createdAt: DateTime.now(),
         );
 
         await _checkpointRepo.create(checkpoint);
         created++;
-        print('✓ נוצרה נקודה $created/$count: ${checkpoint.name}');
+        print('✓ נוצרה נקודה $created/$count: #$seqNum');
       }
     }
 
@@ -84,8 +108,12 @@ class TestDataGenerator {
   }) async {
     print('מתחיל יצירת $count נקודות ציון סביב ($centerLat, $centerLng)...');
 
+    // טעינת נקודות קיימות לחישוב מספרים פנויים
+    final existing = await _checkpointRepo.getByArea(areaId);
+    final existingNumbers = existing.map((c) => c.sequenceNumber).toSet();
+    final availableNumbers = _getAvailableNumbers(existingNumbers, count);
+
     final random = Random();
-    final colors = ['blue', 'green'];
     final types = ['checkpoint', 'mandatory_passage'];
 
     // המרת רדיוס ק"מ למעלות (קירוב גס)
@@ -98,28 +126,30 @@ class TestDataGenerator {
       final lat = centerLat + distance * cos(angle);
       final lng = centerLng + distance * sin(angle);
 
+      final seqNum = availableNumbers[i];
+      final type = types[random.nextInt(types.length)];
       final checkpoint = Checkpoint(
         id: '${DateTime.now().millisecondsSinceEpoch}_$i',
         areaId: areaId,
-        name: 'נ.צ ${i + 1}',
-        description: 'נקודת ציון ${i + 1} - נוצרה אוטומטית לבדיקה',
-        type: types[random.nextInt(types.length)],
-        color: colors[random.nextInt(colors.length)],
+        name: '',
+        description: '',
+        type: type,
+        color: Checkpoint.colorForType(type),
         coordinates: Coordinate(
           lat: lat,
           lng: lng,
           utm: _convertToUTM(lat, lng),
         ),
-        sequenceNumber: i + 1,
+        sequenceNumber: seqNum,
         createdBy: '',
         createdAt: DateTime.now(),
       );
 
       await _checkpointRepo.create(checkpoint);
-      print('✓ נוצרה נקודה ${i + 1}/20: ${checkpoint.name}');
+      print('✓ נוצרה נקודה ${i + 1}/$count: #$seqNum');
     }
 
-    print('✓ הושלמה יצירת 20 נקודות ציון בהצלחה!');
+    print('✓ הושלמה יצירת $count נקודות ציון בהצלחה!');
   }
 
   /// בדיקה אם נקודה נמצאת בתוך פוליגון (Ray casting algorithm)

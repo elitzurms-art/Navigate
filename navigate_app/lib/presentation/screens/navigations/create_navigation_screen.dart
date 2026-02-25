@@ -18,6 +18,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/unit.dart' as domain_unit;
 import '../../../services/auth_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../core/map_config.dart';
 import 'navigation_preparation_screen.dart';
@@ -49,6 +50,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   final _userRepository = UserRepository();
   final _unitRepository = UnitRepository();
   final _layerCopyService = NavigationLayerCopyService();
+  final _navLayerRepo = NavLayerRepository();
   final _authService = AuthService();
 
   // Data
@@ -756,36 +758,56 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.blue[200]!),
                 ),
-                child: Row(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.layers, color: Colors.blue[700], size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.navigation == null
-                                ? 'בעת יצירת הניווט, יועתקו כל השכבות בתוך הגבול הנבחר'
-                                : 'שכבות ניווטיות הועתקו - ניתנות לעריכה בשלב הכנה',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.blue[900],
-                              fontWeight: FontWeight.w500,
-                            ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.layers, color: Colors.blue[700], size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.navigation == null
+                                    ? 'בעת יצירת הניווט, יועתקו כל השכבות בתוך הגבול הנבחר'
+                                    : 'שכבות ניווטיות הועתקו - ניתנות לעריכה בשלב הכנה',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.blue[900],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'נ"צ, נת"ב וב"א בתוך הג"ג יועתקו כעותקים עצמאיים',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.blue[700],
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'נ"צ, נת"ב וב"א בתוך הג"ג יועתקו כעותקים עצמאיים',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.blue[700],
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
+                    if (widget.navigation != null) ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _reloadNavigationLayers,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('צור מחדש עותק של שכבות ניווטיות'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.blue[800],
+                            side: BorderSide(color: Colors.blue[300]!),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1945,6 +1967,87 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _reloadNavigationLayers() async {
+    final navigation = widget.navigation;
+    if (navigation == null || _selectedBoundaryId == null || _selectedArea == null) return;
+
+    // דיאלוג אזהרה לפני ביצוע
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('יצירת עותק שכבות מחדש'),
+        content: const Text(
+          'פעולה זו תמחק את כל השכבות הניווטיות הקיימות '
+          '(נ"צ, נת"ב, ב"א) ותעתיק אותן מחדש מהג"ג הנבחר.\n\n'
+          'שינויים שבוצעו בשכבות הניווטיות הקיימות יאבדו.\n\n'
+          'להמשיך?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('אישור — צור מחדש'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isSaving = true);
+    try {
+      // מחיקת שכבות ישנות
+      await _navLayerRepo.deleteAllLayersForNavigation(navigation.id);
+
+      // העתקה מחדש
+      final currentUser = await _authService.getCurrentUser();
+      final copyResult = await _layerCopyService.copyLayersForNavigation(
+        navigationId: navigation.id,
+        boundaryId: _selectedBoundaryId!,
+        areaId: _selectedArea!.id,
+        createdBy: currentUser?.uid ?? navigation.createdBy,
+      );
+
+      if (mounted) {
+        if (!copyResult.hasError) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'הועתקו ${copyResult.totalCopied} שכבות מחדש '
+                '(${copyResult.checkpointsCopied} נ"צ, '
+                '${copyResult.safetyPointsCopied} נת"ב, '
+                '${copyResult.clustersCopied} ב"א)',
+              ),
+              backgroundColor: Colors.blue,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('שגיאה: ${copyResult.error}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהעתקת שכבות: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _save() => _performSave();
