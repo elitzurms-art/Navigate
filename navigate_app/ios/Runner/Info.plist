@@ -55,5 +55,7 @@
 	<string>האפליקציה צריכה גישה למיקום לצורך מעקב GPS בזמן ניווט</string>
 	<key>NSMotionUsageDescription</key>
 	<string>האפליקציה צריכה גישה לחיישני תנועה לצורך ניווט מדויק ללא GPS</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>האפליקציה צריכה גישה למיקרופון לשליחת הודעות קוליות (ווקי טוקי) במהלך ניווט</string>
 </dict>
 </plist>

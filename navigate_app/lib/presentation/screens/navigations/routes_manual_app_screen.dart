@@ -740,7 +740,6 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
               icon: Icons.play_arrow,
               color: Colors.green,
               excludeIds: {
-                if (_endPointId != null) _endPointId!,
                 ..._intermediatePointIds,
               },
               onChanged: (val) => setState(() => _startPointId = val),
@@ -754,7 +753,6 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
               icon: Icons.stop,
               color: Colors.red,
               excludeIds: {
-                if (_startPointId != null) _startPointId!,
                 ..._intermediatePointIds,
               },
               onChanged: (val) => setState(() => _endPointId = val),

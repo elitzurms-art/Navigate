@@ -1252,6 +1252,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       'squad' => 'חוליה',
       _ => 'קבוצה',
     };
+    final compositionLabelPlural = switch (_forceComposition) {
+      'guard' => 'זוגות',
+      'pair' => 'צמדים',
+      'squad' => 'חוליות',
+      _ => 'קבוצות',
+    };
 
     return Card(
       child: Padding(
@@ -1262,7 +1268,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             Row(
               children: [
                 Text(
-                  'שיבוץ ${compositionLabel}ות',
+                  'שיבוץ $compositionLabelPlural',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),

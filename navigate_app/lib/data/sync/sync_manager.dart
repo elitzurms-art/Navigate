@@ -155,6 +155,16 @@ class SyncManager {
 
     print('SyncManager: Starting...');
 
+    // איפוס פריטי סנכרון שנתקעו (retryCount >= 10) כדי לנסות שוב
+    try {
+      final resetCount = await _db.resetStuckSyncItems();
+      if (resetCount > 0) {
+        print('SyncManager: Reset $resetCount stuck sync items for retry.');
+      }
+    } catch (e) {
+      print('SyncManager: Failed to reset stuck items: $e');
+    }
+
     // בדיקת חיבור ראשונית
     final connectivityResult = await _connectivity.checkConnectivity();
     _isOnline = connectivityResult != ConnectivityResult.none;
@@ -432,9 +442,8 @@ class SyncManager {
 
       final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
 
-      // מחיקות לא צריכות בדיקת קונפליקט — תמיד לבצע
-      if (item.operation != 'delete') {
-        // בדיקת קונפליקט גרסאות (רק ל-bidirectional, לא למחיקות)
+      // בדיקת קונפליקט גרסאות רק ל-update — create לא צריך (אין מסמך בשרת), delete לא צריך
+      if (item.operation == 'update') {
         if (direction == SyncDirection.bidirectional) {
           final conflictDetected = await _checkVersionConflict(
             collection: item.collectionName,
@@ -553,9 +562,9 @@ class SyncManager {
       // גרסת שרת < גרסה מקומית - 1: מצב לא צפוי, ננסה push
       return false;
     } catch (e) {
-      // אם לא ניתן לבדוק גרסה (בעיית רשת) - לא קונפליקט, ננסה שוב אחרי
-      print('SyncManager: Could not check version for $collection/$documentId: $e');
-      rethrow; // יגרום ל-retry ב-_processSingleItem
+      // Permission denied או בעיית רשת — נתייחס כאין קונפליקט ונתן ל-push להמשיך
+      print('SyncManager: Version check failed for $collection/$documentId: $e');
+      return false;
     }
   }
 

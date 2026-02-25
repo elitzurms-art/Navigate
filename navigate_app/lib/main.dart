@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -64,9 +65,11 @@ void main() async {
   // אתחול קונפיגורציית מפה
   await MapConfig().init();
 
-  // יצירת משתמש מפתח
+  // יצירת משתמש מפתח — רק בסביבת פיתוח
   final authService = AuthService();
-  await authService.ensureDeveloperUser();
+  if (kDebugMode) {
+    await authService.ensureDeveloperUser();
+  }
 
   // ניקוי חד-פעמי: מחיקת עצי ניווט ישנים ללא unitId על מסגרות
   await _migrateDeleteOldTrees();

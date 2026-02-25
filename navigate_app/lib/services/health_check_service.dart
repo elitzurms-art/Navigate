@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/services.dart';
+
 import '../domain/entities/checkpoint_punch.dart';
 import '../domain/entities/coordinate.dart';
 import '../data/repositories/navigator_alert_repository.dart';
@@ -93,9 +93,6 @@ class HealthCheckService {
       if (!_isAlarming) {
         _isAlarming = true;
       }
-
-      // צפצוף כל דקה
-      SystemSound.play(SystemSoundType.alert);
 
       onAlarmStateChanged?.call(true, _alarmMessage);
 

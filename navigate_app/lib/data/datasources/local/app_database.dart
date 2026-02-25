@@ -682,6 +682,16 @@ class AppDatabase extends _$AppDatabase {
     ));
   }
 
+  /// איפוס ניסיונות חוזרים לפריטים שנתקעו (retryCount >= maxRetries)
+  Future<int> resetStuckSyncItems() async {
+    return await (update(syncQueue)
+          ..where((tbl) => tbl.synced.equals(false) & tbl.retryCount.isBiggerOrEqualValue(10)))
+        .write(const SyncQueueCompanion(
+      retryCount: Value(0),
+      errorMessage: Value(null),
+    ));
+  }
+
   /// הוספת רשומה לתור קונפליקטים
   Future<int> insertConflict(ConflictQueueCompanion conflict) async {
     return await into(conflictQueue).insert(conflict);

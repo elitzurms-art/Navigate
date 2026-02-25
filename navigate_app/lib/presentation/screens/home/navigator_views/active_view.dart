@@ -1190,7 +1190,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         navigatorName: widget.currentUser.fullName,
         alertRepository: _alertRepo,
         onAlarmStateChanged: (isAlarming, message) {
-          if (mounted) setState(() {});
+          if (mounted) {
+            setState(() {});
+            if (isAlarming) {
+              _playAlertFeedback(); // alarm channel + רטט ×3
+            }
+          }
         },
       );
       _healthCheckService!.start();
