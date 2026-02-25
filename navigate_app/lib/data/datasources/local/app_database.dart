@@ -206,6 +206,7 @@ class Navigations extends Table {
   TextColumn get timeCalculationSettingsJson => text().withDefault(const Constant('{"enabled":true,"isHeavyLoad":false,"isNightNavigation":false,"isSummer":true}'))();
   TextColumn get communicationSettingsJson => text().withDefault(const Constant('{"walkieTalkieEnabled":false}'))();
   TextColumn get variablesSheetJson => text().nullable()();
+  TextColumn get forceCompositionJson => text().nullable()();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -403,7 +404,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration {
@@ -614,6 +615,9 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 31 && to >= 32) {
           await m.addColumn(navigationTracks, navigationTracks.overrideEnabledPositionSourcesJson);
+        }
+        if (from <= 32 && to >= 33) {
+          await m.addColumn(navigations, navigations.forceCompositionJson);
         }
       },
     );

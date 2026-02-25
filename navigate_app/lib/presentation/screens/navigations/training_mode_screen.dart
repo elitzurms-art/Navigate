@@ -20,6 +20,23 @@ import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../data/repositories/user_repository.dart';
 
+/// פלטת צבעים למנווטים מרובים
+const _kNavigatorColors = [
+  Color(0xFF2196F3),
+  Color(0xFF4CAF50),
+  Color(0xFFFF9800),
+  Color(0xFF9C27B0),
+  Color(0xFF00BCD4),
+  Color(0xFFFF5722),
+  Color(0xFF3F51B5),
+  Color(0xFFE91E63),
+  Color(0xFF009688),
+  Color(0xFF795548),
+];
+
+/// מצב הצגת נקודות ציון
+enum _NzDisplayMode { participatingOnly, allCheckpoints }
+
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
   final domain.Navigation navigation;
@@ -63,6 +80,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   double _nbOpacity = 1.0;
   bool _showRoutes = true;
   double _routesOpacity = 1.0;
+  _NzDisplayMode _nzMode = _NzDisplayMode.participatingOnly;
 
   // הגדרות למידה
   bool _enableLearningWithPhones = true;
@@ -1579,6 +1597,15 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     label: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: _getNavigatorColor(navigatorId),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                         Text(_getNavigatorDisplayName(navigatorId)),
                         const SizedBox(width: 6),
                         Icon(chipIcon, size: 14, color: chipColor),
@@ -1786,6 +1813,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     onVisibilityChanged: (v) => setState(() => _showNZ = v),
                     opacity: _nzOpacity,
                     onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                    child: _buildNzModeSelector(),
                   ),
                   MapLayerConfig(
                     id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
@@ -1844,7 +1872,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     return points;
   }
 
-  /// בניית markers לנקודות רלוונטיות לניווט: התחלה (ירוק H), סיום (אדום S), נקודות מנווטים (כחול ממוספר)
+  /// בניית markers לנקודות ציון לפי מצב התצוגה הנבחר
   List<Marker> _buildNavigationMarkers() {
     final startPointIds = <String>{};
     final endPointIds = <String>{};
@@ -1884,38 +1912,42 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       } catch (_) {}
     }
 
-    // נקודות ציון של המנווטים (כחול ממוספר) — בלי התחלה/סיום
-    for (final cpId in routeCheckpointIds) {
-      if (startPointIds.contains(cpId) || endPointIds.contains(cpId)) continue;
-      try {
-        final cp = _checkpoints.firstWhere((c) => c.id == cpId);
-        if (cp.isPolygon || cp.coordinates == null) continue;
-        markers.add(Marker(
-          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-          width: 32,
-          height: 32,
-          child: Tooltip(
-            message: cp.name,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.blue,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: Center(
-                child: Text(
-                  '${cp.sequenceNumber}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
+    // נקודות ציון — לפי מצב תצוגה
+    final checkpointsToShow = _nzMode == _NzDisplayMode.allCheckpoints
+        ? _checkpoints
+        : _checkpoints.where((cp) =>
+            routeCheckpointIds.contains(cp.id) ||
+            startPointIds.contains(cp.id) ||
+            endPointIds.contains(cp.id)).toList();
+
+    for (final cp in checkpointsToShow) {
+      if (startPointIds.contains(cp.id) || endPointIds.contains(cp.id)) continue;
+      if (cp.isPolygon || cp.coordinates == null) continue;
+      markers.add(Marker(
+        point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+        width: 32,
+        height: 32,
+        child: Tooltip(
+          message: cp.name,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: Center(
+              child: Text(
+                '${cp.sequenceNumber}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
           ),
-        ));
-      } catch (_) {}
+        ),
+      ));
     }
 
     // נקודות סיום (אדום S)
@@ -1948,6 +1980,34 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     return markers;
   }
 
+  Widget _buildNzModeSelector() {
+    const modes = [
+      (_NzDisplayMode.participatingOnly, 'משתתפות בניווט'),
+      (_NzDisplayMode.allCheckpoints, 'כל הנקודות'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 2,
+        children: modes.map((m) => ChoiceChip(
+          label: Text(m.$2, style: const TextStyle(fontSize: 10)),
+          selected: _nzMode == m.$1,
+          onSelected: (_) => setState(() => _nzMode = m.$1),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        )).toList(),
+      ),
+    );
+  }
+
+  /// מיפוי מנווט → צבע לפי אינדקס
+  Color _getNavigatorColor(String navigatorId) {
+    final keys = _currentNavigation.routes.keys.toList();
+    final idx = keys.indexOf(navigatorId);
+    return _kNavigatorColors[(idx >= 0 ? idx : 0) % _kNavigatorColors.length];
+  }
+
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
 
@@ -1966,13 +2026,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       }
 
       if (points.isNotEmpty) {
+        final color = _getNavigatorColor(navigatorId);
         polylines.add(
           PolylineLayer(
             polylines: [
               Polyline(
                 points: points,
                 strokeWidth: 3.0,
-                color: Colors.blue.withValues(alpha: _routesOpacity),
+                color: color.withValues(alpha: _routesOpacity),
               ),
             ],
           ),

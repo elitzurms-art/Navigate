@@ -117,6 +117,9 @@ class NavigationRepository {
               variablesSheetJson: Value(navigation.variablesSheet != null
                   ? jsonEncode(navigation.variablesSheet!.toMap())
                   : null),
+              forceCompositionJson: Value(!navigation.forceComposition.isSolo
+                  ? jsonEncode(navigation.forceComposition.toMap())
+                  : null),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -199,6 +202,9 @@ class NavigationRepository {
           communicationSettingsJson: Value(jsonEncode(navigation.communicationSettings.toMap())),
           variablesSheetJson: Value(navigation.variablesSheet != null
               ? jsonEncode(navigation.variablesSheet!.toMap())
+              : null),
+          forceCompositionJson: Value(!navigation.forceComposition.isSolo
+              ? jsonEncode(navigation.forceComposition.toMap())
               : null),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
@@ -355,6 +361,9 @@ class NavigationRepository {
       allowManualPosition: data.allowManualPosition,
       gpsSpoofingDetectionEnabled: data.gpsSpoofingDetectionEnabled,
       gpsSpoofingMaxDistanceKm: data.gpsSpoofingMaxDistanceKm,
+      forceComposition: data.forceCompositionJson != null && _parseJsonAsMap(data.forceCompositionJson!) != null
+          ? domain.ForceComposition.fromMap(_parseJsonAsMap(data.forceCompositionJson!)!)
+          : const domain.ForceComposition(),
       communicationSettings: _parseJsonAsMap(data.communicationSettingsJson) != null
           ? domain.CommunicationSettings.fromMap(_parseJsonAsMap(data.communicationSettingsJson)!)
           : const domain.CommunicationSettings(),
@@ -853,6 +862,9 @@ class NavigationRepository {
           variablesSheetJson: Value(nav.variablesSheet != null
               ? jsonEncode(nav.variablesSheet!.toMap())
               : null),
+          forceCompositionJson: Value(!nav.forceComposition.isSolo
+              ? jsonEncode(nav.forceComposition.toMap())
+              : null),
           permissionsJson: jsonEncode(nav.permissions.toMap()),
           createdAt: nav.createdAt,
           updatedAt: nav.updatedAt,
@@ -982,6 +994,9 @@ class NavigationRepository {
                   communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
                   variablesSheetJson: Value(nav.variablesSheet != null
                       ? jsonEncode(nav.variablesSheet!.toMap())
+                      : null),
+                  forceCompositionJson: Value(!nav.forceComposition.isSolo
+                      ? jsonEncode(nav.forceComposition.toMap())
                       : null),
                   gpsSpoofingDetectionEnabled: Value(nav.gpsSpoofingDetectionEnabled),
                   gpsSpoofingMaxDistanceKm: Value(nav.gpsSpoofingMaxDistanceKm),

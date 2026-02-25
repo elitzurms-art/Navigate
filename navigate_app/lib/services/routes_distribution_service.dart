@@ -122,6 +122,59 @@ class _InternalDistribution {
 /// שירות לחלוקה אוטומטית של צירים — אלגוריתם Monte Carlo
 class RoutesDistributionService {
 
+  /// שיבוץ אוטומטי של מנווטים לקבוצות
+  /// מנווטים שכבר משובצים ב-manualGroups נשארים; שאר המנווטים מתחלקים בין הקבוצות.
+  static Map<String, List<String>> autoGroupNavigators({
+    required List<String> navigators,
+    required int baseGroupSize,
+    Map<String, List<String>> manualGroups = const {},
+  }) {
+    final result = <String, List<String>>{};
+    final assigned = <String>{};
+
+    // העתקת קבוצות ידניות קיימות
+    for (final entry in manualGroups.entries) {
+      final validMembers = entry.value.where((id) => navigators.contains(id)).toList();
+      if (validMembers.isNotEmpty) {
+        result[entry.key] = validMembers;
+        assigned.addAll(validMembers);
+      }
+    }
+
+    // מנווטים לא משובצים
+    final unassigned = navigators.where((id) => !assigned.contains(id)).toList()..shuffle();
+
+    // יצירת קבוצות חדשות
+    int groupCounter = result.length;
+    while (unassigned.isNotEmpty) {
+      // בדיקה אם יש קבוצה קיימת שצריכה השלמה
+      final incompleteGroup = result.entries
+          .where((e) => e.value.length < baseGroupSize)
+          .firstOrNull;
+
+      if (incompleteGroup != null) {
+        final needed = baseGroupSize - incompleteGroup.value.length;
+        final toAdd = unassigned.take(needed).toList();
+        incompleteGroup.value.addAll(toAdd);
+        unassigned.removeRange(0, toAdd.length);
+      } else if (unassigned.length >= baseGroupSize) {
+        // קבוצה חדשה מלאה
+        groupCounter++;
+        final groupId = 'group_$groupCounter';
+        result[groupId] = unassigned.take(baseGroupSize).toList();
+        unassigned.removeRange(0, baseGroupSize);
+      } else {
+        // שארית — מוסיפים לקבוצות קיימות ב-round-robin
+        final groupKeys = result.keys.toList();
+        for (int i = 0; unassigned.isNotEmpty; i++) {
+          result[groupKeys[i % groupKeys.length]]!.add(unassigned.removeAt(0));
+        }
+      }
+    }
+
+    return result;
+  }
+
   /// חלוקה אוטומטית של צירים לפי הגדרות
   Future<domain.DistributionResult> distributeAutomatically({
     required domain.Navigation navigation,
@@ -136,8 +189,11 @@ class RoutesDistributionService {
     required double minRouteLength,
     required double maxRouteLength,
     String scoringCriterion = 'fairness',
+    ForceComposition? forceComposition,
     void Function(int current, int total)? onProgress,
   }) async {
+    final composition = forceComposition ?? const ForceComposition();
+
     // --- שלב 1: הכנה ---
     // מציאת משתתפים
     List<String> navigators = await _findNavigators(navigation, tree);
@@ -148,6 +204,30 @@ class RoutesDistributionService {
 
     if (checkpoints.isEmpty) {
       throw Exception('לא נמצאו נקודות ציון');
+    }
+
+    // ולידציות הרכב הכוח
+    if (composition.isGrouped) {
+      if (navigators.length < 2) {
+        throw Exception('נדרשים לפחות 2 מנווטים להרכב ${_compositionLabel(composition.type)}');
+      }
+      if (composition.type == 'squad' && navigators.length < 4) {
+        throw Exception('נדרשים לפחות 4 מנווטים להרכב חוליה');
+      }
+    }
+
+    // --- שיבוץ קבוצות ---
+    Map<String, List<String>> groups = {};
+    List<String> virtualNavigators = navigators;
+
+    if (composition.isGrouped) {
+      groups = autoGroupNavigators(
+        navigators: navigators,
+        baseGroupSize: composition.baseGroupSize,
+        manualGroups: composition.manualGroups,
+      );
+      // "מנווטים וירטואליים" — מזהה קבוצה אחד לכל קבוצה
+      virtualNavigators = groups.keys.toList();
     }
 
     // סינון נקודות לפי גבול גזרה
@@ -186,9 +266,9 @@ class RoutesDistributionService {
 
     final waypointMaps = waypoints.map((w) => w.toMap()).toList();
 
-    // --- שלב 2: הרצת אלגוריתם ב-Isolate ---
+    // --- שלב 2: הרצת אלגוריתם ב-Isolate עם מנווטים וירטואליים ---
     final result = await _runInIsolate(
-      navigators: navigators,
+      navigators: virtualNavigators,
       checkpointMaps: checkpointMaps,
       startPointId: startPointId,
       endPointId: endPointId,
@@ -201,7 +281,212 @@ class RoutesDistributionService {
       onProgress: onProgress,
     );
 
-    return result;
+    // --- שלב 3: הרחבת תוצאות לפי הרכב הכוח ---
+    if (composition.isSolo) {
+      return result;
+    }
+
+    return _expandForComposition(
+      result: result,
+      composition: composition,
+      groups: groups,
+      checkpoints: checkpoints,
+      startPointId: startPointId,
+      endPointId: endPointId,
+    );
+  }
+
+  /// תווית הרכב הכוח
+  static String _compositionLabel(String type) => switch (type) {
+    'guard' => 'מאבטח',
+    'pair' => 'צמד',
+    'squad' => 'חוליה',
+    _ => 'בדד',
+  };
+
+  /// הרחבת תוצאות חלוקה לפי הרכב הכוח
+  domain.DistributionResult _expandForComposition({
+    required domain.DistributionResult result,
+    required ForceComposition composition,
+    required Map<String, List<String>> groups,
+    required List<Checkpoint> checkpoints,
+    String? startPointId,
+    String? endPointId,
+  }) {
+    final expandedRoutes = <String, domain.AssignedRoute>{};
+
+    if (composition.isGuard) {
+      // --- מאבטח: פיצול כל ציר בנקודת החלפה ---
+      String? swapId = composition.swapPointId;
+
+      for (final entry in result.routes.entries) {
+        final groupId = entry.key;
+        final route = entry.value;
+        final members = groups[groupId];
+        if (members == null || members.length < 2) {
+          // fallback: אם אין מספיק חברים, שים את הציר המלא
+          if (members != null && members.isNotEmpty) {
+            expandedRoutes[members.first] = route.copyWith(groupId: groupId, segmentType: 'full');
+          }
+          continue;
+        }
+
+        // בחירת נקודת החלפה אוטומטית אם לא נבחרה — הנקודה הקרובה ביותר לאמצע הציר
+        if (swapId == null) {
+          swapId = _findAutoSwapPoint(route, checkpoints);
+        }
+
+        // מציאת אינדקס נקודת ההחלפה ברצף
+        final seq = route.sequence;
+        final swapIndex = seq.indexOf(swapId ?? '');
+
+        if (swapIndex <= 0 || swapIndex >= seq.length - 1) {
+          // swap point לא נמצא או בקצה — כל חברי הקבוצה מקבלים ציר מלא
+          for (final memberId in members) {
+            expandedRoutes[memberId] = route.copyWith(
+              groupId: groupId,
+              segmentType: 'full',
+              swapPointId: swapId,
+            );
+          }
+          continue;
+        }
+
+        // פיצול: first_half (start → swap) ו-second_half (swap → end)
+        final firstHalfSeq = seq.sublist(0, swapIndex + 1);
+        final secondHalfSeq = seq.sublist(swapIndex);
+        final firstHalfCps = route.checkpointIds.where((id) => firstHalfSeq.contains(id)).toList();
+        final secondHalfCps = route.checkpointIds.where((id) => secondHalfSeq.contains(id)).toList();
+
+        // חישוב אורך חצאי הציר
+        final firstHalfLength = _estimateSegmentLength(firstHalfSeq, checkpoints, startPointId);
+        final secondHalfLength = _estimateSegmentLength(secondHalfSeq, checkpoints, null, endPointId: endPointId);
+
+        // מנווט ראשון: first_half
+        expandedRoutes[members[0]] = domain.AssignedRoute(
+          checkpointIds: firstHalfCps,
+          routeLengthKm: firstHalfLength,
+          sequence: firstHalfSeq,
+          startPointId: route.startPointId,
+          endPointId: swapId,
+          waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
+          status: route.status,
+          groupId: groupId,
+          segmentType: 'first_half',
+          swapPointId: swapId,
+        );
+
+        // מנווט שני: second_half
+        expandedRoutes[members[1]] = domain.AssignedRoute(
+          checkpointIds: secondHalfCps,
+          routeLengthKm: secondHalfLength,
+          sequence: secondHalfSeq,
+          startPointId: swapId,
+          endPointId: route.endPointId,
+          waypointIds: route.waypointIds.where((id) => secondHalfSeq.contains(id)).toList(),
+          status: route.status,
+          groupId: groupId,
+          segmentType: 'second_half',
+          swapPointId: swapId,
+        );
+
+        // חברים נוספים (אם יש שלישייה) — מקבלים ציר מלא
+        for (int i = 2; i < members.length; i++) {
+          expandedRoutes[members[i]] = route.copyWith(
+            groupId: groupId,
+            segmentType: 'full',
+            swapPointId: swapId,
+          );
+        }
+      }
+    } else {
+      // --- צמד / חוליה: כל חבר בקבוצה מקבל אותו ציר ---
+      for (final entry in result.routes.entries) {
+        final groupId = entry.key;
+        final route = entry.value;
+        final members = groups[groupId];
+        if (members == null) continue;
+
+        for (final memberId in members) {
+          expandedRoutes[memberId] = route.copyWith(groupId: groupId);
+        }
+      }
+    }
+
+    // עדכון forceComposition עם הקבוצות הסופיות
+    final updatedComposition = composition.copyWith(manualGroups: groups);
+
+    return domain.DistributionResult(
+      status: result.status,
+      routes: expandedRoutes,
+      approvalOptions: result.approvalOptions,
+      hasSharedCheckpoints: result.hasSharedCheckpoints,
+      sharedCheckpointCount: result.sharedCheckpointCount,
+      forceComposition: updatedComposition,
+    );
+  }
+
+  /// מציאת נקודת החלפה אוטומטית — הנקודה הקרובה ביותר לאמצע הציר (לפי מרחק מצטבר)
+  String? _findAutoSwapPoint(domain.AssignedRoute route, List<Checkpoint> checkpoints) {
+    final seq = route.sequence;
+    if (seq.length < 3) return null;
+
+    final cpMap = <String, Checkpoint>{};
+    for (final cp in checkpoints) cpMap[cp.id] = cp;
+
+    final halfLength = route.routeLengthKm / 2;
+    double cumDist = 0;
+    String? bestId;
+    double bestDiff = double.infinity;
+
+    for (int i = 0; i < seq.length - 1; i++) {
+      final cp1 = cpMap[seq[i]];
+      final cp2 = cpMap[seq[i + 1]];
+      if (cp1 == null || cp2 == null || cp1.coordinates == null || cp2.coordinates == null) continue;
+
+      final segDist = _haversineKm(cp1.coordinates!.lat, cp1.coordinates!.lng, cp2.coordinates!.lat, cp2.coordinates!.lng);
+      cumDist += segDist;
+
+      final diff = (cumDist - halfLength).abs();
+      if (diff < bestDiff && i > 0 && i < seq.length - 2) {
+        bestDiff = diff;
+        bestId = seq[i + 1];
+      }
+    }
+
+    return bestId;
+  }
+
+  /// חישוב אורך מקטע לפי רצף נקודות
+  double _estimateSegmentLength(List<String> sequence, List<Checkpoint> checkpoints, String? startPointId, {String? endPointId}) {
+    final cpMap = <String, Checkpoint>{};
+    for (final cp in checkpoints) cpMap[cp.id] = cp;
+
+    double totalDist = 0;
+    final fullSeq = <String>[
+      if (startPointId != null) startPointId,
+      ...sequence,
+      if (endPointId != null) endPointId,
+    ];
+
+    for (int i = 0; i < fullSeq.length - 1; i++) {
+      final cp1 = cpMap[fullSeq[i]];
+      final cp2 = cpMap[fullSeq[i + 1]];
+      if (cp1 != null && cp2 != null && cp1.coordinates != null && cp2.coordinates != null) {
+        totalDist += _haversineKm(cp1.coordinates!.lat, cp1.coordinates!.lng, cp2.coordinates!.lat, cp2.coordinates!.lng);
+      }
+    }
+    return totalDist;
+  }
+
+  /// Haversine distance in km
+  static double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
+    const R = 6371.0;
+    final dLat = (lat2 - lat1) * pi / 180;
+    final dLng = (lng2 - lng1) * pi / 180;
+    final a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1 * pi / 180) * cos(lat2 * pi / 180) * sin(dLng / 2) * sin(dLng / 2);
+    return R * 2 * atan2(sqrt(a), sqrt(1 - a));
   }
 
   final UserRepository _userRepository = UserRepository();

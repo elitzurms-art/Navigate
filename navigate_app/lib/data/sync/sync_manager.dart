@@ -1276,6 +1276,8 @@ class SyncManager {
             (data['communicationSettings'] != null ? jsonEncode(data['communicationSettings']) : '{"walkieTalkieEnabled":false}')),
         variablesSheetJson: Value(data['variablesSheetJson'] as String? ??
             (data['variablesSheet'] != null ? jsonEncode(data['variablesSheet']) : null)),
+        forceCompositionJson: Value(data['forceCompositionJson'] as String? ??
+            (data['forceComposition'] != null ? jsonEncode(data['forceComposition']) : null)),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),

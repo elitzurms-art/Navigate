@@ -19,6 +19,9 @@ class AssignedRoute extends Equatable {
   final String? rejectionNotes; // הערות פסילה מהמפקד
   final List<Coordinate> plannedPath; // נקודות ציר שצייר המנווט
   final List<NarrationEntry> narrationEntries; // שורות סיפור דרך
+  final String? groupId; // מזהה קבוצה (לקישור בין מנווטים באותו ציר)
+  final String? segmentType; // 'full', 'first_half', 'second_half' (רלוונטי למאבטח)
+  final String? swapPointId; // נקודת ההחלפה (רלוונטי למאבטח)
 
   /// תאימות אחורה — isApproved נגזר מ-approvalStatus
   bool get isApproved => approvalStatus == 'approved';
@@ -36,6 +39,9 @@ class AssignedRoute extends Equatable {
     this.rejectionNotes,
     this.plannedPath = const [],
     this.narrationEntries = const [],
+    this.groupId,
+    this.segmentType,
+    this.swapPointId,
   });
 
   AssignedRoute copyWith({
@@ -52,6 +58,9 @@ class AssignedRoute extends Equatable {
     bool clearRejectionNotes = false,
     List<Coordinate>? plannedPath,
     List<NarrationEntry>? narrationEntries,
+    String? groupId,
+    String? segmentType,
+    String? swapPointId,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -66,6 +75,9 @@ class AssignedRoute extends Equatable {
       rejectionNotes: clearRejectionNotes ? null : (rejectionNotes ?? this.rejectionNotes),
       plannedPath: plannedPath ?? this.plannedPath,
       narrationEntries: narrationEntries ?? this.narrationEntries,
+      groupId: groupId ?? this.groupId,
+      segmentType: segmentType ?? this.segmentType,
+      swapPointId: swapPointId ?? this.swapPointId,
     );
   }
 
@@ -86,6 +98,9 @@ class AssignedRoute extends Equatable {
         'plannedPath': plannedPath.map((c) => c.toMap()).toList(),
       if (narrationEntries.isNotEmpty)
         'narrationEntries': narrationEntries.map((e) => e.toMap()).toList(),
+      if (groupId != null) 'groupId': groupId,
+      if (segmentType != null) 'segmentType': segmentType,
+      if (swapPointId != null) 'swapPointId': swapPointId,
     };
   }
 
@@ -118,11 +133,14 @@ class AssignedRoute extends Equatable {
               .map((e) => NarrationEntry.fromMap(e as Map<String, dynamic>))
               .toList()
           : const [],
+      groupId: map['groupId'] as String?,
+      segmentType: map['segmentType'] as String?,
+      swapPointId: map['swapPointId'] as String?,
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId];
 }
 
 /// אפשרות אישור כשחלוקה חורגת מהטווח
@@ -154,6 +172,7 @@ class DistributionResult extends Equatable {
   final List<ApprovalOption> approvalOptions;
   final bool hasSharedCheckpoints;
   final int sharedCheckpointCount;
+  final ForceComposition? forceComposition; // nullable לתאימות אחורה
 
   const DistributionResult({
     required this.status,
@@ -161,13 +180,14 @@ class DistributionResult extends Equatable {
     this.approvalOptions = const [],
     this.hasSharedCheckpoints = false,
     this.sharedCheckpointCount = 0,
+    this.forceComposition,
   });
 
   bool get isSuccess => status == 'success';
   bool get needsApproval => status == 'needs_approval';
 
   @override
-  List<Object?> get props => [status, routes, approvalOptions, hasSharedCheckpoints, sharedCheckpointCount];
+  List<Object?> get props => [status, routes, approvalOptions, hasSharedCheckpoints, sharedCheckpointCount, forceComposition];
 }
 
 /// טווח אורך מסלול
@@ -331,6 +351,9 @@ class Navigation extends Equatable {
   final bool gpsSpoofingDetectionEnabled;
   final int gpsSpoofingMaxDistanceKm;
 
+  // Force composition (הרכב הכוח)
+  final ForceComposition forceComposition;
+
   // Communication (PTT)
   final CommunicationSettings communicationSettings;
 
@@ -392,6 +415,7 @@ class Navigation extends Equatable {
     this.allowManualPosition = false,
     this.gpsSpoofingDetectionEnabled = true,
     this.gpsSpoofingMaxDistanceKm = 50,
+    this.forceComposition = const ForceComposition(),
     this.communicationSettings = const CommunicationSettings(),
     this.variablesSheet,
     this.timeCalculationSettings = const TimeCalculationSettings(),
@@ -456,6 +480,7 @@ class Navigation extends Equatable {
     bool? allowManualPosition,
     bool? gpsSpoofingDetectionEnabled,
     int? gpsSpoofingMaxDistanceKm,
+    ForceComposition? forceComposition,
     CommunicationSettings? communicationSettings,
     VariablesSheet? variablesSheet,
     bool clearVariablesSheet = false,
@@ -510,6 +535,7 @@ class Navigation extends Equatable {
       allowManualPosition: allowManualPosition ?? this.allowManualPosition,
       gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
       gpsSpoofingMaxDistanceKm: gpsSpoofingMaxDistanceKm ?? this.gpsSpoofingMaxDistanceKm,
+      forceComposition: forceComposition ?? this.forceComposition,
       communicationSettings: communicationSettings ?? this.communicationSettings,
       variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
@@ -570,6 +596,7 @@ class Navigation extends Equatable {
       'allowManualPosition': allowManualPosition,
       'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
       'gpsSpoofingMaxDistanceKm': gpsSpoofingMaxDistanceKm,
+      'forceComposition': forceComposition.toMap(),
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
@@ -656,6 +683,9 @@ class Navigation extends Equatable {
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
       gpsSpoofingDetectionEnabled: map['gpsSpoofingDetectionEnabled'] as bool? ?? true,
       gpsSpoofingMaxDistanceKm: (map['gpsSpoofingMaxDistanceKm'] as num?)?.toInt() ?? 50,
+      forceComposition: map['forceComposition'] != null
+          ? ForceComposition.fromMap(map['forceComposition'] as Map<String, dynamic>)
+          : const ForceComposition(),
       communicationSettings: map['communicationSettings'] != null
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
@@ -720,6 +750,7 @@ class Navigation extends Equatable {
     allowManualPosition,
     gpsSpoofingDetectionEnabled,
     gpsSpoofingMaxDistanceKm,
+    forceComposition,
     communicationSettings,
     variablesSheet,
     timeCalculationSettings,

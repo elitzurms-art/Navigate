@@ -951,3 +951,63 @@ class WaypointSettings extends Equatable {
   @override
   List<Object?> get props => [enabled, waypoints];
 }
+
+/// הרכב הכוח — בדד / מאבטח / צמד / חוליה
+class ForceComposition extends Equatable {
+  final String type; // 'solo', 'guard', 'pair', 'squad'
+  final String? swapPointId; // נקודת החלפה גלובלית — רק ל-guard
+  final Map<String, List<String>> manualGroups; // שיבוץ ידני (groupId → navigatorIds)
+
+  const ForceComposition({
+    this.type = 'solo',
+    this.swapPointId,
+    this.manualGroups = const {},
+  });
+
+  int get baseGroupSize => switch (type) {
+    'guard' || 'pair' => 2,
+    'squad' => 4,
+    _ => 1,
+  };
+
+  bool get isSolo => type == 'solo';
+  bool get isGuard => type == 'guard';
+  bool get isGrouped => type != 'solo';
+
+  ForceComposition copyWith({
+    String? type,
+    String? swapPointId,
+    bool clearSwapPointId = false,
+    Map<String, List<String>>? manualGroups,
+  }) {
+    return ForceComposition(
+      type: type ?? this.type,
+      swapPointId: clearSwapPointId ? null : (swapPointId ?? this.swapPointId),
+      manualGroups: manualGroups ?? this.manualGroups,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'type': type,
+      if (swapPointId != null) 'swapPointId': swapPointId,
+      if (manualGroups.isNotEmpty)
+        'manualGroups': manualGroups.map((k, v) => MapEntry(k, v)),
+    };
+  }
+
+  factory ForceComposition.fromMap(Map<String, dynamic> map) {
+    return ForceComposition(
+      type: map['type'] as String? ?? 'solo',
+      swapPointId: map['swapPointId'] as String?,
+      manualGroups: map['manualGroups'] != null
+          ? (map['manualGroups'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, List<String>.from(v as List)),
+            )
+          : const {},
+    );
+  }
+
+  @override
+  List<Object?> get props => [type, swapPointId, manualGroups];
+}

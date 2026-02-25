@@ -6,6 +6,7 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../data/repositories/user_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../services/routes_distribution_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
@@ -29,6 +30,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavigationLayerCopyService _layerCopyService = NavigationLayerCopyService();
   final RoutesDistributionService _distributionService = RoutesDistributionService();
+  final UserRepository _userRepo = UserRepository();
 
   List<Checkpoint> _checkpoints = [];
   NavigationTree? _tree;
@@ -49,6 +51,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   // קריטריון ניקוד
   String _scoringCriterion = 'fairness';
+
+  // הרכב הכוח
+  String _forceComposition = 'solo';
+  String? _swapPointId;
+  Map<String, List<String>> _manualGroups = {};
+  List<String> _navigatorsList = [];
 
   // Progress
   bool _isDistributing = false;
@@ -80,6 +88,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
       // קריטריון חלוקה
       _scoringCriterion = nav.scoringCriterion ?? 'fairness';
+
+      // הרכב הכוח
+      _forceComposition = nav.forceComposition.type;
+      _swapPointId = nav.forceComposition.swapPointId;
+      _manualGroups = Map.from(nav.forceComposition.manualGroups.map(
+        (k, v) => MapEntry(k, List<String>.from(v)),
+      ));
     });
   }
 
@@ -135,9 +150,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       // טעינת עץ מבנה
       final tree = await _treeRepo.getById(widget.navigation.treeId);
 
+      // טעינת רשימת מנווטים
+      final navigatorsList = await _loadNavigatorsList(tree);
+
       setState(() {
         _checkpoints = checkpoints;
         _tree = tree;
+        _navigatorsList = navigatorsList;
         _isLoading = false;
       });
     } catch (e) {
@@ -150,6 +169,25 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     }
   }
 
+  Future<List<String>> _loadNavigatorsList(NavigationTree? tree) async {
+    if (tree == null) return [];
+    final nav = widget.navigation;
+    // אם נבחרו משתתפים ספציפיים
+    if (nav.selectedParticipantIds.isNotEmpty) {
+      final result = <String>[];
+      for (final uid in nav.selectedParticipantIds) {
+        final user = await _userRepo.getUser(uid);
+        if (user != null && user.role == 'navigator') result.add(uid);
+      }
+      return result;
+    }
+    // fallback: מנווטים מהיחידה
+    final unitId = nav.selectedUnitId ?? tree.unitId;
+    if (unitId == null) return [];
+    final users = await _userRepo.getNavigatorsForUnit(unitId);
+    return users.map((u) => u.uid).toList();
+  }
+
   Future<void> _saveSettings() async {
     final settingsNav = widget.navigation.copyWith(
       navigationType: _navigationType,
@@ -160,6 +198,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       endPoint: _endPointId,
       waypointSettings: WaypointSettings(enabled: _waypointsEnabled, waypoints: _waypoints),
       scoringCriterion: _scoringCriterion,
+      forceComposition: ForceComposition(
+        type: _forceComposition,
+        swapPointId: _swapPointId,
+        manualGroups: _manualGroups,
+      ),
       updatedAt: DateTime.now(),
     );
     await _navRepo.update(settingsNav);
@@ -203,6 +246,27 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       }
     }
 
+    // ולידציות הרכב הכוח (לפני _isDistributing)
+    if (_forceComposition != 'solo') {
+      if (_navigatorsList.length < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('נדרשים לפחות 2 מנווטים להרכב לא-בדד')),
+        );
+        return;
+      }
+      if (_forceComposition == 'squad' && _navigatorsList.length < 4) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('נדרשים לפחות 4 מנווטים להרכב חוליה')),
+        );
+        return;
+      }
+
+      // שיבוץ אוטומטי אם לא הוגדרו קבוצות עדיין
+      if (_manualGroups.isEmpty) {
+        _autoAssignGroups();
+      }
+    }
+
     // שמירת הגדרות לפני החלוקה — כך שהן נשמרות גם אם החלוקה נכשלת או בוטלה
     await _saveSettings();
 
@@ -211,6 +275,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       _progressCurrent = 0;
       _progressTotal = 1000;
     });
+
+    final composition = ForceComposition(
+      type: _forceComposition,
+      swapPointId: _swapPointId,
+      manualGroups: _manualGroups,
+    );
 
     try {
       final distributionResult = await _distributionService.distributeAutomatically(
@@ -226,6 +296,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         minRouteLength: _minRouteLength,
         maxRouteLength: _maxRouteLength,
         scoringCriterion: _scoringCriterion,
+        forceComposition: composition,
         onProgress: (current, total) {
           if (mounted) {
             setState(() {
@@ -395,6 +466,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         enabled: _waypointsEnabled,
         waypoints: _waypoints,
       ),
+      forceComposition: distributionResult.forceComposition ?? ForceComposition(
+        type: _forceComposition,
+        swapPointId: _swapPointId,
+        manualGroups: _manualGroups,
+      ),
       updatedAt: DateTime.now(),
     );
 
@@ -450,6 +526,16 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         // סוג ניווט
                         _buildNavigationTypeSection(),
                         const SizedBox(height: 16),
+
+                        // הרכב הכוח
+                        _buildForceCompositionSection(),
+                        const SizedBox(height: 16),
+
+                        // שיבוץ קבוצות (רק כשהרכב ≠ בדד)
+                        if (_forceComposition != 'solo') ...[
+                          _buildGroupsSection(),
+                          const SizedBox(height: 16),
+                        ],
 
                         // אופן ביצוע
                         _buildExecutionOrderSection(),
@@ -1071,6 +1157,204 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       final current = _waypoints[index];
       _waypoints[index] = current.copyWith(afterCheckpointIndex: gapIndex);
     });
+  }
+
+  void _autoAssignGroups() {
+    final baseSize = ForceComposition(type: _forceComposition).baseGroupSize;
+    final groups = RoutesDistributionService.autoGroupNavigators(
+      navigators: _navigatorsList,
+      baseGroupSize: baseSize,
+    );
+    setState(() => _manualGroups = groups);
+  }
+
+  Widget _buildForceCompositionSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'הרכב הכוח',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _forceComposition,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'בחר הרכב',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'solo', child: Text('בדד')),
+                DropdownMenuItem(value: 'guard', child: Text('מאבטח')),
+                DropdownMenuItem(value: 'pair', child: Text('צמד')),
+                DropdownMenuItem(value: 'squad', child: Text('חוליה')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _forceComposition = value!;
+                  _manualGroups = {};
+                  if (value != 'guard') _swapPointId = null;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            Text(
+              switch (_forceComposition) {
+                'solo' => 'כל מנווט מקבל ציר עצמאי',
+                'guard' => 'זוגות מנווטים — כל אחד מקבל חצי ציר עם נקודת החלפה',
+                'pair' => 'צמדי מנווטים — כל צמד מקבל ציר משותף',
+                'squad' => 'חוליות של 4 מנווטים — כל חוליה מקבלת ציר משותף',
+                _ => '',
+              },
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+
+            // בורר נקודת החלפה — רק למאבטח
+            if (_forceComposition == 'guard') ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _swapPointId,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'נקודת החלפה גלובלית',
+                ),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('אוטומטי (אמצע הציר)')),
+                  ..._checkpoints.map((cp) => DropdownMenuItem(
+                    value: cp.id,
+                    child: Text('${cp.name} (${cp.sequenceNumber})'),
+                  )),
+                ],
+                onChanged: (value) {
+                  setState(() => _swapPointId = value);
+                },
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'כל הזוגות יחליפו באותה נקודה',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupsSection() {
+    final baseSize = ForceComposition(type: _forceComposition).baseGroupSize;
+    final compositionLabel = switch (_forceComposition) {
+      'guard' => 'זוג',
+      'pair' => 'צמד',
+      'squad' => 'חוליה',
+      _ => 'קבוצה',
+    };
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'שיבוץ ${compositionLabel}ות',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _autoAssignGroups,
+                  icon: const Icon(Icons.shuffle, size: 18),
+                  label: Text(_manualGroups.isEmpty ? 'שיבוץ אוטומטי' : 'ערבב מחדש'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${_navigatorsList.length} מנווטים, גודל בסיס: $baseSize',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+
+            if (_manualGroups.isEmpty) ...[
+              const SizedBox(height: 16),
+              Center(
+                child: Text(
+                  'לחץ "שיבוץ אוטומטי" או שהחלוקה תבוצע אוטומטית',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 12),
+              ..._manualGroups.entries.toList().asMap().entries.map((entry) {
+                final groupIndex = entry.key;
+                final groupId = entry.value.key;
+                final members = entry.value.value;
+                final sizeLabel = members.length != baseSize
+                    ? ' (${members.length} חברים)'
+                    : '';
+
+                return Card(
+                  color: Colors.blue[50],
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$compositionLabel ${groupIndex + 1}$sizeLabel',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        ...members.asMap().entries.map((memberEntry) {
+                          final memberId = memberEntry.value;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person, size: 18, color: Colors.blueGrey),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(memberId, style: const TextStyle(fontSize: 13))),
+                                // Dropdown לשינוי קבוצה
+                                DropdownButton<String>(
+                                  value: groupId,
+                                  underline: const SizedBox(),
+                                  isDense: true,
+                                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                  items: _manualGroups.keys.toList().asMap().entries.map((gEntry) {
+                                    return DropdownMenuItem(
+                                      value: gEntry.value,
+                                      child: Text('$compositionLabel ${gEntry.key + 1}'),
+                                    );
+                                  }).toList(),
+                                  onChanged: (newGroupId) {
+                                    if (newGroupId == null || newGroupId == groupId) return;
+                                    setState(() {
+                                      _manualGroups[groupId]!.remove(memberId);
+                                      _manualGroups[newGroupId]!.add(memberId);
+                                      // הסרת קבוצות ריקות
+                                      _manualGroups.removeWhere((_, v) => v.isEmpty);
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildClustersSection() {

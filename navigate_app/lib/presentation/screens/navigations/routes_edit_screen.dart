@@ -862,7 +862,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                       child: const Icon(Icons.drag_handle, size: 20),
                     ),
                     title: Text(
-                      '${index + 1}. ${cp?.name ?? cpId}',
+                      '${index + 1}. ${cp?.sequenceNumber ?? cpId}',
                       style: TextStyle(
                         fontSize: 14,
                         color: isMandatory ? Colors.purple[700] : null,
