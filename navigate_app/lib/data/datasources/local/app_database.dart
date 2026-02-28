@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'dart:io';
@@ -24,6 +25,7 @@ class Users extends Table {
   TextColumn get fcmToken => text().nullable()();
   TextColumn get firebaseUid => text().nullable()();
   BoolColumn get isApproved => boolean().withDefault(const Constant(false))();
+  TextColumn get approvalStatus => text().nullable()();
   DateTimeColumn get soloQuizPassedAt => dateTime().nullable()();
   IntColumn get soloQuizScore => integer().nullable()();
   DateTimeColumn get createdAt => dateTime()();
@@ -237,6 +239,7 @@ class NavigationTracks extends Table {
   TextColumn get overrideEnabledPositionSourcesJson => text().nullable()();
   BoolColumn get manualPositionUsed => boolean().withDefault(const Constant(false))();
   DateTimeColumn get manualPositionUsedAt => dateTime().nullable()();
+  BoolColumn get isGroupSecondary => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -404,7 +407,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 33;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration {
@@ -561,63 +564,86 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('DROP TABLE safety_points');
           await customStatement('ALTER TABLE safety_points_new RENAME TO safety_points');
         }
+        // Helper: safe addColumn — ignores "duplicate column" errors
+        Future<void> safeAddColumn(TableInfo table, GeneratedColumn column) async {
+          try {
+            await m.addColumn(table, column);
+          } on SqliteException catch (e) {
+            if (!e.toString().contains('duplicate column')) rethrow;
+          }
+        }
+
         if (from <= 19 && to >= 20) {
-          await m.addColumn(users, users.fcmToken);
+          await safeAddColumn(users, users.fcmToken);
         }
         if (from <= 20 && to >= 21) {
-          await m.addColumn(navigationTracks, navigationTracks.overrideAllowOpenMap);
-          await m.addColumn(navigationTracks, navigationTracks.overrideShowSelfLocation);
-          await m.addColumn(navigationTracks, navigationTracks.overrideShowRouteOnMap);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideAllowOpenMap);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideShowSelfLocation);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideShowRouteOnMap);
         }
         if (from <= 21 && to >= 22) {
-          await m.addColumn(navigations, navigations.enabledPositionSourcesJson);
+          await safeAddColumn(navigations, navigations.enabledPositionSourcesJson);
         }
         if (from <= 22 && to >= 23) {
-          await m.addColumn(navigations, navigations.allowManualPosition);
-          await m.addColumn(navigationTracks, navigationTracks.overrideAllowManualPosition);
-          await m.addColumn(navigationTracks, navigationTracks.manualPositionUsed);
-          await m.addColumn(navigationTracks, navigationTracks.manualPositionUsedAt);
+          await safeAddColumn(navigations, navigations.allowManualPosition);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideAllowManualPosition);
+          await safeAddColumn(navigationTracks, navigationTracks.manualPositionUsed);
+          await safeAddColumn(navigationTracks, navigationTracks.manualPositionUsedAt);
         }
         if (from <= 23 && to >= 24) {
-          await m.addColumn(navigations, navigations.timeCalculationSettingsJson);
+          await safeAddColumn(navigations, navigations.timeCalculationSettingsJson);
         }
         if (from <= 24 && to >= 25) {
-          await m.addColumn(navigations, navigations.communicationSettingsJson);
-          await m.addColumn(navigationTracks, navigationTracks.overrideWalkieTalkieEnabled);
+          await safeAddColumn(navigations, navigations.communicationSettingsJson);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideWalkieTalkieEnabled);
         }
         if (from <= 25 && to >= 26) {
-          await m.addColumn(users, users.isApproved);
+          await safeAddColumn(users, users.isApproved);
           // תאימות לאחור: משתמשים קיימים עם unitId → מאושרים
           await customStatement(
             "UPDATE users SET is_approved = 1 WHERE unit_id IS NOT NULL AND unit_id != ''"
           );
         }
         if (from <= 26 && to >= 27) {
-          await m.addColumn(users, users.firebaseUid);
+          await safeAddColumn(users, users.firebaseUid);
         }
         if (from <= 27 && to >= 28) {
-          await m.addColumn(users, users.soloQuizPassedAt);
-          await m.addColumn(users, users.soloQuizScore);
+          await safeAddColumn(users, users.soloQuizPassedAt);
+          await safeAddColumn(users, users.soloQuizScore);
         }
         if (from <= 28 && to >= 29) {
-          await m.addColumn(navigations, navigations.startPoint);
-          await m.addColumn(navigations, navigations.endPoint);
-          await m.addColumn(navigations, navigations.checkpointsPerNavigator);
-          await m.addColumn(navigations, navigations.waypointSettingsJson);
-          await m.addColumn(navigations, navigations.scoringCriterion);
+          await safeAddColumn(navigations, navigations.startPoint);
+          await safeAddColumn(navigations, navigations.endPoint);
+          await safeAddColumn(navigations, navigations.checkpointsPerNavigator);
+          await safeAddColumn(navigations, navigations.waypointSettingsJson);
+          await safeAddColumn(navigations, navigations.scoringCriterion);
         }
         if (from <= 29 && to >= 30) {
-          await m.addColumn(navigations, navigations.variablesSheetJson);
+          await safeAddColumn(navigations, navigations.variablesSheetJson);
         }
         if (from <= 30 && to >= 31) {
-          await m.addColumn(navigations, navigations.gpsSpoofingDetectionEnabled);
-          await m.addColumn(navigations, navigations.gpsSpoofingMaxDistanceKm);
+          await safeAddColumn(navigations, navigations.gpsSpoofingDetectionEnabled);
+          await safeAddColumn(navigations, navigations.gpsSpoofingMaxDistanceKm);
         }
         if (from <= 31 && to >= 32) {
-          await m.addColumn(navigationTracks, navigationTracks.overrideEnabledPositionSourcesJson);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideEnabledPositionSourcesJson);
         }
         if (from <= 32 && to >= 33) {
-          await m.addColumn(navigations, navigations.forceCompositionJson);
+          await safeAddColumn(navigations, navigations.forceCompositionJson);
+        }
+        if (from <= 33 && to >= 34) {
+          await safeAddColumn(navigationTracks, navigationTracks.isGroupSecondary);
+        }
+        if (from <= 34 && to >= 35) {
+          await safeAddColumn(users, users.approvalStatus);
+          await customStatement("""
+            UPDATE users SET approval_status =
+              CASE
+                WHEN is_approved = 1 THEN 'approved'
+                WHEN is_approved = 0 AND unit_id IS NOT NULL AND unit_id != '' THEN 'pending'
+                ELSE NULL
+              END
+          """);
         }
       },
     );

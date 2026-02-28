@@ -21,6 +21,7 @@ import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/cluster_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
+import '../../../../data/repositories/user_repository.dart';
 import '../../../../data/repositories/unit_repository.dart';
 import '../../../../domain/entities/safety_point.dart';
 import '../../../../domain/entities/boundary.dart';
@@ -92,6 +93,9 @@ class _LearningViewState extends State<LearningView>
 
   /// סיפור דרך — state
   List<NarrationEntry> _narrationEntries = [];
+
+  /// קבוצה (צמד/חוליה) — state
+  String? _repName; // שם הנציג (לבאנר)
 
   /// שמות לתצוגה בפרטי ניווט
   String? _areaName;
@@ -169,9 +173,10 @@ class _LearningViewState extends State<LearningView>
     super.didUpdateWidget(oldWidget);
     _currentNavigation = widget.navigation;
     if (oldWidget.navigation.id != widget.navigation.id) {
-      _buildTabs();
-      _tabController.dispose();
-      _tabController = TabController(length: _tabs.length, vsync: this);
+      _rebuildTabs();
+    } else if (oldWidget.navigation.forceComposition != widget.navigation.forceComposition) {
+      // נציג השתנה דרך sync — בנייה מחדש
+      _rebuildTabs();
     }
   }
 
@@ -182,7 +187,15 @@ class _LearningViewState extends State<LearningView>
   }
 
   void _buildTabs() {
-    final settings = widget.navigation.learningSettings;
+    final settings = _currentNavigation.learningSettings;
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    final groupId = route?.groupId;
+    final composition = _currentNavigation.forceComposition;
+    final isGrouped = composition.isGrouped && groupId != null;
+    final learningRep = composition.getLearningRepresentative(groupId);
+    final isRep = learningRep == widget.currentUser.uid;
+    final hasOtherRep = learningRep != null && !isRep;
+
     _tabs = [];
 
     if (settings.showNavigationDetails) {
@@ -201,20 +214,26 @@ class _LearningViewState extends State<LearningView>
       ));
     }
 
-    if (settings.allowRouteEditing) {
-      _tabs.add(_LearningTab(
-        label: 'עריכה ואישור',
-        icon: Icons.edit,
-        builder: _buildEditTab,
-      ));
-    }
+    // אם יש קבוצה ויש נציג אחר — הסתר עריכה/אישור/סיפור דרך
+    if (isGrouped && hasOtherRep) {
+      // לא מוסיפים edit/narration tabs — הנציג עורך עבור המשני
+      _loadRepName(learningRep!);
+    } else {
+      if (settings.allowRouteEditing) {
+        _tabs.add(_LearningTab(
+          label: 'עריכה ואישור',
+          icon: Icons.edit,
+          builder: _buildEditTab,
+        ));
+      }
 
-    if (settings.allowRouteNarration) {
-      _tabs.add(_LearningTab(
-        label: 'סיפור דרך',
-        icon: Icons.record_voice_over,
-        builder: _buildNarrationTab,
-      ));
+      if (settings.allowRouteNarration) {
+        _tabs.add(_LearningTab(
+          label: 'סיפור דרך',
+          icon: Icons.record_voice_over,
+          builder: _buildNarrationTab,
+        ));
+      }
     }
 
     // אם אין לשוניות בכלל, הוסף placeholder
@@ -225,6 +244,77 @@ class _LearningViewState extends State<LearningView>
         builder: _buildEmptyTab,
       ));
     }
+  }
+
+  /// טעינת שם הנציג לבאנר
+  void _loadRepName(String repId) {
+    UserRepository().getUser(repId).then((user) {
+      if (mounted && user != null) {
+        setState(() => _repName = user.fullName.isNotEmpty ? user.fullName : repId);
+      }
+    });
+  }
+
+  /// תווית הרכב כוח
+  String _getCompositionLabel() {
+    final type = _currentNavigation.forceComposition.type;
+    return type == 'pair' ? 'צמד' : (type == 'squad' ? 'חוליה' : 'קבוצה');
+  }
+
+  /// בדיקה + תביעת נציג למידה. מחזיר true אם המנווט הוא/הפך לנציג.
+  Future<bool> _ensureLearningRepresentative() async {
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route == null || route.groupId == null) return true; // solo
+    final composition = _currentNavigation.forceComposition;
+    if (!composition.isGrouped) return true;
+
+    final existingRep = composition.getLearningRepresentative(route.groupId);
+    if (existingRep == widget.currentUser.uid) return true; // כבר נציג
+    if (existingRep != null) return false; // יש נציג אחר
+
+    // אין נציג — שאל
+    final label = _getCompositionLabel();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('נציג ה$label'),
+        content: Text('האם אתה בטוח שאתה נציג ה$label?\n'
+            'לאחר אישור, רק אתה תוכל לערוך את הציר.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('אישור')),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+
+    // עדכון ForceComposition
+    final updatedReps = Map<String, String>.from(
+      _currentNavigation.forceComposition.learningRepresentatives,
+    );
+    updatedReps[route.groupId!] = widget.currentUser.uid;
+    final updatedNav = _currentNavigation.copyWith(
+      forceComposition: _currentNavigation.forceComposition.copyWith(
+        learningRepresentatives: updatedReps,
+      ),
+      updatedAt: DateTime.now(),
+    );
+    await _navigationRepo.update(updatedNav);
+    setState(() => _currentNavigation = updatedNav);
+    widget.onNavigationUpdated(updatedNav);
+    _rebuildTabs();
+    return true;
+  }
+
+  /// בנייה מחדש של tabs (אחרי שינוי נציג)
+  void _rebuildTabs() {
+    final oldLength = _tabs.length;
+    _buildTabs();
+    if (_tabs.length != oldLength) {
+      _tabController.dispose();
+      _tabController = TabController(length: _tabs.length, vsync: this);
+    }
+    setState(() {});
   }
 
   /// טעינת נקודות ציון של הציר לפי סדר ה-sequence + התחלה/סיום
@@ -854,9 +944,13 @@ class _LearningViewState extends State<LearningView>
     );
   }
 
-  void _openRouteEditor() {
+  Future<void> _openRouteEditor() async {
     final route = _currentNavigation.routes[widget.currentUser.uid];
     if (route == null) return;
+
+    // בדיקת נציג — אם יש קבוצה, וודא שהמנווט הוא הנציג
+    final isRep = await _ensureLearningRepresentative();
+    if (!isRep || !mounted) return;
 
     Navigator.push(
       context,
@@ -899,6 +993,15 @@ class _LearningViewState extends State<LearningView>
       _currentNavigation.routes,
     );
     updatedRoutes[widget.currentUser.uid] = updatedRoute;
+
+    // עדכון סטטוס אישור לכל חברי הקבוצה
+    if (route.groupId != null) {
+      for (final entry in updatedRoutes.entries) {
+        if (entry.value.groupId == route.groupId && entry.key != widget.currentUser.uid) {
+          updatedRoutes[entry.key] = entry.value.copyWith(approvalStatus: 'pending_approval');
+        }
+      }
+    }
 
     final updatedNav = _currentNavigation.copyWith(
       routes: updatedRoutes,
@@ -1250,6 +1353,17 @@ class _LearningViewState extends State<LearningView>
       _currentNavigation.routes,
     );
     updatedRoutes[widget.currentUser.uid] = updatedRoute;
+
+    // עדכון סיפור דרך לכל חברי הקבוצה (צמד/חוליה)
+    if (route.groupId != null) {
+      for (final entry in updatedRoutes.entries) {
+        if (entry.value.groupId == route.groupId && entry.key != widget.currentUser.uid) {
+          updatedRoutes[entry.key] = entry.value.copyWith(
+            narrationEntries: _narrationEntries,
+          );
+        }
+      }
+    }
 
     final updatedNav = _currentNavigation.copyWith(
       routes: updatedRoutes,
@@ -1958,10 +2072,39 @@ class _LearningViewState extends State<LearningView>
   // Build
   // ===========================================================================
 
+  /// האם המנווט הנוכחי משני בקבוצה (לא נציג)
+  bool get _isGroupSecondary {
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route == null || route.groupId == null) return false;
+    final composition = _currentNavigation.forceComposition;
+    if (!composition.isGrouped) return false;
+    final rep = composition.getLearningRepresentative(route.groupId);
+    return rep != null && rep != widget.currentUser.uid;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // באנר למנווט משני — "הנציג [שם] עורך את הציר עבור ה[צמד/חוליה]"
+        if (_isGroupSecondary)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.blue[50],
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.blue[700]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'הנציג ${_repName ?? ''} עורך את הציר עבור ה${_getCompositionLabel()}',
+                    style: TextStyle(fontSize: 13, color: Colors.blue[800]),
+                  ),
+                ),
+              ],
+            ),
+          ),
         TabBar(
           controller: _tabController,
           isScrollable: _tabs.length > 3,

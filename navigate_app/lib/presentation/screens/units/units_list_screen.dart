@@ -25,22 +25,28 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
   final UnitRepository _repository = UnitRepository();
   List<_UnitWithDepth> _hierarchicalUnits = [];
   bool _isLoading = true;
+  bool _initialLoadDone = false;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     _loadUnits();
-    // האזנה לשינויי סנכרון — רענון אוטומטי כשיחידות מתעדכנות
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשיחידות מתעדכנות (עם debounce)
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.unitsCollection && mounted) {
-        _loadUnits();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadUnits();
+        });
       }
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     super.dispose();
   }
@@ -72,16 +78,21 @@ class _UnitsListScreenState extends State<UnitsListScreen> {
   }
 
   Future<void> _loadUnits() async {
-    setState(() => _isLoading = true);
+    if (!_initialLoadDone) {
+      setState(() => _isLoading = true);
+    }
     try {
       final allUnits = await _repository.getAll();
-      setState(() {
-        _hierarchicalUnits = _buildHierarchy(allUnits);
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
       if (mounted) {
+        setState(() {
+          _hierarchicalUnits = _buildHierarchy(allUnits);
+          _isLoading = false;
+          _initialLoadDone = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה בטעינה: $e')),
         );

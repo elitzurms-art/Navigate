@@ -169,6 +169,8 @@ class SessionService {
     // ניקוי מפתחות ישנים
     await prefs.remove('session_framework_id');
     await prefs.remove('session_framework_name');
+    // ניקוי session ID (אכיפת מכשיר יחיד)
+    await prefs.remove('active_session_id');
   }
 
 }

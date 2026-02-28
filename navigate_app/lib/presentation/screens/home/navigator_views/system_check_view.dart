@@ -55,6 +55,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
   Timer? _periodicTimer;
   int _checkCount = 0; // סופר בדיקות — דיווח ל-Firestore כל 5 בדיקות (15 שניות)
+  Map<String, dynamic>? _lastStatusData; // מטמון לזיהוי שינויים — חוסך כתיבות Firestore
 
   @override
   void initState() {
@@ -267,6 +268,34 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   Future<void> _reportStatusToFirestore() async {
     final uid = widget.currentUser.uid;
     try {
+      // בניית נתוני סטטוס להשוואה (ללא שדות שמשתנים תמיד כמו updatedAt)
+      final compareData = <String, dynamic>{
+        'isConnected': _currentPosition != null,
+        'batteryLevel': _batteryLevel,
+        'hasGPS': _hasGpsPermission && _hasLocationService,
+        'gpsAccuracy': _gpsAccuracy.round(), // עיגול למניעת שינויים זעירים
+        'receptionLevel': _estimateReceptionLevel(),
+        'positionSource': _gpsService.lastPositionSource.name,
+        'hasMicrophonePermission': _permissions['microphone']?.isGranted ?? false,
+        'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
+        'hasDNDPermission': _hasDNDPermission,
+        'latitude': _currentPosition?.latitude,
+        'longitude': _currentPosition?.longitude,
+      };
+
+      // השוואה למטמון — דילוג על כתיבה אם לא השתנה כלום
+      if (_lastStatusData != null) {
+        bool changed = false;
+        for (final key in compareData.keys) {
+          if (compareData[key] != _lastStatusData![key]) {
+            changed = true;
+            break;
+          }
+        }
+        if (!changed && compareData.length == _lastStatusData!.length) return;
+      }
+      _lastStatusData = Map.from(compareData);
+
       final docRef = FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
           .doc(widget.navigation.id)
@@ -276,18 +305,12 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       final data = <String, dynamic>{
         'navigatorId': uid,
         'navigatorName': widget.currentUser.fullName,
-        'isConnected': _currentPosition != null,
-        'batteryLevel': _batteryLevel,
-        'hasGPS': _hasGpsPermission && _hasLocationService,
-        'gpsAccuracy': _gpsAccuracy,
-        'receptionLevel': _estimateReceptionLevel(),
-        'positionSource': _gpsService.lastPositionSource.name,
-        'hasMicrophonePermission': _permissions['microphone']?.isGranted ?? false,
-        'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
-        'hasDNDPermission': _hasDNDPermission,
+        ...compareData,
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      // רק מעדכן מיקום כשיש — לא דורס עם null
+      // מיקום — רק כשיש, ולא דורס עם null
+      data.remove('latitude');
+      data.remove('longitude');
       if (_currentPosition != null) {
         data['latitude'] = _currentPosition!.latitude;
         data['longitude'] = _currentPosition!.longitude;

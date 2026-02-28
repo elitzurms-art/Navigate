@@ -14,9 +14,10 @@ class User extends Equatable {
   final String? unitId; // יחידה שהמשתמש שייך אליה
   final String? fcmToken; // FCM push notification token
   final String? firebaseUid; // Firebase Auth UID (for auth_mapping)
-  final bool isApproved; // האם המשתמש מאושר ביחידה
+  final String? approvalStatus; // null, "pending", "approved", "rejected"
   final DateTime? soloQuizPassedAt; // מתי עבר מבחן בדד
   final int? soloQuizScore; // ציון מבחן בדד
+  final String? activeSessionId; // session ID לאכיפת מכשיר יחיד (Firestore-only)
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -32,9 +33,10 @@ class User extends Equatable {
     this.unitId,
     this.fcmToken,
     this.firebaseUid,
-    this.isApproved = false,
+    this.approvalStatus,
     this.soloQuizPassedAt,
     this.soloQuizScore,
+    this.activeSessionId,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -73,11 +75,23 @@ class User extends Equatable {
   /// האם המשתמש הוא מפתח
   bool get isDeveloper => role == 'developer';
 
+  /// האם המשתמש מאושר
+  bool get isApproved => approvalStatus == 'approved';
+
+  /// האם ממתין לאישור
+  bool get isPending => approvalStatus == 'pending';
+
+  /// האם נדחה
+  bool get isRejected => approvalStatus == 'rejected';
+
   /// האם המשתמש עבר onboarding מלא (יש יחידה + מאושר)
   bool get isOnboarded => unitId != null && unitId!.isNotEmpty && isApproved;
 
   /// האם ממתין לאישור מפקד
-  bool get isAwaitingApproval => unitId != null && unitId!.isNotEmpty && !isApproved;
+  bool get isAwaitingApproval => unitId != null && unitId!.isNotEmpty && isPending;
+
+  /// האם נדחה ועדיין משויך ליחידה
+  bool get wasRejected => unitId != null && unitId!.isNotEmpty && isRejected;
 
   /// האם צריך לבחור יחידה (אין unitId ואין הרשאות מפקד)
   bool get needsUnitSelection => (unitId == null || unitId!.isEmpty) && !hasCommanderPermissions;
@@ -107,11 +121,14 @@ class User extends Equatable {
     String? fcmToken,
     String? firebaseUid,
     bool clearFirebaseUid = false,
-    bool? isApproved,
+    String? approvalStatus,
+    bool clearApprovalStatus = false,
     DateTime? soloQuizPassedAt,
     bool clearSoloQuizPassedAt = false,
     int? soloQuizScore,
     bool clearSoloQuizScore = false,
+    String? activeSessionId,
+    bool clearActiveSessionId = false,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -127,9 +144,10 @@ class User extends Equatable {
       unitId: clearUnitId ? null : (unitId ?? this.unitId),
       fcmToken: fcmToken ?? this.fcmToken,
       firebaseUid: clearFirebaseUid ? null : (firebaseUid ?? this.firebaseUid),
-      isApproved: isApproved ?? this.isApproved,
+      approvalStatus: clearApprovalStatus ? null : (approvalStatus ?? this.approvalStatus),
       soloQuizPassedAt: clearSoloQuizPassedAt ? null : (soloQuizPassedAt ?? this.soloQuizPassedAt),
       soloQuizScore: clearSoloQuizScore ? null : (soloQuizScore ?? this.soloQuizScore),
+      activeSessionId: clearActiveSessionId ? null : (activeSessionId ?? this.activeSessionId),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -151,9 +169,12 @@ class User extends Equatable {
       if (unitId != null) 'unitId': unitId,
       if (fcmToken != null) 'fcmToken': fcmToken,
       if (firebaseUid != null) 'firebaseUid': firebaseUid,
-      'isApproved': isApproved,
+      'isApproved': approvalStatus == 'approved' ? true
+                  : approvalStatus == 'rejected' ? false
+                  : approvalStatus, // "pending" or null
       if (soloQuizPassedAt != null) 'soloQuizPassedAt': soloQuizPassedAt!.toIso8601String(),
       if (soloQuizScore != null) 'soloQuizScore': soloQuizScore,
+      if (activeSessionId != null) 'activeSessionId': activeSessionId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -195,12 +216,18 @@ class User extends Equatable {
       unitId: unitId,
       fcmToken: map['fcmToken'] as String?,
       firebaseUid: map['firebaseUid'] as String?,
-      isApproved: map['isApproved'] as bool? ??
-          (unitId != null && unitId.isNotEmpty), // backward compat
+      approvalStatus: () {
+        final rawApproval = map['isApproved'];
+        if (rawApproval == true) return 'approved';
+        if (rawApproval == false) return 'rejected';
+        if (rawApproval == 'pending') return 'pending';
+        return null; // missing field = NOT approved (security)
+      }(),
       soloQuizPassedAt: map['soloQuizPassedAt'] != null
           ? DateTime.parse(map['soloQuizPassedAt'] as String)
           : null,
       soloQuizScore: map['soloQuizScore'] as int?,
+      activeSessionId: map['activeSessionId'] as String?,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'] as String)
           : DateTime.now(),
@@ -223,9 +250,10 @@ class User extends Equatable {
     unitId,
     fcmToken,
     firebaseUid,
-    isApproved,
+    approvalStatus,
     soloQuizPassedAt,
     soloQuizScore,
+    activeSessionId,
     createdAt,
     updatedAt,
   ];

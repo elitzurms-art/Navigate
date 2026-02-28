@@ -78,10 +78,12 @@ class NavigationScore extends Equatable {
       navigationId: map['navigationId'] as String,
       navigatorId: map['navigatorId'] as String,
       totalScore: map['totalScore'] as int,
-      checkpointScores: (map['checkpointScores'] as Map<String, dynamic>).map(
-        (k, v) => MapEntry(k, CheckpointScore.fromMap(v as Map<String, dynamic>)),
-      ),
-      customCriteriaScores: map['customCriteriaScores'] != null
+      checkpointScores: map['checkpointScores'] is Map
+          ? (map['checkpointScores'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, CheckpointScore.fromMap(v as Map<String, dynamic>)),
+            )
+          : const {},
+      customCriteriaScores: map['customCriteriaScores'] is Map
           ? Map<String, int>.from(map['customCriteriaScores'] as Map)
           : const {},
       calculatedAt: DateTime.parse(map['calculatedAt'] as String),

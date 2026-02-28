@@ -600,7 +600,7 @@ class ScoringCriteria extends Equatable {
     return ScoringCriteria(
       mode: map['mode'] as String? ?? 'equal',
       equalWeightPerCheckpoint: map['equalWeightPerCheckpoint'] as int?,
-      checkpointWeights: map['checkpointWeights'] != null
+      checkpointWeights: map['checkpointWeights'] is Map
           ? Map<String, int>.from(map['checkpointWeights'] as Map)
           : const {},
       customCriteria: map['customCriteria'] != null
@@ -707,10 +707,10 @@ class DisplaySettings extends Equatable {
       defaultMap: map['defaultMap'] as String?,
       openingLat: map['openingLat'] as double?,
       openingLng: map['openingLng'] as double?,
-      activeLayers: map['activeLayers'] != null
+      activeLayers: map['activeLayers'] is Map
           ? Map<String, bool>.from(map['activeLayers'] as Map)
           : null,
-      layerOpacity: map['layerOpacity'] != null
+      layerOpacity: map['layerOpacity'] is Map
           ? (map['layerOpacity'] as Map).map(
               (k, v) => MapEntry(k as String, (v as num).toDouble()))
           : null,
@@ -957,11 +957,15 @@ class ForceComposition extends Equatable {
   final String type; // 'solo', 'guard', 'pair', 'squad'
   final String? swapPointId; // נקודת החלפה גלובלית — רק ל-guard
   final Map<String, List<String>> manualGroups; // שיבוץ ידני (groupId → navigatorIds)
+  final Map<String, String> learningRepresentatives; // groupId → navigatorId (נציג למידה)
+  final Map<String, String> activeRepresentatives; // groupId → navigatorId (נציג ניווט פעיל)
 
   const ForceComposition({
     this.type = 'solo',
     this.swapPointId,
     this.manualGroups = const {},
+    this.learningRepresentatives = const {},
+    this.activeRepresentatives = const {},
   });
 
   int get baseGroupSize => switch (type) {
@@ -970,20 +974,52 @@ class ForceComposition extends Equatable {
     _ => 1,
   };
 
+  int get maxGroupSize => switch (type) {
+    'guard' || 'pair' => 3,
+    'squad' => 5,
+    _ => 1,
+  };
+
   bool get isSolo => type == 'solo';
   bool get isGuard => type == 'guard';
   bool get isGrouped => type != 'solo';
+
+  /// נציג למידה לקבוצה
+  String? getLearningRepresentative(String? groupId) =>
+      groupId != null ? learningRepresentatives[groupId] : null;
+
+  /// נציג ניווט פעיל לקבוצה
+  String? getActiveRepresentative(String? groupId) =>
+      groupId != null ? activeRepresentatives[groupId] : null;
+
+  /// האם מנווט הוא נציג למידה של הקבוצה
+  bool isLearningRepresentative(String? groupId, String navigatorId) =>
+      getLearningRepresentative(groupId) == navigatorId;
+
+  /// האם מנווט הוא נציג ניווט פעיל של הקבוצה
+  bool isActiveRepresentative(String? groupId, String navigatorId) =>
+      getActiveRepresentative(groupId) == navigatorId;
 
   ForceComposition copyWith({
     String? type,
     String? swapPointId,
     bool clearSwapPointId = false,
     Map<String, List<String>>? manualGroups,
+    Map<String, String>? learningRepresentatives,
+    bool clearLearningRepresentatives = false,
+    Map<String, String>? activeRepresentatives,
+    bool clearActiveRepresentatives = false,
   }) {
     return ForceComposition(
       type: type ?? this.type,
       swapPointId: clearSwapPointId ? null : (swapPointId ?? this.swapPointId),
       manualGroups: manualGroups ?? this.manualGroups,
+      learningRepresentatives: clearLearningRepresentatives
+          ? const {}
+          : (learningRepresentatives ?? this.learningRepresentatives),
+      activeRepresentatives: clearActiveRepresentatives
+          ? const {}
+          : (activeRepresentatives ?? this.activeRepresentatives),
     );
   }
 
@@ -993,6 +1029,10 @@ class ForceComposition extends Equatable {
       if (swapPointId != null) 'swapPointId': swapPointId,
       if (manualGroups.isNotEmpty)
         'manualGroups': manualGroups.map((k, v) => MapEntry(k, v)),
+      if (learningRepresentatives.isNotEmpty)
+        'learningRepresentatives': learningRepresentatives,
+      if (activeRepresentatives.isNotEmpty)
+        'activeRepresentatives': activeRepresentatives,
     };
   }
 
@@ -1000,14 +1040,24 @@ class ForceComposition extends Equatable {
     return ForceComposition(
       type: map['type'] as String? ?? 'solo',
       swapPointId: map['swapPointId'] as String?,
-      manualGroups: map['manualGroups'] != null
+      manualGroups: map['manualGroups'] is Map
           ? (map['manualGroups'] as Map<String, dynamic>).map(
               (k, v) => MapEntry(k, List<String>.from(v as List)),
+            )
+          : const {},
+      learningRepresentatives: map['learningRepresentatives'] is Map
+          ? (map['learningRepresentatives'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, v as String),
+            )
+          : const {},
+      activeRepresentatives: map['activeRepresentatives'] is Map
+          ? (map['activeRepresentatives'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, v as String),
             )
           : const {},
     );
   }
 
   @override
-  List<Object?> get props => [type, swapPointId, manualGroups];
+  List<Object?> get props => [type, swapPointId, manualGroups, learningRepresentatives, activeRepresentatives];
 }

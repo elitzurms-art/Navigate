@@ -1,0 +1,1188 @@
+Analyzing lib...                                                
+
+   info - Use 'const' with the constructor to improve performance - lib\core\utils\geometry_utils.dart:128:14 - prefer_const_constructors
+   info - Use 'const' for final variables initialized to a constant value - lib\core\utils\geometry_utils.dart:360:5 - prefer_const_declarations
+warning - Unused import: '../../domain/entities/boundary.dart' - lib\core\utils\test_data_generator.dart:4:8 - unused_import
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:17:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:32:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:66:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:71:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:73:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:85:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:119:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\core\utils\test_data_generator.dart:122:5 - avoid_print
+   info - The variable name 'N1' isn't a lowerCamelCase identifier - lib\core\utils\utm_converter.dart:55:11 - non_constant_identifier_names
+   info - The variable name 'T1' isn't a lowerCamelCase identifier - lib\core\utils\utm_converter.dart:56:11 - non_constant_identifier_names
+   info - The variable name 'C1' isn't a lowerCamelCase identifier - lib\core\utils\utm_converter.dart:57:11 - non_constant_identifier_names
+   info - The variable name 'R1' isn't a lowerCamelCase identifier - lib\core\utils\utm_converter.dart:58:11 - non_constant_identifier_names
+   info - Use 'const' with the constructor to improve performance - lib\data\datasources\local\app_database.dart:675:21 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:101:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:193:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:218:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:232:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:259:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:273:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:296:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:310:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:334:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:344:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:366:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\area_repository.dart:368:7 - avoid_print
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\boundary_repository.dart:13:27 - unused_field
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:20:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:33:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:35:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:38:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:56:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:62:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:64:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:67:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:80:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:95:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:120:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:157:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\checkpoint_punch_repository.dart:179:7 - avoid_print
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\checkpoint_repository.dart:13:27 - unused_field
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\cluster_repository.dart:13:27 - unused_field
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:660:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:684:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:708:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:732:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:739:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:774:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:810:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:840:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:871:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\nav_layer_repository.dart:875:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:32:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:34:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:37:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:57:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:115:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:126:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:130:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:138:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:187:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:200:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:208:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:216:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:227:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:240:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\data\repositories\navigation_repository.dart:302:13 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\data\repositories\navigation_repository.dart:314:13 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\data\repositories\navigation_repository.dart:317:13 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:368:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:370:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:389:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:412:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:433:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:435:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:454:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:477:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:498:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:500:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:520:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:543:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:577:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:579:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:602:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:623:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:625:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:648:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:668:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:670:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:690:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:742:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:760:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:820:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:828:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:830:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:947:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_repository.dart:949:7 - avoid_print
+   info - Unnecessary use of parentheses - lib\data\repositories\navigation_track_repository.dart:97:12 - unnecessary_parenthesis
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\navigation_tree_repository.dart:12:27 - unused_field
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:18:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:20:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:23:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:43:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:60:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:71:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:75:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:83:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:98:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:111:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:119:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:124:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:135:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:163:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigation_tree_repository.dart:223:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:18:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:21:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:23:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:36:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:38:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:53:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:70:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\navigator_alert_repository.dart:109:7 - avoid_print
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\navigator_tree_repository.dart:11:27 - unused_field
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\data\repositories\navigator_tree_repository.dart:118:16 - prefer_const_literals_to_create_immutables
+warning - The value of the field '_firestore' isn't used - lib\data\repositories\safety_point_repository.dart:13:27 - unused_field
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:11:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:21:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:23:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:47:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:58:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:91:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\security_violation_repository.dart:93:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:25:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:46:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:57:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:60:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:67:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:85:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:98:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:105:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:110:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:121:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:128:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:134:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:185:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:187:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:209:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:211:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:214:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:227:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:240:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:253:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:271:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:287:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:289:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:299:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:311:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:313:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:324:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:339:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:362:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:383:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:400:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:446:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\unit_repository.dart:479:7 - avoid_print
+warning - Unused import: 'package:cloud_firestore/cloud_firestore.dart' - lib\data\repositories\user_repository.dart:1:8 - unused_import
+warning - The value of the field '_firebaseService' isn't used - lib\data\repositories\user_repository.dart:11:26 - unused_field
+   info - Don't invoke 'print' in production code - lib\data\repositories\user_repository.dart:127:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\user_repository.dart:166:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\user_repository.dart:181:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\repositories\user_repository.dart:204:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:92:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:142:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:147:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:172:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:184:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:191:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:199:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:225:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:237:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:241:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:279:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:299:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:303:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:308:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:314:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:321:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:333:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:346:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:385:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:391:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:396:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:436:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:447:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:462:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:475:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:521:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:533:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:539:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:546:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:561:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:568:5 - avoid_print
+   info - Unnecessary use of parentheses - lib\data\sync\sync_manager.dart:610:29 - unnecessary_parenthesis
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:617:15 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:623:15 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:628:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:638:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:642:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:672:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:688:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:693:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:713:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:717:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:850:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:853:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:882:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:885:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:887:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:908:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:910:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1108:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1314:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1316:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1336:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1338:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1359:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1361:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1380:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1419:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1422:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1457:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1469:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1481:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1484:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1499:5 - avoid_print
+   info - Uncancelled instance of 'StreamSubscription' - lib\data\sync\sync_manager.dart:1501:11 - cancel_subscriptions
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1517:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1529:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1538:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1568:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1586:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\data\sync\sync_manager.dart:1614:5 - avoid_print
+   info - Use 'const' for final variables initialized to a constant value - lib\data\sync\sync_manager.dart:1660:5 - prefer_const_declarations
+   info - Use 'const' for final variables initialized to a constant value - lib\data\sync\sync_manager.dart:1661:5 - prefer_const_declarations
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\boundary.dart:25:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\boundary.dart:26:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\checkpoint.dart:37:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\checkpoint.dart:42:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\checkpoint.dart:43:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\cluster.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\cluster.dart:28:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\hat_type.dart:26:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\hat_type.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\hat_type.dart:28:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\hat_type.dart:29:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\narration_entry.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:37:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:39:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:40:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:41:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:170:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:172:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:173:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:174:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:289:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:290:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:291:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:394:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:395:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\nav_layer.dart:396:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:350:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:351:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:352:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:354:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:365:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:366:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:370:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:373:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:374:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:380:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:385:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:386:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation.dart:387:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\navigation_score.dart:24:19 - always_put_required_named_parameters_first
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\domain\entities\navigation_tree.dart:188:20 - prefer_const_literals_to_create_immutables
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\domain\entities\navigation_tree.dart:195:20 - prefer_const_literals_to_create_immutables
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\domain\entities\navigation_tree.dart:202:20 - prefer_const_literals_to_create_immutables
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\safety_point.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\safety_point.dart:29:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\safety_point.dart:30:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\unit.dart:26:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\unit.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\unit.dart:28:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\unit.dart:29:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\user.dart:23:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\user.dart:24:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\user.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\user.dart:30:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\user.dart:31:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\voice_message.dart:22:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\voice_message.dart:23:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\domain\entities\voice_message.dart:24:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\main.dart:92:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:94:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:119:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:121:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:135:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:139:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:142:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:215:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:219:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:228:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:230:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:234:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:242:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:244:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:266:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\main.dart:267:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:82:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:84:30 - prefer_const_constructors
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\main_simple.dart:86:35 - prefer_const_literals_to_create_immutables
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:110:27 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:111:27 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:112:27 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\main_simple.dart:113:27 - prefer_const_constructors
+   info - Required named parameters should be before optional named parameters - lib\main_simple.dart:144:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\main_simple.dart:145:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\areas\area_details_screen.dart:17:53 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\area_details_screen.dart:173:21 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\area_details_screen.dart:194:21 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\area_details_screen.dart:215:21 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\area_details_screen.dart:236:21 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\areas\area_details_screen.dart:278:32 - deprecated_member_use
+warning - The value of the field '_authService' isn't used - lib\presentation\screens\areas\areas_list_screen.dart:18:21 - unused_field
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\areas_list_screen.dart:85:17 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\areas\areas_list_screen.dart:132:62 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\areas_list_screen.dart:163:33 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\areas\areas_list_screen.dart:176:27 - unawaited_futures
+   info - The private field _boundaryPoints could be 'final' - lib\presentation\screens\areas\create_area_screen.dart:26:16 - prefer_final_fields
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\areas\create_area_screen.dart:196:44 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:255:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:258:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:263:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:278:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:280:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:282:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:288:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:293:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:302:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:304:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:311:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:318:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:335:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\areas\create_area_screen.dart:336:7 - avoid_print
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\email_verification_screen.dart:16:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\email_verification_screen.dart:17:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\email_verification_screen.dart:18:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\email_verification_screen.dart:44:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\email_verification_screen.dart:147:11 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\email_verification_screen.dart:168:11 - unawaited_futures
+warning - Unused import: '../../../services/auth_service.dart' - lib\presentation\screens\auth\guest_mode_screen.dart:8:8 - unused_import
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\guest_mode_screen.dart:21:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\guest_mode_screen.dart:178:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\guest_mode_screen.dart:237:9 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\guest_mode_screen.dart:373:32 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\hat_selection_screen.dart:14:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\hat_selection_screen.dart:46:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\hat_selection_screen.dart:51:7 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\hat_selection_screen.dart:126:69 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\hat_selection_screen.dart:174:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\hat_selection_screen.dart:212:67 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\hat_selection_screen.dart:253:59 - deprecated_member_use
+warning - Unused import: 'sms_verification_screen.dart' - lib\presentation\screens\auth\login_screen.dart:5:8 - unused_import
+warning - Unused import: 'email_verification_screen.dart' - lib\presentation\screens\auth\login_screen.dart:6:8 - unused_import
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\login_screen.dart:40:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\login_screen.dart:90:9 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\auth\login_screen.dart:121:46 - deprecated_member_use
+warning - Unused import: 'sms_verification_screen.dart' - lib\presentation\screens\auth\register_screen.dart:4:8 - unused_import
+warning - Unused import: 'email_verification_screen.dart' - lib\presentation\screens\auth\register_screen.dart:5:8 - unused_import
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\register_screen.dart:139:9 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\sms_verification_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\sms_verification_screen.dart:20:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\sms_verification_screen.dart:21:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\auth\sms_verification_screen.dart:22:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\sms_verification_screen.dart:119:11 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\auth\sms_verification_screen.dart:140:11 - unawaited_futures
+warning - Unused import: 'package:latlong2/latlong.dart' - lib\presentation\screens\home\home_screen.dart:3:8 - unused_import
+warning - Unused import: '../dashboard/dashboard_screen.dart' - lib\presentation\screens\home\home_screen.dart:7:8 - unused_import
+warning - The value of the field '_mapController' isn't used - lib\presentation\screens\home\home_screen.dart:26:23 - unused_field
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\home_screen.dart:208:19 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\presentation\screens\home\home_screen.dart:208:32 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\home_screen.dart:223:55 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\home_screen.dart:261:5 - unawaited_futures
+warning - The declaration '_showNavigationSubmenu' isn't referenced - lib\presentation\screens\home\home_screen.dart:272:8 - unused_element
+warning - The declaration '_showQuickActions' isn't referenced - lib\presentation\screens\home\home_screen.dart:309:8 - unused_element
+warning - The value of the field '_perNavigatorShowRouteOnMap' isn't used - lib\presentation\screens\home\navigator_home_screen.dart:46:8 - unused_field
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_home_screen.dart:113:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_home_screen.dart:170:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_home_screen.dart:190:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_home_screen.dart:332:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_home_screen.dart:376:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\home\navigator_home_screen.dart:464:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\home\navigator_home_screen.dart:521:14 - prefer_const_constructors
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\active_view.dart:44:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\active_view.dart:45:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\active_view.dart:46:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:256:11 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:257:11 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:299:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:301:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:315:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:317:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:356:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:362:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:367:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:370:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:420:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:425:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:476:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:485:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:501:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:599:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\home\navigator_views\active_view.dart:655:28 - use_build_context_synchronously
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:673:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:715:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:759:9 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:781:15 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:786:9 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\home\navigator_views\active_view.dart:787:30 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:802:9 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:811:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:860:9 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:870:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:930:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:933:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:969:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\active_view.dart:1027:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:1213:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:1317:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:1329:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\active_view.dart:1360:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1690:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1762:26 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1781:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1791:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1852:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1853:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1894:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:1895:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:2215:20 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\active_view.dart:2223:45 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\approval_view.dart:41:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\approval_view.dart:42:19 - always_put_required_named_parameters_first
+   info - The private field _showPlanned could be 'final' - lib\presentation\screens\home\navigator_views\approval_view.dart:78:8 - prefer_final_fields
+   info - The private field _showActual could be 'final' - lib\presentation\screens\home\navigator_views\approval_view.dart:79:8 - prefer_final_fields
+   info - The private field _showCheckpoints could be 'final' - lib\presentation\screens\home\navigator_views\approval_view.dart:80:8 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\approval_view.dart:193:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\approval_view.dart:345:52 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\approval_view.dart:461:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\approval_view.dart:510:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\approval_view.dart:564:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\approval_view.dart:609:77 - deprecated_member_use
+warning - Unused import: '../../../widgets/fullscreen_map_screen.dart' - lib\presentation\screens\home\navigator_views\learning_view.dart:30:8 - unused_import
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\learning_view.dart:41:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\learning_view.dart:42:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\learning_view.dart:43:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\navigator_map_screen.dart:27:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\navigator_map_screen.dart:28:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\navigator_map_screen.dart:152:36 - deprecated_member_use
+warning - Unused import: '../../../widgets/fullscreen_map_screen.dart' - lib\presentation\screens\home\navigator_views\review_view.dart:22:8 - unused_import
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\review_view.dart:44:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\review_view.dart:45:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\review_view.dart:232:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:554:59 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:608:57 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:804:25 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:913:45 - deprecated_member_use
+   info - The private field _showDeviations could be 'final' - lib\presentation\screens\home\navigator_views\review_view.dart:1030:8 - prefer_final_fields
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:1205:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\review_view.dart:1259:53 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:29:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:30:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:31:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:32:19 - always_put_required_named_parameters_first
+   info - Statements in an if should be enclosed in a block - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:161:25 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:162:16 - curly_braces_in_flow_control_structures
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:471:24 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:471:31 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:480:20 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:487:19 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\home\navigator_views\route_editor_screen.dart:491:19 - unnecessary_brace_in_string_interps
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\system_check_view.dart:20:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\home\navigator_views\system_check_view.dart:21:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\system_check_view.dart:125:5 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\system_check_view.dart:147:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\home\navigator_views\system_check_view.dart:156:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\system_check_view.dart:158:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\home\navigator_views\system_check_view.dart:190:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\home\navigator_views\system_check_view.dart:291:11 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\home\navigator_views\system_check_view.dart:293:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\home\navigator_views\system_check_view.dart:459:27 - prefer_const_constructors
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\system_check_view.dart:489:26 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\home\navigator_views\system_check_view.dart:491:45 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\boundaries_list_screen.dart:16:56 - always_put_required_named_parameters_first
+warning - The value of the field '_checkpoints' isn't used - lib\presentation\screens\layers\boundaries_list_screen.dart:26:20 - unused_field
+   info - Don't invoke 'print' in production code - lib\presentation\screens\layers\boundaries_list_screen.dart:80:11 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\boundaries_list_screen.dart:141:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\boundaries_list_screen.dart:205:7 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\boundaries_list_screen.dart:267:63 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\boundaries_list_screen.dart:343:19 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\checkpoints_list_screen.dart:15:57 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\checkpoints_list_screen.dart:111:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\checkpoints_list_screen.dart:145:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\checkpoints_list_screen.dart:273:19 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\checkpoints_list_screen.dart:341:7 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\layers\checkpoints_list_screen.dart:441:7 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\checkpoints_list_screen.dart:514:7 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\clusters_list_screen.dart:13:54 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\clusters_list_screen.dart:114:7 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\clusters_list_screen.dart:147:41 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\clusters_list_screen.dart:178:7 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\clusters_list_screen.dart:240:63 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\clusters_list_screen.dart:313:19 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\create_boundary_screen.dart:22:56 - always_put_required_named_parameters_first
+   info - The private field _polygonPoints could be 'final' - lib\presentation\screens\layers\create_boundary_screen.dart:39:16 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\layers\create_boundary_screen.dart:81:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_boundary_screen.dart:333:92 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_boundary_screen.dart:349:44 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_boundary_screen.dart:350:50 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_boundary_screen.dart:370:73 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_boundary_screen.dart:393:51 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\create_checkpoint_screen.dart:22:58 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\layers\create_checkpoint_screen.dart:94:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_checkpoint_screen.dart:422:94 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_checkpoint_screen.dart:438:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_checkpoint_screen.dart:439:52 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_checkpoint_screen.dart:459:75 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_checkpoint_screen.dart:490:44 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\create_cluster_screen.dart:22:55 - always_put_required_named_parameters_first
+   info - The private field _polygonPoints could be 'final' - lib\presentation\screens\layers\create_cluster_screen.dart:39:16 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\layers\create_cluster_screen.dart:81:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_cluster_screen.dart:331:92 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_cluster_screen.dart:352:73 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_cluster_screen.dart:375:51 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\create_safety_point_screen.dart:22:59 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\layers\create_safety_point_screen.dart:87:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_safety_point_screen.dart:302:70 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_safety_point_screen.dart:449:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_safety_point_screen.dart:450:52 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_safety_point_screen.dart:470:75 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\create_safety_point_screen.dart:500:57 - deprecated_member_use
+warning - The declaration '_parseColor' isn't referenced - lib\presentation\screens\layers\create_safety_point_screen.dart:631:9 - unused_element
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_boundary_screen.dart:18:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_boundary_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\edit_boundary_screen.dart:275:51 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_checkpoint_screen.dart:18:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_checkpoint_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_cluster_screen.dart:18:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_cluster_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\edit_cluster_screen.dart:275:47 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_safety_point_screen.dart:18:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\edit_safety_point_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\edit_safety_point_screen.dart:249:70 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\layers_screen.dart:174:34 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\map_with_layers_screen.dart:20:55 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:220:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:221:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:234:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:235:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:248:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\map_with_layers_screen.dart:249:49 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\layers\safety_points_list_screen.dart:13:58 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\safety_points_list_screen.dart:114:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\safety_points_list_screen.dart:187:7 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\layers\safety_points_list_screen.dart:279:84 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\layers\safety_points_list_screen.dart:358:19 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\main_mode_selection_screen.dart:36:5 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\main_mode_selection_screen.dart:37:7 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\main_mode_selection_screen.dart:41:26 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\main_mode_selection_screen.dart:64:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\main_mode_selection_screen.dart:186:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\main_mode_selection_screen.dart:200:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\main_mode_selection_screen.dart:223:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\all_trees_screen.dart:260:38 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:76:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:99:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:203:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:419:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:420:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\create_navigation_tree_screen.dart:728:40 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:14:58 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:51:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:69:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:793:55 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:946:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:1082:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:1083:47 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\manage_frameworks_screen.dart:1375:40 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:100:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:128:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:194:27 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:274:70 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:348:41 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:351:39 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:364:37 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigation_trees\navigation_trees_list_screen.dart:385:13 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:30:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:153:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:170:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:1010:7 - use_build_context_synchronously
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:1113:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\presentation\screens\navigation_trees\unit_admin_frameworks_screen.dart:1603:40 - use_build_context_synchronously
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\active_navigation_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\active_navigation_screen.dart:20:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\active_navigation_screen.dart:21:19 - always_put_required_named_parameters_first
+   info - The private field _punches could be 'final' - lib\presentation\screens\navigations\active_navigation_screen.dart:35:25 - prefer_final_fields
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\active_navigation_screen.dart:142:7 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\active_navigation_screen.dart:510:30 - deprecated_member_use
+warning - Unused import: '../../../domain/entities/navigation_settings.dart' - lib\presentation\screens\navigations\approval_screen.dart:10:8 - unused_import
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:61:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\approval_screen.dart:177:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\approval_screen.dart:435:9 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1224:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1385:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1778:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1884:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1931:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1984:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:1995:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:2070:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:2224:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\approval_screen.dart:2238:36 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\approval_screen.dart:2263:28 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\approval_screen.dart:2263:38 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\approval_screen.dart:2264:13 - unnecessary_brace_in_string_interps
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2295:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2296:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2297:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2298:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2299:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2300:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\approval_screen.dart:2301:19 - always_put_required_named_parameters_first
+   info - The private field _usersCache could be 'final' - lib\presentation\screens\navigations\create_navigation_screen.dart:71:33 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\create_navigation_screen.dart:312:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\create_navigation_screen.dart:1022:73 - deprecated_member_use
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\presentation\screens\navigations\create_navigation_screen.dart:1866:20 - prefer_const_literals_to_create_immutables
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\create_navigation_screen.dart:1925:11 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\data_export_screen.dart:36:19 - always_put_required_named_parameters_first
+   info - The private field _showNZ could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:100:8 - prefer_final_fields
+   info - The private field _nzOpacity could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:101:10 - prefer_final_fields
+   info - The private field _showNB could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:103:8 - prefer_final_fields
+   info - The private field _nbOpacity could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:104:10 - prefer_final_fields
+   info - The private field _showGG could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:106:8 - prefer_final_fields
+   info - The private field _ggOpacity could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:107:10 - prefer_final_fields
+   info - The private field _showBA could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:109:8 - prefer_final_fields
+   info - The private field _baOpacity could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:110:10 - prefer_final_fields
+   info - The private field _showDistributedOnly could be 'final' - lib\presentation\screens\navigations\data_export_screen.dart:113:8 - prefer_final_fields
+   info - Use 'const' for final variables initialized to a constant value - lib\presentation\screens\navigations\data_export_screen.dart:256:7 - prefer_const_declarations
+   info - Use 'const' for final variables initialized to a constant value - lib\presentation\screens\navigations\data_export_screen.dart:458:7 - prefer_const_declarations
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:792:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1217:58 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1218:64 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1231:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1232:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1245:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1246:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_export_screen.dart:1267:30 - deprecated_member_use
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\data_export_screen.dart:1717:73 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\data_export_screen.dart:1731:40 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\data_export_screen.dart:1758:46 - unnecessary_parenthesis
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\data_export_screen.dart:1759:44 - prefer_const_constructors
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\data_loading_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\data_loading_screen.dart:20:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\data_loading_screen.dart:21:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\data_loading_screen.dart:105:5 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\data_loading_screen.dart:273:20 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:63:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\investigation_screen.dart:210:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\investigation_screen.dart:641:9 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:869:70 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:1006:52 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\investigation_screen.dart:1433:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\investigation_screen.dart:1451:5 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:1864:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:2038:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:2526:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:2904:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:2939:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:2988:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3001:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3104:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3152:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3303:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3321:36 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3673:25 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\investigation_screen.dart:3792:42 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\investigation_screen.dart:3905:28 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\investigation_screen.dart:3905:38 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\investigation_screen.dart:3906:13 - unnecessary_brace_in_string_interps
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3939:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3940:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3941:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3942:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3943:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3944:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\investigation_screen.dart:3945:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigation_management_screen.dart:41:19 - always_put_required_named_parameters_first
+   info - The private field _selectedNavigators could be 'final' - lib\presentation\screens\navigations\navigation_management_screen.dart:77:21 - prefer_final_fields
+   info - The private field _navigatorData could be 'final' - lib\presentation\screens\navigations\navigation_management_screen.dart:80:34 - prefer_final_fields
+   info - The private field _userNames could be 'final' - lib\presentation\screens\navigations\navigation_management_screen.dart:124:23 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:508:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:528:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:630:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:653:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:681:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:714:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_management_screen.dart:880:13 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_management_screen.dart:2063:43 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_management_screen.dart:2228:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_management_screen.dart:2337:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_management_screen.dart:2618:41 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigation_management_screen.dart:3807:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigation_management_screen.dart:3808:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigation_management_screen.dart:3867:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigation_preparation_screen.dart:21:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_preparation_screen.dart:55:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigation_preparation_screen.dart:302:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:610:34 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:641:30 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:642:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:659:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:660:37 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:694:49 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:697:53 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigation_preparation_screen.dart:745:32 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigations_list_screen.dart:87:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigations_list_screen.dart:100:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:161:11 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigations_list_screen.dart:165:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:258:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:262:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:285:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:413:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:448:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:472:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigations_list_screen.dart:586:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\navigations_list_screen.dart:638:11 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:643:29 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:689:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:692:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:742:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:788:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:840:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:885:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:930:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:936:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:962:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1037:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1093:7 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\navigations_list_screen.dart:1471:11 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1476:29 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1486:29 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1496:29 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1500:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1504:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1508:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1512:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1516:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1520:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1524:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1528:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1532:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1536:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1545:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1557:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1561:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1565:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1650:5 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\navigations_list_screen.dart:1651:7 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1680:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigations_list_screen.dart:1762:13 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigations_list_screen.dart:2050:30 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigations_list_screen.dart:2070:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\navigations_list_screen.dart:2101:52 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigator_planning_screen.dart:23:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\navigator_planning_screen.dart:109:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\navigator_planning_screen.dart:169:7 - unawaited_futures
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\navigations\navigator_planning_screen.dart:341:45 - unnecessary_brace_in_string_interps
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigator_training_screen.dart:23:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\navigator_training_screen.dart:24:19 - always_put_required_named_parameters_first
+warning - The value of the field '_navRepo' isn't used - lib\presentation\screens\navigations\navigator_training_screen.dart:35:30 - unused_field
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\navigator_training_screen.dart:184:26 - use_build_context_synchronously
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_automatic_setup_screen.dart:18:62 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_edit_screen.dart:22:52 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_manual_app_screen.dart:24:57 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_manual_upload_screen.dart:15:60 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_setup_screen.dart:11:53 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\routes_setup_screen.dart:161:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\routes_setup_screen.dart:173:32 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\routes_verification_screen.dart:22:60 - always_put_required_named_parameters_first
+   info - The private field _selectedNavigators could be 'final' - lib\presentation\screens\navigations\routes_verification_screen.dart:42:21 - prefer_final_fields
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\routes_verification_screen.dart:174:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\routes_verification_screen.dart:258:9 - unawaited_futures
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\navigations\routes_verification_screen.dart:304:23 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\routes_verification_screen.dart:537:52 - deprecated_member_use
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\routes_verification_screen.dart:828:77 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\routes_verification_screen.dart:874:44 - unnecessary_parenthesis
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\system_check_screen.dart:33:19 - always_put_required_named_parameters_first
+   info - The private field _navigatorStatuses could be 'final' - lib\presentation\screens\navigations\system_check_screen.dart:59:32 - prefer_final_fields
+   info - The private field _usersCache could be 'final' - lib\presentation\screens\navigations\system_check_screen.dart:60:33 - prefer_final_fields
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\system_check_screen.dart:181:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:256:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:258:9 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\system_check_screen.dart:268:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:270:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:300:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:449:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:474:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:479:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:503:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\system_check_screen.dart:525:11 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\navigations\system_check_screen.dart:541:5 - unawaited_futures
+   info - Statements in an if should be enclosed in a block - lib\presentation\screens\navigations\system_check_screen.dart:547:22 - curly_braces_in_flow_control_structures
+   info - 'onPopInvoked' is deprecated and shouldn't be used. Use onPopInvokedWithResult instead. This feature was deprecated after v3.22.0-12.0.pre - lib\presentation\screens\navigations\system_check_screen.dart:609:7 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\system_check_screen.dart:791:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\navigations\system_check_screen.dart:1368:38 - deprecated_member_use
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\system_check_screen.dart:1561:77 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\system_check_screen.dart:1578:44 - unnecessary_parenthesis
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:1579:42 - prefer_const_constructors
+warning - The declaration '_getConnectivityColor' isn't referenced - lib\presentation\screens\navigations\system_check_screen.dart:1604:9 - unused_element
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:1947:56 - prefer_const_constructors
+   info - 'onPopInvoked' is deprecated and shouldn't be used. Use onPopInvokedWithResult instead. This feature was deprecated after v3.22.0-12.0.pre - lib\presentation\screens\navigations\system_check_screen.dart:2069:7 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:2463:23 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:2517:27 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:2532:37 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\system_check_screen.dart:2534:47 - prefer_const_constructors
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\training_mode_screen.dart:29:19 - always_put_required_named_parameters_first
+   info - The private field _selectedNavigators could be 'final' - lib\presentation\screens\navigations\training_mode_screen.dart:48:21 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\training_mode_screen.dart:300:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\presentation\screens\navigations\training_mode_screen.dart:345:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\navigations\training_mode_screen.dart:572:15 - prefer_const_constructors
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:1585:77 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:1598:55 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:1610:50 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:1623:81 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:2107:73 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:2125:64 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:2138:46 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:2151:77 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\navigations\training_mode_screen.dart:2162:49 - unnecessary_parenthesis
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\navigations\waiting_screen.dart:10:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\security\guided_access_instructions_screen.dart:10:19 - always_put_required_named_parameters_first
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\security\guided_access_instructions_screen.dart:39:9 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\presentation\screens\settings\offline_maps_screen.dart:101:7 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\settings\offline_maps_screen.dart:217:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\settings\offline_maps_screen.dart:360:7 - unawaited_futures
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\settings\offline_maps_screen.dart:546:47 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\screens\settings\offline_maps_screen.dart:666:37 - unnecessary_brace_in_string_interps
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\learning_navigations_screen.dart:90:9 - unawaited_futures
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\learning_navigations_screen.dart:443:38 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\learning_navigations_screen.dart:470:44 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\learning_navigations_screen.dart:483:98 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\learning_navigations_screen.dart:494:73 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\learning_navigations_screen.dart:504:73 - unnecessary_parenthesis
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\learning_navigations_screen.dart:572:42 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\learning_navigations_screen.dart:666:65 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\learning_navigations_screen.dart:750:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\learning_navigations_screen.dart:751:55 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:105:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:189:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:221:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:230:9 - unawaited_futures
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\presentation\screens\training\training_navigations_screen.dart:236:36 - prefer_const_literals_to_create_immutables
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:271:5 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:309:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\training\training_navigations_screen.dart:338:7 - unawaited_futures
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\training_navigations_screen.dart:643:36 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\training_navigations_screen.dart:670:42 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\training_navigations_screen.dart:683:96 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\training_navigations_screen.dart:694:71 - unnecessary_parenthesis
+   info - Unnecessary use of parentheses - lib\presentation\screens\training\training_navigations_screen.dart:704:71 - unnecessary_parenthesis
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\training_navigations_screen.dart:772:32 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\training\training_navigations_screen.dart:844:15 - prefer_const_constructors
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\training_navigations_screen.dart:867:65 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\training\training_navigations_screen.dart:1000:38 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\trees\create_tree_screen.dart:279:35 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\trees\create_tree_screen.dart:279:48 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\trees\create_tree_screen.dart:281:39 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\trees\create_tree_screen.dart:281:52 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\presentation\screens\trees\create_tree_screen.dart:542:32 - prefer_const_constructors
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\presentation\screens\trees\create_tree_screen.dart:614:20 - prefer_const_literals_to_create_immutables
+   info - Required named parameters should be before optional named parameters - lib\presentation\screens\trees\edit_tree_screen.dart:12:50 - always_put_required_named_parameters_first
+   info - The private field _memberNames could be 'final' - lib\presentation\screens\trees\edit_tree_screen.dart:24:16 - prefer_final_fields
+   info - Don't invoke 'print' in production code - lib\presentation\screens\trees\edit_tree_screen.dart:74:7 - avoid_print
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\trees\edit_tree_screen.dart:416:9 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\trees\edit_tree_screen.dart:482:9 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\screens\trees\edit_tree_screen.dart:516:9 - use_build_context_synchronously
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\trees\trees_list_screen.dart:71:17 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\trees\trees_list_screen.dart:138:50 - deprecated_member_use
+warning - The declaration '_showCreateTreeDialog' isn't referenced - lib\presentation\screens\trees\trees_list_screen.dart:195:16 - unused_element
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\presentation\screens\trees\trees_list_screen.dart:263:20 - prefer_const_literals_to_create_immutables
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\presentation\screens\trees\trees_list_screen.dart:267:22 - prefer_const_literals_to_create_immutables
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\trees\trees_list_screen.dart:272:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\trees\trees_list_screen.dart:303:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\trees\trees_list_screen.dart:330:9 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\units\units_list_screen.dart:120:9 - unawaited_futures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\units\units_list_screen.dart:191:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\screens\units\units_list_screen.dart:195:52 - deprecated_member_use
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\units\units_list_screen.dart:232:53 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\units\units_list_screen.dart:234:33 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\units\units_list_screen.dart:245:49 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\screens\units\units_list_screen.dart:260:31 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\elevation_profile_chart.dart:12:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\elevation_profile_chart.dart:126:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\elevation_profile_chart.dart:154:24 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\elevation_profile_chart.dart:155:24 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\export_format_picker.dart:129:34 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\export_format_picker.dart:155:46 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\fullscreen_map_screen.dart:19:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\fullscreen_map_screen.dart:23:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:51:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:106:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:154:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:192:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:193:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\loading_widget.dart:196:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\map_controls.dart:32:19 - always_put_required_named_parameters_first
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:506:47 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:728:30 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:728:37 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:758:23 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:760:25 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\presentation\widgets\map_controls.dart:760:44 - unnecessary_brace_in_string_interps
+   info - Don't use 'BuildContext's across async gaps - lib\presentation\widgets\map_image_export.dart:31:20 - use_build_context_synchronously
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\map_image_export.dart:72:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\map_image_export.dart:73:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\map_image_export.dart:93:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\navigator_comparison_widget.dart:12:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\navigator_comparison_widget.dart:108:39 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\navigator_heatmap.dart:14:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\navigator_heatmap.dart:40:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\navigator_heatmap.dart:125:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\navigator_heatmap.dart:160:26 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\push_to_talk_button.dart:14:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\push_to_talk_button.dart:15:19 - always_put_required_named_parameters_first
+warning - The value of the field '_dragOffset' isn't used - lib\presentation\widgets\push_to_talk_button.dart:29:10 - unused_field
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\widgets\push_to_talk_button.dart:69:7 - unawaited_futures
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\presentation\widgets\push_to_talk_button.dart:85:5 - unawaited_futures
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\route_playback_widget.dart:14:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\route_playback_widget.dart:111:33 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\speed_profile_chart.dart:12:19 - always_put_required_named_parameters_first
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\speed_profile_chart.dart:123:30 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\speed_profile_chart.dart:131:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\speed_profile_chart.dart:164:23 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\presentation\widgets\speed_profile_chart.dart:165:23 - deprecated_member_use
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\unlock_dialog.dart:12:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\unlock_dialog.dart:13:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_message_bubble.dart:13:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_message_bubble.dart:14:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_message_bubble.dart:15:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_messages_panel.dart:28:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_messages_panel.dart:29:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\presentation\widgets\voice_messages_panel.dart:30:19 - always_put_required_named_parameters_first
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:93:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:119:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:131:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:154:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:157:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:165:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:167:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:179:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:244:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:260:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:284:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:313:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:334:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:363:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:401:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\services\alert_monitoring_service.dart:402:48 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:419:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:461:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:485:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:505:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\services\alert_monitoring_service.dart:506:48 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:535:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:553:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\alert_monitoring_service.dart:555:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auth_service.dart:186:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auth_service.dart:214:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auth_service.dart:216:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auth_service.dart:314:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auth_service.dart:398:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:72:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:79:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:119:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:132:9 - avoid_print
+   info - Uncancelled instance of 'StreamSubscription' - lib\services\auto_map_download_service.dart:135:15 - cancel_subscriptions
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:150:15 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:156:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:161:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:173:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:177:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\auto_map_download_service.dart:198:5 - avoid_print
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\services\auto_map_download_service.dart:205:9 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\services\background_location_service.dart:51:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\background_location_service.dart:53:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\background_location_service.dart:64:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\background_location_service.dart:66:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:21:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:24:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:37:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:40:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:99:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:102:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:115:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\device_security_service.dart:118:7 - avoid_print
+   info - Use of an async 'dart:io' method - lib\services\elevation_service.dart:42:16 - avoid_slow_async_io
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:46:5 - avoid_print
+   info - Use of an async 'dart:io' method - lib\services\elevation_service.dart:114:15 - avoid_slow_async_io
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:120:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:125:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:166:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:174:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:238:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:240:7 - avoid_print
+   info - Use of an async 'dart:io' method - lib\services\elevation_service.dart:303:17 - avoid_slow_async_io
+   info - Don't invoke 'print' in production code - lib\services\elevation_service.dart:324:7 - avoid_print
+warning - The value of the field '_openCellIdApiKey' isn't used - lib\services\gps_service.dart:29:23 - unused_field
+   info - Missing an 'await' for the 'Future' computed by this expression - lib\services\gps_service.dart:42:7 - unawaited_futures
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:44:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:57:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:59:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:62:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:77:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:83:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:85:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:100:7 - avoid_print
+   info - Unnecessary use of parentheses - lib\services\gps_service.dart:140:30 - unnecessary_parenthesis
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:142:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:237:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:253:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:282:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:300:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:315:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:408:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:413:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:417:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_service.dart:421:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:32:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:53:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:82:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:85:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:93:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:112:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:115:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:123:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:141:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:146:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:182:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:185:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:189:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:204:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:206:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:210:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:220:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:229:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:236:7 - avoid_print
+   info - The local variable '_lastRecordTime' starts with an underscore - lib\services\gps_tracking_service.dart:244:15 - no_leading_underscores_for_local_identifiers
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:270:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:293:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:300:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:324:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:341:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:381:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:457:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:470:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:509:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\gps_tracking_service.dart:534:5 - avoid_print
+warning - The value of the local variable 'zone' isn't used - lib\services\gps_tracking_service.dart:565:11 - unused_local_variable
+   info - Don't invoke 'print' in production code - lib\services\health_check_service.dart:124:7 - avoid_print
+   info - The parameter name 'sum' matches a visible type name - lib\services\navigation_data_loader.dart:80:22 - avoid_types_as_parameter_names
+warning - The value of the field '_syncManager' isn't used - lib\services\navigation_data_loader.dart:127:21 - unused_field
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:187:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:295:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:302:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:342:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:454:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:462:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:480:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:485:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:510:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:518:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:592:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:634:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:677:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:730:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:767:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:802:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:837:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_data_loader.dart:851:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:83:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:90:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:115:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:137:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:159:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:182:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:192:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:195:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\navigation_layer_copy_service.dart:357:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:22:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:41:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:60:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:62:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:71:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:74:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:82:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:84:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:89:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:94:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:118:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\notification_service.dart:120:7 - avoid_print
+   info - Required named parameters should be before optional named parameters - lib\services\route_analysis_service.dart:56:19 - always_put_required_named_parameters_first
+warning - Unused import: '../domain/entities/navigation_score.dart' - lib\services\route_export_service.dart:10:8 - unused_import
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:867:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:889:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:910:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:942:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:956:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\route_export_service.dart:972:11 - avoid_print
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:30:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:31:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:32:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:33:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:34:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:35:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:36:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:37:19 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:131:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:132:18 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:133:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:134:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:233:41 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:234:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:235:18 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:236:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:237:21 - always_put_required_named_parameters_first
+   info - Required named parameters should be before optional named parameters - lib\services\routes_distribution_service.dart:238:21 - always_put_required_named_parameters_first
+   info - Use 'const' for final variables initialized to a constant value - lib\services\routes_distribution_service.dart:422:5 - prefer_const_declarations
+   info - The 'if' statement could be replaced by a null-aware assignment - lib\services\routes_distribution_service.dart:516:5 - prefer_conditional_assignment
+   info - Statements in a for should be enclosed in a block - lib\services\routes_distribution_service.dart:699:28 - curly_braces_in_flow_control_structures
+   info - Statements in a for should be enclosed in a block - lib\services\routes_distribution_service.dart:700:38 - curly_braces_in_flow_control_structures
+   info - Don't invoke 'print' in production code - lib\services\scoring_service.dart:18:5 - avoid_print
+   info - Use 'const' literals as arguments to constructors of '@immutable' classes - lib\services\scoring_service.dart:27:27 - prefer_const_literals_to_create_immutables
+   info - Don't invoke 'print' in production code - lib\services\scoring_service.dart:111:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:47:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:58:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:80:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:96:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:106:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:139:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:144:5 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:152:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:157:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:189:11 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:260:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:264:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:284:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:286:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:307:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\security_manager.dart:309:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\session_service.dart:44:9 - avoid_print
+warning - Unused import: 'dart:io' - lib\services\sms_service.dart:1:8 - unused_import
+   info - Use 'const' with the constructor to improve performance - lib\services\tile_cache_service.dart:22:21 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\services\tile_cache_service.dart:27:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\tile_cache_service.dart:29:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\services\tile_cache_service.dart:38:12 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\services\tile_cache_service.dart:69:12 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\services\tile_cache_service.dart:108:27 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\services\tile_cache_service.dart:114:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\services\tile_cache_service.dart:123:13 - prefer_const_constructors
+   info - Don't invoke 'print' in production code - lib\services\tile_cache_service.dart:124:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\services\tile_cache_service.dart:126:7 - avoid_print
+   info - Use of an async 'dart:io' method - lib\services\voice_service.dart:118:16 - avoid_slow_async_io
+

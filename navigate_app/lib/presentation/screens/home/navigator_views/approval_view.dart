@@ -152,9 +152,18 @@ class _ApprovalViewState extends State<ApprovalView> {
       }
 
       // מסלול בפועל — נסיון מקומי, fallback ל-Firestore
+      // אם מנווט משני בקבוצה — טוען track של הנציג
+      String trackUserId = userId;
+      if (route != null && route.groupId != null && widget.navigation.forceComposition.isGrouped) {
+        final rep = widget.navigation.forceComposition.getActiveRepresentative(route.groupId);
+        if (rep != null && rep != userId) {
+          trackUserId = rep;
+        }
+      }
+
       String? trackJson;
       final track =
-          await _trackRepo.getByNavigatorAndNavigation(userId, navId);
+          await _trackRepo.getByNavigatorAndNavigation(trackUserId, navId);
       if (track != null && track.trackPointsJson.isNotEmpty) {
         trackJson = track.trackPointsJson;
       } else {
@@ -162,7 +171,7 @@ class _ApprovalViewState extends State<ApprovalView> {
           final firestoreTracks =
               await _trackRepo.getByNavigationFromFirestore(navId);
           final myTrack = firestoreTracks
-              .where((t) => t.navigatorUserId == userId)
+              .where((t) => t.navigatorUserId == trackUserId)
               .toList();
           if (myTrack.isNotEmpty &&
               myTrack.first.trackPointsJson.isNotEmpty) {
@@ -289,8 +298,34 @@ class _ApprovalViewState extends State<ApprovalView> {
           )
         : const LatLng(32.0853, 34.7818);
 
+    // באנר למנווט משני
+    final isSecondary = route != null &&
+        route.groupId != null &&
+        widget.navigation.forceComposition.isGrouped &&
+        widget.navigation.forceComposition.getActiveRepresentative(route.groupId) != null &&
+        widget.navigation.forceComposition.getActiveRepresentative(route.groupId) != widget.currentUser.uid;
+    final repLabel = widget.navigation.forceComposition.type == 'pair' ? 'צמד' : (widget.navigation.forceComposition.type == 'squad' ? 'חוליה' : 'קבוצה');
+
     return Column(
       children: [
+        if (isSecondary)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.blue[50],
+            child: Row(
+              children: [
+                Icon(Icons.group, size: 18, color: Colors.blue[700]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'ציון ה$repLabel — על בסיס ניווט הנציג',
+                    style: TextStyle(fontSize: 13, color: Colors.blue[800]),
+                  ),
+                ),
+              ],
+            ),
+          ),
         // סרגל סטטיסטיקות + ייצוא
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

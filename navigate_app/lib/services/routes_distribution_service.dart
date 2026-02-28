@@ -128,6 +128,7 @@ class RoutesDistributionService {
     required List<String> navigators,
     required int baseGroupSize,
     Map<String, List<String>> manualGroups = const {},
+    String compositionType = 'solo',
   }) {
     final result = <String, List<String>>{};
     final assigned = <String>{};
@@ -164,10 +165,24 @@ class RoutesDistributionService {
         result[groupId] = unassigned.take(baseGroupSize).toList();
         unassigned.removeRange(0, baseGroupSize);
       } else {
-        // שארית — מוסיפים לקבוצות קיימות ב-round-robin
-        final groupKeys = result.keys.toList();
-        for (int i = 0; unassigned.isNotEmpty; i++) {
-          result[groupKeys[i % groupKeys.length]]!.add(unassigned.removeAt(0));
+        // שארית — טיפול לפי הרכב הכוח
+        if (compositionType == 'pair') {
+          // צמד: שארית מצטרפת לקבוצה האחרונה → שלישייה
+          final lastGroupKey = result.keys.last;
+          result[lastGroupKey]!.addAll(unassigned);
+          unassigned.clear();
+        } else if (compositionType == 'guard') {
+          // מאבטח: כל שארית מקבלת קבוצה בודדת
+          while (unassigned.isNotEmpty) {
+            groupCounter++;
+            result['group_$groupCounter'] = [unassigned.removeAt(0)];
+          }
+        } else {
+          // ברירת מחדל — round-robin
+          final groupKeys = result.keys.toList();
+          for (int i = 0; unassigned.isNotEmpty; i++) {
+            result[groupKeys[i % groupKeys.length]]!.add(unassigned.removeAt(0));
+          }
         }
       }
     }
@@ -264,9 +279,45 @@ class RoutesDistributionService {
         })
         .toList();
 
-    final waypointMaps = waypoints.map((w) => w.toMap()).toList();
+    // מאבטח: נקודת ההחלפה חייבת להיות ברשימת הנקודות (גם אם סוננה ע"י גבול גזרה)
+    if (composition.isGuard && composition.swapPointId != null) {
+      final swapInMaps = checkpointMaps.any((m) => m['id'] == composition.swapPointId);
+      if (!swapInMaps) {
+        final swapCp = checkpoints.where((cp) => cp.id == composition.swapPointId).firstOrNull;
+        if (swapCp != null && !swapCp.isPolygon && swapCp.coordinates != null) {
+          checkpointMaps.add({
+            'id': swapCp.id,
+            'lat': swapCp.coordinates!.lat,
+            'lng': swapCp.coordinates!.lng,
+          });
+        }
+      }
+    }
+
+    var waypointMaps = waypoints.map((w) => w.toMap()).toList();
+
+    // מאבטח: נקודת ההחלפה הגלובלית כ-waypoint חובה — כך האלגוריתם מייעל את הציר דרכה
+    if (composition.isGuard && composition.swapPointId != null) {
+      final alreadyWaypoint = waypointMaps.any((w) => w['checkpointId'] == composition.swapPointId);
+      if (!alreadyWaypoint) {
+        waypointMaps = [
+          ...waypointMaps,
+          WaypointCheckpoint(
+            checkpointId: composition.swapPointId!,
+            placementType: 'distance',
+            afterDistanceMinKm: minRouteLength * 0.3,
+            afterDistanceMaxKm: maxRouteLength * 0.7,
+          ).toMap(),
+        ];
+      }
+    }
 
     // --- שלב 2: הרצת אלגוריתם ב-Isolate עם מנווטים וירטואליים ---
+    // מאבטח: כל מנווט וירטואלי מייצג 2 מנווטים שמתחלקים בציר — כפול נקודות
+    final effectiveCpPerNav = composition.isGuard
+        ? checkpointsPerNavigator * 2
+        : checkpointsPerNavigator;
+
     final result = await _runInIsolate(
       navigators: virtualNavigators,
       checkpointMaps: checkpointMaps,
@@ -274,7 +325,7 @@ class RoutesDistributionService {
       endPointId: endPointId,
       waypointMaps: waypointMaps,
       executionOrder: executionOrder,
-      checkpointsPerNavigator: checkpointsPerNavigator,
+      checkpointsPerNavigator: effectiveCpPerNav,
       minRouteLength: minRouteLength,
       maxRouteLength: maxRouteLength,
       scoringCriterion: scoringCriterion,
@@ -316,87 +367,115 @@ class RoutesDistributionService {
     final expandedRoutes = <String, domain.AssignedRoute>{};
 
     if (composition.isGuard) {
-      // --- מאבטח: פיצול כל ציר בנקודת החלפה ---
+      // --- מאבטח: פיצול לפי כמות נקודות (חלוקה שווה) ---
       String? swapId = composition.swapPointId;
 
       for (final entry in result.routes.entries) {
         final groupId = entry.key;
         final route = entry.value;
         final members = groups[groupId];
-        if (members == null || members.length < 2) {
-          // fallback: אם אין מספיק חברים, שים את הציר המלא
-          if (members != null && members.isNotEmpty) {
-            expandedRoutes[members.first] = route.copyWith(groupId: groupId, segmentType: 'full');
-          }
-          continue;
-        }
+        if (members == null || members.isEmpty) continue;
 
-        // בחירת נקודת החלפה אוטומטית אם לא נבחרה — הנקודה הקרובה ביותר לאמצע הציר
+        // בחירת נקודת החלפה אוטומטית אם לא נבחרה
         if (swapId == null) {
           swapId = _findAutoSwapPoint(route, checkpoints);
         }
 
-        // מציאת אינדקס נקודת ההחלפה ברצף
         final seq = route.sequence;
-        final swapIndex = seq.indexOf(swapId ?? '');
 
-        if (swapIndex <= 0 || swapIndex >= seq.length - 1) {
-          // swap point לא נמצא או בקצה — כל חברי הקבוצה מקבלים ציר מלא
+        // מיון נ"צ לפי סדרן ברצף — מבטיח חלוקה גיאוגרפית נכונה
+        final orderedCps = List<String>.from(route.checkpointIds);
+        orderedCps.sort((a, b) {
+          final ai = seq.indexOf(a);
+          final bi = seq.indexOf(b);
+          return (ai < 0 ? 999999 : ai).compareTo(bi < 0 ? 999999 : bi);
+        });
+
+        // חלוקה שווה: חצי ראשון ← מנווט 1, חצי שני ← מנווט 2
+        final half = orderedCps.length ~/ 2;
+        if (half == 0) {
           for (final memberId in members) {
             expandedRoutes[memberId] = route.copyWith(
-              groupId: groupId,
-              segmentType: 'full',
-              swapPointId: swapId,
+              groupId: groupId, segmentType: 'full', swapPointId: swapId,
             );
           }
           continue;
         }
 
-        // פיצול: first_half (start → swap) ו-second_half (swap → end)
-        final firstHalfSeq = seq.sublist(0, swapIndex + 1);
-        final secondHalfSeq = seq.sublist(swapIndex);
-        final firstHalfCps = route.checkpointIds.where((id) => firstHalfSeq.contains(id)).toList();
-        final secondHalfCps = route.checkpointIds.where((id) => secondHalfSeq.contains(id)).toList();
+        final firstHalfCps = orderedCps.sublist(0, half);
+        final secondHalfCps = orderedCps.sublist(half);
+
+        // מציאת נקודת הפיצול ברצף
+        final lastFirstInSeq = seq.indexOf(firstHalfCps.last);
+        final firstSecondInSeq = seq.indexOf(secondHalfCps.first);
+        final swapInSeq = swapId != null ? seq.indexOf(swapId) : -1;
+
+        // אם נקודת ההחלפה נמצאת בין שני החצאים — נפצל דרכה
+        final splitIdx = (swapInSeq > lastFirstInSeq && swapInSeq <= firstSecondInSeq)
+            ? swapInSeq
+            : lastFirstInSeq;
+
+        // חצי ראשון: מתחילת הרצף עד נקודת הפיצול (כולל)
+        final firstHalfSeq = seq.sublist(0, splitIdx + 1).toList();
+        if (swapId != null && !firstHalfSeq.contains(swapId)) {
+          firstHalfSeq.add(swapId);
+        }
+
+        // חצי שני: מנקודת ההחלפה עד סוף הרצף
+        final secondHalfSeq = <String>[];
+        if (swapId != null) secondHalfSeq.add(swapId);
+        for (int i = splitIdx + 1; i < seq.length; i++) {
+          if (seq[i] != swapId) secondHalfSeq.add(seq[i]);
+        }
 
         // חישוב אורך חצאי הציר
         final firstHalfLength = _estimateSegmentLength(firstHalfSeq, checkpoints, startPointId);
         final secondHalfLength = _estimateSegmentLength(secondHalfSeq, checkpoints, null, endPointId: endPointId);
 
-        // מנווט ראשון: first_half
-        expandedRoutes[members[0]] = domain.AssignedRoute(
-          checkpointIds: firstHalfCps,
-          routeLengthKm: firstHalfLength,
-          sequence: firstHalfSeq,
-          startPointId: route.startPointId,
-          endPointId: swapId,
-          waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
-          status: route.status,
-          groupId: groupId,
-          segmentType: 'first_half',
-          swapPointId: swapId,
-        );
-
-        // מנווט שני: second_half
-        expandedRoutes[members[1]] = domain.AssignedRoute(
-          checkpointIds: secondHalfCps,
-          routeLengthKm: secondHalfLength,
-          sequence: secondHalfSeq,
-          startPointId: swapId,
-          endPointId: route.endPointId,
-          waypointIds: route.waypointIds.where((id) => secondHalfSeq.contains(id)).toList(),
-          status: route.status,
-          groupId: groupId,
-          segmentType: 'second_half',
-          swapPointId: swapId,
-        );
-
-        // חברים נוספים (אם יש שלישייה) — מקבלים ציר מלא
-        for (int i = 2; i < members.length; i++) {
-          expandedRoutes[members[i]] = route.copyWith(
+        if (members.length == 1) {
+          // בדד מאבטח — מקבל חצי ציר ראשון בלבד (start → swap)
+          expandedRoutes[members[0]] = domain.AssignedRoute(
+            checkpointIds: firstHalfCps,
+            routeLengthKm: firstHalfLength,
+            sequence: firstHalfSeq,
+            startPointId: route.startPointId,
+            endPointId: swapId,
+            waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
+            status: route.status,
             groupId: groupId,
-            segmentType: 'full',
+            segmentType: 'first_half',
             swapPointId: swapId,
           );
+        } else {
+          // מנווט ראשון: first_half
+          expandedRoutes[members[0]] = domain.AssignedRoute(
+            checkpointIds: firstHalfCps,
+            routeLengthKm: firstHalfLength,
+            sequence: firstHalfSeq,
+            startPointId: route.startPointId,
+            endPointId: swapId,
+            waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
+            status: route.status,
+            groupId: groupId,
+            segmentType: 'first_half',
+            swapPointId: swapId,
+          );
+
+          // מנווט שני ואילך: second_half
+          for (int i = 1; i < members.length; i++) {
+            expandedRoutes[members[i]] = domain.AssignedRoute(
+              checkpointIds: secondHalfCps,
+              routeLengthKm: secondHalfLength,
+              sequence: secondHalfSeq,
+              startPointId: swapId,
+              endPointId: route.endPointId,
+              waypointIds: route.waypointIds.where((id) => secondHalfSeq.contains(id)).toList(),
+              status: route.status,
+              groupId: groupId,
+              segmentType: 'second_half',
+              swapPointId: swapId,
+            );
+          }
         }
       }
     } else {

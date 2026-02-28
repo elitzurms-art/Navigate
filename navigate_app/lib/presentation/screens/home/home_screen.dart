@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
+import '../../../services/notification_service.dart';
 import '../../../domain/entities/hat_type.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../areas/areas_list_screen.dart';
@@ -28,15 +31,64 @@ class _HomeScreenState extends State<HomeScreen> {
   final MapController _mapController = MapController();
   final AuthService _authService = AuthService();
   final SessionService _sessionService = SessionService();
+  final NotificationService _notificationService = NotificationService();
   String _userName = '';
   String _unitName = '';
   String _userRole = '';
   HatInfo? _currentHat;
+  StreamSubscription<RemoteMessage>? _joinRequestSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadUserInfo();
+    _setupJoinRequestListener();
+  }
+
+  @override
+  void dispose() {
+    _joinRequestSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _setupJoinRequestListener() {
+    // האזנה להתראות joinRequest בזמן אמת
+    _joinRequestSubscription =
+        _notificationService.joinRequestStream.listen((_) {
+      if (!mounted) return;
+      _showJoinRequestSnackBar();
+    });
+
+    // בדיקת התראה שהמתינה (מ-terminated state)
+    final pending = _notificationService.consumePendingJoinRequest();
+    if (pending != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showJoinRequestSnackBar();
+      });
+    }
+  }
+
+  void _showJoinRequestSnackBar() {
+    // רענון ה-badge של ממתינים ב-drawer
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('בקשת הצטרפות חדשה'),
+        backgroundColor: Colors.orange,
+        action: SnackBarAction(
+          label: 'צפה',
+          textColor: Colors.white,
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const PendingApprovalsScreen(),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _loadUserInfo() async {

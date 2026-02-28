@@ -402,7 +402,28 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   }
 
   String _getNavigatorDisplayName(String navigatorId) {
-    return _userNames[navigatorId] ?? navigatorId;
+    final name = _userNames[navigatorId] ?? navigatorId;
+    final route = _currentNavigation.routes[navigatorId];
+    if (route != null && route.groupId != null && _currentNavigation.forceComposition.isGrouped) {
+      final label = _getGroupLabel(route.groupId!);
+      if (label != null) return '$name ($label)';
+    }
+    return name;
+  }
+
+  /// תווית קבוצה (צמד/חוליה)
+  String? _getGroupLabel(String groupId) {
+    final composition = _currentNavigation.forceComposition;
+    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : 'קבוצה');
+    final groupIds = _currentNavigation.routes.values
+        .where((r) => r.groupId != null)
+        .map((r) => r.groupId!)
+        .toSet()
+        .toList()
+      ..sort();
+    final groupNum = groupIds.indexOf(groupId) + 1;
+    if (groupNum <= 0) return null;
+    return '$typeLabel $groupNum';
   }
 
   // ===========================================================================
@@ -414,12 +435,20 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
     try {
       final criteria = _currentNavigation.reviewSettings.scoringCriteria;
+      final composition = _currentNavigation.forceComposition;
 
+      // שלב 1: חישוב ציונים לנציגים ול-solo
       for (final entry in _navigatorDataMap.entries) {
         final navId = entry.key;
         final data = entry.value;
-
         final route = _currentNavigation.routes[navId];
+
+        // דילוג על משניים — יקבלו ציון מהנציג בשלב 2
+        if (route != null && route.groupId != null && composition.isGrouped) {
+          final rep = composition.getActiveRepresentative(route.groupId);
+          if (rep != null && rep != navId) continue;
+        }
+
         final score = _scoringService.calculateAutomaticScore(
           navigationId: widget.navigation.id,
           navigatorId: navId,
@@ -432,6 +461,31 @@ class _ApprovalScreenState extends State<ApprovalScreen>
 
         _scores[navId] = score;
         _autoScores[navId] = score.totalScore;
+      }
+
+      // שלב 2: העתקת ציון מנציג למשניים
+      for (final entry in _navigatorDataMap.entries) {
+        final navId = entry.key;
+        if (_scores.containsKey(navId)) continue; // כבר חושב
+
+        final route = _currentNavigation.routes[navId];
+        if (route != null && route.groupId != null && composition.isGrouped) {
+          final rep = composition.getActiveRepresentative(route.groupId);
+          if (rep != null && _scores.containsKey(rep)) {
+            final repScore = _scores[rep]!;
+            _scores[navId] = NavigationScore(
+              id: '${widget.navigation.id}_${navId}_${DateTime.now().millisecondsSinceEpoch}',
+              navigationId: widget.navigation.id,
+              navigatorId: navId,
+              totalScore: repScore.totalScore,
+              checkpointScores: repScore.checkpointScores,
+              calculatedAt: DateTime.now(),
+              isManual: repScore.isManual,
+              notes: repScore.notes,
+            );
+            _autoScores[navId] = repScore.totalScore;
+          }
+        }
       }
 
       // שמירת טיוטה ל-Firestore — כדי שהציונים לא יאבדו ביציאה מהמסך

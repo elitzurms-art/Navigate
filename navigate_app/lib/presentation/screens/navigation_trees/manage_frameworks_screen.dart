@@ -31,6 +31,7 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
   List<app_user.User> _allUsers = [];
   bool _isLoading = false;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
   HatInfo? _currentHat;
   Map<String, List<app_user.User>> _subFrameworkUsersMap = {};
 
@@ -39,16 +40,20 @@ class _ManageFrameworksScreenState extends State<ManageFrameworksScreen> {
     super.initState();
     _tree = widget.tree;
     _loadUsers();
-    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים מתעדכנים
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים מתעדכנים (עם debounce)
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.usersCollection && mounted) {
-        _loadUsers();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadUsers();
+        });
       }
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     super.dispose();
   }

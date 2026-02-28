@@ -40,8 +40,8 @@ class _SmsVerificationScreenState extends State<SmsVerificationScreen> {
     super.initState();
     _currentVerificationId = widget.verificationId;
 
-    // אם אימות אוטומטי - מעבר ישר
-    if (widget.autoVerified) {
+    // אם אימות אוטומטי או desktop bypass — מעבר ישר
+    if (widget.autoVerified || _currentVerificationId == 'desktop-bypass') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _handleVerificationSuccess();
       });
@@ -140,7 +140,9 @@ class _SmsVerificationScreenState extends State<SmsVerificationScreen> {
           Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('DEBUG _handleVerificationSuccess ERROR: $e');
+      print('DEBUG _handleVerificationSuccess STACK: $stackTrace');
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(

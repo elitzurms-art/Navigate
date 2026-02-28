@@ -69,6 +69,7 @@ class NavigationTrackRepository {
                 ? (data['manualPositionUsedAt'] as Timestamp).toDate()
                 : DateTime.tryParse(data['manualPositionUsedAt'].toString()))
             : null,
+        isGroupSecondary: data['isGroupSecondary'] as bool? ?? false,
       );
     }).toList();
   }
@@ -77,6 +78,7 @@ class NavigationTrackRepository {
   Future<NavigationTrack> startNavigation({
     required String navigatorUserId,
     required String navigationId,
+    bool isGroupSecondary = false,
   }) async {
     final id = const Uuid().v4();
     final now = DateTime.now();
@@ -91,6 +93,7 @@ class NavigationTrackRepository {
         startedAt: now,
         isActive: true,
         isDisqualified: false,
+        isGroupSecondary: Value(isGroupSecondary),
       ),
     );
 
@@ -146,6 +149,7 @@ class NavigationTrackRepository {
         'isDisqualified': track.isDisqualified,
         'manualPositionUsed': track.manualPositionUsed,
         'manualPositionUsedAt': track.manualPositionUsedAt?.toUtc().toIso8601String(),
+        'isGroupSecondary': track.isGroupSecondary,
       },
       priority: SyncPriority.high,
     );
@@ -192,6 +196,14 @@ class NavigationTrackRepository {
           .update({'isDisqualified': false});
     } catch (_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
+  }
+
+  /// פסילת מנווט לפי navigatorId + navigationId — מוצא track ומסמן כפסול
+  Future<void> disqualifyByNavigator(String navigatorId, String navigationId, {String? reason}) async {
+    final track = await getByNavigatorAndNavigation(navigatorId, navigationId);
+    if (track != null) {
+      await disqualifyNavigator(track.id, reason: reason);
     }
   }
 

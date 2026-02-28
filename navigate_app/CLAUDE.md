@@ -10,7 +10,7 @@
 |---|---|---|
 | Flutter | SDK >=3.0.0 | UI Framework |
 | Dart | >=3.0.0 <4.0.0 | שפת תכנות |
-| Firebase Auth | ^6.1.4 | אימות (טלפון + אנונימי) |
+| Firebase Auth | ^6.1.4 | אימות (טלפון + אנונימי + Email OTP) |
 | Cloud Firestore | ^6.1.2 | מסד נתונים מרוחק |
 | Firebase Storage | ^13.0.6 | אחסון קבצים |
 | Drift | ^2.14.1 | SQLite ORM (מקומי) |
@@ -81,7 +81,7 @@ lib/
 │   └── sync/sync_manager.dart     # סנכרון דו-כיווני Drift↔Firestore
 │
 ├── services/              # שירותים (13 קבצים)
-│   ├── auth_service.dart              # התחברות, הרשמה, SMS, Anonymous Auth
+│   ├── auth_service.dart              # התחברות, הרשמה, SMS, Email OTP, Anonymous Auth
 │   ├── auth_mapping_service.dart      # מיפוי Firebase Auth UID → app user (Firestore rules)
 │   ├── session_service.dart           # ניהול session + סריקת כובעים
 │   ├── navigation_data_loader.dart    # טעינת נתוני ניווט (גדול!)
@@ -98,7 +98,7 @@ lib/
 │
 ├── presentation/          # שכבת UI
 │   ├── screens/
-│   │   ├── auth/           # 6 מסכי אימות
+│   │   ├── auth/           # 7 מסכי אימות (כולל email_code_verification_screen)
 │   │   ├── home/           # מסך בית + navigator views (6)
 │   │   ├── navigations/    # 19 מסכי ניווט (הזרם הראשי!)
 │   │   ├── navigation_trees/  # 4 מסכי עצים (פעילים)
@@ -157,14 +157,38 @@ dart run build_runner build --delete-conflicting-outputs
 ## Firebase
 
 - **פרויקט**: `navigate-native` (319417384412)
-- **אימות**: Phone Auth + Anonymous Auth (לגישת Firestore)
-- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT), auth_mapping
+- **אימות**: Phone Auth + Anonymous Auth (לגישת Firestore) + Email OTP (לדסקטופ)
+- **Collections**: users, units, areas, navigator_trees, navigations, navigation_tracks, navigation_approval, sync_metadata, rooms (PTT), auth_mapping, email_codes, email_lookup, mail
 - **Subcollections תחת areas**: layers_nz (נ"צ), layers_nb (נ"ב), layers_gg (ג"ג), layers_ba (ב"א)
 - **Subcollections תחת rooms**: messages (הודעות קוליות)
 - **Subcollections תחת navigations**: extension_requests (בקשות הארכת זמן)
 - **auth_mapping**: מיפוי Firebase Auth UID → app user data (ראה סעיף אבטחת Firestore)
 - **Firebase Storage**: `voice_messages/{navigationId}/{timestamp}.m4a`
 - **קבצי הגדרות**: `firebase.json`, `firestore.rules`, `firestore.indexes.json`
+
+### Cloud Functions (`functions/index.js`)
+
+12 Cloud Functions (כולן v2, region: us-central1):
+
+| פונקציה | סוג | תפקיד |
+|---|---|---|
+| `initSession` | onCall | קביעת custom claims על Firebase Auth user |
+| `sendEmailCode` | onCall | שליחת קוד אימות 6 ספרות למייל |
+| `verifyEmailCode` | onCall | אימות קוד מייל |
+| `httpInitSession` | onRequest | HTTP wrapper ל-initSession (לדסקטופ) |
+| `httpSendEmailCode` | onRequest | HTTP wrapper ל-sendEmailCode (לדסקטופ) |
+| `httpVerifyEmailCode` | onRequest | HTTP wrapper ל-verifyEmailCode (לדסקטופ) |
+| `onUserWrite` | Firestore trigger | עדכון custom claims בשינוי user doc |
+| `onNavigationUpdate` | Firestore trigger | התראות push בשינוי סטטוס ניווט |
+| `sendEmergencyBroadcast` | onCall | שליחת התראת חירום |
+| `cleanupOldVoiceMessages` | Scheduled | ניקוי הודעות קוליות ישנות (כל 24 שעות) |
+
+**הגדרות SMTP**: `functions/.env` (לא ב-git) — `SMTP_URI` + `SMTP_FROM`
+
+**חשוב — דסקטופ vs מובייל**:
+- `cloud_functions` Flutter SDK **לא נתמך ב-Windows** — אין platform channel
+- בדסקטופ, `AuthService._callCloudFunction()` משתמש ב-`SecureSocket` (HTTP ישיר) עם endpoints מסוג `onRequest` (prefix `http`)
+- במובייל, נעשה שימוש ב-SDK הרגיל (`httpsCallable`) עם fallback ל-HTTP אם נכשל
 
 ---
 
@@ -325,15 +349,39 @@ SyncManager טוען הקשר משתמש (`_loadCurrentUserContext`) לפני ס
 ## אימות ו-Onboarding (Auth Flow)
 
 1. משתמש מזין מספר אישי (7 ספרות) → `LoginScreen`
-2. אימות SMS (או email לדסקטופ) → `SmsVerificationScreen`
+2. אימות:
+   - **מובייל**: SMS → `SmsVerificationScreen`
+   - **דסקטופ**: Email OTP (6 ספרות) → `EmailCodeVerificationScreen`
 3. Anonymous Firebase Auth ברקע (לגישת Firestore) → `_ensureFirebaseAuth()` ב-main.dart
-4. **בדיקת onboarding** (חדש):
+4. **בדיקת onboarding**:
    - `bypassesOnboarding` (admin/developer) → דילוג ישר לשלב 5
    - `needsUnitSelection` (אין unitId) → `ChooseUnitScreen` → בחירת יחידה → `WaitingForApprovalScreen`
    - `isAwaitingApproval` (יש unitId, לא מאושר) → `WaitingForApprovalScreen`
    - `isOnboarded` (מאושר) → שלב 5
 5. סריקת כובעים → כובע אחד ישר לניווט, מרובים → `HatSelectionScreen`
 6. `HomeRouter` → `NavigatorHomeScreen` (מנווט) או `HomeScreen` (מפקד/מנהל)
+
+### Email OTP Flow (דסקטופ)
+```
+LoginScreen (טאב "כתובת מייל") → הזנת מייל
+  → AuthService.loginByEmail() — חיפוש ב-email_lookup + DB מקומי
+  → AuthService.sendEmailVerificationCode() → Cloud Function httpSendEmailCode
+    → יצירת קוד 6 ספרות → שמירה ב-email_codes/{personalNumber}
+    → שליחת מייל via nodemailer (SMTP ישיר)
+  → EmailCodeVerificationScreen — הזנת קוד
+  → AuthService.verifyEmailCode() → Cloud Function httpVerifyEmailCode
+  → AuthService.completeLogin() → Cloud Function httpInitSession (custom claims)
+  → /home
+```
+
+**Fallback**: אם SMTP לא מוגדר, הקוד מוחזר בתגובת ה-API ומוצג ישירות במסך
+
+### `AuthService._callCloudFunction()` — דסקטופ
+- `cloud_functions` SDK לא נתמך ב-Windows (אין platform channel)
+- v2 `onCall` Cloud Functions דורשים IAM permissions ולא נגישים ב-HTTP ישיר
+- **פתרון**: endpoints מסוג `onRequest` (prefix `http`) + `SecureSocket` בצד הקליינט
+- `SecureSocket` עוקף בעיית `HttpException: Failed to parse header value` שנגרמת מ-JWT ארוך ב-Authorization header ב-Windows
+- מיפוי שמות: `sendEmailCode` → `httpSendEmailCode` (אוטומטי ב-`_callCloudFunction`)
 
 ---
 
@@ -390,18 +438,46 @@ auth_mapping/{firebaseAuthUid} = {
 
 ### Helper Functions ב-Rules
 ```javascript
-authData()          // קריאת auth_mapping doc
-myAppUid()          // מספר אישי מ-auth_mapping
-myRole()            // תפקיד מ-auth_mapping
-isDeveloperOrAdmin() // developer או admin
-isInUnitScope(unitId) // unitId ב-allowedUnitScopeIds
-isParticipant(navDoc) // appUid ברשימת participants
+myAppUid()              // מספר אישי מ-custom claims (JWT token)
+myRole()                // תפקיד מ-custom claims
+isDeveloperOrAdmin()    // developer או admin
+isInUnitScope(unitId)   // unitId ב-unitScope (claims) או auth_mapping (fallback)
+isSelf(personalNumber)  // האם זה ה-doc שלי
+isParticipant(navDoc)   // appUid ברשימת participants
+noPrivilegeFieldsOnCreate()  // create ללא role/isApproved
+noPrivilegeFieldChanges()    // update ללא שינוי role/isApproved
+validCommanderApproval()     // אישור ע"י commander (לא יכול לתת unit_admin/admin/developer)
+validAdminApproval()         // אישור ע"י unit_admin (לא יכול לתת developer)
+removingFromUnit()           // הסרה מיחידה (unitId=null)
+validAddToUnit()             // הוספה ליחידה (unitId!=null, isApproved=true, לא developer/admin)
 ```
 
+### כללי /users/{personalNumber}
+| כלל | תנאי | helper |
+|---|---|---|
+| Developer/Admin | `isDeveloperOrAdmin()` | גישה מלאה |
+| GET | `isAuthenticated()` | חיפוש לפי מספר אישי |
+| LIST | `isInUnitScope(resource.data.unitId)` | SyncManager + PendingApprovals |
+| CREATE self | `isSelf()` + `noPrivilegeFieldsOnCreate()` | הרשמה |
+| UPDATE self | `isSelf()` + `noPrivilegeFieldChanges()` | עדכון פרטים (ללא role/isApproved) |
+| Cancel own request | `isSelf()` + `removingFromUnit()` | ביטול בקשת הצטרפות |
+| Approval (commander) | `isInUnitScope(resource.data.unitId)` + `validCommanderApproval()` | אישור/שינוי role |
+| Approval (unit_admin) | `isInUnitScope(resource.data.unitId)` + `validAdminApproval()` | אישור/שינוי role |
+| Remove from unit | `isInUnitScope(resource.data.unitId)` + `removingFromUnit()` | הסרת משתמש מיחידה |
+| Add to unit | `isInUnitScope(request.resource.data.unitId)` + `validAddToUnit()` | הוספה ישירה ליחידה |
+
+**שים לב**: "Add to unit" בודק `request.resource.data.unitId` (היחידה החדשה) ולא `resource.data.unitId` (הישנה) — כי למשתמש אולי אין יחידה עדיין.
+
 ### עלות get() בכללים
-- כל בדיקת rule קוראת auth_mapping (1 get)
+- `isInUnitScope` עם `hasFullScope=true` קורא auth_mapping (1 get)
 - subcollections של navigations גם קוראים parent navigation doc (+1 get)
 - מקסימום 2 reads per evaluation — בתוך מגבלת 10 של Firestore
+
+### completeLogin — הגנה על שדות הרשאה
+- `completeLogin()` דוחף נתוני משתמש מלאים ל-Firestore (טיפול ב-setUserUnit שנכשל לפני initSession)
+- **חובה**: מסיר `role` + `isApproved` מה-map לפני הכתיבה — ערכי Firestore הם הסמכותיים
+- בלי ההסרה: אם Drift מקומי מכיל `isApproved: false` (לא סונכרן) → self-update rule חוסם כי privilege fields השתנו
+- אותו pattern כמו `setUserUnit()` (שורות 329-330 ב-auth_service.dart)
 
 ---
 
@@ -549,6 +625,15 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;
 
 ### _currentNavigation pattern
 במסכים שמשנים ניווט (training_mode_screen וכו'): להשתמש ב-`_currentNavigation` (mutable) ולא ב-`widget.navigation` (immutable). לעדכן אחרי כל שמירה.
+
+### cloud_functions SDK לא נתמך ב-Windows
+- `FirebaseFunctions.instance.httpsCallable()` זורק `Unable to establish connection on channel`
+- **פתרון**: `AuthService._callCloudFunction()` משתמש ב-`SecureSocket` HTTP ישיר בדסקטופ
+- v2 Cloud Functions (`onCall`) דורשים IAM — יש endpoints `onRequest` מקבילים (prefix `http`)
+
+### JWT ב-Authorization header ב-Windows
+- `dart:io` HttpClient זורק `HttpException: Failed to parse header value` עם JWT ארוך
+- **פתרון**: `SecureSocket` ישיר (בניית HTTP request ידנית, עוקף header validation)
 
 ---
 

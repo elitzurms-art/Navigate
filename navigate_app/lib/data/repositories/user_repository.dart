@@ -4,8 +4,8 @@ import '../../domain/entities/user.dart' as domain;
 import '../datasources/remote/firebase_service.dart';
 import '../datasources/local/app_database.dart';
 import '../../core/constants/app_constants.dart';
-import '../../services/auth_mapping_service.dart';
 import '../sync/sync_manager.dart';
+import 'navigation_repository.dart';
 
 /// Repository למשתמשים
 class UserRepository {
@@ -41,14 +41,60 @@ class UserRepository {
   }
 
   /// קבלת משתמש לפי מספר טלפון
+  /// תומך בפורמטים: 05XXXXXXXX, +9725XXXXXXXX
+  /// אם יש כמה משתמשים עם אותו טלפון — מחזיר את זה שאימת (phoneVerified)
   Future<domain.User?> getUserByPhoneNumber(String phoneNumber) async {
     final db = _localDatabase ?? AppDatabase();
     try {
-      final result = await (db.select(db.users)
+      // 1. חיפוש לפי הערך שהתקבל
+      var results = await (db.select(db.users)
         ..where((tbl) => tbl.phoneNumber.equals(phoneNumber)))
-          .getSingleOrNull();
-      if (result == null) return null;
-      return _userFromRow(result);
+          .get();
+
+      // 2. ניסיון בפורמט אלטרנטיבי (05↔+972)
+      if (results.isEmpty) {
+        String? altFormat;
+        if (phoneNumber.startsWith('05') && phoneNumber.length == 10) {
+          altFormat = '+972${phoneNumber.substring(1)}';
+        } else if (phoneNumber.startsWith('+9725')) {
+          altFormat = '0${phoneNumber.substring(4)}';
+        }
+
+        if (altFormat != null) {
+          results = await (db.select(db.users)
+            ..where((tbl) => tbl.phoneNumber.equals(altFormat!)))
+              .get();
+        }
+      }
+
+      if (results.isEmpty) return null;
+
+      // אם יש כמה תוצאות — העדפה למשתמש שאימת טלפון
+      if (results.length > 1) {
+        final verified = results.where((u) => u.phoneVerified).toList();
+        if (verified.isNotEmpty) {
+          // מהמאומתים — העדפה לאחרון שנעדכן
+          verified.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          return _userFromRow(verified.first);
+        }
+      }
+      return _userFromRow(results.first);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// קבלת משתמש לפי כתובת מייל — חיפוש מקומי ב-Drift (case-insensitive)
+  Future<domain.User?> getUserByEmail(String email) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final normalizedEmail = email.trim().toLowerCase();
+      final results = await (db.select(db.users)
+        ..where((tbl) => tbl.email.lower().equals(normalizedEmail)))
+          .get();
+
+      if (results.isEmpty) return null;
+      return _userFromRow(results.first);
     } catch (e) {
       return null;
     }
@@ -111,7 +157,8 @@ class UserRepository {
           unitId: Value(user.unitId),
           fcmToken: Value(user.fcmToken),
           firebaseUid: Value(user.firebaseUid),
-          isApproved: Value(user.isApproved),
+          isApproved: Value(user.isApproved), // bool for Drift compat
+          approvalStatus: Value(user.approvalStatus),
           soloQuizPassedAt: Value(user.soloQuizPassedAt),
           soloQuizScore: Value(user.soloQuizScore),
           createdAt: user.createdAt,
@@ -120,11 +167,18 @@ class UserRepository {
       );
 
       if (queueSync) {
+        final syncData = user.toMap();
+        // unitId, isApproved, role are admin-controlled — only commander
+        // operations (approveUser, removeUserFromUnit, etc.) push these.
+        syncData.remove('unitId');
+        syncData.remove('isApproved');
+        syncData.remove('role');
+
         await _syncManager.queueOperation(
           collection: AppConstants.usersCollection,
           documentId: user.uid,
-          operation: 'create',
-          data: user.toMap(),
+          operation: 'update',
+          data: syncData,
           priority: SyncPriority.high,
         );
       }
@@ -147,7 +201,7 @@ class UserRepository {
       unitId: row.unitId,
       fcmToken: row.fcmToken,
       firebaseUid: row.firebaseUid,
-      isApproved: row.isApproved,
+      approvalStatus: row.approvalStatus ?? (row.isApproved ? 'approved' : null),
       soloQuizPassedAt: row.soloQuizPassedAt,
       soloQuizScore: row.soloQuizScore,
       createdAt: row.createdAt,
@@ -232,12 +286,7 @@ class UserRepository {
         data: {'role': role, 'updatedAt': now.toIso8601String()},
         priority: SyncPriority.high,
       );
-
-      // עדכון auth_mapping אם יש firebaseUid
-      final updatedUser = await getUser(uid);
-      if (updatedUser?.firebaseUid != null) {
-        await AuthMappingService().updateMappingForUser(updatedUser!);
-      }
+      // Custom claims updated automatically by onUserWrite Cloud Function trigger
     } catch (e) {
       print('DEBUG: Error in updateUserRole: $e');
     }
@@ -253,41 +302,55 @@ class UserRepository {
   // Onboarding / Approval Workflow
   // ---------------------------------------------------------------------------
 
-  /// מנווט בוחר יחידה — שמירה עם isApproved=false
+  /// מנווט בוחר יחידה — שמירה עם isApproved="pending"
   Future<void> setUserUnit(String uid, String unitId) async {
     final db = _localDatabase ?? AppDatabase();
     try {
       final now = DateTime.now();
+      // עדכון Drift מקומי — למצב UI מיידי
       await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
           .write(UsersCompanion(
         unitId: Value(unitId),
-        isApproved: const Value(false),
+        approvalStatus: const Value('pending'),
         updatedAt: Value(now),
       ));
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: {
+      // Firestore — כל השדות + isApproved="pending" (JOIN rule allows self to set "pending")
+      final fullUser = await getUser(uid);
+      final Map<String, dynamic> firestoreData;
+      if (fullUser != null) {
+        firestoreData = fullUser.toMap();
+        firestoreData['unitId'] = unitId;
+        firestoreData['isApproved'] = 'pending';
+        firestoreData.remove('role');
+        firestoreData['updatedAt'] = FieldValue.serverTimestamp();
+      } else {
+        firestoreData = {
+          'uid': uid,
           'unitId': unitId,
-          'isApproved': false,
-          'updatedAt': now.toIso8601String(),
-        },
-        priority: SyncPriority.high,
-      );
-
-      // עדכון auth_mapping אם יש firebaseUid
-      final updatedUser = await getUser(uid);
-      if (updatedUser?.firebaseUid != null) {
-        await AuthMappingService().updateMappingForUser(updatedUser!);
+          'isApproved': 'pending',
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
       }
 
-      // רענון הקשר SyncManager — listeners יופעלו מחדש עם scope מעודכן (fire-and-forget)
+      // שלב 1: יצירת/עדכון המסמך ללא isApproved (create rule blocks privilege fields)
+      final pendingValue = firestoreData.remove('isApproved');
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .set(firestoreData, SetOptions(merge: true));
+
+      // שלב 2: עדכון isApproved ל-"pending" (JOIN/RE-REQUEST update rule allows this)
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .update({'isApproved': pendingValue ?? 'pending', 'updatedAt': FieldValue.serverTimestamp()});
+
       // ignore: unawaited_futures
       _syncManager.refreshUserContext();
     } catch (e) {
       print('DEBUG: Error in setUserUnit: $e');
+      rethrow;
     }
   }
 
@@ -296,62 +359,55 @@ class UserRepository {
     final db = _localDatabase ?? AppDatabase();
     try {
       final now = DateTime.now();
-      final companion = UsersCompanion(
+      // Drift מקומי — UI מיידי
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
         isApproved: const Value(true),
+        approvalStatus: const Value('approved'),
         updatedAt: Value(now),
         role: role != null ? Value(role) : const Value.absent(),
-      );
+      ));
 
-      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
-          .write(companion);
-
-      final data = <String, dynamic>{
+      // Firestore — רק שדות האישור (מפקד יוצר את isApproved ו-role)
+      final firestoreData = <String, dynamic>{
         'isApproved': true,
-        'updatedAt': now.toIso8601String(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
-      if (role != null) data['role'] = role;
+      if (role != null) firestoreData['role'] = role;
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: data,
-        priority: SyncPriority.high,
-      );
-
-      // עדכון auth_mapping אם יש firebaseUid
-      final updatedUser = await getUser(uid);
-      if (updatedUser?.firebaseUid != null) {
-        await AuthMappingService().updateMappingForUser(updatedUser!);
-      }
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .set(firestoreData, SetOptions(merge: true));
     } catch (e) {
       print('DEBUG: Error in approveUser: $e');
     }
   }
 
-  /// מפקד דוחה משתמש — ניקוי unitId + isApproved=false
+  /// מפקד דוחה משתמש — unitId נשמר, isApproved=false (rejected)
   Future<void> rejectUser(String uid) async {
     final db = _localDatabase ?? AppDatabase();
     try {
       final now = DateTime.now();
+      // Drift מקומי — UI מיידי (שומרים unitId — משתמש יראה דיאלוג דחייה)
       await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
           .write(UsersCompanion(
-        unitId: const Value(null),
         isApproved: const Value(false),
+        approvalStatus: const Value('rejected'),
         updatedAt: Value(now),
       ));
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: {
-          'unitId': null,
-          'isApproved': false,
-          'updatedAt': now.toIso8601String(),
-        },
-        priority: SyncPriority.high,
-      );
+      // Firestore — isApproved=false, שומרים unitId
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .update({
+        'isApproved': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // הסרת המשתמש מניווטים
+      await NavigationRepository().removeParticipantFromAll(uid);
     } catch (e) {
       print('DEBUG: Error in rejectUser: $e');
     }
@@ -366,6 +422,7 @@ class UserRepository {
           .write(UsersCompanion(
         unitId: Value(unitId),
         isApproved: const Value(true),
+        approvalStatus: const Value('approved'),
         updatedAt: Value(now),
       ));
 
@@ -380,12 +437,7 @@ class UserRepository {
         },
         priority: SyncPriority.high,
       );
-
-      // עדכון auth_mapping אם יש firebaseUid
-      final updatedUser = await getUser(uid);
-      if (updatedUser?.firebaseUid != null) {
-        await AuthMappingService().updateMappingForUser(updatedUser!);
-      }
+      // Custom claims updated automatically by onUserWrite Cloud Function trigger
     } catch (e) {
       print('DEBUG: Error in addUserToUnit: $e');
     }
@@ -399,7 +451,7 @@ class UserRepository {
         ..where((tbl) =>
             tbl.unitId.isNotNull() &
             tbl.unitId.length.isBiggerThanValue(0) &
-            tbl.isApproved.equals(false)))
+            tbl.approvalStatus.equals('pending')))
           .get();
       return results.map((r) => _userFromRow(r)).toList();
     } catch (e) {
@@ -415,7 +467,7 @@ class UserRepository {
       final results = await (db.select(db.users)
         ..where((tbl) =>
             tbl.unitId.isIn(unitIds) &
-            tbl.isApproved.equals(false)))
+            tbl.approvalStatus.equals('pending')))
           .get();
       return results.map((r) => _userFromRow(r)).toList();
     } catch (e) {
@@ -431,7 +483,7 @@ class UserRepository {
       final results = await (db.select(db.users)
         ..where((tbl) =>
             tbl.unitId.equals(unitId) &
-            tbl.isApproved.equals(true)))
+            tbl.approvalStatus.equals('approved')))
           .get();
       return results.map((r) => _userFromRow(r)).toList();
     } catch (e) {
@@ -460,6 +512,7 @@ class UserRepository {
             .write(UsersCompanion(
           unitId: const Value(null),
           isApproved: const Value(false),
+          approvalStatus: const Value(null),
           role: shouldResetRole
               ? const Value('navigator')
               : const Value.absent(),
@@ -478,6 +531,10 @@ class UserRepository {
           },
           priority: SyncPriority.high,
         );
+        // Custom claims updated automatically by onUserWrite Cloud Function trigger
+
+        // הסרת המשתמש מניווטים של יחידות אחרות
+        await NavigationRepository().removeParticipantFromAll(user.uid);
       }
 
       print('DEBUG: Reset ${users.length} users from unit $unitId');
@@ -503,30 +560,43 @@ class UserRepository {
           .write(UsersCompanion(
         unitId: const Value(null),
         isApproved: const Value(false),
+        approvalStatus: const Value(null),
         role: shouldResetRole
             ? const Value('navigator')
             : const Value.absent(),
         updatedAt: Value(now),
       ));
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: {
-          'unitId': null,
-          'isApproved': false,
-          if (shouldResetRole) 'role': 'navigator',
-          'updatedAt': now.toIso8601String(),
-        },
-        priority: SyncPriority.high,
-      );
-
-      // עדכון auth_mapping אם יש firebaseUid
-      final updatedUser = await getUser(uid);
-      if (updatedUser?.firebaseUid != null) {
-        await AuthMappingService().updateMappingForUser(updatedUser!);
+      // כתיבה ישירה ל-Firestore (למניעת מרוץ עם listener שמחזיר נתונים ישנים)
+      final firestoreData = {
+        'unitId': null,
+        'isApproved': false,
+        if (shouldResetRole) 'role': 'navigator',
+        'updatedAt': now.toIso8601String(),
+      };
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.usersCollection)
+            .doc(uid)
+            .update(firestoreData);
+        print('DEBUG: Direct Firestore update for user $uid (removeFromUnit)');
+      } catch (e) {
+        // Firestore לא זמין — fallback לסנכרון רגיל
+        print('DEBUG: Direct Firestore failed, queueing: $e');
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: uid,
+          operation: 'update',
+          data: firestoreData,
+          priority: SyncPriority.high,
+        );
       }
+
+      // Custom claims updated automatically by onUserWrite Cloud Function trigger
+
+      // Cascade: הסרת המשתמש מכל הניווטים שהוא משתתף בהם
+      final navigationRepo = NavigationRepository();
+      await navigationRepo.removeParticipantFromAll(uid);
 
       print('DEBUG: Removed user $uid from unit'
           '${shouldResetRole ? " (role → navigator)" : ""}');
@@ -542,13 +612,62 @@ class UserRepository {
       final results = await (db.select(db.users)
         ..where((tbl) =>
             tbl.unitId.equals(unitId) &
-            tbl.isApproved.equals(true) &
+            tbl.approvalStatus.equals('approved') &
             tbl.role.isIn(['commander', 'unit_admin', 'admin', 'developer'])))
           .get();
       return results.map((r) => _userFromRow(r)).toList();
     } catch (e) {
       print('DEBUG: Error in getCommandersForUnit: $e');
       return [];
+    }
+  }
+
+  /// משתמש שנדחה מבקש שוב — approvalStatus חוזר ל-"pending"
+  Future<void> requestAgain(String uid) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        approvalStatus: const Value('pending'),
+        updatedAt: Value(now),
+      ));
+
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .update({
+        'isApproved': 'pending',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('DEBUG: Error in requestAgain: $e');
+    }
+  }
+
+  /// משתמש שנדחה בוחר יחידה אחרת — מאפס unitId ו-approvalStatus
+  Future<void> cancelAndChooseNewUnit(String uid) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final now = DateTime.now();
+      await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
+          .write(UsersCompanion(
+        unitId: const Value(null),
+        isApproved: const Value(false),
+        approvalStatus: const Value(null),
+        updatedAt: Value(now),
+      ));
+
+      await FirebaseFirestore.instance
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .update({
+        'unitId': FieldValue.delete(),
+        'isApproved': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('DEBUG: Error in cancelAndChooseNewUnit: $e');
     }
   }
 
@@ -559,7 +678,7 @@ class UserRepository {
       final results = await (db.select(db.users)
         ..where((tbl) =>
             tbl.unitId.equals(unitId) &
-            tbl.isApproved.equals(true) &
+            tbl.approvalStatus.equals('approved') &
             tbl.role.equals('navigator')))
           .get();
       return results.map((r) => _userFromRow(r)).toList();

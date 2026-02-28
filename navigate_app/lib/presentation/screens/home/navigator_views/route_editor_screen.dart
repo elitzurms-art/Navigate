@@ -410,6 +410,20 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       );
       updatedRoutes[widget.navigatorUid] = updatedRoute;
 
+      // עדכון כל חברי הקבוצה (צמד/חוליה) — סנכרון ציר
+      if (route.groupId != null) {
+        for (final entry in updatedRoutes.entries) {
+          if (entry.value.groupId == route.groupId && entry.key != widget.navigatorUid) {
+            updatedRoutes[entry.key] = entry.value.copyWith(
+              plannedPath: plannedPath,
+              routeLengthKm: pathLengthKm,
+              approvalStatus: updatedRoute.approvalStatus,
+              clearRejectionNotes: true,
+            );
+          }
+        }
+      }
+
       final updatedNav = widget.navigation.copyWith(
         routes: updatedRoutes,
         updatedAt: DateTime.now(),

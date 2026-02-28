@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -29,7 +31,6 @@ import 'presentation/screens/home/navigator_home_screen.dart';
 import 'presentation/screens/onboarding/choose_unit_screen.dart';
 import 'presentation/screens/onboarding/waiting_for_approval_screen.dart';
 import 'data/repositories/unit_repository.dart';
-import 'services/auth_mapping_service.dart';
 import 'data/repositories/solo_quiz_repository.dart';
 
 void main() async {
@@ -53,6 +54,14 @@ void main() async {
     persistenceEnabled: false,
   );
 
+  // בדיקות: ביטול אימות reCAPTCHA בזמן פיתוח
+  // ב-debug mode זה מדלג על reCAPTCHA/SafetyNet — SMS נשלח בלי פתיחת דפדפן
+  if (kDebugMode && !Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
+    await FirebaseAuth.instance.setSettings(
+      appVerificationDisabledForTesting: true,
+    );
+  }
+
   // אתחול cache אריחי מפה (חייב לפני MapConfig)
   await TileCacheService().initialize();
 
@@ -73,9 +82,6 @@ void main() async {
 
   // ניקוי חד-פעמי: מחיקת עצי ניווט ישנים ללא unitId על מסגרות
   await _migrateDeleteOldTrees();
-
-  // מחיקת משתמשים ללא שם
-  await _deleteNamelessUsers();
 
   // אם יש משתמש מחובר מקומית אבל אין אימות Firebase — כניסה אנונימית
   // כדי לאפשר גישה ל-Firestore (הכללים דורשים isAuthenticated)
@@ -106,31 +112,75 @@ void main() async {
 /// אם יש משתמש שמור מקומית אבל אין Firebase Auth — כניסה אנונימית
 /// מאפשר ל-SyncManager לגשת ל-Firestore (הכללים דורשים request.auth != null)
 Future<void> _ensureFirebaseAuth() async {
-  if (FirebaseAuth.instance.currentUser != null) return;
-
   final prefs = await SharedPreferences.getInstance();
   final loggedInUid = prefs.getString('logged_in_uid');
   if (loggedInUid == null || loggedInUid.isEmpty) return;
 
-  try {
-    final credential = await FirebaseAuth.instance.signInAnonymously();
-    final firebaseUid = credential.user?.uid;
-    print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid, firebaseUid=$firebaseUid)');
+  // כניסה אנונימית אם אין משתמש Firebase קיים
+  String? firebaseUid = FirebaseAuth.instance.currentUser?.uid;
+  if (firebaseUid == null) {
+    try {
+      final credential = await FirebaseAuth.instance.signInAnonymously();
+      firebaseUid = credential.user?.uid;
+      print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid, firebaseUid=$firebaseUid)');
+    } catch (e) {
+      print('DEBUG: Anonymous sign-in failed: $e');
+      return;
+    }
+  } else {
+    // משתמש קיים — רענון token כדי לוודא שהוא תקף
+    try {
+      await FirebaseAuth.instance.currentUser!.getIdToken(true);
+      print('DEBUG: Refreshed existing Firebase token for $loggedInUid');
+    } catch (e) {
+      // Token לא תקף — כניסה מחדש
+      print('DEBUG: Token refresh failed ($e), re-signing in anonymously...');
+      try {
+        await FirebaseAuth.instance.signOut();
+        final credential = await FirebaseAuth.instance.signInAnonymously();
+        firebaseUid = credential.user?.uid;
+        print('DEBUG: Re-signed in anonymously (user=$loggedInUid, firebaseUid=$firebaseUid)');
+      } catch (e2) {
+        print('DEBUG: Re-sign-in failed: $e2');
+        return;
+      }
+    }
+  }
 
-    // עדכון auth_mapping כדי ש-Firestore Security Rules יוכלו לזהות את המשתמש
-    if (firebaseUid != null) {
-      final userRepo = UserRepository();
-      final user = await userRepo.getUser(loggedInUid);
-      if (user != null) {
-        await AuthMappingService().updateAuthMapping(firebaseUid, user);
-        // עדכון firebaseUid על המשתמש המקומי
-        if (user.firebaseUid != firebaseUid) {
-          await userRepo.saveUserLocally(user.copyWith(firebaseUid: firebaseUid), queueSync: false);
+  if (firebaseUid == null) return;
+
+  final userRepo = UserRepository();
+  final user = await userRepo.getUser(loggedInUid);
+
+  // עדכון firebaseUid על המשתמש המקומי
+  if (user != null && user.firebaseUid != firebaseUid) {
+    await userRepo.saveUserLocally(user.copyWith(firebaseUid: firebaseUid), queueSync: false);
+  }
+
+  // קריאה ל-Cloud Function לקביעת custom claims (תמיד — גם אם Firebase user קיים)
+  // Cloud Function גם מתקנת role=developer למפתחים ידועים (DEVELOPER_UIDS)
+  // ללא זה, claims לא מתרעננים בהפעלה מחדש ו-Firestore rules נכשלים
+  try {
+    await AuthService().initSessionClaims(loggedInUid);
+    print('DEBUG: initSession called + token refreshed for $loggedInUid');
+
+    // אימות שה-claims הוגדרו נכון — חשוב במיוחד ל-developer/admin
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken(false);
+    if (token != null) {
+      final parts = token.split('.');
+      if (parts.length == 3) {
+        final padded = base64Url.normalize(parts[1]);
+        final payload = utf8.decode(base64Url.decode(padded));
+        final claims = jsonDecode(payload) as Map<String, dynamic>;
+        final claimsRole = claims['role'];
+        print('DEBUG _ensureFirebaseAuth: claims role=$claimsRole, appUid=${claims['appUid']}');
+        if (user != null && user.role != claimsRole) {
+          print('WARNING: Claims role mismatch! Token has "$claimsRole", local DB has "${user.role}"');
         }
       }
     }
   } catch (e) {
-    print('DEBUG: Anonymous sign-in failed: $e');
+    print('DEBUG: initSession call failed: $e');
   }
 }
 
@@ -236,12 +286,70 @@ Future<void> _seedSoloQuizIfNeeded() async {
   }
 }
 
-class NavigateApp extends StatelessWidget {
+class NavigateApp extends StatefulWidget {
   const NavigateApp({super.key});
+
+  static final navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  State<NavigateApp> createState() => _NavigateAppState();
+}
+
+class _NavigateAppState extends State<NavigateApp> {
+  StreamSubscription<void>? _forceLogoutSub;
+  bool _isShowingForceLogout = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _forceLogoutSub = AuthService().onForceLogout.listen((_) {
+      _handleForceLogout();
+    });
+  }
+
+  @override
+  void dispose() {
+    _forceLogoutSub?.cancel();
+    super.dispose();
+  }
+
+  void _handleForceLogout() {
+    if (_isShowingForceLogout) return;
+    _isShowingForceLogout = true;
+
+    final navContext = NavigateApp.navigatorKey.currentContext;
+    if (navContext == null) {
+      _isShowingForceLogout = false;
+      return;
+    }
+
+    showDialog(
+      context: navContext,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('התנתקת'),
+        content: const Text('בוצעה התחברות ממכשיר אחר.\nיש להתחבר מחדש.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(navContext).pop();
+              AuthService().performForceLogout().then((_) {
+                _isShowingForceLogout = false;
+                NavigateApp.navigatorKey.currentState
+                    ?.pushNamedAndRemoveUntil('/', (_) => false);
+              });
+            },
+            child: const Text('הבנתי'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: NavigateApp.navigatorKey,
       title: 'Navigate',
       debugShowCheckedModeBanner: false,
 
@@ -321,6 +429,11 @@ class _HomeRouterState extends State<HomeRouter> {
       await SyncManager().waitForInitialSync();
       print('DEBUG HomeRouter: initial sync done');
 
+      // 2.5. הבטחת משתמש מפתח אחרי סנכרון — הסנכרון עלול לדרוס את ה-role ל-navigator
+      if (kDebugMode) {
+        await _authService.ensureDeveloperUser();
+      }
+
       // 3. קבלת משתמש נוכחי
       final user = await _authService.getCurrentUser();
       print('DEBUG HomeRouter: user=${user?.uid}, role=${user?.role}');
@@ -336,14 +449,14 @@ class _HomeRouterState extends State<HomeRouter> {
           _navigateTo(const ChooseUnitScreen());
           return;
         }
-        if (user.isAwaitingApproval) {
+        if (user.wasRejected || user.isAwaitingApproval) {
           // קבלת שם היחידה לתצוגה
           String unitName = '';
           try {
             final unit = await UnitRepository().getById(user.unitId!);
             unitName = unit?.name ?? '';
           } catch (_) {}
-          print('DEBUG HomeRouter: user awaiting approval → WaitingForApprovalScreen');
+          print('DEBUG HomeRouter: user ${user.wasRejected ? "rejected" : "awaiting approval"} → WaitingForApprovalScreen');
           _navigateTo(WaitingForApprovalScreen(unitName: unitName));
           return;
         }

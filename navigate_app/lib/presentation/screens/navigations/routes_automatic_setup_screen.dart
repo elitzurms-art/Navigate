@@ -265,6 +265,19 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       if (_manualGroups.isEmpty) {
         _autoAssignGroups();
       }
+
+      // ולידציה: בדיקה שאין קבוצה שחורגת מהגודל המקסימלי
+      final maxSize = ForceComposition(type: _forceComposition).maxGroupSize;
+      final oversizedGroups = _manualGroups.entries
+          .where((e) => e.value.length > maxSize)
+          .toList();
+      if (oversizedGroups.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('יש קבוצות עם יותר מ-$maxSize חברים — יש לאזן לפני החלוקה')),
+        );
+        return;
+      }
     }
 
     // שמירת הגדרות לפני החלוקה — כך שהן נשמרות גם אם החלוקה נכשלת או בוטלה
@@ -1164,6 +1177,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     final groups = RoutesDistributionService.autoGroupNavigators(
       navigators: _navigatorsList,
       baseGroupSize: baseSize,
+      compositionType: _forceComposition,
     );
     setState(() => _manualGroups = groups);
   }
@@ -1299,9 +1313,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 final groupIndex = entry.key;
                 final groupId = entry.value.key;
                 final members = entry.value.value;
-                final sizeLabel = members.length != baseSize
-                    ? ' (${members.length} חברים)'
-                    : '';
+                final sizeLabel = members.length == 1
+                    ? ' (בדד)'
+                    : members.length == 3 && baseSize == 2
+                        ? ' (שלישייה)'
+                        : members.length != baseSize
+                            ? ' (${members.length} חברים)'
+                            : '';
 
                 return Card(
                   color: Colors.blue[50],
@@ -1331,18 +1349,37 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                                   underline: const SizedBox(),
                                   isDense: true,
                                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                                  items: _manualGroups.keys.toList().asMap().entries.map((gEntry) {
-                                    return DropdownMenuItem(
-                                      value: gEntry.value,
-                                      child: Text('$compositionLabel ${gEntry.key + 1}'),
-                                    );
-                                  }).toList(),
+                                  items: [
+                                    ..._manualGroups.keys.toList().asMap().entries.map((gEntry) {
+                                      final targetSize = _manualGroups[gEntry.value]!.length;
+                                      final maxSize = ForceComposition(type: _forceComposition).maxGroupSize;
+                                      final isFull = targetSize >= maxSize;
+                                      return DropdownMenuItem(
+                                        value: gEntry.value,
+                                        enabled: !isFull || gEntry.value == groupId,
+                                        child: Text(
+                                          '$compositionLabel ${gEntry.key + 1}${isFull && gEntry.value != groupId ? " (מלא)" : ""}',
+                                          style: isFull && gEntry.value != groupId
+                                              ? TextStyle(color: Colors.grey[400])
+                                              : null,
+                                        ),
+                                      );
+                                    }),
+                                    DropdownMenuItem(
+                                      value: '__new_group__',
+                                      child: Text('+ $compositionLabel חדש'),
+                                    ),
+                                  ],
                                   onChanged: (newGroupId) {
                                     if (newGroupId == null || newGroupId == groupId) return;
                                     setState(() {
                                       _manualGroups[groupId]!.remove(memberId);
-                                      _manualGroups[newGroupId]!.add(memberId);
-                                      // הסרת קבוצות ריקות
+                                      if (newGroupId == '__new_group__') {
+                                        final newId = 'group_${DateTime.now().millisecondsSinceEpoch}';
+                                        _manualGroups[newId] = [memberId];
+                                      } else {
+                                        _manualGroups[newGroupId]!.add(memberId);
+                                      }
                                       _manualGroups.removeWhere((_, v) => v.isEmpty);
                                     });
                                   },

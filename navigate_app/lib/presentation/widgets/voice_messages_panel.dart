@@ -46,6 +46,8 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
   String? _selectedTargetName;
   final Set<String> _seenMessageIds = {};
   bool _initialLoadDone = false;
+  String? _replyToId;
+  String? _replyToName;
 
   StreamSubscription<List<VoiceMessage>>? _messagesSub;
   List<VoiceMessage> _messages = [];
@@ -77,12 +79,28 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
         _seenMessageIds.addAll(messages.map((m) => m.id));
         _readUpToCount = messages.length;
         _initialLoadDone = true;
+        // אם ההודעה האחרונה הייתה פרטית אליי — להיכנס מיד למצב מענה פרטי
+        if (!widget.isCommander) {
+          final privateToMe = messages.where((m) =>
+              m.targetId == widget.currentUser.uid &&
+              m.senderId != widget.currentUser.uid);
+          if (privateToMe.isNotEmpty) {
+            _replyToId = privateToMe.first.senderId;
+            _replyToName = privateToMe.first.senderName;
+          }
+        }
       } else {
         // הודעות חדשות מאחרים — הכנסה לתור (מהישנה לחדשה)
         for (final msg in messages.reversed) {
           if (!_seenMessageIds.contains(msg.id) &&
               msg.senderId != widget.currentUser.uid) {
             widget.voiceService.enqueueMessage(msg.audioUrl, msg.id);
+            // הודעה פרטית חדשה אליי — עדכון יעד המענה
+            if (!widget.isCommander &&
+                msg.targetId == widget.currentUser.uid) {
+              _replyToId = msg.senderId;
+              _replyToName = msg.senderName;
+            }
           }
           _seenMessageIds.add(msg.id);
         }
@@ -240,11 +258,55 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
             const Divider(height: 1),
           ],
 
+          // chip מענה פרטי (מנווט בלבד — כשהמפקד שלח הודעה פרטית)
+          if (!widget.isCommander && _replyToId != null)
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.orange.shade300),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.reply, size: 14, color: Colors.orange[700]),
+                    const SizedBox(width: 6),
+                    Text(
+                      'מענה פרטי ← $_replyToName',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange[700],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setState(() {
+                        _replyToId = null;
+                        _replyToName = null;
+                      }),
+                      child: Icon(Icons.close,
+                          size: 14, color: Colors.orange[700]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
           // כפתור PTT — תמיד מוצג
           PushToTalkButton(
             enabled: widget.enabled,
             voiceService: widget.voiceService,
             onRecordingComplete: (filePath, duration) async {
+              final effectiveTargetId =
+                  widget.isCommander ? _selectedTargetId : _replyToId;
+              final effectiveTargetName =
+                  widget.isCommander ? _selectedTargetName : _replyToName;
               try {
                 await _repo.sendMessage(
                   navigationId: widget.navigationId,
@@ -252,8 +314,8 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
                   duration: duration,
                   senderId: widget.currentUser.uid,
                   senderName: widget.currentUser.fullName,
-                  targetId: _selectedTargetId,
-                  targetName: _selectedTargetName,
+                  targetId: effectiveTargetId,
+                  targetName: effectiveTargetName,
                 );
               } catch (e) {
                 if (context.mounted) {

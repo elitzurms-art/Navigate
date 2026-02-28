@@ -22,6 +22,7 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
   List<Area> _areas = [];
   bool _isLoading = true;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -30,13 +31,17 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
     _loadAreas();
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.areasCollection && mounted) {
-        _loadAreas();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadAreas();
+        });
       }
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();

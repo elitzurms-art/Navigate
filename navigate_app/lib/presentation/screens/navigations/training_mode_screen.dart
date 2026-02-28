@@ -331,7 +331,40 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   String _getNavigatorDisplayName(String navigatorId) {
-    return _userNames[navigatorId] ?? navigatorId;
+    final name = _userNames[navigatorId] ?? navigatorId;
+    final route = _currentNavigation.routes[navigatorId];
+    if (route != null && route.groupId != null) {
+      final label = _getGroupLabel(route.groupId!);
+      if (label != null) return '$name ($label)';
+    }
+    return name;
+  }
+
+  /// תווית קבוצה (צמד/חוליה)
+  String? _getGroupLabel(String groupId) {
+    final composition = _currentNavigation.forceComposition;
+    if (!composition.isGrouped) return null;
+    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : 'קבוצה');
+    final groupIds = _currentNavigation.routes.values
+        .where((r) => r.groupId != null)
+        .map((r) => r.groupId!)
+        .toSet()
+        .toList()
+      ..sort();
+    final groupNum = groupIds.indexOf(groupId) + 1;
+    if (groupNum <= 0) return null;
+    return '$typeLabel $groupNum';
+  }
+
+  /// האם מנווט הוא משני (לא נציג) בקבוצה
+  bool _isSecondaryInGroup(String navigatorId) {
+    final route = _currentNavigation.routes[navigatorId];
+    if (route == null || route.groupId == null) return false;
+    final composition = _currentNavigation.forceComposition;
+    if (!composition.isGrouped) return false;
+    final rep = composition.getLearningRepresentative(route.groupId);
+    // משני = יש נציג אחר בקבוצה
+    return rep != null && rep != navigatorId;
   }
 
   /// טעינת הניווט העדכני מה-DB
@@ -439,6 +472,20 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (confirmed == true) {
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
       updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'approved');
+
+      // אישור קבוצתי — אם המנווט שייך לקבוצה, מאשר את כל חברי הקבוצה
+      final route = updatedRoutes[navigatorId]!;
+      if (route.groupId != null && _currentNavigation.forceComposition.isGrouped) {
+        for (final entry in updatedRoutes.entries.toList()) {
+          if (entry.value.groupId == route.groupId && entry.key != navigatorId) {
+            updatedRoutes[entry.key] = entry.value.copyWith(
+              approvalStatus: 'approved',
+              clearRejectionNotes: true,
+            );
+          }
+        }
+      }
+
       final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
       await _navRepo.update(updatedNav);
       setState(() => _currentNavigation = updatedNav);
@@ -498,6 +545,20 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       approvalStatus: 'rejected',
       rejectionNotes: notesController.text.isNotEmpty ? notesController.text : null,
     );
+
+    // פסילה קבוצתית — אם המנווט שייך לקבוצה, פוסל את כל חברי הקבוצה
+    final route = updatedRoutes[navigatorId]!;
+    if (route.groupId != null && _currentNavigation.forceComposition.isGrouped) {
+      for (final entry in updatedRoutes.entries.toList()) {
+        if (entry.value.groupId == route.groupId && entry.key != navigatorId) {
+          updatedRoutes[entry.key] = entry.value.copyWith(
+            approvalStatus: 'rejected',
+            rejectionNotes: notesController.text.isNotEmpty ? notesController.text : null,
+          );
+        }
+      }
+    }
+
     final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
     await _navRepo.update(updatedNav);
     setState(() => _currentNavigation = updatedNav);
@@ -1255,6 +1316,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   Widget _buildRouteCard(String navigatorId, domain.AssignedRoute route) {
     final approvalStatus = route.approvalStatus;
+    final isSecondary = _isSecondaryInGroup(navigatorId);
 
     final Color statusColor;
     final IconData statusIcon;
@@ -1283,6 +1345,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: isSecondary ? Colors.grey[50] : null,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1292,12 +1355,24 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    _getNavigatorDisplayName(navigatorId),
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: Row(
+                    children: [
+                      if (isSecondary)
+                        Padding(
+                          padding: const EdgeInsetsDirectional.only(end: 6),
+                          child: Icon(Icons.lock, size: 16, color: Colors.grey[500]),
+                        ),
+                      Flexible(
+                        child: Text(
+                          _getNavigatorDisplayName(navigatorId),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isSecondary ? Colors.grey[600] : null,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 Container(
@@ -1325,6 +1400,31 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 ),
               ],
             ),
+
+            // באנר — מנווט משני נעול
+            if (isSecondary) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 14, color: Colors.blue[700]),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'מתעדכן לפי הנציג — פעולות נעולות',
+                        style: TextStyle(fontSize: 12, color: Colors.blue[700]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 12),
 
             // פרטי הציר
@@ -1384,10 +1484,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               const SizedBox(height: 16),
               Row(
                 children: [
-                  // כפתור אישור — פעיל רק אם pending_approval
+                  // כפתור אישור — פעיל רק אם pending_approval ולא משני
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: approvalStatus == 'pending_approval'
+                      onPressed: (!isSecondary && approvalStatus == 'pending_approval')
                           ? () => _approveRoute(navigatorId)
                           : null,
                       icon: const Icon(Icons.check_circle, size: 18),
@@ -1398,10 +1498,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // כפתור פסילת ציר
+                  // כפתור פסילת ציר — לא פעיל למשני
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: (approvalStatus == 'pending_approval' || approvalStatus == 'approved')
+                      onPressed: (!isSecondary && (approvalStatus == 'pending_approval' || approvalStatus == 'approved'))
                           ? () => _rejectRoute(navigatorId)
                           : null,
                       icon: const Icon(Icons.cancel, size: 18),
@@ -1412,7 +1512,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // כפתור צפה בציר
+                  // כפתור צפה בציר — תמיד פעיל (גם למשני)
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () => _viewNavigatorRoute(navigatorId, route),

@@ -634,45 +634,47 @@ class Navigation extends Equatable {
       distributionMethod: map['distributionMethod'] as String? ?? 'automatic',
       navigationType: map['navigationType'] as String?,
       executionOrder: map['executionOrder'] as String?,
-      routeLengthKm: map['routeLengthKm'] != null
+      routeLengthKm: map['routeLengthKm'] is Map
           ? RouteLengthRange.fromMap(map['routeLengthKm'] as Map<String, dynamic>)
           : null,
       checkpointsPerNavigator: map['checkpointsPerNavigator'] as int?,
       startPoint: map['startPoint'] as String?,
       endPoint: map['endPoint'] as String?,
-      waypointSettings: map['waypointSettings'] != null
+      waypointSettings: map['waypointSettings'] is Map
           ? WaypointSettings.fromMap(map['waypointSettings'] as Map<String, dynamic>)
           : const WaypointSettings(),
       scoringCriterion: map['scoringCriterion'] as String?,
       boundaryLayerId: map['boundaryLayerId'] as String?,
-      safetyTime: map['safetyTime'] != null
+      safetyTime: map['safetyTime'] is Map
           ? SafetyTimeSettings.fromMap(map['safetyTime'] as Map<String, dynamic>)
           : null,
       distributeNow: map['distributeNow'] as bool? ?? false,
-      learningSettings: LearningSettings.fromMap(
-        map['learningSettings'] as Map<String, dynamic>,
-      ),
-      verificationSettings: VerificationSettings.fromMap(
-        map['verificationSettings'] as Map<String, dynamic>,
-      ),
+      learningSettings: map['learningSettings'] is Map
+          ? LearningSettings.fromMap(map['learningSettings'] as Map<String, dynamic>)
+          : const LearningSettings(),
+      verificationSettings: map['verificationSettings'] is Map
+          ? VerificationSettings.fromMap(map['verificationSettings'] as Map<String, dynamic>)
+          : const VerificationSettings(autoVerification: false),
       allowOpenMap: map['allowOpenMap'] as bool? ?? false,
       showSelfLocation: map['showSelfLocation'] as bool? ?? false,
       showRouteOnMap: map['showRouteOnMap'] as bool? ?? false,
-      alerts: NavigationAlerts.fromMap(
-        map['alerts'] as Map<String, dynamic>,
-      ),
-      securitySettings: map['securitySettings'] != null
+      alerts: map['alerts'] is Map
+          ? NavigationAlerts.fromMap(map['alerts'] as Map<String, dynamic>)
+          : const NavigationAlerts(enabled: false),
+      securitySettings: map['securitySettings'] is Map
           ? SecuritySettings.fromMap(map['securitySettings'] as Map<String, dynamic>)
           : const SecuritySettings(),
-      reviewSettings: map['reviewSettings'] != null
+      reviewSettings: map['reviewSettings'] is Map
           ? ReviewSettings.fromMap(map['reviewSettings'] as Map<String, dynamic>)
           : const ReviewSettings(),
-      displaySettings: DisplaySettings.fromMap(
-        map['displaySettings'] as Map<String, dynamic>,
-      ),
-      routes: (map['routes'] as Map<String, dynamic>).map(
-        (k, v) => MapEntry(k, AssignedRoute.fromMap(v as Map<String, dynamic>)),
-      ),
+      displaySettings: map['displaySettings'] is Map
+          ? DisplaySettings.fromMap(map['displaySettings'] as Map<String, dynamic>)
+          : const DisplaySettings(),
+      routes: map['routes'] is Map
+          ? (map['routes'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, AssignedRoute.fromMap(v as Map<String, dynamic>)),
+            )
+          : const {},
       routesStage: map['routesStage'] as String?,
       routesDistributed: map['routesDistributed'] as bool? ?? false,
       trainingStartTime: _parseDateTimeOrNull(map['trainingStartTime']),
@@ -683,21 +685,21 @@ class Navigation extends Equatable {
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
       gpsSpoofingDetectionEnabled: map['gpsSpoofingDetectionEnabled'] as bool? ?? true,
       gpsSpoofingMaxDistanceKm: (map['gpsSpoofingMaxDistanceKm'] as num?)?.toInt() ?? 50,
-      forceComposition: map['forceComposition'] != null
+      forceComposition: map['forceComposition'] is Map
           ? ForceComposition.fromMap(map['forceComposition'] as Map<String, dynamic>)
           : const ForceComposition(),
-      communicationSettings: map['communicationSettings'] != null
+      communicationSettings: map['communicationSettings'] is Map
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
-      variablesSheet: map['variablesSheet'] != null
+      variablesSheet: map['variablesSheet'] is Map
           ? VariablesSheet.fromMap(map['variablesSheet'] as Map<String, dynamic>)
           : null,
-      timeCalculationSettings: map['timeCalculationSettings'] != null
+      timeCalculationSettings: map['timeCalculationSettings'] is Map
           ? TimeCalculationSettings.fromMap(map['timeCalculationSettings'] as Map<String, dynamic>)
           : const TimeCalculationSettings(),
-      permissions: NavigationPermissions.fromMap(
-        map['permissions'] as Map<String, dynamic>,
-      ),
+      permissions: map['permissions'] is Map
+          ? NavigationPermissions.fromMap(map['permissions'] as Map<String, dynamic>)
+          : const NavigationPermissions(managers: [], viewers: []),
       createdAt: _parseDateTime(map['createdAt']),
       updatedAt: _parseDateTime(map['updatedAt']),
     );

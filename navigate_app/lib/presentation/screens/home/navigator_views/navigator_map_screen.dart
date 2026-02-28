@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -59,6 +62,12 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   bool _showRoutes = true;
   bool _showNZ = true;
 
+  // מצב חירום — הצגת כל המנווטים
+  bool _emergencyActive = false;
+  List<Map<String, dynamic>> _emergencyNavigatorPositions = [];
+  StreamSubscription<DocumentSnapshot>? _emergencyFlagSubscription;
+  StreamSubscription<QuerySnapshot>? _emergencyTracksSubscription;
+
   double _ggOpacity = 1.0;
   double _nbOpacity = 1.0;
   double _baOpacity = 1.0;
@@ -76,6 +85,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       _startLocationTracking();
     }
     _loadMapLayers();
+    _startEmergencyFlagListener();
   }
 
   /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב, נ"צ
@@ -116,6 +126,8 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   @override
   void dispose() {
+    _emergencyFlagSubscription?.cancel();
+    _emergencyTracksSubscription?.cancel();
     super.dispose();
   }
 
@@ -130,6 +142,62 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
         _mapController.move(_currentPosition!, _defaultZoom);
       }
     }).catchError((_) {});
+  }
+
+  void _startEmergencyFlagListener() {
+    _emergencyFlagSubscription = FirebaseFirestore.instance
+        .collection('navigations')
+        .doc(widget.navigation.id)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final active = snap.data()?['emergencyActive'] == true;
+      if (active != _emergencyActive) {
+        setState(() => _emergencyActive = active);
+        if (active) {
+          _startEmergencyTracksListener();
+        } else {
+          _stopEmergencyTracksListener();
+        }
+      }
+    });
+  }
+
+  void _startEmergencyTracksListener() {
+    _emergencyTracksSubscription = FirebaseFirestore.instance
+        .collection('navigation_tracks')
+        .where('navigationId', isEqualTo: widget.navigation.id)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final positions = <Map<String, dynamic>>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final navigatorId = data['navigatorId'] as String? ?? '';
+        if (navigatorId == widget.currentUser.uid) continue;
+        try {
+          final points = jsonDecode(data['trackPointsJson'] ?? '[]') as List;
+          if (points.isNotEmpty) {
+            final last = points.last as Map<String, dynamic>;
+            final coord = last['coordinate'] as Map<String, dynamic>?;
+            if (coord != null) {
+              final lat = (coord['lat'] as num?)?.toDouble();
+              final lng = (coord['lng'] as num?)?.toDouble();
+              if (lat != null && lng != null) {
+                positions.add({'navigatorId': navigatorId, 'lat': lat, 'lng': lng});
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      setState(() => _emergencyNavigatorPositions = positions);
+    });
+  }
+
+  void _stopEmergencyTracksListener() {
+    _emergencyTracksSubscription?.cancel();
+    _emergencyTracksSubscription = null;
+    if (mounted) setState(() => _emergencyNavigatorPositions = []);
   }
 
   LatLng _initialCenter() {
@@ -169,6 +237,32 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
           child: const Icon(Icons.my_location, size: 16, color: Colors.white),
         ),
       ));
+    }
+
+    // מצב חירום — הצגת מנווטים אחרים כנקודות כתומות
+    if (_emergencyActive) {
+      for (final pos in _emergencyNavigatorPositions) {
+        markers.add(Marker(
+          point: LatLng(pos['lat'] as double, pos['lng'] as double),
+          width: 36,
+          height: 36,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.orange,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.orange.withOpacity(0.4),
+                  blurRadius: 6,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.person, size: 18, color: Colors.white),
+          ),
+        ));
+      }
     }
 
     return markers;
@@ -263,9 +357,23 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       appBar: AppBar(
         title: Text(widget.navigation.name),
         centerTitle: true,
-        backgroundColor: Theme.of(context).primaryColor,
+        backgroundColor: _emergencyActive ? Colors.red : Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
+          if (_emergencyActive)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Center(
+                child: Text(
+                  'מצב חירום',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
           if (widget.showSelfLocation)
             IconButton(
               icon: const Icon(Icons.my_location),

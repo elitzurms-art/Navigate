@@ -231,7 +231,7 @@ class NavigatorAlert extends Equatable {
       resolvedBy: map['resolvedBy'] as String?,
       minutesOverdue: map['minutesOverdue'] as int?,
       navigatorName: map['navigatorName'] as String?,
-      barburChecklist: map['barburChecklist'] != null
+      barburChecklist: map['barburChecklist'] is Map
           ? Map<String, bool>.from(map['barburChecklist'] as Map)
           : null,
     );

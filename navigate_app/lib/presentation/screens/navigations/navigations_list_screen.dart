@@ -31,6 +31,7 @@ import 'data_export_screen.dart';
 import 'navigation_management_screen.dart';
 import 'variables_sheet_screen.dart';
 import '../../../data/repositories/voice_message_repository.dart';
+import '../../../data/sync/sync_manager.dart';
 
 
 /// צומת לקיבוץ ניווטים לפי עץ
@@ -63,7 +64,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   Set<String> _expandedNodes = {};
   bool _isLoading = false;
   User? _currentUser;
-  StreamSubscription<({List<domain.Navigation> navigations, Set<String> deletedIds})>? _navigationsListener;
+  StreamSubscription<String>? _navigationsListener;
 
   @override
   void initState() {
@@ -115,54 +116,22 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     }
   }
 
-  /// האזנה בזמן אמת לשינויי ניווטים ב-Firestore
+  /// האזנה לשינויי ניווטים דרך SyncManager — ללא listener ישיר ל-Firestore
+  /// SyncManager כבר מנהל listener מסונן (participants arrayContains) ומסנכרן ל-Drift.
+  /// אנחנו רק מאזינים להודעה שהנתונים המקומיים השתנו וטוענים מחדש.
   void _startNavigationsListener() {
     _navigationsListener?.cancel();
-    _navigationsListener = _repository.watchAllNavigationsWithDeleted().listen(
-      (result) async {
+    _navigationsListener = SyncManager().onDataChanged.listen(
+      (collectionName) {
         if (!mounted) return;
-        final firestoreNavigations = result.navigations;
-        final deletedIds = result.deletedIds;
-
-        bool hasChanges = false;
-
-        // מחיקת ניווטים שנמחקו ב-Firestore (soft-delete)
-        for (final deletedId in deletedIds) {
-          final exists = _navigations.any((n) => n.id == deletedId);
-          if (exists) {
-            await _repository.deleteLocalOnly(deletedId);
-            hasChanges = true;
-          }
-        }
-
-        // בדיקה אם יש שינוי בסטטוס של אחד הניווטים הקיימים
-        for (final fsNav in firestoreNavigations) {
-          final existing = _navigations.where((n) => n.id == fsNav.id).firstOrNull;
-          if (existing == null) {
-            hasChanges = true; // ניווט חדש
-          } else if (existing.status != fsNav.status || existing.updatedAt != fsNav.updatedAt) {
-            hasChanges = true; // סטטוס או נתונים השתנו
-          }
-        }
-
-        // בדיקה אם ניווט הוסר מהרשימה (לא כולל soft-deleted שטופלו למעלה)
-        final firestoreIds = firestoreNavigations.map((n) => n.id).toSet();
-        for (final localNav in _navigations) {
-          if (!firestoreIds.contains(localNav.id) && !deletedIds.contains(localNav.id)) {
-            hasChanges = true;
-          }
-        }
-
-        if (hasChanges) {
-          // upsert כל הניווטים מ-Firestore (כולל חדשים)
-          for (final nav in firestoreNavigations) {
-            await _repository.upsertLocalFromFirestore(nav);
-          }
+        // רענון כשניווטים או עצים השתנו (עצים משפיעים על הסינון)
+        if (collectionName == AppConstants.navigationsCollection ||
+            collectionName == AppConstants.navigatorTreesCollection) {
           _loadNavigations();
         }
       },
       onError: (e) {
-        print('DEBUG: Navigations listener error: $e');
+        print('DEBUG: Navigations SyncManager listener error: $e');
       },
     );
   }

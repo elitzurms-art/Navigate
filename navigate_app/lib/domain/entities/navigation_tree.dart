@@ -74,7 +74,7 @@ class SubFramework extends Equatable {
       id: map['id'] as String,
       name: map['name'] as String,
       userIds: List<String>.from(map['userIds'] as List),
-      userLevels: map['userLevels'] != null
+      userLevels: map['userLevels'] is Map
           ? Map<String, String>.from(map['userLevels'] as Map)
           : const {},
       navigatorType: map['navigatorType'] as String?,

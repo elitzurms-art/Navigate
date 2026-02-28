@@ -6,6 +6,7 @@ import '../../../domain/entities/navigation_tree.dart';
 import '../../../domain/entities/user.dart' as domain;
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
+import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/sync/sync_manager.dart';
 import 'create_unit_screen.dart';
 
@@ -40,7 +41,9 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
   final Map<String, bool> _commanderToggle = {};
 
   bool _isLoading = true;
+  bool _initialLoadDone = false;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
 
   static const _roleOrder = {
     'admin': 0,
@@ -57,13 +60,17 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
     _loadAllData();
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.usersCollection && mounted) {
-        _loadAllData();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+          if (mounted) _loadAllData();
+        });
       }
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     super.dispose();
   }
@@ -73,7 +80,9 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _loadAllData() async {
-    setState(() => _isLoading = true);
+    if (!_initialLoadDone) {
+      setState(() => _isLoading = true);
+    }
     try {
       // נתוני היחידה הראשית
       await _loadUnitData(widget.unit.id);
@@ -90,10 +99,15 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
         await _loadUnitData(child.id);
       }
 
-      setState(() => _isLoading = false);
-    } catch (e) {
-      setState(() => _isLoading = false);
       if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _initialLoadDone = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('שגיאה בטעינה: $e')),
         );
@@ -487,12 +501,14 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
                 _buildUnitHeader(totalMembers, totalPending),
                 const Divider(height: 1),
                 Expanded(
-                  child: totalMembers == 0 &&
-                          totalPending == 0 &&
-                          _childUnits.isEmpty
-                      ? _buildEmptyState()
-                      : ListView(
-                          children: [
+                  child: RefreshIndicator(
+                    onRefresh: _loadAllData,
+                    child: totalMembers == 0 &&
+                            totalPending == 0 &&
+                            _childUnits.isEmpty
+                        ? _buildEmptyState()
+                        : ListView(
+                            children: [
                             // סקציית היחידה הראשית
                             _buildUnitSection(widget.unit, isMainUnit: true),
                             // יחידות משנה — מוצג תמיד (גם אם ריק)
@@ -554,6 +570,7 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
                             const SizedBox(height: 24),
                           ],
                         ),
+                  ),
                 ),
               ],
             ),
@@ -611,29 +628,33 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          Text(
-            'אין חברים ביחידה',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: Colors.grey[600]),
+    return ListView(
+      children: [
+        const SizedBox(height: 80),
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.people_outline, size: 80, color: Colors.grey[300]),
+              const SizedBox(height: 16),
+              Text(
+                'אין חברים ביחידה',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'חברים חדשים יופיעו כאן לאחר אישור',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey[500]),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            'חברים חדשים יופיעו כאן לאחר אישור',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.grey[500]),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -936,6 +957,39 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
           ),
         );
       }
+      return;
+    }
+
+    // בדיקה אם המשתמש בניווט פעיל — חסימת הסרה
+    final activeNavs = await NavigationRepository().getActiveNavigationsForUser(user.uid);
+    if (activeNavs.isNotEmpty) {
+      if (!mounted) return;
+      final statusLabels = {
+        'learning': 'למידה',
+        'system_check': 'בדיקת מערכות',
+        'waiting': 'המתנה',
+        'active': 'ניווט פעיל',
+      };
+      final navLines = activeNavs.map((n) {
+        final label = statusLabels[n.status] ?? n.status;
+        return '• ${n.name} ($label)';
+      }).join('\n');
+
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('לא ניתן להסיר'),
+          content: Text(
+            '${user.fullName} נמצא בניווטים פעילים ולא ניתן להסירו מהיחידה:\n\n$navLines\n\nיש להמתין לסיום הניווטים או להסיר את המשתמש מהניווטים תחילה.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('הבנתי'),
+            ),
+          ],
+        ),
+      );
       return;
     }
 

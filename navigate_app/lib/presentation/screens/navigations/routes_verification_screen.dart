@@ -103,15 +103,37 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     return uid;
   }
 
+  /// תווית קבוצה (צמד/חוליה) למנווט
+  String? _getGroupLabel(String navigatorId) {
+    final route = _filteredRoutes[navigatorId];
+    if (route == null || route.groupId == null) return null;
+    final composition = widget.navigation.forceComposition;
+    if (!composition.isGrouped) return null;
+    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : 'קבוצה');
+    // מספר קבוצה — מ-groupId (מ-1)
+    final groupIds = _filteredRoutes.values
+        .where((r) => r.groupId != null)
+        .map((r) => r.groupId!)
+        .toSet()
+        .toList()
+      ..sort();
+    final groupNum = groupIds.indexOf(route.groupId!) + 1;
+    return '$typeLabel $groupNum';
+  }
+
   void _calculateSharedCheckpoints() {
-    final checkpointCount = <String, int>{};
-    for (final route in _filteredRoutes.values) {
+    // מיפוי checkpoint → set של groupKeys (groupId או navigatorId ל-solo)
+    // נקודות משותפות רק בתוך אותה קבוצה לא נספרות כ"משותפות"
+    final checkpointGroups = <String, Set<String>>{};
+    for (final entry in _filteredRoutes.entries) {
+      final route = entry.value;
+      final groupKey = route.groupId ?? entry.key; // groupId או navigatorId
       for (final cpId in route.checkpointIds) {
-        checkpointCount[cpId] = (checkpointCount[cpId] ?? 0) + 1;
+        checkpointGroups.putIfAbsent(cpId, () => {}).add(groupKey);
       }
     }
-    _sharedCheckpointIds = checkpointCount.entries
-        .where((e) => e.value > 1)
+    _sharedCheckpointIds = checkpointGroups.entries
+        .where((e) => e.value.length > 1) // משותף בין 2+ קבוצות שונות
         .map((e) => e.key)
         .toSet();
   }
@@ -576,7 +598,19 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                 padding: const EdgeInsets.all(8),
                 child: Row(
                   children: [
-                    Expanded(child: Text(_getNavigatorName(navigatorId))),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_getNavigatorName(navigatorId)),
+                          if (_getGroupLabel(navigatorId) != null)
+                            Text(
+                              _getGroupLabel(navigatorId)!,
+                              style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                            ),
+                        ],
+                      ),
+                    ),
                     if (hasShared)
                       Icon(Icons.people, size: 14, color: Colors.orange[700]),
                   ],

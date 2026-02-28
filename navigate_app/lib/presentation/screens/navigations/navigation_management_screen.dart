@@ -69,6 +69,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   StreamSubscription<QuerySnapshot>? _systemStatusListener;
   StreamSubscription<List<NavigatorAlert>>? _alertsListener;
   StreamSubscription<List<CheckpointPunch>>? _punchesListener;
+  StreamSubscription<DocumentSnapshot>? _emergencyFlagListener;
+
+  // מצב חירום
+  bool _emergencyActive = false;
 
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
@@ -157,6 +161,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startTracksPolling();
     _startPunchesPolling();
     _startExtensionRequestListener();
+    _startEmergencyFlagListener();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
@@ -185,6 +190,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _commanderStatusListener?.cancel();
     _extensionListener?.cancel();
     _extensionSnoozeTimer?.cancel();
+    _emergencyFlagListener?.cancel();
     _tabController.dispose();
     _voiceService?.dispose();
     super.dispose();
@@ -2061,6 +2067,17 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ],
         ),
         actions: [
+          if (_emergencyActive)
+            IconButton(
+              icon: const Icon(Icons.crisis_alert, color: Colors.orange),
+              tooltip: 'כבה מצב חירום',
+              onPressed: _deactivateEmergencyMode,
+            ),
+          IconButton(
+            icon: const Icon(Icons.campaign, color: Colors.red),
+            tooltip: 'שידור חירום',
+            onPressed: _showEmergencyBroadcastDialog,
+          ),
           IconButton(
             icon: const Icon(Icons.stop_circle),
             tooltip: 'סיום ניווט כללי',
@@ -4480,6 +4497,164 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
     });
+  }
+
+  // =========================================================================
+  // Emergency Broadcast
+  // =========================================================================
+
+  void _startEmergencyFlagListener() {
+    _emergencyFlagListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final active = snap.data()?['emergencyActive'] == true;
+      if (active != _emergencyActive) {
+        setState(() => _emergencyActive = active);
+      }
+    });
+  }
+
+  void _showEmergencyBroadcastDialog() {
+    final messageController = TextEditingController();
+    final instructionsController = TextEditingController();
+    bool openMap = true;
+    bool showLocation = true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: Colors.red[50],
+          title: Row(
+            children: [
+              const Icon(Icons.campaign, color: Colors.red, size: 28),
+              const SizedBox(width: 8),
+              const Text('שידור חירום', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: messageController,
+                  maxLines: 2,
+                  textDirection: TextDirection.rtl,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'מה קרה *',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: instructionsController,
+                  maxLines: 2,
+                  textDirection: TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    labelText: 'הנחיות (אופציונלי)',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  title: const Text('פתח מפה לכולם'),
+                  value: openMap,
+                  activeColor: Colors.red,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setDialogState(() => openMap = v),
+                ),
+                SwitchListTile(
+                  title: const Text('הצג מיקום לכולם — מצב חירום'),
+                  value: showLocation,
+                  activeColor: Colors.red,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setDialogState(() => showLocation = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('ביטול'),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.send),
+              label: const Text('שלח שידור'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: messageController.text.trim().isEmpty
+                  ? null
+                  : () {
+                      Navigator.of(ctx).pop();
+                      _sendEmergencyBroadcast(
+                        messageController.text.trim(),
+                        instructionsController.text.trim(),
+                        openMap,
+                        showLocation,
+                      );
+                    },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendEmergencyBroadcast(
+    String message,
+    String instructions,
+    bool openMap,
+    bool showLocation,
+  ) async {
+    try {
+      final participants = <String>{
+        ...widget.navigation.selectedParticipantIds,
+        ...widget.navigation.permissions.managers,
+        widget.navigation.createdBy,
+      }.toList();
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('emergency_broadcasts')
+          .add({
+        'message': message,
+        'instructions': instructions,
+        'openMap': openMap,
+        'showLocation': showLocation,
+        'createdBy': _currentUser?.uid ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+        'participants': participants,
+      });
+
+      if (showLocation) {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(widget.navigation.id)
+            .update({'emergencyActive': true});
+      }
+    } catch (e) {
+      print('DEBUG NavigationManagement: send emergency broadcast error: $e');
+    }
+  }
+
+  Future<void> _deactivateEmergencyMode() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .update({'emergencyActive': false});
+    } catch (e) {
+      print('DEBUG NavigationManagement: deactivate emergency error: $e');
+    }
   }
 
   void _showExtensionPopup(ExtensionRequest req) {

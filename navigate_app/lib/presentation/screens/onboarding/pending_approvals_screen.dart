@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
-import '../../../data/sync/sync_manager.dart';
+import '../../../domain/entities/unit.dart';
 import '../../../domain/entities/user.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
@@ -20,14 +21,15 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
   final UnitRepository _unitRepo = UnitRepository();
   final SessionService _sessionService = SessionService();
   final AuthService _authService = AuthService();
-  final SyncManager _syncManager = SyncManager();
 
   List<User> _pendingUsers = [];
   bool _isLoading = true;
+  String? _errorMessage;
   bool _isDeveloper = false;
   bool _canAssignRoles = false; // רק developer/unit_admin יכולים לקבוע תפקידים
   String? _commanderUnitId;
-  StreamSubscription<String>? _syncSubscription;
+  StreamSubscription<QuerySnapshot>? _firestoreListener;
+  Timer? _retryTimer;
 
   // מעקב אחרי toggle "מפקד" לכל משתמש
   final Map<String, bool> _commanderToggle = {};
@@ -41,20 +43,24 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
   // יחידות ללא חברים מאושרים כלל — חובה מנהל יחידה
   final Set<String> _unitsWithNoMembers = {};
 
+  /// המרת Timestamp ל-ISO string (מונעת crash ב-User.fromMap)
+  Map<String, dynamic> _sanitize(Map<String, dynamic> data) {
+    return data.map((key, value) {
+      if (value is Timestamp) return MapEntry(key, value.toDate().toIso8601String());
+      if (value is Map<String, dynamic>) return MapEntry(key, _sanitize(value));
+      return MapEntry(key, value);
+    });
+  }
   @override
   void initState() {
     super.initState();
     _loadData();
-    _syncSubscription = _syncManager.onDataChanged.listen((collection) {
-      if (collection == 'users') {
-        _loadPendingUsers();
-      }
-    });
   }
 
   @override
   void dispose() {
-    _syncSubscription?.cancel();
+    _retryTimer?.cancel();
+    _firestoreListener?.cancel();
     super.dispose();
   }
 
@@ -67,7 +73,8 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
       final session = await _sessionService.getSavedSession();
       _commanderUnitId = session?.unitId;
-      await _loadPendingUsers();
+
+      _startFirestoreListener();
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -75,82 +82,119 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
     }
   }
 
-  Future<void> _loadPendingUsers() async {
-    // מפתח רואה את כל הממתינים בכל היחידות
-    if (_isDeveloper) {
-      try {
-        final users = await _userRepo.getAllPendingApprovalUsers();
-
-        // טעינת שמות יחידות + בדיקת יחידות ללא מפקדים + יחידות ללא חברים
-        _unitNames.clear();
-        _unitsWithoutCommanders.clear();
-        _unitsWithNoMembers.clear();
-        final checkedUnits = <String, bool>{};
-        final checkedMembers = <String, bool>{};
-        for (final user in users) {
-          final uid = user.unitId;
-          if (uid != null && uid.isNotEmpty && !_unitNames.containsKey(uid)) {
-            final unit = await _unitRepo.getById(uid);
-            _unitNames[uid] = unit?.name ?? uid;
-          }
-          if (uid != null && uid.isNotEmpty && !checkedUnits.containsKey(uid)) {
-            final has = await _unitRepo.hasApprovedCommandersInHierarchy(uid);
-            checkedUnits[uid] = has;
-            if (!has) _unitsWithoutCommanders.add(uid);
-          }
-          if (uid != null && uid.isNotEmpty && !checkedMembers.containsKey(uid)) {
-            final members = await _userRepo.getApprovedUsersForUnit(uid);
-            checkedMembers[uid] = members.isNotEmpty;
-            if (members.isEmpty) _unitsWithNoMembers.add(uid);
-          }
-        }
-
-        if (mounted) {
-          setState(() {
-            _pendingUsers = users;
-            _isLoading = false;
-          });
-        }
-      } catch (e) {
-        if (mounted) setState(() => _isLoading = false);
-      }
-      return;
-    }
-
-    // מפקד/מנהל — לוגיקה קיימת (סינון לפי יחידה)
-    if (_commanderUnitId == null) {
-      setState(() {
-        _pendingUsers = [];
-        _isLoading = false;
-      });
-      return;
-    }
+  /// Firestore snapshot listener — עדכונים בזמן אמת כשמגיעות בקשות חדשות
+  void _startFirestoreListener() {
+    _firestoreListener?.cancel();
+    _retryTimer?.cancel();
 
     try {
-      final descendantIds = await _unitRepo.getDescendantIds(_commanderUnitId!);
-      final allUnitIds = [_commanderUnitId!, ...descendantIds];
+      // שאילתה לפי unitId scope — סינון isApproved בצד הקליינט
+      if (!_isDeveloper && _commanderUnitId != null) {
+        _unitRepo.getDescendantIds(_commanderUnitId!).then((descendantIds) {
+          if (!mounted) return;
+          final allUnitIds = [_commanderUnitId!, ...descendantIds];
+          final batch = allUnitIds.length > 10 ? allUnitIds.sublist(0, 10) : allUnitIds;
 
-      final users = await _userRepo.getPendingApprovalUsers(allUnitIds);
+          _firestoreListener = FirebaseFirestore.instance
+              .collection('users')
+              .where('unitId', whereIn: batch)
+              .snapshots()
+              .listen(
+            _onFirestoreSnapshot,
+            onError: _onFirestoreError,
+          );
+        });
+      } else {
+        // developer — כל המשתמשים עם unitId
+        _firestoreListener = FirebaseFirestore.instance
+            .collection('users')
+            .where('unitId', isNotEqualTo: null)
+            .snapshots()
+            .listen(
+          _onFirestoreSnapshot,
+          onError: _onFirestoreError,
+        );
+      }
+    } catch (e) {
+      print('DEBUG PendingApprovals: Firestore listener setup failed: $e');
+      _scheduleListenerRetry();
+    }
+  }
 
-      // בדיקת יחידות ללא מפקדים + יחידות ללא חברים
-      _unitsWithoutCommanders.clear();
-      _unitsWithNoMembers.clear();
-      final checkedUnits = <String, bool>{};
-      final checkedMembers = <String, bool>{};
-      for (final user in users) {
-        final uid = user.unitId;
-        if (uid != null && uid.isNotEmpty && !checkedUnits.containsKey(uid)) {
-          final has = await _unitRepo.hasApprovedCommandersInHierarchy(uid);
-          checkedUnits[uid] = has;
-          if (!has) _unitsWithoutCommanders.add(uid);
-        }
-        if (uid != null && uid.isNotEmpty && !checkedMembers.containsKey(uid)) {
-          final members = await _userRepo.getApprovedUsersForUnit(uid);
-          checkedMembers[uid] = members.isNotEmpty;
-          if (members.isEmpty) _unitsWithNoMembers.add(uid);
-        }
+  void _onFirestoreSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) async {
+    if (!mounted) return;
+    final users = <User>[];
+    for (final doc in snapshot.docs) {
+      final data = _sanitize(doc.data());
+      data['uid'] = doc.id;
+      final unitId = data['unitId'] as String?;
+      if (unitId == null || unitId.isEmpty) continue;
+      // סינון בצד הקליינט — רק משתמשים עם isApproved="pending"
+      if (data['isApproved'] != 'pending') continue;
+      try {
+        users.add(User.fromMap(data));
+      } catch (_) {}
+    }
+
+    await _loadUnitMetadata(users);
+    if (mounted) {
+      setState(() {
+        _pendingUsers = users;
+        _isLoading = false;
+        _errorMessage = null;
+      });
+    }
+  }
+
+  void _onFirestoreError(dynamic error) {
+    print('DEBUG PendingApprovals: Firestore listener error: $error');
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'שגיאה בטעינת בקשות: $error';
+      });
+    }
+    _scheduleListenerRetry();
+  }
+
+  void _scheduleListenerRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) _startFirestoreListener();
+    });
+  }
+
+  /// שאילתה ישירה ל-Firestore — מקור הנתונים היחיד לבקשות ממתינות
+  Future<void> _refreshFromFirestore() async {
+    try {
+      List<String>? unitIds;
+      if (!_isDeveloper && _commanderUnitId != null) {
+        final descendantIds = await _unitRepo.getDescendantIds(_commanderUnitId!);
+        unitIds = [_commanderUnitId!, ...descendantIds];
       }
 
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('users');
+      if (unitIds != null && unitIds.isNotEmpty) {
+        final batch = unitIds.length > 10 ? unitIds.sublist(0, 10) : unitIds;
+        query = query.where('unitId', whereIn: batch);
+      } else {
+        query = query.where('unitId', isNotEqualTo: null);
+      }
+
+      final snapshot = await query.get().timeout(const Duration(seconds: 8));
+      final users = <User>[];
+      for (final doc in snapshot.docs) {
+        final data = _sanitize(doc.data());
+        data['uid'] = doc.id;
+        final unitId = data['unitId'] as String?;
+        if (unitId == null || unitId.isEmpty) continue;
+        if (data['isApproved'] != 'pending') continue;
+        try {
+          users.add(User.fromMap(data));
+        } catch (_) {}
+      }
+
+      await _loadUnitMetadata(users);
       if (mounted) {
         setState(() {
           _pendingUsers = users;
@@ -158,10 +202,40 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// טעינת metadata ליחידות (שמות, מפקדים, חברים) — במקביל per-unit
+  Future<void> _loadUnitMetadata(List<User> users) async {
+    _unitsWithoutCommanders.clear();
+    _unitsWithNoMembers.clear();
+
+    // איסוף יחידות ייחודיות
+    final uniqueUnitIds = <String>{};
+    for (final user in users) {
+      final uid = user.unitId;
+      if (uid != null && uid.isNotEmpty) {
+        uniqueUnitIds.add(uid);
       }
     }
+
+    // שאילתות במקביל לכל יחידה
+    await Future.wait(uniqueUnitIds.map((unitId) async {
+      final results = await Future.wait([
+        _unitRepo.getById(unitId),
+        _unitRepo.hasApprovedCommandersInHierarchy(unitId),
+        _userRepo.getApprovedUsersForUnit(unitId),
+      ]);
+
+      final unit = results[0] as Unit?;
+      final hasCommanders = results[1] as bool;
+      final members = results[2] as List;
+
+      _unitNames[unitId] = unit?.name ?? unitId;
+      if (!hasCommanders) _unitsWithoutCommanders.add(unitId);
+      if (members.isEmpty) _unitsWithNoMembers.add(unitId);
+    }));
   }
 
   Future<void> _approveUser(User user) async {
@@ -188,7 +262,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
     await _userRepo.approveUser(user.uid, role: role);
     _commanderToggle.remove(user.uid);
-    await _loadPendingUsers();
+    await _refreshFromFirestore();
     if (mounted) {
       String roleLabel = '';
       if (role == 'unit_admin') {
@@ -229,7 +303,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
     await _userRepo.rejectUser(user.uid);
     _commanderToggle.remove(user.uid);
-    await _loadPendingUsers();
+    await _refreshFromFirestore();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -250,9 +324,27 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _loadPendingUsers,
+              onRefresh: _refreshFromFirestore,
               child: Column(
                 children: [
+                  if (_errorMessage != null)
+                    MaterialBanner(
+                      content: Text(
+                        _errorMessage!,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      leading: const Icon(Icons.error_outline, color: Colors.red),
+                      backgroundColor: Colors.red.shade50,
+                      actions: [
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _errorMessage = null);
+                            _startFirestoreListener();
+                          },
+                          child: const Text('נסה שוב'),
+                        ),
+                      ],
+                    ),
                   Expanded(
                     child: _pendingUsers.isEmpty
                         ? ListView(

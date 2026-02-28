@@ -157,16 +157,20 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   int _healthCheckIntervalMinutes = 60;
   StreamSubscription<String>? _syncSubscription;
   Timer? _autoSaveTimer;
+  Timer? _debounceTimer;
   bool _hasUnsavedChanges = false;
 
   @override
   void initState() {
     super.initState();
     _initializeScreen();
-    // האזנה לשינויי סנכרון — רענון כשמשתמשים חדשים מסתנכרנים
+    // האזנה לשינויי סנכרון — רענון כשמשתמשים חדשים מסתנכרנים (עם debounce)
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.usersCollection && mounted) {
-        _loadUsersForSelectedSubFrameworks();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadUsersForSelectedSubFrameworks();
+        });
       }
     });
   }
@@ -523,6 +527,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _autoSaveTimer?.cancel();
     _syncSubscription?.cancel();
     _nameController.dispose();

@@ -7,6 +7,7 @@ import '../../domain/entities/navigation_settings.dart' as domain;
 import '../../domain/entities/variables_sheet.dart' as domain;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
+import 'navigation_track_repository.dart';
 
 /// Navigation repository -- local DB CRUD + Firestore subcollection helpers
 ///
@@ -225,6 +226,49 @@ class NavigationRepository {
       return navigation;
     } catch (e) {
       print('DEBUG: Error updating navigation: $e');
+      rethrow;
+    }
+  }
+
+  /// עדכון סטטוס בלבד — שולח רק שדות שהשתנו ל-Firestore (חיסכון ברוחב פס)
+  /// משמש במעברי סטטוס שלא משנים נתוני ניווט (routes, settings וכו')
+  Future<void> updateStatusOnly(
+    String id,
+    String status, {
+    DateTime? trainingStartTime,
+    DateTime? systemCheckStartTime,
+    DateTime? activeStartTime,
+  }) async {
+    try {
+      final now = DateTime.now();
+      await (_db.update(_db.navigations)..where((n) => n.id.equals(id)))
+          .write(NavigationsCompanion(
+        status: Value(status),
+        trainingStartTime: trainingStartTime != null ? Value(trainingStartTime) : const Value.absent(),
+        systemCheckStartTime: systemCheckStartTime != null ? Value(systemCheckStartTime) : const Value.absent(),
+        activeStartTime: activeStartTime != null ? Value(activeStartTime) : const Value.absent(),
+        updatedAt: Value(now),
+      ));
+
+      // שליחה חלקית ל-Firestore — רק שדות שהשתנו (set+merge רק כותב את מה שנשלח)
+      final data = <String, dynamic>{
+        'id': id,
+        'status': status,
+        'updatedAt': now.toUtc().toIso8601String(),
+      };
+      if (trainingStartTime != null) data['trainingStartTime'] = trainingStartTime.toUtc().toIso8601String();
+      if (systemCheckStartTime != null) data['systemCheckStartTime'] = systemCheckStartTime.toUtc().toIso8601String();
+      if (activeStartTime != null) data['activeStartTime'] = activeStartTime.toUtc().toIso8601String();
+
+      await _syncManager.queueOperation(
+        collection: AppConstants.navigationsCollection,
+        documentId: id,
+        operation: 'update',
+        data: data,
+        priority: SyncPriority.high,
+      );
+    } catch (e) {
+      print('DEBUG: Error updating navigation status: $e');
       rethrow;
     }
   }
@@ -872,6 +916,117 @@ class NavigationRepository {
       );
     } catch (e) {
       print('DEBUG: Error upserting local navigation from Firestore: $e');
+    }
+  }
+
+  /// בדיקה אם משתמש נמצא בניווטים פעילים (learning / system_check / active)
+  /// מחזיר רשימת ניווטים שחוסמים הסרה מהיחידה
+  Future<List<domain.Navigation>> getActiveNavigationsForUser(String uid) async {
+    const blockingStatuses = ['learning', 'system_check', 'waiting', 'active'];
+    try {
+      final allRows = await _db.select(_db.navigations).get();
+      final result = <domain.Navigation>[];
+
+      for (final row in allRows) {
+        if (!blockingStatuses.contains(row.status)) continue;
+
+        // בדיקה אם המשתמש ב-routes או ב-selectedParticipantIds
+        final routes = _parseRoutes(row.routesJson);
+        final participantIds = row.selectedParticipantIdsJson != null
+            ? List<String>.from(jsonDecode(row.selectedParticipantIdsJson!))
+            : <String>[];
+
+        if (routes.containsKey(uid) || participantIds.contains(uid)) {
+          result.add(_toDomain(row));
+        }
+      }
+      return result;
+    } catch (e) {
+      print('DEBUG: Error checking active navigations for user: $e');
+      return [];
+    }
+  }
+
+  /// הסרת משתתף מכל הניווטים שהוא חלק מהם (cascade — בהסרה מיחידה)
+  /// מסיר גם מ-selectedParticipantIds, גם מ-routes, וגם tracks
+  Future<void> removeParticipantFromAll(String uid) async {
+    try {
+      final allRows = await _db.select(_db.navigations).get();
+      final trackRepo = NavigationTrackRepository();
+
+      for (final row in allRows) {
+        final participantIds = row.selectedParticipantIdsJson != null
+            ? List<String>.from(jsonDecode(row.selectedParticipantIdsJson!))
+            : <String>[];
+
+        // בדיקה אם המשתמש קיים כמשתתף או כמנווט בצירים
+        final routes = _parseRoutes(row.routesJson);
+        final inParticipants = participantIds.contains(uid);
+        final inRoutes = routes.containsKey(uid);
+
+        if (!inParticipants && !inRoutes) continue;
+
+        // הסרה מרשימת משתתפים
+        if (inParticipants) {
+          participantIds.remove(uid);
+        }
+
+        // הסרה מצירים (routes)
+        if (inRoutes) {
+          routes.remove(uid);
+        }
+
+        final updatedParticipantsJson = participantIds.isNotEmpty ? jsonEncode(participantIds) : null;
+        final updatedRoutesJson = jsonEncode(routes.map((k, v) => MapEntry(k, v.toMap())));
+
+        // עדכון DB מקומי — גם participants וגם routes
+        await (_db.update(_db.navigations)
+              ..where((tbl) => tbl.id.equals(row.id)))
+            .write(NavigationsCompanion(
+          selectedParticipantIdsJson: Value(updatedParticipantsJson),
+          routesJson: Value(updatedRoutesJson),
+          updatedAt: Value(DateTime.now()),
+        ));
+
+        // מחיקת tracks של המנווט בניווט הזה
+        await trackRepo.deleteByNavigator(row.id, uid);
+
+        // בניית participants מחושב מחדש (ללא המשתמש שהוסר)
+        final updatedRow = await (_db.select(_db.navigations)
+              ..where((tbl) => tbl.id.equals(row.id)))
+            .getSingleOrNull();
+        if (updatedRow == null) continue;
+
+        final nav = _toDomain(updatedRow);
+        final navMap = nav.toMap();
+
+        // כתיבה ישירה ל-Firestore (למניעת מרוץ עם listener)
+        final firestoreData = {
+          'selectedParticipantIds': participantIds,
+          'routes': navMap['routes'],
+          'participants': navMap['participants'],
+          'updatedAt': DateTime.now().toIso8601String(),
+        };
+        try {
+          await FirebaseFirestore.instance
+              .collection(AppConstants.navigationsCollection)
+              .doc(row.id)
+              .update(firestoreData);
+        } catch (e) {
+          // Firestore לא זמין — fallback לסנכרון רגיל
+          await _syncManager.queueOperation(
+            collection: AppConstants.navigationsCollection,
+            documentId: row.id,
+            operation: 'update',
+            data: firestoreData,
+            priority: SyncPriority.high,
+          );
+        }
+      }
+
+      print('DEBUG: Removed participant $uid from all navigations (participants + routes + tracks)');
+    } catch (e) {
+      print('DEBUG: Error removing participant from navigations: $e');
     }
   }
 

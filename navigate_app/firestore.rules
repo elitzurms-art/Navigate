@@ -4,7 +4,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // =========================================================================
-    // Helper functions
+    // Helper functions — powered by Custom Claims (JWT token)
     // =========================================================================
 
     /// Check if the request is from an authenticated user
@@ -12,30 +12,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    /// Get auth_mapping data for the current user
-    function authData() {
-      return get(/databases/$(database)/documents/auth_mapping/$(request.auth.uid)).data;
-    }
-
-    /// Get the app UID (personal number) of the current user
+    /// Get the app UID (personal number) from custom claims
     function myAppUid() {
-      return authData().appUid;
+      return request.auth.token.appUid;
     }
 
-    /// Get the role of the current user
+    /// Get the role from custom claims
     function myRole() {
-      return authData().role;
+      return request.auth.token.role;
     }
 
     /// Check if the current user is a developer or admin
     function isDeveloperOrAdmin() {
-      let r = myRole();
+      let r = request.auth.token.role;
       return r == 'developer' || r == 'admin';
     }
 
     /// Check if the given unitId is within the current user's unit scope
+    /// hasFullScope=true for developers/admins OR large-scope commanders (>800 bytes)
+    /// For large-scope non-admin commanders, fallback to auth_mapping read (rare)
     function isInUnitScope(unitId) {
-      return unitId in authData().allowedUnitScopeIds;
+      return (request.auth.token.role in ['developer', 'admin']) ||
+        (!request.auth.token.hasFullScope && unitId in request.auth.token.unitScope) ||
+        (request.auth.token.hasFullScope &&
+         unitId in get(/databases/$(database)/documents/auth_mapping/$(request.auth.uid)).data.allowedUnitScopeIds);
     }
 
     /// Check if the current user is a participant in the given navigation doc
@@ -43,23 +43,159 @@ service cloud.firestore {
       return myAppUid() in navDoc.data.participants;
     }
 
+    /// Self-check: is this my own user doc?
+    function isSelf(personalNumber) {
+      return myAppUid() == personalNumber;
+    }
+
+    /// Create: user must NOT include role or isApproved fields
+    function noPrivilegeFieldsOnCreate() {
+      return !('role' in request.resource.data)
+             && !('isApproved' in request.resource.data);
+    }
+
+    /// Update: user must NOT change role or isApproved fields
+    function noPrivilegeFieldChanges() {
+      return !request.resource.data.diff(resource.data)
+                .affectedKeys()
+                .hasAny(['role', 'isApproved']);
+    }
+
+    /// Commander approval: only isApproved/role/updatedAt changed, can't set admin roles
+    /// Value must be true (approve) or false (reject) — not "pending" or other
+    function validCommanderApproval() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys()
+               .hasOnly(['isApproved', 'role', 'updatedAt'])
+             && (request.resource.data.isApproved == true || request.resource.data.isApproved == false)
+             && request.resource.data.get('role', 'navigator') != 'unit_admin'
+             && request.resource.data.get('role', 'navigator') != 'admin'
+             && request.resource.data.get('role', 'navigator') != 'developer';
+    }
+
+    /// Unit admin approval: only isApproved/role/updatedAt changed, can't set developer
+    /// Value must be true (approve) or false (reject)
+    function validAdminApproval() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys()
+               .hasOnly(['isApproved', 'role', 'updatedAt'])
+             && (request.resource.data.isApproved == true || request.resource.data.isApproved == false)
+             && request.resource.data.get('role', 'navigator') != 'developer';
+    }
+
+    /// Removing user from unit: unitId deleted/nullified
+    function removingFromUnit() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys()
+               .hasOnly(['unitId', 'isApproved', 'role', 'updatedAt'])
+             && request.resource.data.get('unitId', null) == null;
+    }
+
+    /// Adding user to unit: unitId set to value, isApproved set to true
+    function validAddToUnit() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys()
+               .hasOnly(['unitId', 'isApproved', 'role', 'updatedAt'])
+             && request.resource.data.get('unitId', null) != null
+             && request.resource.data.get('isApproved', false) == true
+             && request.resource.data.get('role', 'navigator') != 'developer'
+             && request.resource.data.get('role', 'navigator') != 'admin';
+    }
+
     // =========================================================================
     // /auth_mapping/{uid} -- Firebase Auth UID -> App user mapping
     // =========================================================================
     match /auth_mapping/{uid} {
-      allow read, write: if isAuthenticated() && request.auth.uid == uid;
+      allow read: if isAuthenticated() && request.auth.uid == uid;
+      allow write: if isAuthenticated() && request.auth.uid == uid &&
+        request.resource.data.role ==
+          get(/databases/$(database)/documents/users/$(request.resource.data.appUid)).data.get('role', 'navigator');
     }
 
     // =========================================================================
-    // /users/{userId} -- User profiles
+    // /email_codes/{docId} -- Email OTP codes (server-only)
     // =========================================================================
-    match /users/{uid} {
-      allow read: if isAuthenticated() &&
-        (myAppUid() == uid || isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
-      allow create: if isAuthenticated() && myAppUid() == uid;
-      allow update: if isAuthenticated() &&
-        (myAppUid() == uid || isDeveloperOrAdmin() || isInUnitScope(resource.data.unitId));
-      allow delete: if isAuthenticated() && isDeveloperOrAdmin();
+    match /email_codes/{docId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // /mail/{docId} -- Firebase Trigger Email extension (server-only)
+    // =========================================================================
+    match /mail/{docId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // /email_lookup/{email} -- Email-to-UID mapping for login
+    // =========================================================================
+    match /email_lookup/{email} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // /phone_lookup/{phoneNumber} -- Phone-to-UID mapping for login
+    // =========================================================================
+    match /phone_lookup/{phoneNumber} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // /users/{personalNumber} -- User profiles
+    // =========================================================================
+    match /users/{personalNumber} {
+
+      // ── Developer/Admin — full access ──
+      allow read, write: if isDeveloperOrAdmin();
+
+      // ── GET — any authenticated (login lookup by personal number) ──
+      allow get: if isAuthenticated();
+
+      // ── LIST — unit scope (SyncManager + PendingApprovalsScreen) ──
+      allow list: if isAuthenticated() && isInUnitScope(resource.data.unitId);
+
+      // ── CREATE — self only, no privilege fields ──
+      allow create: if isAuthenticated()
+                    && isSelf(personalNumber)
+                    && noPrivilegeFieldsOnCreate();
+
+      // ── UPDATE self — no privilege field changes ──
+      allow update: if isSelf(personalNumber)
+                    && noPrivilegeFieldChanges();
+
+      // ── CANCEL OWN REQUEST — remove self from unit ──
+      allow update: if isSelf(personalNumber)
+                    && removingFromUnit();
+
+      // ── JOIN / RE-REQUEST — user requests to join a unit ──
+      allow update: if isSelf(personalNumber)
+                    && resource.data.get('isApproved', null) != true
+                    && request.resource.data.get('isApproved', null) == 'pending'
+                    && !request.resource.data.diff(resource.data)
+                          .affectedKeys().hasAny(['role']);
+
+      // ── APPROVAL — commander (can't assign unit_admin/admin/developer) ──
+      allow update: if myRole() == 'commander'
+                    && isInUnitScope(resource.data.unitId)
+                    && validCommanderApproval();
+
+      // ── APPROVAL — unit_admin (can't assign developer) ──
+      allow update: if myRole() == 'unit_admin'
+                    && isInUnitScope(resource.data.unitId)
+                    && validAdminApproval();
+
+      // ── REMOVE FROM UNIT — commander/unit_admin ──
+      allow update: if myRole() in ['commander', 'unit_admin']
+                    && isInUnitScope(resource.data.unitId)
+                    && removingFromUnit();
+
+      // ── ADD TO UNIT — commander/unit_admin adds user directly ──
+      allow update: if myRole() in ['commander', 'unit_admin']
+                    && isInUnitScope(request.resource.data.unitId)
+                    && validAddToUnit();
+
+      // ── DELETE — developer/admin only (covered by first rule) ──
     }
 
     // =========================================================================
@@ -212,6 +348,15 @@ service cloud.firestore {
     match /navigation_approval/{docId} {
       allow read: if isAuthenticated();
       allow create, update, delete: if isAuthenticated();
+    }
+
+    // =========================================================================
+    // /commander_tokens/{uid} -- Active commander FCM tokens
+    // =========================================================================
+    match /commander_tokens/{uid} {
+      allow read: if isAuthenticated() && isDeveloperOrAdmin();
+      allow create, update: if isAuthenticated() && myAppUid() == uid;
+      allow delete: if isAuthenticated() && (myAppUid() == uid || isDeveloperOrAdmin());
     }
 
     // =========================================================================

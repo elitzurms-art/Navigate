@@ -64,24 +64,29 @@ class _UnitAdminFrameworksScreenState extends State<UnitAdminFrameworksScreen> {
   HatInfo? _currentHat; // כובע נוכחי — admin או commander
   Map<String, List<app_user.User>> _subFrameworkUsersMap = {}; // משתמשים לכל תת-מסגרת
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים/יחידות/עצים מתעדכנים
+    // האזנה לשינויי סנכרון — רענון אוטומטי כשמשתמשים/יחידות/עצים מתעדכנים (עם debounce)
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (mounted && (
           collection == AppConstants.usersCollection ||
           collection == AppConstants.unitsCollection ||
           collection == AppConstants.navigatorTreesCollection)) {
-        _loadData();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadData();
+        });
       }
     });
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     super.dispose();
   }

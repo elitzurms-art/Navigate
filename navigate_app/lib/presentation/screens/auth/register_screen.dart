@@ -1,8 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../services/auth_service.dart';
 import 'sms_verification_screen.dart';
-import 'email_verification_screen.dart';
+import 'email_code_verification_screen.dart';
 
 /// מסך רישום משתמש חדש — ללא בחירת מסגרת
 class RegisterScreen extends StatefulWidget {
@@ -23,6 +24,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _phoneController = TextEditingController();
 
   bool _isLoading = false;
+
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void dispose() {
@@ -73,6 +77,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
+    // בדסקטופ — מספר טלפון אופציונלי
+    if (_isDesktop && (value == null || value.trim().isEmpty)) {
+      return null;
+    }
     if (value == null || value.trim().isEmpty) {
       return 'נא להזין מספר טלפון';
     }
@@ -109,35 +117,92 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       // נתוני הרשמה
+      final phone = _phoneController.text.trim();
+      final email = _emailController.text.trim();
       final registrationData = {
         'personalNumber': personalNumber,
         'firstName': _firstNameController.text.trim(),
         'lastName': _lastNameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'phoneNumber': _phoneController.text.trim(),
+        'email': email,
+        'phoneNumber': phone,
       };
 
       if (!mounted) return;
 
-      // TODO: כשנפתור את אימות המייל — להחזיר אימות SMS/Email כאן
-      // בינתיים: רישום ישיר ללא אימות
-      await _authService.registerUser(
-        personalNumber: personalNumber,
-        firstName: registrationData['firstName']!,
-        lastName: registrationData['lastName']!,
-        email: registrationData['email']!,
-        phoneNumber: registrationData['phoneNumber']!,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('נרשמת בהצלחה!'),
-            backgroundColor: Colors.green,
-          ),
+      if (_isDesktop) {
+        // דסקטופ — אימות באמצעות קוד מייל
+        final fallbackCode = await _authService.sendEmailVerificationCode(
+          email: email,
+          personalNumber: personalNumber,
+          purpose: 'registration',
         );
-        Navigator.of(context)
-            .pushNamedAndRemoveUntil('/home', (route) => false);
+
+        if (mounted) {
+          setState(() => _isLoading = false);
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => EmailCodeVerificationScreen(
+                email: email,
+                personalNumber: personalNumber,
+                purpose: VerificationPurpose.registration,
+                registrationData: registrationData,
+                fallbackCode: fallbackCode,
+              ),
+            ),
+          );
+        }
+      } else {
+        // מובייל — שליחת SMS לאימות מספר טלפון
+        final internationalPhone = _authService.formatPhoneForFirebase(phone);
+
+        await _authService.verifyPhoneNumber(
+          phoneNumber: internationalPhone,
+          onCodeSent: (verificationId) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SmsVerificationScreen(
+                    phoneNumber: internationalPhone,
+                    verificationId: verificationId,
+                    personalNumber: personalNumber,
+                    purpose: VerificationPurpose.registration,
+                    registrationData: registrationData,
+                  ),
+                ),
+              );
+            }
+          },
+          onVerificationFailed: (error) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('שגיאה בשליחת SMS: $error'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          },
+          onAutoVerified: (_) {
+            // אימות אוטומטי — מעבר ישיר
+            if (mounted) {
+              setState(() => _isLoading = false);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SmsVerificationScreen(
+                    phoneNumber: internationalPhone,
+                    verificationId: '',
+                    personalNumber: personalNumber,
+                    purpose: VerificationPurpose.registration,
+                    registrationData: registrationData,
+                    autoVerified: true,
+                  ),
+                ),
+              );
+            }
+          },
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -187,7 +252,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'מלא את הפרטים הבאים. לאחר ההרשמה תידרש אימות.',
+                              _isDesktop
+                                  ? 'מלא את הפרטים הבאים. קוד אימות יישלח לכתובת המייל.'
+                                  : 'מלא את הפרטים הבאים. קוד אימות יישלח למספר הטלפון.',
                               style: TextStyle(color: Colors.blue[700]),
                             ),
                           ],
@@ -279,7 +346,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _phoneController,
                 decoration: InputDecoration(
-                  labelText: 'מספר טלפון',
+                  labelText: _isDesktop ? 'מספר טלפון (אופציונלי)' : 'מספר טלפון',
                   prefixIcon: const Icon(Icons.phone),
                   hintText: '05XXXXXXXX',
                   border: OutlineInputBorder(
@@ -330,7 +397,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 12),
-                      Text('בודק פרטים...'),
+                      Text('שולח קוד אימות...'),
                     ],
                   ),
                 )

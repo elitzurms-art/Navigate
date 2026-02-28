@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import '../../../services/auth_service.dart';
 import '../../../data/repositories/user_repository.dart';
-import '../../../data/sync/sync_manager.dart';
 import 'choose_unit_screen.dart';
 
 /// מסך המתנה לאישור — המנווט ממתין לאישור מפקד
@@ -22,94 +22,159 @@ class WaitingForApprovalScreen extends StatefulWidget {
 class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
   final AuthService _authService = AuthService();
   final UserRepository _userRepo = UserRepository();
-  final SyncManager _syncManager = SyncManager();
 
-  StreamSubscription<String>? _syncSubscription;
-  Timer? _pollTimer;
+  StreamSubscription<DocumentSnapshot>? _firestoreListener;
+  Timer? _retryTimer;
+  Timer? _fallbackTimer;
   bool _cancelling = false;
 
   @override
   void initState() {
     super.initState();
-    // האזנה לשינויי סנכרון — כשנתוני users מתעדכנים, בדיקה אם אושר
-    _syncSubscription = _syncManager.onDataChanged.listen((collection) {
-      if (collection == 'users') {
-        _checkApprovalStatus();
+    // Firestore snapshot listener — יורה רק כשמסמך המשתמש משתנה (לא polling)
+    _startFirestoreListener();
+  }
+
+  /// התחלת listener ישיר למסמך המשתמש ב-Firestore — יורה רק בשינוי
+  /// אם נכשל (permission-denied לפני claims), מנסה שוב אחרי 5 שניות
+  Future<void> _startFirestoreListener() async {
+    final user = await _authService.getCurrentUser();
+    if (user == null || !mounted) return;
+
+    _firestoreListener?.cancel();
+    _firestoreListener = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((snapshot) async {
+      if (!mounted) return;
+      if (!snapshot.exists || snapshot.data() == null) return;
+
+      final data = snapshot.data()!;
+      _handleUserData(data);
+    }, onError: (e) {
+      print('DEBUG WaitingForApproval: Firestore listener error: $e — retrying in 5s');
+      // ניסיון חוזר אחרי 5 שניות — claims עשויים להתעדכן
+      _retryTimer?.cancel();
+      _retryTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) _startFirestoreListener();
+      });
+    });
+
+    // fallback: בדיקה ישירה כל 10 שניות — למקרה שה-listener מת
+    _fallbackTimer?.cancel();
+    _fallbackTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!mounted) return;
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get()
+            .timeout(const Duration(seconds: 5));
+        if (doc.exists && doc.data() != null && mounted) {
+          _handleUserData(doc.data()!);
+        }
+      } catch (_) {}
+    });
+  }
+
+  /// טיפול בנתוני משתמש שהתקבלו מ-Firestore (listener או fallback)
+  Future<void> _handleUserData(Map<String, dynamic> data) async {
+    final rawApproval = data['isApproved'];
+    final firestoreUnitId = data['unitId'] as String?;
+
+    if (rawApproval == true) {
+      // אושר — עדכון DB מקומי + רענון token לקבלת claims חדשים + מעבר למסך הבית
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser != null) {
+        await _userRepo.saveUserLocally(
+          currentUser.copyWith(approvalStatus: 'approved', updatedAt: DateTime.now()),
+          queueSync: false,
+        );
+        // רענון token כדי שה-claims החדשים (isApproved=true) ייכנסו לתוקף מיד
+        await FirebaseAuth.instance.currentUser?.getIdToken(true);
       }
-    });
-    // poll כל 30 שניות כ-fallback
-    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      _checkApprovalStatus();
-    });
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/home');
+      }
+    } else if (rawApproval == false) {
+      // נדחה — הצגת דיאלוג דחייה עם אפשרויות
+      if (mounted) _showRejectionDialog();
+    } else if (firestoreUnitId == null || firestoreUnitId.isEmpty) {
+      // הוסר מיחידה — חזרה למסך בחירת יחידה
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser != null) {
+        await _userRepo.saveUserLocally(
+          currentUser.copyWith(unitId: '', clearApprovalStatus: true, updatedAt: DateTime.now()),
+          queueSync: false,
+        );
+      }
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
+        );
+      }
+    }
+    // else: still "pending", do nothing
+  }
+
+  bool _rejectionDialogShowing = false;
+
+  void _showRejectionDialog() {
+    if (_rejectionDialogShowing) return;
+    _rejectionDialogShowing = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('בקשתך נדחתה'),
+        content: Text('בקשתך להצטרף ליחידה "${widget.unitName}" נדחתה.\nמה ברצונך לעשות?'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _rejectionDialogShowing = false;
+              _requestAgain();
+            },
+            child: const Text('בקש שוב'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _rejectionDialogShowing = false;
+              _chooseOtherUnit();
+            },
+            child: const Text('בחר יחידה אחרת'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _requestAgain() async {
+    final user = await _authService.getCurrentUser();
+    if (user == null) return;
+    await _userRepo.requestAgain(user.uid);
+    // listener יורה — יראה "pending", לא יעשה כלום — נשארים על המסך
+  }
+
+  Future<void> _chooseOtherUnit() async {
+    final user = await _authService.getCurrentUser();
+    if (user == null) return;
+    await _userRepo.cancelAndChooseNewUnit(user.uid);
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
+      );
+    }
   }
 
   @override
   void dispose() {
-    _syncSubscription?.cancel();
-    _pollTimer?.cancel();
+    _retryTimer?.cancel();
+    _fallbackTimer?.cancel();
+    _firestoreListener?.cancel();
     super.dispose();
-  }
-
-  Future<void> _checkApprovalStatus() async {
-    final user = await _authService.getCurrentUser();
-    if (user == null || !mounted) return;
-
-    // 1. בדיקה מקומית (מהירה)
-    if (user.isApproved) {
-      // רענון הקשר SyncManager — listeners ייבנו מחדש עם scope מעודכן
-      await _syncManager.refreshUserContext();
-      if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/home');
-      return;
-    } else if (user.unitId == null || user.unitId!.isEmpty) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
-      );
-      return;
-    }
-
-    // 2. Fallback — בדיקה ישירה מ-Firestore (במקרה שה-listener מת)
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get()
-          .timeout(const Duration(seconds: 5));
-
-      if (!doc.exists || doc.data() == null || !mounted) return;
-      final data = doc.data()!;
-
-      final isApproved = data['isApproved'] as bool? ?? false;
-      if (isApproved) {
-        // עדכון DB מקומי + מעבר למסך הבית
-        await _userRepo.saveUserLocally(
-          user.copyWith(isApproved: true, updatedAt: DateTime.now()),
-          queueSync: false,
-        );
-        // רענון הקשר SyncManager — listeners ייבנו מחדש עם scope מעודכן
-        await _syncManager.refreshUserContext();
-        if (mounted) {
-          Navigator.of(context).pushReplacementNamed('/home');
-        }
-        return;
-      }
-
-      // בדיקת דחייה (unitId הוסר)
-      final firestoreUnitId = data['unitId'] as String?;
-      if (firestoreUnitId == null || firestoreUnitId.isEmpty) {
-        await _userRepo.saveUserLocally(
-          user.copyWith(unitId: '', isApproved: false, updatedAt: DateTime.now()),
-          queueSync: false,
-        );
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const ChooseUnitScreen()),
-          );
-        }
-      }
-    } catch (_) {
-      // שגיאת רשת — ייבדק בפולינג הבא
-    }
   }
 
   Future<void> _cancelRequest() async {
@@ -120,7 +185,7 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
       final user = await _authService.getCurrentUser();
       if (user == null) return;
 
-      await _userRepo.rejectUser(user.uid);
+      await _userRepo.cancelAndChooseNewUnit(user.uid);
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

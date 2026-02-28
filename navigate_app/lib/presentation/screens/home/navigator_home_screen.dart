@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../data/sync/sync_manager.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/notification_service.dart';
 import '../../../services/session_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../domain/entities/user.dart';
@@ -54,8 +58,14 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   bool _reverseRevealShown = false;
 
+  // שידור חירום
+  AudioPlayer? _emergencyPlayer;
+  StreamSubscription<RemoteMessage>? _emergencySubscription;
+  Timer? _vibrationTimer;
+
   Timer? _pollTimer;
   Timer? _scorePollTimer;
+  Timer? _debounceTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
   StreamSubscription<String>? _syncSubscription;
 
@@ -63,10 +73,14 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   void initState() {
     super.initState();
     _loadState();
-    // האזנה לשינויים מ-SyncManager (כשניווט חדש מגיע מ-Firestore)
+    _initEmergencyAlarm();
+    // האזנה לשינויים מ-SyncManager (כשניווט חדש מגיע מ-Firestore) — עם debounce
     _syncSubscription = _syncManager.onDataChanged.listen((collection) {
-      if (collection == 'navigations' && mounted) {
-        _loadState(silent: true);
+      if ((collection == 'navigations' || collection == 'users') && mounted) {
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadState(silent: true);
+        });
       }
     });
     // סקר כל 60 שניות כ-fallback (Firestore listener הוא העיקרי)
@@ -75,12 +89,133 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     });
   }
 
+  void _initEmergencyAlarm() {
+    _emergencyPlayer = AudioPlayer();
+    _emergencyPlayer!.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        usageType: AndroidUsageType.alarm,
+        contentType: AndroidContentType.sonification,
+        audioFocus: AndroidAudioFocus.gainTransient,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.duckOthers},
+      ),
+    ));
+
+    // האזנה לשידורי חירום foreground
+    _emergencySubscription = NotificationService().emergencyBroadcastStream
+        .listen(_handleEmergencyBroadcast);
+
+    // טיפול בהודעה שנפתחה מרקע/terminated
+    final pending = NotificationService().consumePendingEmergency();
+    if (pending != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _handleEmergencyBroadcast(pending),
+      );
+    }
+  }
+
+  void _handleEmergencyBroadcast(RemoteMessage message) {
+    if (!mounted) return;
+
+    // הפעלת אזעקה
+    _emergencyPlayer?.setReleaseMode(ReleaseMode.loop);
+    _emergencyPlayer?.play(AssetSource('sounds/alert_beep.wav'));
+
+    // רטט כל 2 שניות
+    _vibrationTimer?.cancel();
+    _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      HapticFeedback.heavyImpact();
+    });
+
+    final msg = message.data['message'] ?? '';
+    final instructions = message.data['instructions'] ?? '';
+    final openMap = message.data['openMap'] == 'true';
+    final showLocation = message.data['showLocation'] == 'true';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.red[50],
+          icon: const Icon(Icons.campaign, color: Colors.red, size: 48),
+          title: const Text(
+            'שידור חירום',
+            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (msg.isNotEmpty)
+                Text(msg, style: const TextStyle(fontSize: 16)),
+              if (instructions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    border: Border.all(color: Colors.orange),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          instructions,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle),
+                label: const Text('אישור והבנתי'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () {
+                  _emergencyPlayer?.stop();
+                  _vibrationTimer?.cancel();
+                  Navigator.of(ctx).pop();
+                  if (openMap && _currentNavigation != null && _currentUser != null) {
+                    _openMapScreen(showRoute: true, showSelfLocation: showLocation);
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _pollTimer?.cancel();
     _scorePollTimer?.cancel();
     _navigationListener?.cancel();
     _syncSubscription?.cancel();
+    _emergencySubscription?.cancel();
+    _emergencyPlayer?.dispose();
+    _vibrationTimer?.cancel();
     super.dispose();
   }
 

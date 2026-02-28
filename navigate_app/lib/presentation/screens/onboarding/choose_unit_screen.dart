@@ -26,14 +26,18 @@ class _ChooseUnitScreenState extends State<ChooseUnitScreen> {
   bool _isLoading = true;
   String? _error;
   StreamSubscription<String>? _syncSubscription;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
-    // האזנה לשינויי סנכרון — אם יחידות מגיעות מאוחר, טעינה מחדש
+    // האזנה לשינויי סנכרון — אם יחידות מגיעות מאוחר, טעינה מחדש (עם debounce)
     _syncSubscription = _syncManager.onDataChanged.listen((collection) {
       if (collection == 'units' && mounted) {
-        _loadUnits();
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+          if (mounted) _loadUnits();
+        });
       }
     });
     _loadUnits();
@@ -41,6 +45,7 @@ class _ChooseUnitScreenState extends State<ChooseUnitScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncSubscription?.cancel();
     super.dispose();
   }
@@ -152,7 +157,18 @@ class _ChooseUnitScreenState extends State<ChooseUnitScreen> {
     final user = await _authService.getCurrentUser();
     if (user == null) return;
 
-    await _userRepo.setUserUnit(user.uid, unit.id);
+    try {
+      await _userRepo.setUserUnit(user.uid, unit.id);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('שגיאה בשליחת הבקשה. נסה שוב.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(

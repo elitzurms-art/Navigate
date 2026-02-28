@@ -8,6 +8,7 @@ import 'package:drift/drift.dart' hide Query;
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 
 import '../../core/constants/app_constants.dart';
+import '../../services/auth_service.dart';
 import '../../services/auto_map_download_service.dart';
 import '../datasources/local/app_database.dart';
 import '../repositories/navigation_repository.dart';
@@ -68,7 +69,7 @@ class SyncManager {
   StreamSubscription<ConnectivityResult>? _connectivitySubscription;
 
   /// האזנות realtime פעילות
-  final Map<String, StreamSubscription<QuerySnapshot>> _realtimeListeners = {};
+  final Map<String, StreamSubscription> _realtimeListeners = {};
 
   /// Stream controller להודעה על שינויי נתונים (שם הקולקשן שהשתנה)
   final StreamController<String> _dataChangedController = StreamController<String>.broadcast();
@@ -85,11 +86,18 @@ class SyncManager {
   /// האם כבר בוצע סנכרון ראשוני (למניעת כפילויות)
   bool _didInitialSync = false;
 
+  /// האם כרגע מרענן הקשר משתמש (למניעת הפעלות מקבילות)
+  bool _isRefreshingContext = false;
+
   /// הקשר המשתמש הנוכחי — לסינון listeners
   String? _currentAppUid;
   String? _currentRole;
   String? _currentUnitId;
   List<String> _allowedUnitScopeIds = [];
+
+  /// מטמון גרסאות שרת — חוסך קריאת get() לפני כל push (Optimization 6)
+  /// key = "collection/docId", value = server version last seen
+  final Map<String, int> _serverVersionCache = {};
 
   /// Completer לסנכרון ראשוני — מאפשר למסכים להמתין לסיום
   Completer<void> _initialSyncCompleter = Completer<void>();
@@ -193,7 +201,9 @@ class SyncManager {
     );
 
     if (_isOnline && !_isAuthenticated) {
-      print('SyncManager: Online but not authenticated — skipping initial sync. Will sync after login.');
+      print('SyncManager: Online but not authenticated — attempting auth retry...');
+      // ניסיון אימות אנונימי + initSession — ייתכן ש-_ensureFirebaseAuth נכשל (אין רשת בהפעלה)
+      unawaited(_retryAuthOnReconnect());
     }
   }
 
@@ -234,25 +244,31 @@ class SyncManager {
   /// רענון הקשר משתמש + הפעלה מחדש של listeners (לאחר שינוי unitId/role)
   Future<void> refreshUserContext() async {
     if (!_isRunning || !_isAuthenticated) return;
+    if (_isRefreshingContext) return; // מניעת הפעלות מקבילות
+    _isRefreshingContext = true;
 
-    print('SyncManager: Refreshing user context and restarting listeners...');
+    try {
+      print('SyncManager: Refreshing user context and restarting listeners...');
 
-    // ביטול listeners קיימים
-    for (final sub in _realtimeListeners.values) {
-      await sub.cancel();
+      // ביטול listeners קיימים
+      for (final sub in _realtimeListeners.values) {
+        await sub.cancel();
+      }
+      _realtimeListeners.clear();
+
+      // טעינת הקשר מעודכן
+      await _loadCurrentUserContext();
+
+      // pull מחדש עם הקשר חדש
+      await pullAll();
+
+      // הפעלת listeners מחדש עם queries מעודכנות
+      _startCollectionRealtimeListeners();
+
+      print('SyncManager: User context refreshed — scope=${_allowedUnitScopeIds.length} units');
+    } finally {
+      _isRefreshingContext = false;
     }
-    _realtimeListeners.clear();
-
-    // טעינת הקשר מעודכן
-    await _loadCurrentUserContext();
-
-    // pull מחדש עם הקשר חדש
-    await pullAll();
-
-    // הפעלת listeners מחדש עם queries מעודכנות
-    _startCollectionRealtimeListeners();
-
-    print('SyncManager: User context refreshed — scope=${_allowedUnitScopeIds.length} units');
   }
 
   /// האם המשתמש הנוכחי הוא developer או admin
@@ -328,10 +344,45 @@ class SyncManager {
 
     print('SyncManager: Connectivity changed. Online=$_isOnline');
 
-    if (!wasOnline && _isOnline && _isAuthenticated) {
-      // חזרנו אונליין ומאומתים - בצע סנכרון מלא
-      print('SyncManager: Back online - triggering full sync.');
-      pullAll().then((_) => processSyncQueue());
+    if (!wasOnline && _isOnline) {
+      if (_isAuthenticated) {
+        // חזרנו אונליין ומאומתים - בצע סנכרון מלא
+        print('SyncManager: Back online - triggering full sync.');
+        pullAll().then((_) => processSyncQueue());
+      } else {
+        // אונליין אבל לא מאומתים — ניסיון אימות מחדש
+        _retryAuthOnReconnect();
+      }
+    }
+  }
+
+  /// ניסיון אימות אנונימי + initSession כשהרשת חוזרת
+  Future<void> _retryAuthOnReconnect() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final loggedInUid = prefs.getString('logged_in_uid');
+      if (loggedInUid == null || loggedInUid.isEmpty) return;
+
+      print('SyncManager: Retrying Firebase auth after reconnect...');
+      final credential = await _auth.signInAnonymously();
+      final firebaseUid = credential.user?.uid;
+      if (firebaseUid == null) return;
+
+      print('SyncManager: Signed in anonymously (firebaseUid=$firebaseUid)');
+
+      // initSession לקביעת custom claims
+      try {
+        final authService = AuthService();
+        await authService.initSessionClaims(loggedInUid);
+        await _auth.currentUser?.getIdToken(true);
+        print('SyncManager: initSession succeeded after reconnect — triggering full sync.');
+        await pullAll();
+        await processSyncQueue();
+      } catch (e) {
+        print('SyncManager: initSession failed after reconnect: $e');
+      }
+    } catch (e) {
+      print('SyncManager: Auth retry failed: $e');
     }
   }
 
@@ -442,6 +493,15 @@ class SyncManager {
 
       final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
 
+      // הגנה על שדות הרשאה — role ו-isApproved סמכותיים ב-Firestore בלבד
+      // (אותו pattern כמו completeLogin ב-auth_service.dart:390-391)
+      if (item.collectionName == AppConstants.usersCollection &&
+          item.operation != 'delete') {
+        data.remove('role');
+        data.remove('isApproved');
+        data.remove('approvalStatus');
+      }
+
       // בדיקת קונפליקט גרסאות רק ל-update — create לא צריך (אין מסמך בשרת), delete לא צריך
       if (item.operation == 'update') {
         if (direction == SyncDirection.bidirectional) {
@@ -469,9 +529,16 @@ class SyncManager {
         version: pushVersion,
       );
 
-      // הצלחה - סימון כמסונכרן
+      // הצלחה - סימון כמסונכרן + עדכון מטמון גרסאות
       await _db.markAsSynced(item.id);
       await _db.updateLastPushAt(item.collectionName, DateTime.now());
+      _serverVersionCache['${item.collectionName}/${item.recordId}'] = pushVersion;
+
+      // phone_lookup: כשמסנכרנים משתמש — מעדכנים מיפוי טלפון→UID
+      if (item.collectionName == AppConstants.usersCollection &&
+          item.operation != 'delete') {
+        await _updatePhoneLookup(data, item.recordId);
+      }
 
       print('SyncManager: Successfully synced ${item.collectionName}/${item.recordId}');
     } catch (e) {
@@ -500,6 +567,15 @@ class SyncManager {
     required Map<String, dynamic> localData,
   }) async {
     try {
+      final cacheKey = '$collection/$documentId';
+
+      // בדיקת מטמון — אם הגרסה המקומית == מטמון + 1, אין צורך בקריאת שרת
+      final cachedVersion = _serverVersionCache[cacheKey];
+      if (cachedVersion != null && localVersion == cachedVersion + 1) {
+        // הגרסה המקומית היא בדיוק אחת מעל השרת — אין קונפליקט
+        return false;
+      }
+
       final serverDoc = await _firestore
           .collection(collection)
           .doc(documentId)
@@ -508,11 +584,15 @@ class SyncManager {
 
       if (!serverDoc.exists) {
         // מסמך לא קיים בשרת - אין קונפליקט (create חדש)
+        _serverVersionCache.remove(cacheKey);
         return false;
       }
 
       final serverData = serverDoc.data()!;
       final serverVersion = (serverData['version'] as num?)?.toInt() ?? 0;
+
+      // עדכון מטמון
+      _serverVersionCache[cacheKey] = serverVersion;
 
       // אם גרסת השרת == גרסה מקומית - 1: הכל תקין, push יצליח
       if (serverVersion == localVersion - 1) {
@@ -659,6 +739,12 @@ class SyncManager {
     print('SyncManager: Pull sync complete.');
   }
 
+  /// Pull a single collection from Firestore (public wrapper)
+  Future<void> pullCollection(String collection) async {
+    if (!_isOnline || !_isAuthenticated) return;
+    await _pullCollection(collection);
+  }
+
   /// בדיקת רשומות מקומיות מול Firestore — מחיקת רשומות שכבר לא קיימות בשרת
   ///
   /// חשוב: מדלגת על רשומות שיש להן פעולת create/update ממתינה בתור הסנכרון,
@@ -692,6 +778,8 @@ class SyncManager {
             .toList();
         if (reconcilableIds.isEmpty) continue;
 
+        int deletedCount = 0;
+
         // בדיקה בקבוצות של 10 (מגבלת whereIn של Firestore)
         for (var i = 0; i < reconcilableIds.length; i += 10) {
           final batch = reconcilableIds.skip(i).take(10).toList();
@@ -721,6 +809,7 @@ class SyncManager {
             for (final localId in batch) {
               if (!existingIds.contains(localId) || !activeIds.contains(localId)) {
                 await _deleteLocalRecord(collection, localId);
+                deletedCount++;
                 print('SyncManager: Reconcile — removed orphan $collection/$localId');
               }
             }
@@ -728,6 +817,11 @@ class SyncManager {
             // permission-denied — דילוג על batch (למשל ניווטים שהמשתמש לא משתתף בהם)
             print('SyncManager: Reconcile — skipping batch for $collection: $batchError');
           }
+        }
+
+        // הודעה אחת על שינוי נתונים — לכל ה-reconciliation של הקולקשן
+        if (deletedCount > 0) {
+          _dataChangedController.add(collection);
         }
       } catch (e) {
         print('SyncManager: Error reconciling $collection: $e');
@@ -776,7 +870,9 @@ class SyncManager {
           if (snapshot.docs.isNotEmpty) {
             print('SyncManager: Pulled ${snapshot.docs.length} docs from $path');
             for (final doc in snapshot.docs) {
-              final serverData = doc.data() as Map<String, dynamic>;
+              final rawData = doc.data();
+              if (rawData is! Map<String, dynamic>) continue;
+              final serverData = rawData;
               serverData['id'] = doc.id;
               serverData['areaId'] = area.id;
               // Soft-delete: if marked as deleted, remove locally
@@ -834,7 +930,9 @@ class SyncManager {
     final direction = _syncDirections[collection] ?? SyncDirection.bidirectional;
 
     for (final doc in snapshot.docs) {
-      final serverData = doc.data() as Map<String, dynamic>;
+      final rawData = doc.data();
+      if (rawData is! Map<String, dynamic>) continue;
+      final serverData = rawData;
       serverData['id'] = doc.id;
 
       // Soft-delete מהשרת מנצח תמיד — גם אם יש שינויים מקומיים ממתינים
@@ -889,6 +987,9 @@ class SyncManager {
       }
     }
 
+    // הודעה אחת על שינוי נתונים — לכל ה-batch, לא per-record
+    _dataChangedController.add(collection);
+
     // עדכון lastPullAt
     await _db.updateLastPullAt(collection, DateTime.now());
   }
@@ -897,6 +998,13 @@ class SyncManager {
   Future<bool> _hasPendingLocalChanges(String collection, String documentId) async {
     final pending = await _db.getPendingSyncItemsByCollection(collection);
     return pending.any((item) => item.recordId == documentId);
+  }
+
+  /// בדיקה אם יש פריטי סנכרון שנכשלו (retryCount > 0) לרשומה
+  Future<bool> _hasFailedSyncItems(String collection, String documentId) async {
+    final pending = await _db.getPendingSyncItemsByCollection(collection);
+    return pending.any((item) =>
+        item.recordId == documentId && item.retryCount > 0);
   }
 
   /// קבלת נתונים מקומיים לרשומה (לבדיקת קונפליקט)
@@ -956,8 +1064,8 @@ class SyncManager {
         default:
           print('SyncManager: No local upsert handler for collection $collection');
       }
-      // הודעה על שינוי נתונים — למסכים שמאזינים
-      _dataChangedController.add(collection);
+      // הערה: הודעת שינוי נתונים מופעלת ברמת ה-batch (pullCollection / listener)
+      // ולא per-record, כדי למנוע הצפת אירועים מיותרת
     } catch (e) {
       print('SyncManager: Error upserting local record $collection/$documentId: $e');
     }
@@ -973,6 +1081,11 @@ class SyncManager {
       switch (collection) {
         case AppConstants.usersCollection:
           await (_db.delete(_db.users)..where((t) => t.uid.equals(documentId))).go();
+          // Cancel pending sync items to prevent stale data push-back
+          final userPending = await _db.getPendingSyncItemsByCollection(collection);
+          for (final item in userPending.where((i) => i.recordId == documentId)) {
+            await _db.markAsSynced(item.id);
+          }
           break;
         case AppConstants.areasCollection:
           await (_db.delete(_db.areas)..where((t) => t.id.equals(documentId))).go();
@@ -992,8 +1105,7 @@ class SyncManager {
           return;
       }
       print('SyncManager: Soft-delete — removed local $collection/$documentId');
-      // הודעה על שינוי נתונים — למסכים שמאזינים
-      _dataChangedController.add(collection);
+      // הערה: הודעת שינוי נתונים מופעלת ברמת ה-batch ולא per-record
     } catch (e) {
       print('SyncManager: Error deleting local record $collection/$documentId: $e');
     }
@@ -1042,7 +1154,7 @@ class SyncManager {
     // Checkpoint.toMap() שולח coordinates כ-nested object: {lat, lng, utm}
     // אבל Drift מצפה לשדות שטוחים — צריך לחלץ מהמבנה המקונן
     final geometryType = data['geometryType'] as String? ?? 'point';
-    final coords = data['coordinates'] as Map<String, dynamic>?;
+    final coords = data['coordinates'] is Map ? data['coordinates'] as Map<String, dynamic>? : null;
     final lat = (coords?['lat'] as num?)?.toDouble()
         ?? (data['lat'] as num?)?.toDouble()
         ?? 0.0;
@@ -1081,7 +1193,7 @@ class SyncManager {
 
   Future<void> _upsertSafetyPoint(String id, Map<String, dynamic> data) async {
     // SafetyPoint.toMap() שולח coordinates כ-nested object (point) או polygonCoordinates כ-array (polygon)
-    final coords = data['coordinates'] as Map<String, dynamic>?;
+    final coords = data['coordinates'] is Map ? data['coordinates'] as Map<String, dynamic>? : null;
     final lat = (coords?['lat'] as num?)?.toDouble()
         ?? (data['lat'] as num?)?.toDouble();
     final lng = (coords?['lng'] as num?)?.toDouble()
@@ -1297,8 +1409,65 @@ class SyncManager {
   }
 
   Future<void> _upsertUser(String id, Map<String, dynamic> data) async {
-    final unitId = data['unitId'] as String?;
+    var unitId = data['unitId'] as String?;
     final firebaseUid = data['firebaseUid'] as String?;
+
+    // הגנה: אם לשרת אין unitId אבל מקומית יש — ייתכן ש-push נכשל.
+    // שומרים על הערך המקומי כדי לא לסרוד שינוי שעדיין לא סונכרן.
+    // Three-state approval: true→"approved", false→"rejected", "pending"→"pending", null→null
+    final rawApproval = data['isApproved'];
+    String? approvalStatus;
+    if (rawApproval == true) {
+      approvalStatus = 'approved';
+    } else if (rawApproval == false) {
+      approvalStatus = 'rejected';
+    } else if (rawApproval == 'pending') {
+      approvalStatus = 'pending';
+    } else {
+      approvalStatus = null; // missing = NOT approved
+    }
+    var isApproved = approvalStatus == 'approved';
+    final serverUnitId = unitId;
+
+    try {
+      final localRow = await ((_db.select(_db.users))
+            ..where((tbl) => tbl.uid.equals(id)))
+          .getSingleOrNull();
+
+      if (localRow != null &&
+          localRow.unitId != null &&
+          localRow.unitId!.isNotEmpty &&
+          (serverUnitId == null || serverUnitId.isEmpty)) {
+        final serverUpdatedAt = _parseDateTime(data['updatedAt']);
+        final localUpdatedAt = localRow.updatedAt;
+
+        if (serverUpdatedAt != null &&
+            localUpdatedAt != null &&
+            !serverUpdatedAt.isBefore(localUpdatedAt)) {
+          // Server is newer or equal — accept removal (admin action is authoritative)
+          // Also cancel any pending sync items for this user
+          final pending = await _db.getPendingSyncItemsByCollection('users');
+          for (final item in pending.where((i) => i.recordId == id)) {
+            await _db.markAsSynced(item.id);
+          }
+          print('DEBUG SyncManager: Accepting server removal for user $id '
+              '(server=$serverUpdatedAt >= local=$localUpdatedAt)');
+        } else {
+          // Local is strictly newer — protect (e.g., user just chose a unit, push pending)
+          final hasFailed = await _hasFailedSyncItems('users', id);
+          if (hasFailed) {
+            unitId = localRow.unitId;
+            isApproved = localRow.isApproved;
+            approvalStatus = localRow.approvalStatus ?? (localRow.isApproved ? 'approved' : null);
+            print('DEBUG SyncManager: Protecting local unitId for user $id '
+                '(server has null, local has ${localRow.unitId})');
+          }
+        }
+      }
+    } catch (e) {
+      // לא חוסם — ממשיכים עם נתוני השרת
+    }
+
     await _db.into(_db.users).insertOnConflictUpdate(
       UsersCompanion.insert(
         uid: id,
@@ -1316,8 +1485,8 @@ class SyncManager {
         unitId: Value(unitId),
         fcmToken: Value(data['fcmToken'] as String?),
         firebaseUid: Value(data['firebaseUid'] as String?),
-        isApproved: Value(_parseBool(data['isApproved']) ??
-            (unitId != null && unitId.isNotEmpty)),
+        isApproved: Value(isApproved),
+        approvalStatus: Value(approvalStatus),
         soloQuizPassedAt: Value(_parseDateTime(data['soloQuizPassedAt'])),
         soloQuizScore: Value(data['soloQuizScore'] as int?),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
@@ -1489,6 +1658,38 @@ class SyncManager {
       print('SyncManager: Auto-resolved $collection conflict by keeping both for $documentId');
     } catch (e) {
       print('SyncManager: Error auto-merging $collection: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phone lookup for login
+  // ---------------------------------------------------------------------------
+
+  /// עדכון phone_lookup בעת סנכרון משתמש — מיפוי טלפון→UID
+  Future<void> _updatePhoneLookup(Map<String, dynamic> userData, String recordId) async {
+    try {
+      final phone = userData['phoneNumber'] as String?;
+      if (phone == null || phone.isEmpty) return;
+
+      final normalized = phone.replaceAll(RegExp(r'[\s\-]'), '');
+      final lookupData = {
+        'uid': recordId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      await _firestore.collection('phone_lookup').doc(normalized).set(lookupData);
+
+      // כתיבה גם בפורמט אלטרנטיבי (05↔+972)
+      if (normalized.startsWith('05') && normalized.length == 10) {
+        final intl = '+972${normalized.substring(1)}';
+        await _firestore.collection('phone_lookup').doc(intl).set(lookupData);
+      } else if (normalized.startsWith('+9725')) {
+        final local = '0${normalized.substring(4)}';
+        await _firestore.collection('phone_lookup').doc(local).set(lookupData);
+      }
+    } catch (e) {
+      // לא קריטי — לא מכשיל את הסנכרון
+      print('SyncManager: phone_lookup update failed: $e');
     }
   }
 
@@ -1681,6 +1882,8 @@ class SyncManager {
     _startCollectionListener(AppConstants.navigatorTreesCollection);
     // listener חדש לניווטים — מסונן לפי משתתפים
     _startCollectionListener(AppConstants.navigationsCollection);
+    // listener ישיר למשתמש הנוכחי — תופס שינויים גם כש-unitId הופך ל-null
+    _startCurrentUserListener();
   }
 
   /// בניית Query מסוננת לפי הקשר המשתמש הנוכחי
@@ -1755,6 +1958,7 @@ class SyncManager {
 
         print('SyncManager: Realtime $collection — ${changes.length} changes');
 
+        int processedCount = 0;
         for (final change in changes) {
           final data = change.doc.data();
           if (data == null) continue;
@@ -1762,13 +1966,20 @@ class SyncManager {
 
           if (data['deletedAt'] != null || change.type == DocumentChangeType.removed) {
             await _deleteLocalRecord(collection, change.doc.id);
+            processedCount++;
           } else {
             try {
               await _upsertLocalFromServer(collection, change.doc.id, data);
+              processedCount++;
             } catch (e) {
               print('SyncManager: Realtime upsert error for $collection/${change.doc.id}: $e');
             }
           }
+        }
+
+        // הודעה אחת על שינוי נתונים — לכל ה-snapshot batch
+        if (processedCount > 0) {
+          _dataChangedController.add(collection);
         }
 
         // עדכון lastPullAt לקולקשן — מונע pull כפול
@@ -1776,6 +1987,57 @@ class SyncManager {
       },
       onError: (e) {
         print('SyncManager: Realtime listener error for $collection: $e');
+      },
+    );
+
+    _realtimeListeners[listenerId] = subscription;
+  }
+
+  /// listener ישיר למסמך המשתמש הנוכחי — תופס שינויים גם כש-unitId הופך ל-null
+  void _startCurrentUserListener() {
+    if (_currentAppUid == null) return;
+    final listenerId = 'current_user';
+    if (_realtimeListeners.containsKey(listenerId)) return;
+
+    print('SyncManager: Starting dedicated listener for current user $_currentAppUid');
+
+    bool isFirstSnapshot = true;
+
+    final subscription = _firestore
+        .collection(AppConstants.usersCollection)
+        .doc(_currentAppUid)
+        .snapshots()
+        .listen(
+      (docSnapshot) async {
+        if (isFirstSnapshot) {
+          isFirstSnapshot = false;
+          return;
+        }
+
+        if (docSnapshot.exists) {
+          final data = docSnapshot.data() ?? {};
+          data['id'] = docSnapshot.id;
+          try {
+            await _upsertLocalFromServer('users', docSnapshot.id, data);
+            _dataChangedController.add('users');
+          } catch (e) {
+            print('SyncManager: Current user upsert error: $e');
+          }
+
+          // זיהוי התחברות ממכשיר אחר — השוואת activeSessionId
+          final serverSessionId = data['activeSessionId'] as String?;
+          if (serverSessionId != null && serverSessionId.isNotEmpty) {
+            final prefs = await SharedPreferences.getInstance();
+            final localSessionId = prefs.getString('active_session_id');
+            if (localSessionId != null && serverSessionId != localSessionId) {
+              print('SyncManager: Session invalidated — another device logged in');
+              AuthService().notifyForceLogout();
+            }
+          }
+        }
+      },
+      onError: (e) {
+        print('SyncManager: Current user listener error: $e');
       },
     );
 

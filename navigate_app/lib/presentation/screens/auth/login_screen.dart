@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/session_service.dart';
 import 'sms_verification_screen.dart';
-import 'email_verification_screen.dart';
+import 'email_code_verification_screen.dart';
 
-/// מסך כניסה — הזנת מספר אישי
+/// מצב כניסה — מספר אישי (לבדיקות) או מספר טלפון/מייל
+enum _LoginMode { personalNumber, phoneOrEmail }
+
+/// מסך כניסה — הזנת מספר אישי או מספר טלפון
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -17,7 +21,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final AuthService _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
   final _personalNumberController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
   bool _isLoading = false;
+  _LoginMode _loginMode = _LoginMode.phoneOrEmail;
+
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -28,6 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     _personalNumberController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -53,8 +65,19 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  /// כניסה — חיפוש משתמש לפי מספר אישי ושליחה לאימות
-  Future<void> _handleLogin() async {
+  String? _validatePhone(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'נא להזין מספר טלפון';
+    }
+    final phoneRegex = RegExp(r'^05\d{8}$');
+    if (!phoneRegex.hasMatch(value.trim())) {
+      return 'מספר טלפון לא תקין (פורמט: 05XXXXXXXX)';
+    }
+    return null;
+  }
+
+  /// כניסה לפי מספר אישי — ללא אימות SMS (לבדיקות)
+  Future<void> _handlePersonalNumberLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
@@ -76,8 +99,6 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // TODO: כשנפתור את אימות המייל — להחזיר אימות SMS/Email כאן
-      // בינתיים: כניסה ישירה ללא אימות
       await _authService.completeLogin(personalNumber);
       await SessionService().clearSession();
       if (mounted) {
@@ -89,6 +110,160 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         Navigator.of(context)
             .pushNamedAndRemoveUntil('/home', (route) => false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// כניסה לפי מספר טלפון — שליחת SMS ומעבר לאימות
+  Future<void> _handlePhoneLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final phone = _phoneController.text.trim();
+
+      // חיפוש משתמש לפי טלפון
+      final user = await _authService.loginByPhoneNumber(phone);
+
+      if (!mounted) return;
+
+      if (user == null) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('מספר טלפון לא נמצא במערכת. הירשם תחילה.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // שליחת SMS
+      final internationalPhone = _authService.formatPhoneForFirebase(phone);
+
+      await _authService.verifyPhoneNumber(
+        phoneNumber: internationalPhone,
+        onCodeSent: (verificationId) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SmsVerificationScreen(
+                  phoneNumber: internationalPhone,
+                  verificationId: verificationId,
+                  personalNumber: user.uid,
+                  purpose: VerificationPurpose.login,
+                ),
+              ),
+            );
+          }
+        },
+        onVerificationFailed: (error) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('שגיאה בשליחת SMS: $error'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        },
+        onAutoVerified: (_) {
+          // אימות אוטומטי — מעבר ישיר
+          if (mounted) {
+            setState(() => _isLoading = false);
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SmsVerificationScreen(
+                  phoneNumber: internationalPhone,
+                  verificationId: '',
+                  personalNumber: user.uid,
+                  purpose: VerificationPurpose.login,
+                  autoVerified: true,
+                ),
+              ),
+            );
+          }
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'נא להזין כתובת מייל';
+    }
+    final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!emailRegex.hasMatch(value.trim())) {
+      return 'כתובת מייל לא תקינה';
+    }
+    return null;
+  }
+
+  /// כניסה לפי מייל — חיפוש משתמש ושליחת קוד אימות (דסקטופ)
+  Future<void> _handleEmailLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final email = _emailController.text.trim();
+      final user = await _authService.loginByEmail(email);
+
+      if (!mounted) return;
+
+      if (user == null) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('כתובת מייל לא נמצאה במערכת. הירשם תחילה.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // שליחת קוד אימות למייל
+      final fallbackCode = await _authService.sendEmailVerificationCode(
+        email: email,
+        personalNumber: user.uid,
+        purpose: 'login',
+      );
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => EmailCodeVerificationScreen(
+              email: email,
+              personalNumber: user.uid,
+              purpose: VerificationPurpose.login,
+              fallbackCode: fallbackCode,
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -173,53 +348,63 @@ class _LoginScreenState extends State<LoginScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
+                            const SizedBox(height: 24),
+
+                            // טוגל בין מצבי כניסה
+                            SegmentedButton<_LoginMode>(
+                              segments: [
+                                ButtonSegment<_LoginMode>(
+                                  value: _LoginMode.phoneOrEmail,
+                                  label: Text(_isDesktop ? 'כתובת מייל' : 'מספר טלפון'),
+                                  icon: Icon(_isDesktop ? Icons.email : Icons.phone),
+                                ),
+                                const ButtonSegment<_LoginMode>(
+                                  value: _LoginMode.personalNumber,
+                                  label: Text('מספר אישי'),
+                                  icon: Icon(Icons.badge),
+                                ),
+                              ],
+                              selected: {_loginMode},
+                              onSelectionChanged: _isLoading
+                                  ? null
+                                  : (Set<_LoginMode> newSelection) {
+                                      setState(() {
+                                        _loginMode = newSelection.first;
+                                        _formKey.currentState?.reset();
+                                      });
+                                    },
+                            ),
                             const SizedBox(height: 8),
                             Text(
-                              'הזן את המספר האישי שלך',
+                              _loginMode == _LoginMode.phoneOrEmail
+                                  ? (_isDesktop
+                                      ? 'הזן כתובת מייל לקבלת קוד אימות'
+                                      : 'הזן מספר טלפון לקבלת קוד SMS')
+                                  : 'כניסה ישירה למפתחים',
                               textAlign: TextAlign.center,
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                 color: Colors.grey[600],
                               ),
                             ),
-                            const SizedBox(height: 32),
+                            const SizedBox(height: 24),
 
-                            // שדה מספר אישי
-                            TextFormField(
-                              controller: _personalNumberController,
-                              decoration: InputDecoration(
-                                labelText: 'מספר אישי',
-                                hintText: '7 ספרות',
-                                prefixIcon: const Icon(Icons.badge),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              keyboardType: TextInputType.number,
-                              textDirection: TextDirection.ltr,
-                              textAlign: TextAlign.center,
-                              maxLength: 7,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              validator: _validatePersonalNumber,
-                              enabled: !_isLoading,
-                              textInputAction: TextInputAction.done,
-                              onFieldSubmitted: (_) => _handleLogin(),
-                              style: const TextStyle(
-                                fontSize: 20,
-                                letterSpacing: 4,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            // שדות לפי מצב
+                            if (_loginMode == _LoginMode.phoneOrEmail)
+                              _isDesktop ? _buildEmailField() : _buildPhoneField()
+                            else
+                              _buildPersonalNumberField(),
+
                             const SizedBox(height: 24),
 
                             // כפתורים
                             if (_isLoading)
-                              const Column(
+                              Column(
                                 children: [
-                                  CircularProgressIndicator(),
-                                  SizedBox(height: 12),
-                                  Text('מחפש משתמש...'),
+                                  const CircularProgressIndicator(),
+                                  const SizedBox(height: 12),
+                                  Text(_loginMode == _LoginMode.phoneOrEmail
+                                      ? 'שולח קוד אימות...'
+                                      : 'מחפש משתמש...'),
                                 ],
                               )
                             else
@@ -227,9 +412,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                 children: [
                                   // כפתור כניסה
                                   ElevatedButton.icon(
-                                    onPressed: _handleLogin,
-                                    icon: const Icon(Icons.login),
-                                    label: const Text('כניסה'),
+                                    onPressed: _loginMode == _LoginMode.phoneOrEmail
+                                        ? (_isDesktop ? _handleEmailLogin : _handlePhoneLogin)
+                                        : _handlePersonalNumberLogin,
+                                    icon: Icon(_loginMode == _LoginMode.phoneOrEmail
+                                        ? (_isDesktop ? Icons.email : Icons.sms)
+                                        : Icons.login),
+                                    label: Text(_loginMode == _LoginMode.phoneOrEmail
+                                        ? 'שלח קוד'
+                                        : 'כניסה'),
                                     style: ElevatedButton.styleFrom(
                                       minimumSize: const Size(double.infinity, 50),
                                       shape: RoundedRectangleBorder(
@@ -272,6 +463,94 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// שדה מספר טלפון
+  Widget _buildPhoneField() {
+    return TextFormField(
+      controller: _phoneController,
+      decoration: InputDecoration(
+        labelText: 'מספר טלפון',
+        hintText: '05XXXXXXXX',
+        prefixIcon: const Icon(Icons.phone),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      keyboardType: TextInputType.phone,
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLength: 10,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+      ],
+      validator: _validatePhone,
+      enabled: !_isLoading,
+      textInputAction: TextInputAction.done,
+      onFieldSubmitted: (_) => _handlePhoneLogin(),
+      style: const TextStyle(
+        fontSize: 20,
+        letterSpacing: 2,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+
+  /// שדה כתובת מייל (דסקטופ)
+  Widget _buildEmailField() {
+    return TextFormField(
+      controller: _emailController,
+      decoration: InputDecoration(
+        labelText: 'כתובת מייל',
+        hintText: 'example@mail.com',
+        prefixIcon: const Icon(Icons.email),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      keyboardType: TextInputType.emailAddress,
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+      validator: _validateEmail,
+      enabled: !_isLoading,
+      textInputAction: TextInputAction.done,
+      onFieldSubmitted: (_) => _handleEmailLogin(),
+      style: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+
+  /// שדה מספר אישי
+  Widget _buildPersonalNumberField() {
+    return TextFormField(
+      controller: _personalNumberController,
+      decoration: InputDecoration(
+        labelText: 'מספר אישי',
+        hintText: '7 ספרות',
+        prefixIcon: const Icon(Icons.badge),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      keyboardType: TextInputType.number,
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLength: 7,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+      ],
+      validator: _validatePersonalNumber,
+      enabled: !_isLoading,
+      textInputAction: TextInputAction.done,
+      onFieldSubmitted: (_) => _handlePersonalNumberLogin(),
+      style: const TextStyle(
+        fontSize: 20,
+        letterSpacing: 4,
+        fontWeight: FontWeight.bold,
       ),
     );
   }
