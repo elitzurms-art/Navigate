@@ -953,6 +953,8 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   /// פתיחת מסך מתאים לפי סטטוס הניווט
   Future<void> _openNavigationScreen(domain.Navigation navigation) async {
+    print('DEBUG NavList: opening navigation "${navigation.name}" status=${navigation.status} '
+        'user=${_currentUser?.uid} isCommander=${_currentUser?.hasCommanderPermissions}');
     // מצבים שדורשים טעינת נתונים אופליין לפני כניסה
     final needsDataLoading = [
       'waiting',
@@ -1031,7 +1033,10 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
       case 'learning':
         if (_currentUser != null && _currentUser!.hasCommanderPermissions) {
-          screen = NavigationPreparationScreen(navigation: navigation);
+          screen = TrainingModeScreen(
+            navigation: navigation,
+            isCommander: true,
+          );
         } else {
           screen = NavigatorPlanningScreen(navigation: navigation);
         }

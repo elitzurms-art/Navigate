@@ -116,6 +116,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   // שמות מנווטים
   final Map<String, String> _userNames = {};
+  int _pollCount = 0;
 
   @override
   void initState() {
@@ -129,6 +130,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _reloadNavigationFromDb();
     _startNavigationListener();
     _startNavigationPolling();
+    print('DEBUG TrainingMode: initState — navId=${widget.navigation.id} status=${widget.navigation.status} routes=${widget.navigation.routes.length}');
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
@@ -386,11 +388,21 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   void _startNavigationListener() {
     _navigationListener = _navRepo.watchNavigation(widget.navigation.id).listen(
       (nav) {
-        if (!mounted || nav == null) return;
+        if (!mounted || nav == null) {
+          print('DEBUG TrainingMode: listener fired but nav is null or not mounted');
+          return;
+        }
         // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
         // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
         if (_currentNavigation.routes != nav.routes ||
             _currentNavigation.status != nav.status) {
+          for (final entry in nav.routes.entries) {
+            final oldRoute = _currentNavigation.routes[entry.key];
+            if (oldRoute?.approvalStatus != entry.value.approvalStatus) {
+              print('DEBUG TrainingMode listener: route ${entry.key} approval changed: '
+                  '${oldRoute?.approvalStatus} → ${entry.value.approvalStatus}');
+            }
+          }
           setState(() {
             _currentNavigation = nav;
             _learningStarted = nav.status == 'learning';
@@ -404,7 +416,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   // ===========================================================================
-  // Navigation polling fallback — direct Firestore .get() every 10 seconds
+  // Navigation polling fallback — direct Firestore .get() every 3 seconds
   // (bypasses Windows threading bug with .snapshots() listeners)
   // ===========================================================================
 
@@ -412,7 +424,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     // שאילתה ראשונית מיידית
     _pollNavigation();
     _navigationPollTimer = Timer.periodic(
-      const Duration(seconds: 10),
+      const Duration(seconds: 3),
       (_) => _pollNavigation(),
     );
   }
@@ -428,12 +440,29 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       final data = snapshot.data()!;
       data['id'] = snapshot.id;
+      // DEBUG: dump raw routes from Firestore (one-time)
+      if (_pollCount < 3) {
+        final rawRoutes = data['routes'];
+        print('DEBUG TrainingMode RAW routes type=${rawRoutes.runtimeType}: $rawRoutes');
+      }
+      _pollCount++;
       final nav = domain.Navigation.fromMap(data);
 
       // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
       // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
-      if (_currentNavigation.routes != nav.routes ||
-          _currentNavigation.status != nav.status) {
+      final routesChanged = _currentNavigation.routes != nav.routes;
+      final statusChanged = _currentNavigation.status != nav.status;
+      final approvalStatuses = nav.routes.entries.map((e) => '${e.key}=${e.value.approvalStatus}').join(', ');
+      print('DEBUG TrainingMode poll: status=${nav.status} routes=${nav.routes.length} '
+          'routesChanged=$routesChanged statusChanged=$statusChanged approvals=[$approvalStatuses]');
+      if (routesChanged || statusChanged) {
+        for (final entry in nav.routes.entries) {
+          final oldRoute = _currentNavigation.routes[entry.key];
+          if (oldRoute?.approvalStatus != entry.value.approvalStatus) {
+            print('DEBUG TrainingMode poll: route ${entry.key} approval changed: '
+                '${oldRoute?.approvalStatus} → ${entry.value.approvalStatus}');
+          }
+        }
         setState(() {
           _currentNavigation = nav;
           _learningStarted = nav.status == 'learning';

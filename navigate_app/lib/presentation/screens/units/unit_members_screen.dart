@@ -8,6 +8,7 @@ import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/sync/sync_manager.dart';
+import '../../../services/auth_service.dart';
 import 'create_unit_screen.dart';
 
 /// מסך חברי יחידה — הצגת משתמשים מאושרים + ממתינים + שינוי תפקידים
@@ -24,6 +25,7 @@ class UnitMembersScreen extends StatefulWidget {
 class _UnitMembersScreenState extends State<UnitMembersScreen> {
   final UserRepository _userRepository = UserRepository();
   final UnitRepository _unitRepository = UnitRepository();
+  domain.User? _currentUser;
 
   // נתונים לפי יחידה (ID → רשימה)
   final Map<String, List<domain.User>> _membersByUnit = {};
@@ -84,6 +86,9 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
       setState(() => _isLoading = true);
     }
     try {
+      // טעינת המשתמש הנוכחי (לבדיקת הרשאות developer)
+      _currentUser ??= await AuthService().getCurrentUser();
+
       // נתוני היחידה הראשית
       await _loadUnitData(widget.unit.id);
 
@@ -1031,6 +1036,98 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
     }
   }
 
+  Future<void> _deleteUser(domain.User user) async {
+    if (_isSoleUnitAdmin(user)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('לא ניתן למחוק — מנהל יחידה יחיד'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // בדיקה אם המשתמש בניווט פעיל
+    final activeNavs = await NavigationRepository().getActiveNavigationsForUser(user.uid);
+    if (activeNavs.isNotEmpty) {
+      if (!mounted) return;
+      final statusLabels = {
+        'learning': 'למידה',
+        'system_check': 'בדיקת מערכות',
+        'waiting': 'המתנה',
+        'active': 'ניווט פעיל',
+      };
+      final navLines = activeNavs.map((n) {
+        final label = statusLabels[n.status] ?? n.status;
+        return '• ${n.name} ($label)';
+      }).join('\n');
+
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('לא ניתן למחוק'),
+          content: Text(
+            '${user.fullName} נמצא בניווטים פעילים:\n\n$navLines\n\nיש להמתין לסיום הניווטים תחילה.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('הבנתי'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('מחיקת משתמש לצמיתות'),
+        content: Text(
+          'למחוק את ${user.fullName} לצמיתות?\n\nהפעולה בלתי הפיכה.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחיקה לצמיתות'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _userRepository.deleteUserPermanently(user.uid);
+      await _loadAllData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${user.fullName} נמחק לצמיתות'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה במחיקה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildMemberTile(domain.User user) {
     final canChange = _canChangeRole(user);
     final isSoleAdmin = _isSoleUnitAdmin(user);
@@ -1102,6 +1199,16 @@ class _UnitMembersScreenState extends State<UnitMembersScreen> {
                     size: 20, color: Colors.red[300]),
                 tooltip: 'הסרה מהיחידה',
                 onPressed: () => _removeFromUnit(user),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+            if (_currentUser?.role == 'developer') ...[
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.delete_forever,
+                    size: 20, color: Colors.red),
+                tooltip: 'מחיקה לצמיתות',
+                onPressed: () => _deleteUser(user),
                 visualDensity: VisualDensity.compact,
               ),
             ],

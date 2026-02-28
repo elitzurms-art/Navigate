@@ -493,6 +493,20 @@ class SyncManager {
 
       final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
 
+      // Purge stale user items: navigator can only push changes to their OWN user doc.
+      // Items for other users are leftover from a previous login session (different user)
+      // and will always fail with permission-denied, poisoning the Firestore write stream.
+      if (item.collectionName == AppConstants.usersCollection &&
+          _currentAppUid != null &&
+          item.recordId != _currentAppUid &&
+          _currentRole != null &&
+          !['developer', 'admin', 'unit_admin', 'commander'].contains(_currentRole)) {
+        print('SyncManager: Purging stale user item ${item.id} '
+            '(record=${item.recordId}, currentUser=$_currentAppUid, role=$_currentRole)');
+        await _db.markAsSynced(item.id);
+        return;
+      }
+
       // הגנה על שדות הרשאה — role ו-isApproved סמכותיים ב-Firestore בלבד
       // (אותו pattern כמו completeLogin ב-auth_service.dart:390-391)
       if (item.collectionName == AppConstants.usersCollection &&
@@ -751,6 +765,7 @@ class SyncManager {
   /// כדי למנוע מחיקה של רשומות שנוצרו מקומית אבל עדיין לא הועלו ל-Firestore.
   Future<void> _reconcileDeletedRecords() async {
     final collectionsToReconcile = {
+      AppConstants.usersCollection: () async => (await _db.select(_db.users).get()).map((u) => u.uid).toList(),
       AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
       AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
       AppConstants.navigationsCollection: () async => (await _db.select(_db.navigations).get()).map((n) => n.id).toList(),
@@ -1409,6 +1424,12 @@ class SyncManager {
   }
 
   Future<void> _upsertUser(String id, Map<String, dynamic> data) async {
+    // Soft-delete: if the server record is marked as deleted, remove locally
+    if (data['deletedAt'] != null) {
+      await _deleteLocalRecord(AppConstants.usersCollection, id);
+      return;
+    }
+
     var unitId = data['unitId'] as String?;
     final firebaseUid = data['firebaseUid'] as String?;
 
@@ -1964,9 +1985,13 @@ class SyncManager {
           if (data == null) continue;
           data['id'] = change.doc.id;
 
-          if (data['deletedAt'] != null || change.type == DocumentChangeType.removed) {
+          if (data['deletedAt'] != null) {
             await _deleteLocalRecord(collection, change.doc.id);
             processedCount++;
+          } else if (change.type == DocumentChangeType.removed) {
+            // removed = query membership change (token refresh, scope change, unit reassignment)
+            // NOT a deletion — ignore. Pull sync will reconcile stale records.
+            print('SyncManager: Ignoring removed event for $collection/${change.doc.id} (query scope change)');
           } else {
             try {
               await _upsertLocalFromServer(collection, change.doc.id, data);

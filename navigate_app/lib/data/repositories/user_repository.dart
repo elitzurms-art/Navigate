@@ -298,6 +298,33 @@ class UserRepository {
     await (db.delete(db.users)..where((tbl) => tbl.uid.equals(uid))).go();
   }
 
+  /// מחיקת משתמש לצמיתות (soft-delete) — developer בלבד
+  Future<void> deleteUserPermanently(String uid) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      // Cascade: הסרת המשתמש מכל הניווטים
+      final navigationRepo = NavigationRepository();
+      await navigationRepo.removeParticipantFromAll(uid);
+
+      // מחיקה מקומית
+      await (db.delete(db.users)..where((tbl) => tbl.uid.equals(uid))).go();
+
+      // Soft-delete ב-Firestore (deletedAt)
+      await _syncManager.queueOperation(
+        collection: AppConstants.usersCollection,
+        documentId: uid,
+        operation: 'delete',
+        data: {'uid': uid},
+        priority: SyncPriority.high,
+      );
+
+      print('DEBUG: User $uid deleted permanently');
+    } catch (e) {
+      print('DEBUG: Error in deleteUserPermanently: $e');
+      rethrow;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Onboarding / Approval Workflow
   // ---------------------------------------------------------------------------
