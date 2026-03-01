@@ -42,10 +42,8 @@ class _NavigationHistoryListScreenState
       final all = await _navRepo.getAllIncludingDeleted();
       final uid = widget.currentUser.uid;
 
-      // סינון: סטטוסים שמייצגים ניווט שהתבצע (כולל מחוקים) + המנווט משתתף
-      const historyStatuses = {'waiting', 'active', 'approval', 'review'};
+      // סינון: כל ניווט שהמנווט משתתף בו (כולל מחוקים)
       final filtered = all.where((nav) {
-        if (!historyStatuses.contains(nav.status)) return false;
         if (nav.routes.containsKey(uid)) return true;
         if (nav.selectedParticipantIds.contains(uid)) return true;
         return false;
@@ -99,14 +97,22 @@ class _NavigationHistoryListScreenState
 
   String _statusLabel(String status) {
     switch (status) {
-      case 'review':
-        return 'תחקור';
-      case 'approval':
-        return 'ממתין לאישור';
-      case 'active':
-        return 'פעיל';
+      case 'preparation':
+        return 'הכנה';
+      case 'ready':
+        return 'מוכן';
+      case 'learning':
+        return 'למידה';
+      case 'system_check':
+        return 'בדיקת מערכת';
       case 'waiting':
         return 'ממתין';
+      case 'active':
+        return 'פעיל';
+      case 'approval':
+        return 'ממתין לאישור';
+      case 'review':
+        return 'תחקור';
       default:
         return status;
     }
@@ -114,14 +120,22 @@ class _NavigationHistoryListScreenState
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'review':
-        return Colors.blue;
-      case 'approval':
-        return Colors.orange;
-      case 'active':
-        return Colors.green;
+      case 'preparation':
+        return Colors.grey;
+      case 'ready':
+        return Colors.indigo;
+      case 'learning':
+        return Colors.purple;
+      case 'system_check':
+        return Colors.amber.shade700;
       case 'waiting':
         return Colors.teal;
+      case 'active':
+        return Colors.green;
+      case 'approval':
+        return Colors.orange;
+      case 'review':
+        return Colors.blue;
       default:
         return Colors.grey;
     }

@@ -773,12 +773,7 @@ exports.onEmergencyBroadcast = onDocumentCreated(
       : 'emergencyBroadcast';
 
     const message = {
-      notification: {
-        title: fcmType === 'emergencyCancelled'
-          ? `✅ חזרה לשגרה — ${navName}`
-          : `\u{1F6A8} שידור חירום — ${navName}`,
-        body: broadcastData.message || '',
-      },
+      // data-only — no notification field, the app handles display via custom dialog
       data: {
         type: fcmType,
         navigationId,
@@ -788,6 +783,7 @@ exports.onEmergencyBroadcast = onDocumentCreated(
         emergencyMode: String(broadcastData.emergencyMode ?? 0),
       },
       android: { priority: "high" },
+      apns: { payload: { aps: { 'content-available': 1 } }, headers: { 'apns-priority': '10' } },
       tokens,
     };
 

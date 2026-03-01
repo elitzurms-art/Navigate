@@ -948,6 +948,12 @@ class SyncManager {
 
       // Soft-delete מהשרת מנצח תמיד — גם אם יש שינויים מקומיים ממתינים
       if (serverData['deletedAt'] != null) {
+        // Skip if already soft-deleted locally (prevents repeated processing every sync cycle)
+        if (collection == AppConstants.navigationsCollection) {
+          final localNav = await (_db.select(_db.navigations)
+            ..where((t) => t.id.equals(doc.id))).getSingleOrNull();
+          if (localNav?.deletedAt != null) continue;
+        }
         await _deleteLocalRecord(collection, doc.id);
         // ביטול פריטים ממתינים כדי שלא ישחזרו את הרשומה
         final pending = await _db.getPendingSyncItemsByCollection(collection);

@@ -138,6 +138,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final active = snap.data()?['emergencyActive'] == true;
       final broadcastId = snap.data()?['activeBroadcastId'] as String?;
       final mode = snap.data()?['emergencyMode'] as int? ?? 0;
+      final cancelId = snap.data()?['cancelBroadcastId'] as String?;
 
       if (active && !_emergencyDialogShowing && broadcastId != null && broadcastId != _lastShownBroadcastId) {
         // חירום חדש — fallback: השהייה 2 שניות לתת ל-FCM להגיע ראשון
@@ -164,25 +165,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           });
         });
       } else if (!active && _wasInEmergency) {
-        // חירום בוטל — fallback: השהייה 2 שניות לתת ל-FCM להגיע ראשון
+        // חירום בוטל — קריאת cancelBroadcastId ישירות מה-snapshot (ללא query)
         _wasInEmergency = false;
         Future.delayed(const Duration(seconds: 2), () {
           if (!mounted || _routineDialogShowing) return;
-          FirebaseFirestore.instance
-              .collection(AppConstants.navigationsCollection)
-              .doc(navigationId)
-              .collection('emergency_broadcasts')
-              .where('type', isEqualTo: 'cancellation')
-              .orderBy('createdAt', descending: true)
-              .limit(1)
-              .get()
-              .then((snap) {
-            if (!mounted || _routineDialogShowing) return;
-            final cancelBroadcastId = snap.docs.isNotEmpty ? snap.docs.first.id : null;
-            _showReturnToRoutineDialog(cancelBroadcastId: cancelBroadcastId);
-          }).catchError((_) {
-            if (mounted && !_routineDialogShowing) _showReturnToRoutineDialog();
-          });
+          _showReturnToRoutineDialog(cancelBroadcastId: cancelId);
         });
       }
     });

@@ -4631,6 +4631,30 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   void _showEmergencyBroadcastDialog() {
+    // חסימה — אי אפשר להפעיל חירום נוסף כשכבר פעיל
+    if (_emergencyActive) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.orange[50],
+          icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 48),
+          title: const Text('מצב חירום כבר פעיל', style: TextStyle(color: Colors.orange)),
+          content: const Text(
+            'לא ניתן להפעיל שידור חירום נוסף.\n'
+            'יש לבטל את מצב החירום הנוכחי (חזרה לשגרה) לפני הפעלת שידור חדש.',
+            textAlign: TextAlign.center,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('הבנתי'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     final messageController = TextEditingController();
     final instructionsController = TextEditingController();
     int emergencyMode = 2; // ברירת מחדל: מלא
@@ -4837,8 +4861,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // עדכון מסמך ניווט
-      await navRef.update({'emergencyActive': false});
+      // עדכון מסמך ניווט — כולל cancelBroadcastId כדי שהמנווט יוכל לקרוא אותו ישירות
+      await navRef.update({
+        'emergencyActive': false,
+        'cancelBroadcastId': cancelDoc.id,
+      });
 
       // מעקב אישורי ביטול
       setState(() {
