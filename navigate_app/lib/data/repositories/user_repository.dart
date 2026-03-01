@@ -298,7 +298,7 @@ class UserRepository {
     await (db.delete(db.users)..where((tbl) => tbl.uid.equals(uid))).go();
   }
 
-  /// מחיקת משתמש לצמיתות (soft-delete) — developer בלבד
+  /// מחיקת משתמש לצמיתות (hard-delete) — developer בלבד
   Future<void> deleteUserPermanently(String uid) async {
     final db = _localDatabase ?? AppDatabase();
     try {
@@ -309,14 +309,24 @@ class UserRepository {
       // מחיקה מקומית
       await (db.delete(db.users)..where((tbl) => tbl.uid.equals(uid))).go();
 
-      // Soft-delete ב-Firestore (deletedAt)
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'delete',
-        data: {'uid': uid},
-        priority: SyncPriority.high,
-      );
+      // Hard-delete מ-Firestore — מחיקת המסמך לחלוטין
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.usersCollection)
+            .doc(uid)
+            .delete()
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        // Fallback: אם Firestore לא זמין, שומרים בתור סנכרון כ-hard_delete
+        print('DEBUG: Firestore hard-delete failed, queueing: $e');
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: uid,
+          operation: 'hard_delete',
+          data: {'uid': uid},
+          priority: SyncPriority.high,
+        );
+      }
 
       print('DEBUG: User $uid deleted permanently');
     } catch (e) {
@@ -553,6 +563,7 @@ class UserRepository {
           data: {
             'unitId': null,
             'isApproved': false,
+            'approvalStatus': null,
             if (shouldResetRole) 'role': 'navigator',
             'updatedAt': now.toIso8601String(),
           },
@@ -598,6 +609,7 @@ class UserRepository {
       final firestoreData = {
         'unitId': null,
         'isApproved': false,
+        'approvalStatus': null,
         if (shouldResetRole) 'role': 'navigator',
         'updatedAt': now.toIso8601String(),
       };
