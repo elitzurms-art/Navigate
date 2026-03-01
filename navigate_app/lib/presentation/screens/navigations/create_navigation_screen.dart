@@ -293,6 +293,42 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       setState(() {
         _selectedTree = trees.first;
       });
+    } else if (mounted) {
+      // Auto-create tree with default fixed sub-frameworks
+      // (self-healing: tree may have been lost due to sync failure)
+      final currentUser = await _authService.getCurrentUser();
+      if (currentUser != null) {
+        final now = DateTime.now();
+        final treeId = 'tree_${unit.id}';
+        final tree = NavigationTree(
+          id: treeId,
+          name: 'עץ מבנה - ${unit.name}',
+          subFrameworks: [
+            SubFramework(
+              id: '${treeId}_cmd_mgmt',
+              name: 'מפקדים ומנהלת - ${unit.name}',
+              userIds: const [],
+              isFixed: true,
+              unitId: unit.id,
+            ),
+            SubFramework(
+              id: '${treeId}_soldiers',
+              name: 'חיילים - ${unit.name}',
+              userIds: const [],
+              isFixed: true,
+              unitId: unit.id,
+            ),
+          ],
+          createdBy: currentUser.uid,
+          createdAt: now,
+          updatedAt: now,
+          unitId: unit.id,
+        );
+        await _treeRepository.create(tree);
+        setState(() {
+          _selectedTree = tree;
+        });
+      }
     }
     _onSettingChanged();
   }

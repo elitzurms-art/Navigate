@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -370,6 +371,15 @@ class AuthService {
       }
 
       await prefs.setString(_sessionIdKey, sessionId);
+
+      // Windows workaround: Firestore C++ SDK may not pick up refreshed auth token.
+      // Cycling the network forces a fresh gRPC connection with updated claims.
+      try {
+        await _firestore.disableNetwork();
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _firestore.enableNetwork();
+        print('DEBUG completeLogin: Firestore network cycled for token refresh');
+      } catch (_) {}
     } else {
       // אין Firebase user — שמירת session ID מקומי בלבד
       final sessionId = '${personalNumber}_${DateTime.now().millisecondsSinceEpoch}';
@@ -789,28 +799,54 @@ class AuthService {
       return;
     }
 
-    await _auth.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      verificationCompleted:
-          (firebase_auth.PhoneAuthCredential credential) async {
-        if (onAutoVerified != null) {
-          onAutoVerified(credential);
-        }
-        try {
-          await _auth.signInWithCredential(credential);
-        } catch (e) {
-          print('DEBUG: Auto-verification sign-in error: $e');
-        }
-      },
-      verificationFailed: (firebase_auth.FirebaseAuthException e) {
-        onVerificationFailed(e.message ?? 'אימות מספר טלפון נכשל');
-      },
-      codeSent: (String verificationId, int? resendToken) {
-        onCodeSent(verificationId);
-      },
-      codeAutoRetrievalTimeout: (String verificationId) {},
-      timeout: const Duration(seconds: 120),
-    );
+    // Re-apply debug settings — anonymous sign-in may reset them
+    if (kDebugMode) {
+      await firebase_auth.FirebaseAuth.instance.setSettings(
+        appVerificationDisabledForTesting: true,
+      );
+      print('DEBUG verifyPhoneNumber: appVerificationDisabledForTesting=true');
+    }
+
+    // Play Integrity first, reCAPTCHA fallback on failure
+    void doVerify({bool forceRecaptcha = false}) async {
+      if (forceRecaptcha) {
+        await firebase_auth.FirebaseAuth.instance.setSettings(
+          forceRecaptchaFlow: true,
+        );
+        print('DEBUG verifyPhoneNumber: Retrying with forceRecaptchaFlow=true');
+      }
+
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        verificationCompleted:
+            (firebase_auth.PhoneAuthCredential credential) async {
+          if (onAutoVerified != null) {
+            onAutoVerified(credential);
+          }
+          try {
+            await _auth.signInWithCredential(credential);
+          } catch (e) {
+            print('DEBUG: Auto-verification sign-in error: $e');
+          }
+        },
+        verificationFailed: (firebase_auth.FirebaseAuthException e) {
+          if (!forceRecaptcha &&
+              (e.message ?? '').contains('missing a valid app identifier')) {
+            print('DEBUG verifyPhoneNumber: Play Integrity failed, falling back to reCAPTCHA');
+            doVerify(forceRecaptcha: true);
+          } else {
+            onVerificationFailed(e.message ?? 'אימות מספר טלפון נכשל');
+          }
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          onCodeSent(verificationId);
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {},
+        timeout: const Duration(seconds: 120),
+      );
+    }
+
+    doVerify();
   }
 
   /// כניסה עם קוד SMS

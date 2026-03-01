@@ -293,18 +293,36 @@ class SyncManager {
         return;
       }
       _didInitialSync = true;
-      print('SyncManager: User authenticated — triggering sync.');
-      _loadCurrentUserContext().then((_) => pullAll()).then((_) {
+      print('SyncManager: User authenticated — loading context.');
+      _loadCurrentUserContext().then((_) {
+        if (_isDeveloperOrAdmin) {
+          // Developer/admin queries don't need claims-based scope — pull immediately
+          print('SyncManager: Developer/admin — pulling immediately.');
+          pullAll().then((_) {
+            if (!_initialSyncCompleter.isCompleted) {
+              _initialSyncCompleter.complete();
+            }
+            processSyncQueue();
+            _startCollectionRealtimeListeners();
+          }).catchError((e) {
+            print('SyncManager: Initial pullAll failed: $e');
+            if (!_initialSyncCompleter.isCompleted) {
+              _initialSyncCompleter.complete();
+            }
+          });
+        } else {
+          // Non-dev: defer pull to refreshUserContext() (called from completeLogin
+          // after initSessionClaims sets custom claims on the JWT).
+          // Complete the initial sync completer so UI doesn't block waiting.
+          print('SyncManager: Non-dev user — deferring pull until claims are set.');
+          if (!_initialSyncCompleter.isCompleted) {
+            _initialSyncCompleter.complete();
+          }
+        }
+      }).catchError((e) {
+        print('SyncManager: _loadCurrentUserContext failed: $e');
         if (!_initialSyncCompleter.isCompleted) {
           _initialSyncCompleter.complete();
-        }
-        processSyncQueue();
-        // הפעלת listeners בזמן אמת לקולקשנים ראשיים
-        _startCollectionRealtimeListeners();
-      }).catchError((e) {
-        print('SyncManager: Initial pullAll failed: $e');
-        if (!_initialSyncCompleter.isCompleted) {
-          _initialSyncCompleter.complete(); // השלם גם בשגיאה כדי לא לחסום
         }
       });
     } else if (user == null) {

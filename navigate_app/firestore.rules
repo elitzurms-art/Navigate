@@ -153,7 +153,7 @@ service cloud.firestore {
       allow get: if isAuthenticated();
 
       // ── LIST — unit scope (SyncManager + PendingApprovalsScreen) ──
-      allow list: if isAuthenticated() && isInUnitScope(resource.data.unitId);
+      allow list: if isDeveloperOrAdmin() || (isAuthenticated() && isInUnitScope(resource.data.unitId));
 
       // ── CREATE — self only, no privilege fields ──
       allow create: if isAuthenticated()

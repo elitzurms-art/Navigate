@@ -53,14 +53,6 @@ void main() async {
     persistenceEnabled: false,
   );
 
-  // בדיקות: ביטול אימות reCAPTCHA בזמן פיתוח
-  // ב-debug mode זה מדלג על reCAPTCHA/SafetyNet — SMS נשלח בלי פתיחת דפדפן
-  if (kDebugMode && !Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
-    await FirebaseAuth.instance.setSettings(
-      appVerificationDisabledForTesting: true,
-    );
-  }
-
   // אתחול cache אריחי מפה (חייב לפני MapConfig)
   await TileCacheService().initialize();
 
@@ -85,6 +77,14 @@ void main() async {
   // אם יש משתמש מחובר מקומית אבל אין אימות Firebase — כניסה אנונימית
   // כדי לאפשר גישה ל-Firestore (הכללים דורשים isAuthenticated)
   await _ensureFirebaseAuth();
+
+  // בדיקות: ביטול אימות reCAPTCHA בזמן פיתוח (אחרי _ensureFirebaseAuth כי signInAnonymously יכול לאפס)
+  if (kDebugMode && !Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
+    await FirebaseAuth.instance.setSettings(
+      appVerificationDisabledForTesting: true,
+    );
+    print('DEBUG: appVerificationDisabledForTesting set to true (post-auth)');
+  }
 
   // זריעת שאלות מבחן בדד (אם חסרות) — רק עבור developer/admin
   await _seedSoloQuizIfNeeded();
@@ -164,6 +164,16 @@ Future<void> _ensureFirebaseAuth() async {
   } catch (e) {
     print('DEBUG: initSession call failed: $e');
   }
+
+  // Windows workaround: Firestore C++ SDK may not pick up refreshed auth token.
+  // Cycling the network forces a fresh gRPC connection with updated claims.
+  try {
+    final firestore = FirebaseFirestore.instance;
+    await firestore.disableNetwork();
+    await Future.delayed(const Duration(milliseconds: 500));
+    await firestore.enableNetwork();
+    print('DEBUG _ensureFirebaseAuth: Firestore network cycled for token refresh');
+  } catch (_) {}
 }
 
 /// בקשת כל ההרשאות הנדרשות שעדיין לא אושרו
