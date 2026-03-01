@@ -76,6 +76,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   Timer? _debounceTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
   StreamSubscription<String>? _syncSubscription;
+  StreamSubscription<QuerySnapshot>? _allNavigationsWatcher;
 
   @override
   void initState() {
@@ -402,6 +403,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _scoreSubscription?.cancel();
     _navigationListener?.cancel();
     _syncSubscription?.cancel();
+    _allNavigationsWatcher?.cancel();
     _emergencySubscription?.cancel();
     _emergencyFirestoreListener?.cancel();
     _emergencyPlayer?.dispose();
@@ -449,6 +451,55 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         print('DEBUG: Navigation listener error: $e');
       },
     );
+  }
+
+  /// האזנה לכל הניווטים של המשתמש — לזיהוי מעבר ניווט אחר לסטטוס פעיל
+  void _startAllNavigationsWatcher() {
+    if (_allNavigationsWatcher != null) return; // already running
+    final userId = _currentUser?.uid;
+    if (userId == null) return;
+
+    _allNavigationsWatcher = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .where('participants', arrayContains: userId)
+        .snapshots()
+        .listen(
+      (snapshot) async {
+        if (!mounted) return;
+
+        final currentPriority = _currentNavigation != null
+            ? navigationStatusPriority(_currentNavigation!.status)
+            : 0;
+
+        for (final change in snapshot.docChanges) {
+          if (change.type == DocumentChangeType.removed) continue;
+          if (change.doc.id == _currentNavigation?.id) continue;
+          final data = change.doc.data();
+          if (data == null) continue;
+          final status = data['status'] as String? ?? '';
+          if (navigationStatusPriority(status) > currentPriority) {
+            // Found a higher-priority navigation — upsert locally, then reload
+            final navData = Map<String, dynamic>.from(data);
+            navData['id'] = change.doc.id;
+            try {
+              final nav = domain.Navigation.fromMap(navData);
+              await _navigationRepo.upsertLocalFromFirestore(nav);
+            } catch (_) {}
+            if (mounted) _loadState(silent: true);
+            return;
+          }
+        }
+      },
+      onError: (e) {
+        print('DEBUG: All navigations watcher error: $e');
+      },
+    );
+  }
+
+  /// עצירת האזנה לכל הניווטים
+  void _stopAllNavigationsWatcher() {
+    _allNavigationsWatcher?.cancel();
+    _allNavigationsWatcher = null;
   }
 
   /// טעינת מצב — silent=true לא מציג loading spinner
@@ -540,6 +591,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           _state = NavigatorScreenState.noActiveNavigation;
           _currentNavigation = null;
         });
+        _startAllNavigationsWatcher();
         return;
       }
 
@@ -554,6 +606,15 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         _currentNavigation = bestNav;
         _state = statusToScreenState(bestNav!.status);
       });
+
+      // Start/stop all-navigations watcher: active only on passive screens
+      if (_state == NavigatorScreenState.preparation ||
+          _state == NavigatorScreenState.waiting ||
+          _state == NavigatorScreenState.noActiveNavigation) {
+        _startAllNavigationsWatcher();
+      } else {
+        _stopAllNavigationsWatcher();
+      }
 
       // ניווט הפוך — חשיפה אם נפתח ישירות ב-waiting (cold start)
       if (bestNav.navigationType == 'reverse' &&

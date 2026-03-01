@@ -366,8 +366,10 @@ class RouteAnalysisService {
 
     final speedProfile = calculateSpeedProfile(trackPoints: trackPoints);
     final speeds = speedProfile.map((s) => s.speedKmh).where((s) => s > 0).toList();
-    final avgSpeed = speeds.isNotEmpty
-        ? speeds.reduce((a, b) => a + b) / speeds.length
+    // מהירות ממוצעת: מרחק כולל / זמן כולל (מדויק יותר מממוצע מקטעים)
+    final totalDurSeconds = totalDuration.inSeconds;
+    final avgSpeed = (totalDurSeconds > 0 && actualDistKm > 0)
+        ? actualDistKm / (totalDurSeconds / 3600.0)
         : 0.0;
     final maxSpeed = speeds.isNotEmpty
         ? speeds.reduce((a, b) => a > b ? a : b)
@@ -479,6 +481,11 @@ class RouteAnalysisService {
   }) {
     if (trackPoints.length < 2) return [];
 
+    // סף מינימלי — קטעים קצרים מדי אינם אמינים לחישוב מהירות
+    const double minDtSeconds = 2.0;
+    // תקרת מהירות סבירה לניווט רגלי (30 קמ"ש ≈ ריצה מהירה)
+    const double maxReasonableSpeedKmh = 30.0;
+
     final rawSpeeds = <_RawSpeed>[];
     double cumulativeDist = 0;
 
@@ -493,12 +500,16 @@ class RouteAnalysisService {
       final dtSeconds =
           curr.timestamp.difference(prev.timestamp).inMilliseconds / 1000.0;
 
-      double speedKmh = 0;
-      if (dtSeconds > 0) {
-        speedKmh = (distMeters / dtSeconds) * 3.6;
-      }
-
       cumulativeDist += distMeters;
+
+      double speedKmh = 0;
+      if (dtSeconds >= minDtSeconds) {
+        speedKmh = (distMeters / dtSeconds) * 3.6;
+        // תקרת מהירות — מעבר לסף זה GPS noise ולא תנועה אמיתית
+        if (speedKmh > maxReasonableSpeedKmh) {
+          speedKmh = maxReasonableSpeedKmh;
+        }
+      }
 
       rawSpeeds.add(_RawSpeed(
         timestamp: curr.timestamp,
@@ -697,10 +708,17 @@ class RouteAnalysisService {
 
     double totalMeters = 0;
     for (int i = 0; i < points.length - 1; i++) {
-      totalMeters += _distanceBetween(
+      final dist = _distanceBetween(
         LatLng(points[i].coordinate.lat, points[i].coordinate.lng),
         LatLng(points[i + 1].coordinate.lat, points[i + 1].coordinate.lng),
       );
+      // דילוג על קטעים עם מהירות בלתי אפשרית (>150 קמ"ש) — GPS noise
+      final dtSeconds = points[i + 1].timestamp
+          .difference(points[i].timestamp)
+          .inSeconds
+          .abs();
+      if (dtSeconds > 0 && (dist / dtSeconds) > 41.67) continue;
+      totalMeters += dist;
     }
     return totalMeters / 1000.0;
   }
