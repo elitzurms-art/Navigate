@@ -42,9 +42,10 @@ class _NavigationHistoryListScreenState
       final all = await _navRepo.getAllIncludingDeleted();
       final uid = widget.currentUser.uid;
 
-      // סינון: רק approval/review + המנווט משתתף
+      // סינון: סטטוסים שמייצגים ניווט שהתבצע (כולל מחוקים) + המנווט משתתף
+      const historyStatuses = {'waiting', 'active', 'approval', 'review'};
       final filtered = all.where((nav) {
-        if (nav.status != 'approval' && nav.status != 'review') return false;
+        if (!historyStatuses.contains(nav.status)) return false;
         if (nav.routes.containsKey(uid)) return true;
         if (nav.selectedParticipantIds.contains(uid)) return true;
         return false;
@@ -102,6 +103,10 @@ class _NavigationHistoryListScreenState
         return 'תחקור';
       case 'approval':
         return 'ממתין לאישור';
+      case 'active':
+        return 'פעיל';
+      case 'waiting':
+        return 'ממתין';
       default:
         return status;
     }
@@ -113,6 +118,10 @@ class _NavigationHistoryListScreenState
         return Colors.blue;
       case 'approval':
         return Colors.orange;
+      case 'active':
+        return Colors.green;
+      case 'waiting':
+        return Colors.teal;
       default:
         return Colors.grey;
     }
