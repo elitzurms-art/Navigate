@@ -140,42 +140,49 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final mode = snap.data()?['emergencyMode'] as int? ?? 0;
 
       if (active && !_emergencyDialogShowing && broadcastId != null && broadcastId != _lastShownBroadcastId) {
-        // חירום חדש — טעינת פרטי השידור מ-Firestore
+        // חירום חדש — fallback: השהייה 2 שניות לתת ל-FCM להגיע ראשון
         _currentBroadcastId = broadcastId;
-        FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(navigationId)
-            .collection('emergency_broadcasts')
-            .doc(broadcastId)
-            .get()
-            .then((doc) {
-          if (!mounted || _emergencyDialogShowing) return;
-          final data = doc.data() ?? {};
-          _showEmergencyDialog(
-            message: data['message'] as String? ?? '',
-            instructions: data['instructions'] as String? ?? '',
-            emergencyMode: mode,
-            broadcastId: broadcastId,
-          );
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!mounted || _emergencyDialogShowing || _routineDialogShowing) return;
+          if (broadcastId == _lastShownBroadcastId) return;
+          FirebaseFirestore.instance
+              .collection(AppConstants.navigationsCollection)
+              .doc(navigationId)
+              .collection('emergency_broadcasts')
+              .doc(broadcastId)
+              .get()
+              .then((doc) {
+            if (!mounted || _emergencyDialogShowing || _routineDialogShowing) return;
+            if (broadcastId == _lastShownBroadcastId) return;
+            final data = doc.data() ?? {};
+            _showEmergencyDialog(
+              message: data['message'] as String? ?? '',
+              instructions: data['instructions'] as String? ?? '',
+              emergencyMode: mode,
+              broadcastId: broadcastId,
+            );
+          });
         });
       } else if (!active && _wasInEmergency) {
-        // חירום בוטל — הצגת דיאלוג "חזרה לשגרה"
+        // חירום בוטל — fallback: השהייה 2 שניות לתת ל-FCM להגיע ראשון
         _wasInEmergency = false;
-        // מציאת cancellation doc
-        FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(navigationId)
-            .collection('emergency_broadcasts')
-            .where('type', isEqualTo: 'cancellation')
-            .orderBy('createdAt', descending: true)
-            .limit(1)
-            .get()
-            .then((snap) {
-          if (!mounted) return;
-          final cancelBroadcastId = snap.docs.isNotEmpty ? snap.docs.first.id : null;
-          _showReturnToRoutineDialog(cancelBroadcastId: cancelBroadcastId);
-        }).catchError((_) {
-          if (mounted) _showReturnToRoutineDialog();
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!mounted || _routineDialogShowing) return;
+          FirebaseFirestore.instance
+              .collection(AppConstants.navigationsCollection)
+              .doc(navigationId)
+              .collection('emergency_broadcasts')
+              .where('type', isEqualTo: 'cancellation')
+              .orderBy('createdAt', descending: true)
+              .limit(1)
+              .get()
+              .then((snap) {
+            if (!mounted || _routineDialogShowing) return;
+            final cancelBroadcastId = snap.docs.isNotEmpty ? snap.docs.first.id : null;
+            _showReturnToRoutineDialog(cancelBroadcastId: cancelBroadcastId);
+          }).catchError((_) {
+            if (mounted && !_routineDialogShowing) _showReturnToRoutineDialog();
+          });
         });
       }
     });
@@ -197,6 +204,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     // emergencyBroadcast
     if (_emergencyDialogShowing || _routineDialogShowing) return;
     final broadcastId = message.data['broadcastId'] as String?;
+    if (broadcastId != null && broadcastId == _lastShownBroadcastId) return;
     _currentBroadcastId = broadcastId;
     final emergencyMode = int.tryParse(message.data['emergencyMode'] ?? '') ?? 0;
     _showEmergencyDialog(
