@@ -716,6 +716,14 @@ class SyncManager {
             }, SetOptions(merge: true))
             .timeout(const Duration(seconds: 10));
         break;
+      case 'hard_delete':
+        // Hard delete — מחיקת המסמך לחלוטין מ-Firestore
+        await _firestore
+            .collection(collection)
+            .doc(documentId)
+            .delete()
+            .timeout(const Duration(seconds: 10));
+        break;
       default:
         print('SyncManager: Unknown operation: $operation');
     }
