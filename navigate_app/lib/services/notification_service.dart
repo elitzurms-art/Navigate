@@ -133,7 +133,7 @@ class NotificationService {
   void _handleForegroundMessage(RemoteMessage message) {
     print('DEBUG NotificationService: foreground message: ${message.notification?.title}');
     final type = message.data['type'];
-    if (type == 'emergencyBroadcast') {
+    if (type == 'emergencyBroadcast' || type == 'emergencyCancelled') {
       _emergencyBroadcastController.add(message);
     } else if (type == 'joinRequest') {
       _joinRequestController.add(message);
@@ -144,7 +144,7 @@ class NotificationService {
     final navigationId = message.data['navigationId'];
     print('DEBUG NotificationService: message tapped, navigationId=$navigationId');
     final type = message.data['type'];
-    if (type == 'emergencyBroadcast') {
+    if (type == 'emergencyBroadcast' || type == 'emergencyCancelled') {
       _pendingEmergency = message;
     } else if (type == 'joinRequest') {
       _pendingJoinRequest = message;
@@ -156,7 +156,7 @@ class NotificationService {
       final initial = await _messaging.getInitialMessage();
       if (initial == null) return;
       final type = initial.data['type'];
-      if (type == 'emergencyBroadcast') {
+      if (type == 'emergencyBroadcast' || type == 'emergencyCancelled') {
         _pendingEmergency = initial;
       } else if (type == 'joinRequest') {
         _pendingJoinRequest = initial;

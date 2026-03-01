@@ -109,6 +109,23 @@ async function buildClaims(userData, personalNumber) {
 }
 
 // =========================================================================
+// Helper: Wait for custom claims to propagate server-side
+// Blocks until admin.auth().getUser() confirms claims are set.
+// Prevents client-side race condition where getIdToken(true) fires
+// before claims propagate → stale token → permission-denied.
+// =========================================================================
+async function waitForClaimsPropagation(firebaseUid, expectedAppUid) {
+  const maxRetries = 20; // 10 seconds total
+  for (let i = 0; i < maxRetries; i++) {
+    const userRecord = await auth.getUser(firebaseUid);
+    const claims = userRecord.customClaims || {};
+    if (claims.appUid === expectedAppUid) return;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error(`Claims propagation timeout for ${expectedAppUid} after 10s`);
+}
+
+// =========================================================================
 // initSession — Callable: sets custom claims on login
 // =========================================================================
 exports.initSession = onCall({ region: "us-central1", invoker: "public" }, async (request) => {
@@ -139,6 +156,7 @@ exports.initSession = onCall({ region: "us-central1", invoker: "public" }, async
       unitScope: [],
       hasFullScope: false,
     });
+    await waitForClaimsPropagation(firebaseUid, personalNumber);
     // Write activeSessionId via admin SDK (no rules restriction)
     await db.collection("users").doc(personalNumber).set(
       { activeSessionId: sessionId },
@@ -158,6 +176,7 @@ exports.initSession = onCall({ region: "us-central1", invoker: "public" }, async
 
   const claims = await buildClaims(userData, personalNumber);
   await auth.setCustomUserClaims(firebaseUid, claims);
+  await waitForClaimsPropagation(firebaseUid, personalNumber);
 
   // Write activeSessionId via admin SDK (no rules restriction)
   await db.collection("users").doc(personalNumber).update({
@@ -749,18 +768,24 @@ exports.onEmergencyBroadcast = onDocumentCreated(
       return;
     }
 
+    const fcmType = broadcastData.type === 'cancellation'
+      ? 'emergencyCancelled'
+      : 'emergencyBroadcast';
+
     const message = {
       notification: {
-        title: `\u{1F6A8} שידור חירום — ${navName}`,
-        body: broadcastData.message || "שידור חירום",
+        title: fcmType === 'emergencyCancelled'
+          ? `✅ חזרה לשגרה — ${navName}`
+          : `\u{1F6A8} שידור חירום — ${navName}`,
+        body: broadcastData.message || '',
       },
       data: {
-        type: "emergencyBroadcast",
+        type: fcmType,
         navigationId,
         broadcastId,
-        instructions: broadcastData.instructions || "",
-        openMap: broadcastData.openMap ? "true" : "false",
-        showLocation: broadcastData.showLocation ? "true" : "false",
+        message: broadcastData.message || '',
+        instructions: broadcastData.instructions || '',
+        emergencyMode: String(broadcastData.emergencyMode ?? 0),
       },
       android: { priority: "high" },
       tokens,
@@ -893,6 +918,7 @@ exports.httpInitSession = onRequest(
           unitScope: [],
           hasFullScope: false,
         });
+        await waitForClaimsPropagation(firebaseUid, personalNumber);
         res.json({ result: { success: true } });
         return;
       }
@@ -908,6 +934,7 @@ exports.httpInitSession = onRequest(
 
       const claims = await buildClaims(userData, personalNumber);
       await auth.setCustomUserClaims(firebaseUid, claims);
+      await waitForClaimsPropagation(firebaseUid, personalNumber);
       res.json({ result: { success: true } });
     } catch (error) {
       console.error("httpInitSession error:", error);

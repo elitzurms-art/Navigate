@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -159,26 +158,9 @@ Future<void> _ensureFirebaseAuth() async {
 
   // קריאה ל-Cloud Function לקביעת custom claims (תמיד — גם אם Firebase user קיים)
   // Cloud Function גם מתקנת role=developer למפתחים ידועים (DEVELOPER_UIDS)
-  // ללא זה, claims לא מתרעננים בהפעלה מחדש ו-Firestore rules נכשלים
+  // CF blocks until claims verified server-side — JWT verification handled internally
   try {
     await AuthService().initSessionClaims(loggedInUid);
-    print('DEBUG: initSession called + token refreshed for $loggedInUid');
-
-    // אימות שה-claims הוגדרו נכון — חשוב במיוחד ל-developer/admin
-    final token = await FirebaseAuth.instance.currentUser?.getIdToken(false);
-    if (token != null) {
-      final parts = token.split('.');
-      if (parts.length == 3) {
-        final padded = base64Url.normalize(parts[1]);
-        final payload = utf8.decode(base64Url.decode(padded));
-        final claims = jsonDecode(payload) as Map<String, dynamic>;
-        final claimsRole = claims['role'];
-        print('DEBUG _ensureFirebaseAuth: claims role=$claimsRole, appUid=${claims['appUid']}');
-        if (user != null && user.role != claimsRole) {
-          print('WARNING: Claims role mismatch! Token has "$claimsRole", local DB has "${user.role}"');
-        }
-      }
-    }
   } catch (e) {
     print('DEBUG: initSession call failed: $e');
   }

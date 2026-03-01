@@ -332,11 +332,26 @@ class _ReviewViewState extends State<ReviewView> {
           )
         : const LatLng(32.0853, 34.7818);
 
-    return Column(
+    // האם הציון הופץ למנווט
+    final bool scoresPublished = _score != null && _score!.isPublished;
+
+    // חישוב נ.צ. — רק נקודות המנווט (ללא התחלה/סיום/ביניים), רק אחרי הפצת ציונים
+    int navigatorCpCount = 0;
+    int approvedCpCount = 0;
+    if (route != null && scoresPublished) {
+      navigatorCpCount = route.checkpointIds.length;
+      final navigatorCpIds = route.checkpointIds.toSet();
+      approvedCpCount = _punches
+          .where((p) => p.isApproved && navigatorCpIds.contains(p.checkpointId))
+          .length;
+    }
+
+    return SingleChildScrollView(
+      child: Column(
       children: [
-        // כרטיס ציון
-        if (showScores && _score != null) _buildScoreHeader(),
-        if (showScores && _score == null)
+        // כרטיס ציון — רק אחרי הפצת ציונים
+        if (showScores && scoresPublished) _buildScoreHeader(),
+        if (showScores && !scoresPublished)
           Container(
             padding: const EdgeInsets.all(12),
             color: Colors.grey[50],
@@ -344,7 +359,7 @@ class _ReviewViewState extends State<ReviewView> {
               children: [
                 Icon(Icons.pending, color: Colors.orange, size: 20),
                 SizedBox(width: 8),
-                Text('ציון טרם חושב',
+                Text('ציון טרם הופץ',
                     style: TextStyle(color: Colors.grey)),
               ],
             ),
@@ -377,9 +392,10 @@ class _ReviewViewState extends State<ReviewView> {
                         '${plannedDistKm.toStringAsFixed(1)} ק"מ', 'מתוכנן'),
                     _statChip(Icons.timeline,
                         '${actualDistKm.toStringAsFixed(1)} ק"מ', 'בפועל'),
-                    _statChip(Icons.flag,
-                        '${_punches.where((p) => !p.isDeleted).length}/${_checkpoints.length}',
-                        'נ.צ.'),
+                    if (scoresPublished)
+                      _statChip(Icons.flag,
+                          '$approvedCpCount/$navigatorCpCount',
+                          'נ.צ.'),
                     if (_totalAscent > 0)
                       _statChip(Icons.arrow_upward,
                           '${_totalAscent.round()}מ\'', 'עלייה',
@@ -401,8 +417,9 @@ class _ReviewViewState extends State<ReviewView> {
           ),
         ),
 
-        // מפה
-        Expanded(
+        // מפה — גובה קבוע כדי שכפתור מסך מלא תמיד נראה
+        SizedBox(
+          height: 300,
           child: Stack(
             children: [
               MapWithTypeSelector(
@@ -728,9 +745,10 @@ class _ReviewViewState extends State<ReviewView> {
           ),
         ),
 
-        // פירוט ציונים (תחת המפה)
-        if (showScores && _score != null) _buildScoreDetails(),
+        // פירוט ציונים (תחת המפה) — רק אחרי הפצת ציונים
+        if (showScores && scoresPublished) _buildScoreDetails(),
       ],
+      ),
     );
   }
 

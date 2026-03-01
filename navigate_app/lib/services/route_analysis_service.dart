@@ -82,6 +82,8 @@ class RouteStatistics {
   final double totalAscent;
   final double totalDescent;
   final List<ElevationSegment> elevationProfile;
+  /// אחוז דיוק מסלול — % נקודות GPS שהיו בסטייה של עד 50 מ' מהציר המתוכנן
+  final double routeAccuracyPercent;
 
   const RouteStatistics({
     required this.plannedDistanceKm,
@@ -106,6 +108,7 @@ class RouteStatistics {
     this.totalAscent = 0,
     this.totalDescent = 0,
     this.elevationProfile = const [],
+    this.routeAccuracyPercent = 0,
   });
 }
 
@@ -425,6 +428,18 @@ class RouteAnalysisService {
       totalDevTime += seg.duration;
     }
 
+    // דיוק מסלול: % נקודות GPS בסטייה ≤50 מ' מהציר המתוכנן
+    double routeAccuracy = 0;
+    if (plannedRoute != null && plannedRoute.length >= 2 && trackPoints.length >= 2) {
+      int onRouteCount = 0;
+      for (final tp in trackPoints) {
+        final pt = LatLng(tp.coordinate.lat, tp.coordinate.lng);
+        final dist = _distanceToPolyline(pt, plannedRoute);
+        if (dist <= 50.0) onRouteCount++;
+      }
+      routeAccuracy = (onRouteCount / trackPoints.length) * 100;
+    }
+
     final elevData = calculateElevationProfile(trackPoints: trackPoints);
 
     return RouteStatistics(
@@ -450,6 +465,7 @@ class RouteAnalysisService {
       totalAscent: elevData.ascent,
       totalDescent: elevData.descent,
       elevationProfile: elevData.profile,
+      routeAccuracyPercent: routeAccuracy,
     );
   }
 

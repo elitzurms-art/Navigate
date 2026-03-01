@@ -300,6 +300,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
       final verifiedCount = score != null
           ? score.checkpointScores.values.where((cs) => cs.approved).length
           : 0;
+      final verifiableCheckpointsCount = routeCps
+          .where((cp) => cp.type == 'checkpoint')
+          .length;
       final plannedTimeMinutes = GeometryUtils.calculateNavigationTimeMinutes(
         routeLengthKm: route.routeLengthKm,
         settings: widget.navigation.timeCalculationSettings,
@@ -319,6 +322,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
         verifiedCount: verifiedCount,
+        verifiableCheckpointsCount: verifiableCheckpointsCount,
         plannedTimeMinutes: plannedTimeMinutes,
         color: color,
         isDisqualified: track?.isDisqualified ?? false,
@@ -818,6 +822,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
           avgSpeedKmh: data.avgSpeedKmh,
           checkpointsHit: data.checkpointsHit,
           totalCheckpoints: data.totalCheckpoints,
+          verifiedCount: data.verifiedCount,
+          verifiableCheckpointsCount: data.verifiableCheckpointsCount,
+          plannedTimeMinutes: data.plannedTimeMinutes,
           color: data.color,
           isDisqualified: false,
         );
@@ -1962,10 +1969,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
             DataCell(Text(data.avgSpeedKmh > 0
                 ? '${data.avgSpeedKmh.toStringAsFixed(1)} קמ"ש'
                 : '-')),
-            DataCell(
-                Text('${data.checkpointsHit}/${data.totalCheckpoints}')),
+            DataCell(Text('${data.checkpointsHit}')),
             DataCell(data.score != null
-                ? Text('${data.verifiedCount}/${data.totalCheckpoints}')
+                ? Text('${data.verifiedCount}/${data.verifiableCheckpointsCount}')
                 : const Text('-', style: TextStyle(color: Colors.grey))),
             DataCell(score != null
                 ? Container(
@@ -2457,8 +2463,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
-    if (hours > 0) return '${hours}ש ${minutes}ד';
-    return '${minutes}ד';
+    return '$hours:${minutes.toString().padLeft(2, '0')}';
   }
 }
 
@@ -2480,6 +2485,7 @@ class _NavigatorData {
   final int checkpointsHit;
   final int totalCheckpoints;
   final int verifiedCount;
+  final int verifiableCheckpointsCount;
   final int plannedTimeMinutes;
   final Color color;
   final bool isDisqualified;
@@ -2498,6 +2504,7 @@ class _NavigatorData {
     required this.checkpointsHit,
     required this.totalCheckpoints,
     required this.verifiedCount,
+    required this.verifiableCheckpointsCount,
     required this.plannedTimeMinutes,
     required this.color,
     this.isDisqualified = false,

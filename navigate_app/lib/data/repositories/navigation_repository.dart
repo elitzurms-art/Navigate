@@ -28,15 +28,28 @@ class NavigationRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SyncManager _syncManager = SyncManager();
 
-  /// קבלת כל הניווטים
+  /// קבלת כל הניווטים (ללא מחוקים)
   Future<List<domain.Navigation>> getAll() async {
     try {
       print('DEBUG: Loading navigations from local database');
-      final navigations = await _db.select(_db.navigations).get();
+      final navigations = await (_db.select(_db.navigations)
+            ..where((n) => n.deletedAt.isNull()))
+          .get();
       print('DEBUG: Found ${navigations.length} navigations');
       return navigations.map((n) => _toDomain(n)).toList();
     } catch (e) {
       print('DEBUG: Error loading navigations: $e');
+      rethrow;
+    }
+  }
+
+  /// קבלת כל הניווטים כולל מחוקים — עבור מסך היסטוריה
+  Future<List<domain.Navigation>> getAllIncludingDeleted() async {
+    try {
+      final navigations = await _db.select(_db.navigations).get();
+      return navigations.map((n) => _toDomain(n)).toList();
+    } catch (e) {
+      print('DEBUG: Error loading all navigations including deleted: $e');
       rethrow;
     }
   }
@@ -273,18 +286,19 @@ class NavigationRepository {
     }
   }
 
-  /// מחיקת ניווט
+  /// מחיקת ניווט (soft-delete — סימון deletedAt)
   Future<void> delete(String id) async {
     try {
-      print('DEBUG: Deleting navigation: $id');
+      print('DEBUG: Soft-deleting navigation: $id');
 
       // סימון כנמחק לאחרונה — מונע שחזור ע"י Firestore listener
       markAsRecentlyDeleted(id);
 
-      // מחיקה מקומית
-      await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
+      // soft-delete מקומי — סימון deletedAt במקום מחיקת השורה
+      await (_db.update(_db.navigations)..where((n) => n.id.equals(id)))
+          .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
 
-      print('DEBUG: Navigation deleted locally');
+      print('DEBUG: Navigation soft-deleted locally');
 
       // הוספה לתור סנכרון — עדיפות גבוהה למחיקות
       await _syncManager.queueOperation(
@@ -300,11 +314,11 @@ class NavigationRepository {
     }
   }
 
-  /// קבלת ניווטים לפי treeId
+  /// קבלת ניווטים לפי treeId (ללא מחוקים)
   Future<List<domain.Navigation>> getByTreeId(String treeId) async {
     try {
       final rows = await (_db.select(_db.navigations)
-            ..where((n) => n.treeId.equals(treeId)))
+            ..where((n) => n.treeId.equals(treeId) & n.deletedAt.isNull()))
           .get();
       return rows.map((r) => _toDomain(r)).toList();
     } catch (e) {
@@ -1030,13 +1044,14 @@ class NavigationRepository {
     }
   }
 
-  /// מחיקה מקומית של ניווט ללא סנכרון (עבור Firestore listener)
+  /// מחיקה מקומית של ניווט ללא סנכרון (soft-delete עבור Firestore listener)
   Future<void> deleteLocalOnly(String id) async {
     try {
-      await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
-      print('DEBUG: Deleted local navigation from Firestore listener: $id');
+      await (_db.update(_db.navigations)..where((n) => n.id.equals(id)))
+          .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
+      print('DEBUG: Soft-deleted local navigation from Firestore listener: $id');
     } catch (e) {
-      print('DEBUG: Error deleting local navigation: $e');
+      print('DEBUG: Error soft-deleting local navigation: $e');
     }
   }
 

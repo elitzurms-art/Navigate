@@ -146,12 +146,13 @@ class UnitRepository {
             .get();
         for (final tree in trees) {
           treesToDelete.add(tree.id);
-          // Delete navigations that use this tree
+          // Soft-delete navigations that use this tree (שימור היסטוריה)
           final navs = await (_db.select(_db.navigations)
                 ..where((t) => t.treeId.equals(tree.id)))
               .get();
           for (final nav in navs) {
-            await (_db.delete(_db.navigations)..where((t) => t.id.equals(nav.id))).go();
+            await (_db.update(_db.navigations)..where((t) => t.id.equals(nav.id)))
+                .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
             await _syncManager.queueOperation(
               collection: AppConstants.navigationsCollection,
               documentId: nav.id,

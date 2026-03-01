@@ -256,6 +256,8 @@ class _NavigationPreparationScreenState
     if (_navigation.status == 'system_check') {
       if (!await _confirmStopActiveMode('למידה')) return;
     }
+    // בדיקת התנגשויות מנווטים
+    if (!await _checkNavigatorConflicts()) return;
     final isCommander = _currentUser?.hasCommanderPermissions ?? true;
     final result = await Navigator.push(
       context,
@@ -278,6 +280,8 @@ class _NavigationPreparationScreenState
     if (_navigation.status == 'learning') {
       if (!await _confirmStopActiveMode('בדיקת מערכות')) return;
     }
+    // בדיקת התנגשויות מנווטים
+    if (!await _checkNavigatorConflicts()) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -359,7 +363,7 @@ class _NavigationPreparationScreenState
         return '$name  -  $navNames';
       }).join('\n');
 
-      final confirmed = await showDialog<bool>(
+      await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Row(
@@ -385,7 +389,7 @@ class _NavigationPreparationScreenState
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'האם להמשיך בכל זאת?',
+                  'סיים את הניווטים הפעילים ולאחר מכן נסה שוב.',
                   style: TextStyle(color: Colors.red),
                 ),
               ],
@@ -393,19 +397,14 @@ class _NavigationPreparationScreenState
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('ביטול'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('המשך בכל זאת'),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('הבנתי'),
             ),
           ],
         ),
       );
 
-      return confirmed == true;
+      return false;
     } catch (e) {
       print('DEBUG: Error checking navigator conflicts: $e');
       return true;

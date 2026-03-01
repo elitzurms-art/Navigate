@@ -73,6 +73,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   // מצב חירום
   bool _emergencyActive = false;
+  int _emergencyMode = 0;
+  String? _activeBroadcastId;
+  StreamSubscription<DocumentSnapshot>? _ackListener;
+  List<String> _acknowledgedBy = [];
+  Timer? _autoRetryTimer;
+  // ביטול
+  String? _cancelBroadcastId;
+  StreamSubscription<DocumentSnapshot>? _cancelAckListener;
+  List<String> _cancelAcknowledgedBy = [];
+  Timer? _cancelAutoRetryTimer;
 
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
@@ -191,6 +201,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _extensionListener?.cancel();
     _extensionSnoozeTimer?.cancel();
     _emergencyFlagListener?.cancel();
+    _ackListener?.cancel();
+    _autoRetryTimer?.cancel();
+    _cancelAckListener?.cancel();
+    _cancelAutoRetryTimer?.cancel();
     _tabController.dispose();
     _voiceService?.dispose();
     super.dispose();
@@ -2071,7 +2085,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             IconButton(
               icon: const Icon(Icons.crisis_alert, color: Colors.orange),
               tooltip: 'כבה מצב חירום',
-              onPressed: _deactivateEmergencyMode,
+              onPressed: _showDeactivateConfirmation,
             ),
           IconButton(
             icon: const Icon(Icons.campaign, color: Colors.red),
@@ -2095,6 +2109,22 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     a.type == AlertType.healthCheckExpired) ||
                     _extensionRequests.any((r) => r.status == ExtensionRequestStatus.pending))
                   _buildAlertsBanner(),
+                // פאנל אישורי קבלה — חירום
+                if (_emergencyActive && _activeBroadcastId != null)
+                  _buildAckPanel(
+                    title: 'אישורי קבלת חירום',
+                    acknowledgedBy: _acknowledgedBy,
+                    color: Colors.red,
+                    onResend: () => _resendToUnacknowledged(_activeBroadcastId!),
+                  ),
+                // פאנל אישורי ביטול
+                if (!_emergencyActive && _cancelBroadcastId != null && _cancelAcknowledgedBy.length < _allEmergencyParticipants.length)
+                  _buildAckPanel(
+                    title: 'אישורי חזרה לשגרה',
+                    acknowledgedBy: _cancelAcknowledgedBy,
+                    color: Colors.green,
+                    onResend: () => _resendCancelToUnacknowledged(_cancelBroadcastId!),
+                  ),
                 Expanded(
                   child: TabBarView(
                     controller: _tabController,
@@ -2388,86 +2418,34 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       title: 'ניהול ניווט',
                       initialCenter: camera.center,
                       initialZoom: camera.zoom,
-                      layers: [
-                        if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
-                          PolygonLayer(
-                            polygons: [
-                              Polygon(
-                                points: _boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                                color: Colors.black.withOpacity(0.2 * _ggOpacity),
-                                borderColor: Colors.black,
-                                borderStrokeWidth: 2,
-                              ),
-                            ],
-                          ),
-                        if (_showNZ)
-                          MarkerLayer(
-                            markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
-                              // זיהוי סוג נקודה: התחלה / סיום / ביניים
-                              final startIds = <String>{};
-                              final endIds = <String>{};
-                              final waypointIds = <String>{};
-                              for (final route in widget.navigation.routes.values) {
-                                if (route.startPointId != null) startIds.add(route.startPointId!);
-                                if (route.endPointId != null) endIds.add(route.endPointId!);
-                                waypointIds.addAll(route.waypointIds);
-                              }
-                              for (final wp in widget.navigation.waypointSettings.waypoints) {
-                                waypointIds.add(wp.checkpointId);
-                              }
-
-                              final isStart = startIds.contains(cp.id) || cp.isStart;
-                              final isEnd = endIds.contains(cp.id) || cp.isEnd;
-                              final isWaypoint = waypointIds.contains(cp.id);
-
-                              Color cpColor;
-                              String letter;
-                              if (isStart) {
-                                cpColor = const Color(0xFF4CAF50); // ירוק — התחלה
-                                letter = 'H';
-                              } else if (isEnd) {
-                                cpColor = const Color(0xFFF44336); // אדום — סיום
-                                letter = 'S';
-                              } else if (isWaypoint) {
-                                cpColor = const Color(0xFFFFC107); // צהוב — ביניים
-                                letter = 'B';
-                              } else {
-                                cpColor = Colors.blue;
-                                letter = '';
-                              }
-
-                              return Marker(
-                                point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-                                width: 48,
-                                height: 48,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.place,
-                                      color: cpColor.withValues(alpha: _nzOpacity),
-                                      size: 32,
-                                    ),
-                                    Text(
-                                      '${cp.sequenceNumber}$letter',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: cpColor,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        if (_showTracks) ..._buildNavigatorTracks(),
-                        if (_showPunches) ..._buildPunchMarkers(),
-                        ..._buildNavigatorMarkers(),
-                        ..._buildSelfMarker(),
-                        ..._buildCommanderMarkers(),
-                        if (_showAlerts) ..._buildAlertMarkers(),
+                      layerConfigs: [
+                        MapLayerConfig(
+                          id: 'nz', label: 'נקודות ציון', color: Colors.blue,
+                          visible: _showNZ, opacity: _nzOpacity,
+                          onVisibilityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'gg', label: 'גבול גזרה', color: Colors.black,
+                          visible: _showGG, opacity: _ggOpacity,
+                          onVisibilityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'tracks', label: 'מסלולים', color: Colors.orange,
+                          visible: _showTracks, opacity: _tracksOpacity,
+                          onVisibilityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'punches', label: 'דקירות', color: Colors.green,
+                          visible: _showPunches, opacity: _punchesOpacity,
+                          onVisibilityChanged: (_) {},
+                        ),
+                        MapLayerConfig(
+                          id: 'alerts', label: 'התראות', color: Colors.red,
+                          visible: _showAlerts, opacity: 1.0,
+                          onVisibilityChanged: (_) {},
+                        ),
                       ],
+                      layerBuilder: _buildFullscreenMapLayers,
                     ),
                   ));
                 },
@@ -2691,8 +2669,125 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
-  List<Widget> _buildNavigatorTracks() {
+  /// בניית שכבות מפה למסך מלא — משתמש בהגדרות visibility/opacity מהמסך המלא
+  List<Widget> _buildFullscreenMapLayers(
+      Map<String, bool> visibility, Map<String, double> opacity) {
+    final showGG = visibility['gg'] ?? true;
+    final showNZ = visibility['nz'] ?? true;
+    final showTracks = visibility['tracks'] ?? true;
+    final showPunches = visibility['punches'] ?? true;
+    final showAlerts = visibility['alerts'] ?? true;
+    final ggOp = opacity['gg'] ?? _ggOpacity;
+    final nzOp = opacity['nz'] ?? _nzOpacity;
+
+    return [
+      // גבול ג"ג
+      if (showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+        PolygonLayer(
+          polygons: [
+            Polygon(
+              points: _boundary!.coordinates
+                  .map((coord) => LatLng(coord.lat, coord.lng))
+                  .toList(),
+              color: Colors.black.withOpacity(0.2 * ggOp),
+              borderColor: Colors.black,
+              borderStrokeWidth: 2,
+            ),
+          ],
+        ),
+
+      // נקודות ציון
+      if (showNZ)
+        MarkerLayer(
+          markers: _checkpoints
+              .where((cp) => !cp.isPolygon && cp.coordinates != null)
+              .map((cp) {
+            final startIds = <String>{};
+            final endIds = <String>{};
+            final waypointIds = <String>{};
+            for (final route in widget.navigation.routes.values) {
+              if (route.startPointId != null) startIds.add(route.startPointId!);
+              if (route.endPointId != null) endIds.add(route.endPointId!);
+              waypointIds.addAll(route.waypointIds);
+            }
+            for (final wp in widget.navigation.waypointSettings.waypoints) {
+              waypointIds.add(wp.checkpointId);
+            }
+
+            final isStart = startIds.contains(cp.id) || cp.isStart;
+            final isEnd = endIds.contains(cp.id) || cp.isEnd;
+            final isWaypoint = waypointIds.contains(cp.id);
+
+            Color cpColor;
+            String letter;
+            if (isStart) {
+              cpColor = const Color(0xFF4CAF50);
+              letter = 'H';
+            } else if (isEnd) {
+              cpColor = const Color(0xFFF44336);
+              letter = 'S';
+            } else if (isWaypoint) {
+              cpColor = const Color(0xFFFFC107);
+              letter = 'B';
+            } else {
+              cpColor = Colors.blue;
+              letter = '';
+            }
+
+            return Marker(
+              point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+              width: 48,
+              height: 48,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.place,
+                    color: cpColor.withValues(alpha: nzOp),
+                    size: 32,
+                  ),
+                  Text(
+                    '${cp.sequenceNumber}$letter',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: cpColor,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+
+      // מסלולים
+      if (showTracks)
+        ..._buildNavigatorTracks(opacityOverride: opacity['tracks']),
+
+      // צירים מתוכננים
+      ..._buildPlannedAxisLayers(),
+
+      // דקירות
+      if (showPunches)
+        ..._buildPunchMarkers(opacityOverride: opacity['punches']),
+
+      // מיקומים נוכחיים של מנווטים
+      ..._buildNavigatorMarkers(),
+
+      // מיקום עצמי (מפקד)
+      ..._buildSelfMarker(),
+
+      // מפקדים אחרים
+      ..._buildCommanderMarkers(),
+
+      // התראות
+      if (showAlerts) ..._buildAlertMarkers(),
+    ];
+  }
+
+  List<Widget> _buildNavigatorTracks({double? opacityOverride}) {
     List<Widget> tracks = [];
+    final tracksOp = opacityOverride ?? _tracksOpacity;
 
     for (final entry in _navigatorData.entries) {
       final navigatorId = entry.key;
@@ -2716,7 +2811,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             Polyline(
               points: points,
               strokeWidth: 3,
-              color: _getTrackColor(data.personalStatus).withValues(alpha: _tracksOpacity),
+              color: _getTrackColor(data.personalStatus).withValues(alpha: tracksOp),
             ),
           ],
         ),
@@ -2756,8 +2851,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     return layers;
   }
 
-  List<Widget> _buildPunchMarkers() {
+  List<Widget> _buildPunchMarkers({double? opacityOverride}) {
     List<Widget> markers = [];
+    final punchesOp = opacityOverride ?? _punchesOpacity;
 
     for (final entry in _navigatorData.entries) {
       final navigatorId = entry.key;
@@ -2784,7 +2880,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           width: 90,
           height: 45,
           child: Opacity(
-            opacity: _punchesOpacity,
+            opacity: punchesOp,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -4511,8 +4607,25 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .listen((snap) {
       if (!mounted) return;
       final active = snap.data()?['emergencyActive'] == true;
-      if (active != _emergencyActive) {
-        setState(() => _emergencyActive = active);
+      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
+      final broadcastId = snap.data()?['activeBroadcastId'] as String?;
+
+      if (active != _emergencyActive || mode != _emergencyMode) {
+        setState(() {
+          _emergencyActive = active;
+          _emergencyMode = mode;
+        });
+
+        if (active && broadcastId != null && broadcastId != _activeBroadcastId) {
+          _activeBroadcastId = broadcastId;
+          _startAckListener(broadcastId);
+          _startAutoRetryTimer(broadcastId);
+        } else if (!active) {
+          _ackListener?.cancel();
+          _autoRetryTimer?.cancel();
+          _activeBroadcastId = null;
+          _acknowledgedBy = [];
+        }
       }
     });
   }
@@ -4520,8 +4633,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   void _showEmergencyBroadcastDialog() {
     final messageController = TextEditingController();
     final instructionsController = TextEditingController();
-    bool openMap = true;
-    bool showLocation = true;
+    int emergencyMode = 2; // ברירת מחדל: מלא
 
     showDialog(
       context: context,
@@ -4561,20 +4673,34 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     isDense: true,
                   ),
                 ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  title: const Text('פתח מפה לכולם'),
-                  value: openMap,
+                const SizedBox(height: 12),
+                const Text('פתיחת מפה למנווטים:', style: TextStyle(fontWeight: FontWeight.bold)),
+                RadioListTile<int>(
+                  title: const Text('ללא פתיחת מפה'),
+                  value: 0,
+                  groupValue: emergencyMode,
                   activeColor: Colors.red,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setDialogState(() => openMap = v),
+                  dense: true,
+                  onChanged: (v) => setDialogState(() => emergencyMode = v!),
                 ),
-                SwitchListTile(
-                  title: const Text('הצג מיקום לכולם — מצב חירום'),
-                  value: showLocation,
+                RadioListTile<int>(
+                  title: const Text('פתח מפה ומיקום עצמי לכולם'),
+                  value: 1,
+                  groupValue: emergencyMode,
                   activeColor: Colors.red,
                   contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setDialogState(() => showLocation = v),
+                  dense: true,
+                  onChanged: (v) => setDialogState(() => emergencyMode = v!),
+                ),
+                RadioListTile<int>(
+                  title: const Text('פתח מפה + מיקום עצמי + מיקומי כל המשתתפים'),
+                  value: 2,
+                  groupValue: emergencyMode,
+                  activeColor: Colors.red,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  onChanged: (v) => setDialogState(() => emergencyMode = v!),
                 ),
               ],
             ),
@@ -4598,8 +4724,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       _sendEmergencyBroadcast(
                         messageController.text.trim(),
                         instructionsController.text.trim(),
-                        openMap,
-                        showLocation,
+                        emergencyMode,
                       );
                     },
             ),
@@ -4612,8 +4737,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Future<void> _sendEmergencyBroadcast(
     String message,
     String instructions,
-    bool openMap,
-    bool showLocation,
+    int emergencyMode,
   ) async {
     try {
       final participants = <String>{
@@ -4621,40 +4745,314 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ...widget.navigation.permissions.managers,
         widget.navigation.createdBy,
       }.toList();
-      await FirebaseFirestore.instance
+      final broadcastDoc = await FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
           .doc(widget.navigation.id)
           .collection('emergency_broadcasts')
           .add({
         'message': message,
         'instructions': instructions,
-        'openMap': openMap,
-        'showLocation': showLocation,
+        'emergencyMode': emergencyMode,
         'createdBy': _currentUser?.uid ?? '',
         'createdAt': FieldValue.serverTimestamp(),
         'participants': participants,
+        'acknowledgedBy': [],
+        'status': 'active',
       });
 
-      if (showLocation) {
-        await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(widget.navigation.id)
-            .update({'emergencyActive': true});
-      }
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .update({
+        'emergencyActive': true,
+        'emergencyMode': emergencyMode,
+        'activeBroadcastId': broadcastDoc.id,
+      });
     } catch (e) {
       print('DEBUG NavigationManagement: send emergency broadcast error: $e');
     }
   }
 
+  /// ביטול מצב חירום — עם אישור
+  void _showDeactivateConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ביטול מצב חירום'),
+        content: const Text('האם לבטל מצב חירום?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('לא'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _deactivateEmergencyMode();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('כן, חזרה לשגרה'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _deactivateEmergencyMode() async {
     try {
-      await FirebaseFirestore.instance
+      final participants = <String>{
+        ...widget.navigation.selectedParticipantIds,
+        ...widget.navigation.permissions.managers,
+        widget.navigation.createdBy,
+      }.toList();
+
+      final navRef = FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .update({'emergencyActive': false});
+          .doc(widget.navigation.id);
+
+      // עדכון סטטוס השידור המקורי
+      if (_activeBroadcastId != null) {
+        await navRef
+            .collection('emergency_broadcasts')
+            .doc(_activeBroadcastId)
+            .update({
+          'status': 'cancelled',
+          'cancelledAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // שידור ביטול — מסמך חדש ב-emergency_broadcasts (מפעיל Cloud Function)
+      final cancelDoc = await navRef
+          .collection('emergency_broadcasts')
+          .add({
+        'type': 'cancellation',
+        'message': 'חזרה לשגרה — המשך בניווט',
+        'originalBroadcastId': _activeBroadcastId ?? '',
+        'participants': participants,
+        'acknowledgedBy': [],
+        'createdBy': _currentUser?.uid ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // עדכון מסמך ניווט
+      await navRef.update({'emergencyActive': false});
+
+      // מעקב אישורי ביטול
+      setState(() {
+        _cancelBroadcastId = cancelDoc.id;
+        _cancelAcknowledgedBy = [];
+      });
+      _startCancelAckListener(cancelDoc.id);
+      _startCancelAutoRetryTimer(cancelDoc.id);
+
+      // ביטול מעקב חירום
+      _autoRetryTimer?.cancel();
+      _ackListener?.cancel();
     } catch (e) {
       print('DEBUG NavigationManagement: deactivate emergency error: $e');
     }
+  }
+
+  // =========================================================================
+  // Acknowledgment Tracking
+  // =========================================================================
+
+  void _startAckListener(String broadcastId) {
+    _ackListener?.cancel();
+    _ackListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('emergency_broadcasts')
+        .doc(broadcastId)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final data = snap.data();
+      if (data == null) return;
+      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
+      setState(() => _acknowledgedBy = acked);
+    });
+  }
+
+  void _startAutoRetryTimer(String broadcastId) {
+    _autoRetryTimer?.cancel();
+    _autoRetryTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _resendToUnacknowledged(broadcastId);
+    });
+  }
+
+  Future<void> _resendToUnacknowledged(String broadcastId) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('emergency_broadcasts')
+          .doc(broadcastId)
+          .get();
+
+      if (!doc.exists) return;
+      final data = doc.data()!;
+      final allParticipants = List<String>.from(data['participants'] ?? []);
+      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
+      final missing = allParticipants.where((p) => !acked.contains(p)).toList();
+
+      if (missing.isEmpty) {
+        _autoRetryTimer?.cancel();
+        return;
+      }
+
+      // שידור חוזר רק לחסרים
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('emergency_broadcasts')
+          .add({
+        'message': data['message'] ?? '',
+        'instructions': data['instructions'] ?? '',
+        'emergencyMode': data['emergencyMode'] ?? 0,
+        'createdBy': _currentUser?.uid ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+        'participants': missing,
+        'acknowledgedBy': [],
+        'status': 'retry',
+        'originalBroadcastId': broadcastId,
+      });
+    } catch (e) {
+      print('DEBUG NavigationManagement: auto-retry error: $e');
+    }
+  }
+
+  void _startCancelAckListener(String cancelBroadcastId) {
+    _cancelAckListener?.cancel();
+    _cancelAckListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('emergency_broadcasts')
+        .doc(cancelBroadcastId)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final data = snap.data();
+      if (data == null) return;
+      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
+      setState(() => _cancelAcknowledgedBy = acked);
+    });
+  }
+
+  void _startCancelAutoRetryTimer(String cancelBroadcastId) {
+    _cancelAutoRetryTimer?.cancel();
+    _cancelAutoRetryTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _resendCancelToUnacknowledged(cancelBroadcastId);
+    });
+  }
+
+  Future<void> _resendCancelToUnacknowledged(String cancelBroadcastId) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('emergency_broadcasts')
+          .doc(cancelBroadcastId)
+          .get();
+
+      if (!doc.exists) return;
+      final data = doc.data()!;
+      final allParticipants = List<String>.from(data['participants'] ?? []);
+      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
+      final missing = allParticipants.where((p) => !acked.contains(p)).toList();
+
+      if (missing.isEmpty) {
+        _cancelAutoRetryTimer?.cancel();
+        return;
+      }
+
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(widget.navigation.id)
+          .collection('emergency_broadcasts')
+          .add({
+        'type': 'cancellation',
+        'message': 'חזרה לשגרה — המשך בניווט',
+        'originalBroadcastId': cancelBroadcastId,
+        'participants': missing,
+        'acknowledgedBy': [],
+        'createdBy': _currentUser?.uid ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('DEBUG NavigationManagement: cancel auto-retry error: $e');
+    }
+  }
+
+  List<String> get _allEmergencyParticipants {
+    return <String>{
+      ...widget.navigation.selectedParticipantIds,
+      ...widget.navigation.permissions.managers,
+      widget.navigation.createdBy,
+    }.toList();
+  }
+
+  Widget _buildAckPanel({
+    required String title,
+    required List<String> acknowledgedBy,
+    required Color color,
+    required VoidCallback onResend,
+  }) {
+    final allParticipants = _allEmergencyParticipants;
+    final total = allParticipants.length;
+    final acked = acknowledgedBy.length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      color: color.withOpacity(0.1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(acked >= total ? Icons.check_circle : Icons.pending, color: color, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                '$title — $acked/$total אישרו קבלה',
+                style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
+              ),
+              const Spacer(),
+              if (acked < total)
+                TextButton.icon(
+                  icon: Icon(Icons.send, size: 14, color: color),
+                  label: Text('שלח שוב', style: TextStyle(fontSize: 12, color: color)),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 28),
+                  ),
+                  onPressed: onResend,
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 2,
+            children: allParticipants.map((uid) {
+              final ackd = acknowledgedBy.contains(uid);
+              final name = _userNames[uid] ?? uid;
+              return Chip(
+                avatar: Icon(ackd ? Icons.check : Icons.close, size: 14,
+                    color: ackd ? Colors.green : Colors.red),
+                label: Text(name, style: const TextStyle(fontSize: 11)),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showExtensionPopup(ExtensionRequest req) {

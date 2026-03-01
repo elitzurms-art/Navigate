@@ -455,6 +455,17 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
       final activePunches = punches.where((p) => !p.isDeleted).toList();
 
+      final verifiedCount = score != null
+          ? score.checkpointScores.values.where((cs) => cs.approved).length
+          : 0;
+      final verifiableCheckpointsCount = routeCps
+          .where((cp) => cp.type == 'checkpoint')
+          .length;
+      final plannedTimeMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+        routeLengthKm: route.routeLengthKm,
+        settings: widget.navigation.timeCalculationSettings,
+      );
+
       // חישוב פרופיל גובה
       final elevData = _analysisService.calculateElevationProfile(trackPoints: trackPoints);
 
@@ -472,6 +483,9 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         avgSpeedKmh: avgSpeedKmh,
         checkpointsHit: activePunches.length,
         totalCheckpoints: route.checkpointIds.length,
+        verifiedCount: verifiedCount,
+        verifiableCheckpointsCount: verifiableCheckpointsCount,
+        plannedTimeMinutes: plannedTimeMinutes,
         color: color,
         totalAscent: elevData.ascent,
         totalDescent: elevData.descent,
@@ -2574,7 +2588,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   style: TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 12))),
           DataColumn(
-              label: Text('נ.צ.\nשנדקרו',
+              label: Text('כמות\nדקירות',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12))),
+          DataColumn(
+              label: Text('נ.צ.\nשאומתו',
                   style: TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 12))),
           DataColumn(
@@ -2610,14 +2628,26 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             DataCell(Text(data.actualDistanceKm > 0
                 ? '${data.actualDistanceKm.toStringAsFixed(1)} ק"מ'
                 : '-')),
-            DataCell(Text(data.totalDuration.inSeconds > 0
-                ? _formatDuration(data.totalDuration)
-                : '-')),
+            DataCell(data.totalDuration.inSeconds > 0
+                ? (data.plannedTimeMinutes > 0
+                    ? Text(
+                        '${_formatDuration(data.totalDuration)}/${_formatDuration(Duration(minutes: data.plannedTimeMinutes))}',
+                        style: TextStyle(
+                          color: data.totalDuration.inMinutes < data.plannedTimeMinutes
+                              ? Colors.green
+                              : Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      )
+                    : Text(_formatDuration(data.totalDuration)))
+                : const Text('-')),
             DataCell(Text(data.avgSpeedKmh > 0
                 ? '${data.avgSpeedKmh.toStringAsFixed(1)} קמ"ש'
                 : '-')),
-            DataCell(Text(
-                '${data.checkpointsHit}/${data.totalCheckpoints}')),
+            DataCell(Text('${data.checkpointsHit}')),
+            DataCell(data.score != null
+                ? Text('${data.verifiedCount}/${data.verifiableCheckpointsCount}')
+                : const Text('-', style: TextStyle(color: Colors.grey))),
             DataCell(data.totalAscent > 0 || data.totalDescent > 0
                 ? Text('↑${data.totalAscent.round()} ↓${data.totalDescent.round()}',
                     style: const TextStyle(fontSize: 11))
@@ -4008,8 +4038,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
-    if (hours > 0) return '${hours}ש ${minutes}ד';
-    return '${minutes}ד';
+    return '$hours:${minutes.toString().padLeft(2, '0')}';
   }
 }
 
@@ -4030,6 +4059,9 @@ class _NavigatorData {
   final double avgSpeedKmh;
   final int checkpointsHit;
   final int totalCheckpoints;
+  final int verifiedCount;
+  final int verifiableCheckpointsCount;
+  final int plannedTimeMinutes;
   final Color color;
   final double totalAscent;
   final double totalDescent;
@@ -4048,6 +4080,9 @@ class _NavigatorData {
     required this.avgSpeedKmh,
     required this.checkpointsHit,
     required this.totalCheckpoints,
+    required this.verifiedCount,
+    required this.verifiableCheckpointsCount,
+    required this.plannedTimeMinutes,
     required this.color,
     this.totalAscent = 0,
     this.totalDescent = 0,

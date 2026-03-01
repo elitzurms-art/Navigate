@@ -25,6 +25,7 @@ class NavigatorMapScreen extends StatefulWidget {
   final User currentUser;
   final bool showSelfLocation;
   final bool showRoute;
+  final bool openedFromEmergency;
 
   const NavigatorMapScreen({
     super.key,
@@ -32,6 +33,7 @@ class NavigatorMapScreen extends StatefulWidget {
     required this.currentUser,
     this.showSelfLocation = false,
     this.showRoute = false,
+    this.openedFromEmergency = false,
   });
 
   @override
@@ -64,6 +66,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   // מצב חירום — הצגת כל המנווטים
   bool _emergencyActive = false;
+  int _emergencyMode = 0;
   List<Map<String, dynamic>> _emergencyNavigatorPositions = [];
   StreamSubscription<DocumentSnapshot>? _emergencyFlagSubscription;
   StreamSubscription<QuerySnapshot>? _emergencyTracksSubscription;
@@ -152,9 +155,22 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
         .listen((snap) {
       if (!mounted) return;
       final active = snap.data()?['emergencyActive'] == true;
+      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
+
       if (active != _emergencyActive) {
-        setState(() => _emergencyActive = active);
-        if (active) {
+        // חירום בוטל כשהמפה נפתחה מחירום → חזרה אחורה
+        if (!active && _emergencyActive && widget.openedFromEmergency) {
+          Navigator.of(context).pop();
+          return;
+        }
+
+        setState(() {
+          _emergencyActive = active;
+          _emergencyMode = mode;
+          if (active) _showNB = true;
+        });
+
+        if (active && mode >= 2) {
           _startEmergencyTracksListener();
         } else {
           _stopEmergencyTracksListener();

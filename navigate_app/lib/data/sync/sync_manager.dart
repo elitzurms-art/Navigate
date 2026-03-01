@@ -214,6 +214,16 @@ class SyncManager {
       final loggedInUid = prefs.getString('logged_in_uid');
       if (loggedInUid == null || loggedInUid.isEmpty) return;
 
+      // ניקוי תור סנכרון ישן בהחלפת משתמש — פריטים מהמשתמש הקודם
+      // מכוונים למסמכים שלמשתמש החדש אין הרשאה לכתוב, וגורמים לשגיאות
+      // permission-denied שמרעילות את ערוץ הכתיבה של Firestore gRPC
+      final previousOwner = prefs.getString('sync_queue_owner_uid');
+      if (previousOwner != null && previousOwner != loggedInUid) {
+        final purged = await _db.purgeAllUnsynced();
+        print('SyncManager: User changed ($previousOwner → $loggedInUid) — purged $purged stale sync items');
+      }
+      await prefs.setString('sync_queue_owner_uid', loggedInUid);
+
       _currentAppUid = loggedInUid;
 
       // קריאת המשתמש מה-DB המקומי
@@ -493,20 +503,6 @@ class SyncManager {
 
       final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
 
-      // Purge stale user items: navigator can only push changes to their OWN user doc.
-      // Items for other users are leftover from a previous login session (different user)
-      // and will always fail with permission-denied, poisoning the Firestore write stream.
-      if (item.collectionName == AppConstants.usersCollection &&
-          _currentAppUid != null &&
-          item.recordId != _currentAppUid &&
-          _currentRole != null &&
-          !['developer', 'admin', 'unit_admin', 'commander'].contains(_currentRole)) {
-        print('SyncManager: Purging stale user item ${item.id} '
-            '(record=${item.recordId}, currentUser=$_currentAppUid, role=$_currentRole)');
-        await _db.markAsSynced(item.id);
-        return;
-      }
-
       // הגנה על שדות הרשאה — role ו-isApproved סמכותיים ב-Firestore בלבד
       // (אותו pattern כמו completeLogin ב-auth_service.dart:390-391)
       if (item.collectionName == AppConstants.usersCollection &&
@@ -765,10 +761,10 @@ class SyncManager {
   /// כדי למנוע מחיקה של רשומות שנוצרו מקומית אבל עדיין לא הועלו ל-Firestore.
   Future<void> _reconcileDeletedRecords() async {
     final collectionsToReconcile = {
-      AppConstants.usersCollection: () async => (await _db.select(_db.users).get()).map((u) => u.uid).toList(),
+      // users לא כלול — מחיקת משתמשים מטופלת ע"י soft-delete (deletedAt) ב-_upsertUser() בזמן pull sync
       AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
       AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
-      AppConstants.navigationsCollection: () async => (await _db.select(_db.navigations).get()).map((n) => n.id).toList(),
+      AppConstants.navigationsCollection: () async => (await (_db.select(_db.navigations)..where((n) => n.deletedAt.isNull())).get()).map((n) => n.id).toList(),
     };
 
     for (final entry in collectionsToReconcile.entries) {
@@ -1113,7 +1109,9 @@ class SyncManager {
           break;
         case AppConstants.navigationsCollection:
           NavigationRepository.markAsRecentlyDeleted(documentId);
-          await (_db.delete(_db.navigations)..where((t) => t.id.equals(documentId))).go();
+          // soft-delete — סימון deletedAt במקום מחיקת השורה (שימור היסטוריה)
+          await (_db.update(_db.navigations)..where((t) => t.id.equals(documentId)))
+              .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
           break;
         default:
           print('SyncManager: No local delete handler for collection $collection');
@@ -1944,8 +1942,10 @@ class SyncManager {
       case 'navigations':
         // סינון לפי participants — רק ניווטים שהמשתמש הנוכחי משתתף בהם
         if (_currentAppUid != null) {
+          print('SyncManager: Building navigations query — participants arrayContains $_currentAppUid');
           return baseQuery.where('participants', arrayContains: _currentAppUid);
         }
+        print('SyncManager: WARNING — _currentAppUid is null, navigations query unscoped');
         return baseQuery;
 
       default:

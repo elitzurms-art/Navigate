@@ -213,6 +213,7 @@ class Navigations extends Table {
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
   DateTimeColumn get activeStartTime => dateTime().nullable()();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -407,7 +408,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 35;
+  int get schemaVersion => 36;
 
   @override
   MigrationStrategy get migration {
@@ -645,6 +646,9 @@ class AppDatabase extends _$AppDatabase {
               END
           """);
         }
+        if (from <= 35 && to >= 36) {
+          await safeAddColumn(navigations, navigations.deletedAt);
+        }
       },
     );
   }
@@ -673,6 +677,13 @@ class AppDatabase extends _$AppDatabase {
       synced: const Value(true),
       syncedAt: Value(DateTime.now()),
     ));
+  }
+
+  /// מחיקת כל הרשומות שלא סונכרנו (לניקוי תור סנכרון ישן בהחלפת משתמש)
+  Future<int> purgeAllUnsynced() async {
+    return await (delete(syncQueue)
+      ..where((tbl) => tbl.synced.equals(false)))
+        .go();
   }
 
   /// קבלת רשומות ממתינות לסנכרון (FIFO - לפי סדר יצירה)

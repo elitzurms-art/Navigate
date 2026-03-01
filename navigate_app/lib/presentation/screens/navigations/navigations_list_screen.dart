@@ -504,7 +504,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         return '$name  -  $navNames';
       }).join('\n');
 
-      final confirmed = await showDialog<bool>(
+      await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Row(
@@ -530,7 +530,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'האם להמשיך בכל זאת?',
+                  'סיים את הניווטים הפעילים ולאחר מכן נסה שוב.',
                   style: TextStyle(color: Colors.red),
                 ),
               ],
@@ -538,19 +538,14 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('ביטול'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('המשך בכל זאת'),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('הבנתי'),
             ),
           ],
         ),
       );
 
-      return confirmed == true;
+      return false;
     } catch (e) {
       print('DEBUG: Error checking navigator conflicts: $e');
       // במקרה של שגיאה, מאפשרים להמשיך
@@ -953,8 +948,6 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   /// פתיחת מסך מתאים לפי סטטוס הניווט
   Future<void> _openNavigationScreen(domain.Navigation navigation) async {
-    print('DEBUG NavList: opening navigation "${navigation.name}" status=${navigation.status} '
-        'user=${_currentUser?.uid} isCommander=${_currentUser?.hasCommanderPermissions}');
     // מצבים שדורשים טעינת נתונים אופליין לפני כניסה
     final needsDataLoading = [
       'waiting',

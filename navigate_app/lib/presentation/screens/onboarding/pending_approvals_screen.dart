@@ -105,10 +105,9 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
           );
         });
       } else {
-        // developer — כל המשתמשים עם unitId
+        // developer — כל המשתמשים (סינון unitId בצד הקליינט)
         _firestoreListener = FirebaseFirestore.instance
             .collection('users')
-            .where('unitId', isNotEqualTo: null)
             .snapshots()
             .listen(
           _onFirestoreSnapshot,
@@ -177,9 +176,8 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
       if (unitIds != null && unitIds.isNotEmpty) {
         final batch = unitIds.length > 10 ? unitIds.sublist(0, 10) : unitIds;
         query = query.where('unitId', whereIn: batch);
-      } else {
-        query = query.where('unitId', isNotEqualTo: null);
       }
+      // developer — ללא סינון בשאילתה, סינון unitId בצד הקליינט
 
       final snapshot = await query.get().timeout(const Duration(seconds: 8));
       final users = <User>[];

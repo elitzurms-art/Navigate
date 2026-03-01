@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../services/route_analysis_service.dart';
-import '../../services/scoring_service.dart';
 
 /// ווידג'ט השוואת מנווטים — כרטיסי השוואה מדורגים
 class NavigatorComparisonWidget extends StatelessWidget {
@@ -38,16 +37,12 @@ class NavigatorComparisonWidget extends StatelessWidget {
 
   Widget _buildComparisonCard(
       BuildContext context, NavigatorComparison comp, Color color, int rank) {
-    final scoreColor = ScoringService.getScoreColor(comp.overallScore.round());
     final stats = comp.statistics;
 
     // חישוב ציוני משנה מנתונים
     final checkpointPct = stats.totalCheckpoints > 0
         ? (stats.checkpointsPunched / stats.totalCheckpoints) * 100
         : 0.0;
-    final deviationPct = stats.deviationCount == 0
-        ? 100.0
-        : (100.0 - (stats.maxDeviation / 10).clamp(0.0, 100.0));
     final avgDeviationM = stats.deviationCount > 0
         ? stats.totalDeviationDistance / stats.deviationCount
         : 0.0;
@@ -100,24 +95,6 @@ class NavigatorComparisonWidget extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-
-                // ציון כולל
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: scoreColor.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: scoreColor, width: 1.5),
-                  ),
-                  child: Text(
-                    '${comp.overallScore.round()}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: scoreColor,
-                    ),
-                  ),
-                ),
               ],
             ),
             const SizedBox(height: 10),
@@ -127,7 +104,7 @@ class NavigatorComparisonWidget extends StatelessWidget {
                 checkpointPct, Colors.green),
             const SizedBox(height: 6),
             _buildMetricBar('דיוק מסלול',
-                deviationPct, Colors.blue),
+                stats.routeAccuracyPercent, Colors.blue),
 
             // פרטי מרחק
             const SizedBox(height: 8),

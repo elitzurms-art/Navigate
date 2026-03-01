@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ import 'navigator_views/system_check_view.dart';
 import 'navigator_views/active_view.dart';
 import 'navigator_views/review_view.dart';
 import 'navigator_views/navigator_map_screen.dart';
+import 'navigation_history_list_screen.dart';
 
 /// מסך בית למנווט — container screen עם drawer ותוכן inline
 class NavigatorHomeScreen extends StatefulWidget {
@@ -61,7 +63,13 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   // שידור חירום
   AudioPlayer? _emergencyPlayer;
   StreamSubscription<RemoteMessage>? _emergencySubscription;
+  StreamSubscription<DocumentSnapshot>? _emergencyFirestoreListener;
   Timer? _vibrationTimer;
+  bool _emergencyDialogShowing = false;
+  bool _routineDialogShowing = false;
+  bool _wasInEmergency = false;
+  String? _currentBroadcastId;
+  String? _lastShownBroadcastId;
 
   Timer? _pollTimer;
   Timer? _scorePollTimer;
@@ -103,21 +111,113 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       ),
     ));
 
-    // האזנה לשידורי חירום foreground
-    _emergencySubscription = NotificationService().emergencyBroadcastStream
-        .listen(_handleEmergencyBroadcast);
+    // האזנה לשידורי חירום foreground (FCM) — לא נתמך ב-Windows
+    if (!Platform.isWindows) {
+      _emergencySubscription = NotificationService().emergencyBroadcastStream
+          .listen(_handleEmergencyFCM);
 
-    // טיפול בהודעה שנפתחה מרקע/terminated
-    final pending = NotificationService().consumePendingEmergency();
-    if (pending != null) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _handleEmergencyBroadcast(pending),
-      );
+      // טיפול בהודעה שנפתחה מרקע/terminated
+      final pending = NotificationService().consumePendingEmergency();
+      if (pending != null) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _handleEmergencyFCM(pending),
+        );
+      }
     }
   }
 
-  void _handleEmergencyBroadcast(RemoteMessage message) {
+  /// Firestore listener — fallback אמין למצב חירום (עובד גם עם מסך כבוי)
+  void _startEmergencyFirestoreListener(String navigationId) {
+    _emergencyFirestoreListener?.cancel();
+    _emergencyFirestoreListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final active = snap.data()?['emergencyActive'] == true;
+      final broadcastId = snap.data()?['activeBroadcastId'] as String?;
+      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
+
+      if (active && !_emergencyDialogShowing && broadcastId != null && broadcastId != _lastShownBroadcastId) {
+        // חירום חדש — טעינת פרטי השידור מ-Firestore
+        _currentBroadcastId = broadcastId;
+        FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(navigationId)
+            .collection('emergency_broadcasts')
+            .doc(broadcastId)
+            .get()
+            .then((doc) {
+          if (!mounted || _emergencyDialogShowing) return;
+          final data = doc.data() ?? {};
+          _showEmergencyDialog(
+            message: data['message'] as String? ?? '',
+            instructions: data['instructions'] as String? ?? '',
+            emergencyMode: mode,
+            broadcastId: broadcastId,
+          );
+        });
+      } else if (!active && _wasInEmergency) {
+        // חירום בוטל — הצגת דיאלוג "חזרה לשגרה"
+        _wasInEmergency = false;
+        // מציאת cancellation doc
+        FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(navigationId)
+            .collection('emergency_broadcasts')
+            .where('type', isEqualTo: 'cancellation')
+            .orderBy('createdAt', descending: true)
+            .limit(1)
+            .get()
+            .then((snap) {
+          if (!mounted) return;
+          final cancelBroadcastId = snap.docs.isNotEmpty ? snap.docs.first.id : null;
+          _showReturnToRoutineDialog(cancelBroadcastId: cancelBroadcastId);
+        }).catchError((_) {
+          if (mounted) _showReturnToRoutineDialog();
+        });
+      }
+    });
+  }
+
+  /// טיפול בהודעת FCM — חירום או ביטול
+  void _handleEmergencyFCM(RemoteMessage message) {
     if (!mounted) return;
+    final type = message.data['type'] ?? '';
+    if (type == 'emergencyCancelled') {
+      // ביטול חירום הגיע דרך FCM
+      if (_wasInEmergency) {
+        _wasInEmergency = false;
+        final broadcastId = message.data['broadcastId'] as String?;
+        _showReturnToRoutineDialog(cancelBroadcastId: broadcastId);
+      }
+      return;
+    }
+    // emergencyBroadcast
+    if (_emergencyDialogShowing || _routineDialogShowing) return;
+    final broadcastId = message.data['broadcastId'] as String?;
+    _currentBroadcastId = broadcastId;
+    final emergencyMode = int.tryParse(message.data['emergencyMode'] ?? '') ?? 0;
+    _showEmergencyDialog(
+      message: message.data['message'] ?? '',
+      instructions: message.data['instructions'] ?? '',
+      emergencyMode: emergencyMode,
+      broadcastId: broadcastId,
+    );
+  }
+
+  /// דיאלוג חירום — מוצג גם מ-FCM וגם מ-Firestore listener
+  void _showEmergencyDialog({
+    required String message,
+    required String instructions,
+    required int emergencyMode,
+    String? broadcastId,
+  }) {
+    if (_emergencyDialogShowing || _routineDialogShowing) return;
+    _emergencyDialogShowing = true;
+    _wasInEmergency = true;
+    _lastShownBroadcastId = broadcastId;
 
     // הפעלת אזעקה
     _emergencyPlayer?.setReleaseMode(ReleaseMode.loop);
@@ -128,11 +228,6 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       HapticFeedback.heavyImpact();
     });
-
-    final msg = message.data['message'] ?? '';
-    final instructions = message.data['instructions'] ?? '';
-    final openMap = message.data['openMap'] == 'true';
-    final showLocation = message.data['showLocation'] == 'true';
 
     showDialog(
       context: context,
@@ -151,8 +246,16 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (msg.isNotEmpty)
-                Text(msg, style: const TextStyle(fontSize: 16)),
+              if (message.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
               if (instructions.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -168,10 +271,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                       const Icon(Icons.info_outline, color: Colors.orange, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
-                          instructions,
-                          style: const TextStyle(fontSize: 14),
-                        ),
+                        child: Text(instructions, style: const TextStyle(fontSize: 14)),
                       ),
                     ],
                   ),
@@ -193,9 +293,103 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                 onPressed: () {
                   _emergencyPlayer?.stop();
                   _vibrationTimer?.cancel();
+                  _emergencyDialogShowing = false;
                   Navigator.of(ctx).pop();
-                  if (openMap && _currentNavigation != null && _currentUser != null) {
-                    _openMapScreen(showRoute: true, showSelfLocation: showLocation);
+
+                  // כתיבת אישור קבלה
+                  if (broadcastId != null && _currentNavigation != null && _currentUser != null) {
+                    FirebaseFirestore.instance
+                        .collection(AppConstants.navigationsCollection)
+                        .doc(_currentNavigation!.id)
+                        .collection('emergency_broadcasts')
+                        .doc(broadcastId)
+                        .update({'acknowledgedBy': FieldValue.arrayUnion([_currentUser!.uid])});
+                  }
+
+                  // פתיחת מפה לפי מצב
+                  if (_currentNavigation != null && _currentUser != null) {
+                    if (emergencyMode == 1) {
+                      _openMapScreen(showSelfLocation: true);
+                    } else if (emergencyMode >= 2) {
+                      _openMapScreen(showSelfLocation: true, openedFromEmergency: true);
+                    }
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// דיאלוג חזרה לשגרה
+  void _showReturnToRoutineDialog({String? cancelBroadcastId}) {
+    if (_routineDialogShowing) return;
+
+    // סגירת דיאלוג חירום אם עדיין פתוח
+    if (_emergencyDialogShowing) {
+      _emergencyPlayer?.stop();
+      _vibrationTimer?.cancel();
+      _emergencyDialogShowing = false;
+      Navigator.of(context).pop();
+    }
+
+    _routineDialogShowing = true;
+
+    // הפעלת אזעקה
+    _emergencyPlayer?.setReleaseMode(ReleaseMode.loop);
+    _emergencyPlayer?.play(AssetSource('sounds/alert_beep.wav'));
+
+    // רטט כל 2 שניות
+    _vibrationTimer?.cancel();
+    _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      HapticFeedback.heavyImpact();
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.green[50],
+          icon: const Icon(Icons.check_circle, color: Colors.green, size: 48),
+          title: const Text(
+            'חזרה לשגרה',
+            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          content: const Text(
+            'חזרה לשגרה — המשך בניווט',
+            style: TextStyle(fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle),
+                label: const Text('אישור'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () {
+                  _emergencyPlayer?.stop();
+                  _vibrationTimer?.cancel();
+                  _routineDialogShowing = false;
+                  Navigator.of(ctx).pop();
+
+                  // כתיבת אישור קבלה לביטול
+                  if (cancelBroadcastId != null && _currentNavigation != null && _currentUser != null) {
+                    FirebaseFirestore.instance
+                        .collection(AppConstants.navigationsCollection)
+                        .doc(_currentNavigation!.id)
+                        .collection('emergency_broadcasts')
+                        .doc(cancelBroadcastId)
+                        .update({'acknowledgedBy': FieldValue.arrayUnion([_currentUser!.uid])});
                   }
                 },
               ),
@@ -214,6 +408,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _navigationListener?.cancel();
     _syncSubscription?.cancel();
     _emergencySubscription?.cancel();
+    _emergencyFirestoreListener?.cancel();
     _emergencyPlayer?.dispose();
     _vibrationTimer?.cancel();
     super.dispose();
@@ -316,6 +511,12 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final navigations = await _navigationRepo.getAll();
       if (!mounted) return;
 
+      // Diagnostic: log navigation search results
+      final myNavs = navigations.where((n) =>
+          n.routes.containsKey(user.uid) || n.selectedParticipantIds.contains(user.uid)).toList();
+      print('DEBUG _loadState: uid=${user.uid}, total navigations=${navigations.length}, '
+          'matching=${myNavs.length}, statuses=${myNavs.map((n) => "${n.id}:${n.status}").toList()}');
+
       domain.Navigation? bestNav;
       int bestPriority = -1;
 
@@ -350,6 +551,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       // התחלת listener בזמן אמת אם הניווט השתנה
       if (_currentNavigation?.id != bestNav.id) {
         _startNavigationListener(bestNav.id);
+        _startEmergencyFirestoreListener(bestNav.id);
       }
 
       if (!mounted) return;
@@ -595,7 +797,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   }
 
   /// פתיחת מסך מפה מהתפריט
-  void _openMapScreen({bool showSelfLocation = false, bool showRoute = false}) {
+  void _openMapScreen({
+    bool showSelfLocation = false,
+    bool showRoute = false,
+    bool openedFromEmergency = false,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => NavigatorMapScreen(
@@ -603,6 +809,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           currentUser: _currentUser!,
           showSelfLocation: showSelfLocation,
           showRoute: showRoute,
+          openedFromEmergency: openedFromEmergency,
         ),
       ),
     );
@@ -681,13 +888,24 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             if (!isActive && nav != null && nav.learningSettings.isQuizCurrentlyOpen)
               _buildQuizDrawerItem(),
 
-            // היסטוריית ניווטים — לא מוצג במצב ניווט פעיל
-            if (!isActive) ListTile(
-              leading: const Icon(Icons.history, color: Colors.grey),
-              title: const Text('היסטוריית ניווטים'),
-              subtitle: const Text('בפיתוח'),
-              enabled: false,
-            ),
+            // היסטוריית ניווטים — רק כשאין ניווט פעיל או בהכנה
+            if (_state == NavigatorScreenState.noActiveNavigation ||
+                _state == NavigatorScreenState.preparation)
+              ListTile(
+                leading: const Icon(Icons.history, color: Colors.blue),
+                title: const Text('היסטוריית ניווטים'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => NavigationHistoryListScreen(
+                        currentUser: _currentUser!,
+                      ),
+                    ),
+                  );
+                },
+              ),
 
             // מפה פתוחה — רק במצב active + (allowOpenMap ברמת ניווט או דריסה פר-מנווט)
             if (isActive && nav != null && (nav.allowOpenMap || _perNavigatorAllowOpenMap)) ...[

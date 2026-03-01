@@ -350,17 +350,13 @@ class AuthService {
       }
 
       // קריאה ל-Cloud Function לקביעת custom claims + כתיבת activeSessionId
-      // (הפונקציה רצה עם admin SDK — עוקפת חוקי Firestore, תמיד מצליחה)
+      // CF blocks until claims verified server-side — no race condition
       String sessionId = '${personalNumber}_${DateTime.now().millisecondsSinceEpoch}';
       try {
-        final result = await _callCloudFunction('initSession', {'personalNumber': personalNumber});
-        // רענון token כדי לקבל claims חדשים
-        await firebaseUser.getIdToken(true);
-        // שימוש ב-sessionId שהשרת כתב ל-Firestore
+        final result = await initSessionClaims(personalNumber);
         if (result['sessionId'] != null) {
           sessionId = result['sessionId'] as String;
         }
-        print('DEBUG: initSession called + token refreshed for $personalNumber');
       } catch (e) {
         print('DEBUG: initSession call failed: $e');
         // fallback: ניסיון כתיבה ישירה (עלול להיכשל אם אין claims)
@@ -666,32 +662,54 @@ class AuthService {
     return null;
   }
 
+  /// Mutex: prevent duplicate concurrent initSession calls
+  Future<Map<String, dynamic>>? _initSessionInFlight;
+
   /// קריאה ל-initSession Cloud Function — קובעת custom claims + מרעננת token
   /// נקראת מ-main.dart _ensureFirebaseAuth ומ-completeLogin
-  Future<void> initSessionClaims(String personalNumber) async {
-    await _callCloudFunction('initSession', {'personalNumber': personalNumber});
-    await _auth.currentUser?.getIdToken(true);
+  /// CF blocks until claims verified server-side — no client guessing
+  Future<Map<String, dynamic>> initSessionClaims(String personalNumber) {
+    if (_initSessionInFlight != null) return _initSessionInFlight!;
+    _initSessionInFlight = _doInitSessionClaims(personalNumber)
+        .whenComplete(() => _initSessionInFlight = null);
+    return _initSessionInFlight!;
+  }
 
-    // דסקטופ: רענון כפול — platform-channel threading ב-Windows עלול לשמור token ישן
-    if (isDesktopPlatform) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      await _auth.currentUser?.getIdToken(true);
-    }
+  Future<Map<String, dynamic>> _doInitSessionClaims(String personalNumber) async {
+    final user = _auth.currentUser;
+    if (user == null) return {};
 
-    // אימות claims — פענוח JWT ולוג לבדיקה
-    try {
-      final token = await _auth.currentUser?.getIdToken(false);
-      if (token != null) {
-        final parts = token.split('.');
-        if (parts.length == 3) {
-          final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
-          final claims = jsonDecode(payload) as Map<String, dynamic>;
-          print('DEBUG initSessionClaims: role=${claims['role']}, appUid=${claims['appUid']}, unitId=${claims['unitId']}');
+    // CF blocks until claims verified server-side — single refresh suffices
+    final result = await _callCloudFunction('initSession', {'personalNumber': personalNumber});
+    await user.getIdToken(true);
+
+    // Verify claims actually contain the expected appUid.
+    // Safety net for propagation delays (Windows platform-channel threading,
+    // network latency, or CF deployment lag).
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        final token = await user.getIdToken(false);
+        if (token != null) {
+          final parts = token.split('.');
+          if (parts.length == 3) {
+            final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+            final claims = jsonDecode(payload) as Map<String, dynamic>;
+            print('DEBUG initSessionClaims: attempt=$attempt, role=${claims['role']}, appUid=${claims['appUid']}, unitId=${claims['unitId']}');
+            if (claims['appUid'] == personalNumber) {
+              return result; // Claims verified
+            }
+          }
         }
+      } catch (e) {
+        print('DEBUG initSessionClaims: JWT decode failed (attempt $attempt): $e');
       }
-    } catch (e) {
-      print('DEBUG initSessionClaims: JWT decode failed: $e');
+      // Claims not set yet — wait and force-refresh
+      await Future.delayed(const Duration(milliseconds: 500));
+      await user.getIdToken(true);
     }
+
+    print('WARNING initSessionClaims: claims verification failed after 3 attempts for $personalNumber');
+    return result;
   }
 
   // ─── אימות Email OTP (דסקטופ) ───
