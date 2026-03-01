@@ -1024,10 +1024,16 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         );
       }
 
+      // זיהוי המשך ניווט — מנווט שסיים והמפקד חידש אותו
+      final isActive = data['isActive'] as bool? ?? true;
+      if (_personalStatus == NavigatorPersonalStatus.finished && isActive) {
+        _performRemoteResume();
+        return;
+      }
+
       // שאר הלוגיקה רלוונטית רק במצב פעיל
       if (_personalStatus != NavigatorPersonalStatus.active) return;
 
-      final isActive = data['isActive'] as bool? ?? true;
       if (!isActive) {
         // המפקד עצר את הניווט
         _performRemoteStop();
@@ -1205,6 +1211,51 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         const SnackBar(
           content: Text('הניווט הופסק על ידי המפקד'),
           backgroundColor: Colors.orange,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  /// המשך ניווט מרחוק — המפקד חידש את ה-track, המנווט ממשיך מאיפה שנעצר
+  Future<void> _performRemoteResume() async {
+    if (_track == null) return;
+
+    // עדכון Drift מקומי
+    try {
+      await _trackRepo.resumeNavigation(_track!.id);
+    } catch (_) {}
+
+    // חזרה למצב פעיל
+    _startTime = _track!.startedAt;
+    _elapsed = DateTime.now().difference(_startTime!);
+    _manualPositionUsed = false;
+    _hadGpsFix = false;
+
+    if (mounted) {
+      setState(() {
+        _personalStatus = NavigatorPersonalStatus.active;
+        _isLoading = false;
+      });
+
+      // הפעלת שירותים — כמו נתיב "already active on reload"
+      _startElapsedTimer();
+      _startSecurity();
+      if (!_isGroupSecondary) {
+        _startGpsTracking();
+        _startGpsSourceCheck();
+        _startHealthCheck();
+        _startAlertMonitoring();
+        _startExtensionListener();
+        _checkExistingBarburAlert();
+      }
+      _startStatusReporting();
+
+      HapticFeedback.mediumImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('הניווט ממשיך'),
+          backgroundColor: Colors.blue,
           duration: Duration(seconds: 5),
         ),
       );

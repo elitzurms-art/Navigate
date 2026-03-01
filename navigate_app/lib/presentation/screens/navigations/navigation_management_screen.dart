@@ -1392,6 +1392,89 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     }
   }
 
+  /// המשך ניווט — חידוש track קיים, מנווט ממשיך מאיפה שנעצר
+  Future<void> _resumeNavigatorNavigation(String navigatorId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('המשך ניווט'),
+        content: Text('להמשיך את הניווט עבור $navigatorId?\n\nהניווט ימשיך מאיפה שנעצר.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.blue),
+            child: const Text('המשך ניווט'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // מציאת track קיים ב-Firestore
+      final snapshot = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: widget.navigation.id)
+          .where('navigatorUserId', isEqualTo: navigatorId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('לא נמצא track עבור $navigatorId'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final trackDoc = snapshot.docs.first;
+
+      // עדכון Firestore — isActive=true, endedAt=null
+      await trackDoc.reference.update({
+        'isActive': true,
+        'endedAt': null,
+      });
+
+      // עדכון Drift מקומי
+      await _trackRepo.resumeNavigation(trackDoc.id);
+
+      // עדכון UI מקומי
+      if (mounted) {
+        setState(() {
+          final data = _navigatorData[navigatorId];
+          if (data != null) {
+            data.personalStatus = NavigatorPersonalStatus.active;
+            data.trackEndedAt = null;
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$navigatorId ממשיך ניווט'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בהמשך ניווט: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// איפוס ניווט — מחיקת track + דקירות, מנווט חוזר למסך המתנה נקי
   Future<void> _resetNavigatorNavigation(String navigatorId) async {
     final confirmed = await showDialog<bool>(
@@ -1562,6 +1645,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           case 'start':
             _startNavigatorNavigation(navigatorId);
             break;
+          case 'resume':
+            _resumeNavigatorNavigation(navigatorId);
+            break;
           case 'reset':
             _resetNavigatorNavigation(navigatorId);
             break;
@@ -1584,9 +1670,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
-        // התחלת ניווט — waiting או finished
-        if (status == NavigatorPersonalStatus.waiting ||
-            status == NavigatorPersonalStatus.finished)
+        // התחלת ניווט — רק waiting
+        if (status == NavigatorPersonalStatus.waiting)
           const PopupMenuItem(
             value: 'start',
             child: Row(
@@ -1594,6 +1679,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 Icon(Icons.play_circle, color: Colors.green, size: 20),
                 SizedBox(width: 8),
                 Text('התחלת ניווט', style: TextStyle(color: Colors.green)),
+              ],
+            ),
+          ),
+        // המשך ניווט — רק finished
+        if (status == NavigatorPersonalStatus.finished)
+          const PopupMenuItem(
+            value: 'resume',
+            child: Row(
+              children: [
+                Icon(Icons.play_circle, color: Colors.blue, size: 20),
+                SizedBox(width: 8),
+                Text('המשך ניווט', style: TextStyle(color: Colors.blue)),
               ],
             ),
           ),
@@ -4764,11 +4861,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     int emergencyMode,
   ) async {
     try {
+      final me = _currentUser?.uid;
       final participants = <String>{
         ...widget.navigation.selectedParticipantIds,
         ...widget.navigation.permissions.managers,
         widget.navigation.createdBy,
-      }.toList();
+      }.where((uid) => uid != me).toList();
       final broadcastDoc = await FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
           .doc(widget.navigation.id)
@@ -4827,11 +4925,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _deactivateEmergencyMode() async {
     try {
+      final me = _currentUser?.uid;
       final participants = <String>{
         ...widget.navigation.selectedParticipantIds,
         ...widget.navigation.permissions.managers,
         widget.navigation.createdBy,
-      }.toList();
+      }.where((uid) => uid != me).toList();
 
       final navRef = FirebaseFirestore.instance
           .collection(AppConstants.navigationsCollection)
@@ -5015,11 +5114,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   List<String> get _allEmergencyParticipants {
+    final me = _currentUser?.uid;
     return <String>{
       ...widget.navigation.selectedParticipantIds,
       ...widget.navigation.permissions.managers,
       widget.navigation.createdBy,
-    }.toList();
+    }.where((uid) => uid != me).toList();
   }
 
   Widget _buildAckPanel({

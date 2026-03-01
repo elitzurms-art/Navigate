@@ -112,6 +112,16 @@ class NavigationTrackRepository {
     ));
   }
 
+  /// המשך ניווט — עדכון isActive=true, endedAt=null (הפוך מ-endNavigation)
+  Future<void> resumeNavigation(String trackId) async {
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(const NavigationTracksCompanion(
+      isActive: Value(true),
+      endedAt: Value(null),
+    ));
+  }
+
   /// שליפת track לפי מזהה
   Future<NavigationTrack> getById(String trackId) async {
     return await (_db.select(_db.navigationTracks)
