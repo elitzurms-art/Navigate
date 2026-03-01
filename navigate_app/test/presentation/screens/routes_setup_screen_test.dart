@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:navigate_app/presentation/screens/navigations/routes_setup_screen.dart';
 import 'package:navigate_app/domain/entities/navigation.dart';
 import 'package:navigate_app/domain/entities/navigation_settings.dart';
-import 'package:navigate_app/domain/entities/security_violation.dart';
 
 Navigation _createTestNavigation() {
   final now = DateTime.now();

@@ -22,6 +22,7 @@ class AssignedRoute extends Equatable {
   final String? groupId; // מזהה קבוצה (לקישור בין מנווטים באותו ציר)
   final String? segmentType; // 'full', 'first_half', 'second_half' (רלוונטי למאבטח)
   final String? swapPointId; // נקודת ההחלפה (רלוונטי למאבטח)
+  final int? manualTimeMinutes; // זמן ידני (דקות) — דורס את החישוב האוטומטי
 
   /// תאימות אחורה — isApproved נגזר מ-approvalStatus
   bool get isApproved => approvalStatus == 'approved';
@@ -42,6 +43,7 @@ class AssignedRoute extends Equatable {
     this.groupId,
     this.segmentType,
     this.swapPointId,
+    this.manualTimeMinutes,
   });
 
   AssignedRoute copyWith({
@@ -61,6 +63,8 @@ class AssignedRoute extends Equatable {
     String? groupId,
     String? segmentType,
     String? swapPointId,
+    int? manualTimeMinutes,
+    bool clearManualTimeMinutes = false,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -78,6 +82,7 @@ class AssignedRoute extends Equatable {
       groupId: groupId ?? this.groupId,
       segmentType: segmentType ?? this.segmentType,
       swapPointId: swapPointId ?? this.swapPointId,
+      manualTimeMinutes: clearManualTimeMinutes ? null : (manualTimeMinutes ?? this.manualTimeMinutes),
     );
   }
 
@@ -101,6 +106,7 @@ class AssignedRoute extends Equatable {
       if (groupId != null) 'groupId': groupId,
       if (segmentType != null) 'segmentType': segmentType,
       if (swapPointId != null) 'swapPointId': swapPointId,
+      if (manualTimeMinutes != null) 'manualTimeMinutes': manualTimeMinutes,
     };
   }
 
@@ -136,11 +142,12 @@ class AssignedRoute extends Equatable {
       groupId: map['groupId'] as String?,
       segmentType: map['segmentType'] as String?,
       swapPointId: map['swapPointId'] as String?,
+      manualTimeMinutes: map['manualTimeMinutes'] as int?,
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId, manualTimeMinutes];
 }
 
 /// אפשרות אישור כשחלוקה חורגת מהטווח

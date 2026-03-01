@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../services/auth_service.dart';
+import '../../../services/auth_service.dart' show AuthService, ActiveSessionCheckResult;
 import '../../../services/session_service.dart';
 
 /// מטרת האימות — כניסה או הרשמה
@@ -106,6 +106,17 @@ class _SmsVerificationScreenState extends State<SmsVerificationScreen> {
 
     try {
       if (widget.purpose == VerificationPurpose.login) {
+        // בדיקת session פעיל במכשיר אחר
+        final sessionCheck = await _authService.checkActiveSession(widget.personalNumber);
+        if (!mounted) return;
+
+        if (sessionCheck == ActiveSessionCheckResult.activeSessionExists) {
+          setState(() => _isLoading = false);
+          final forceLogin = await AuthService.showActiveSessionDialog(context);
+          if (!forceLogin || !mounted) return;
+          setState(() => _isLoading = true);
+        }
+
         // כניסה — שמירת session ומעבר לבית
         await _authService.completeLogin(widget.personalNumber);
         await SessionService().clearSession();

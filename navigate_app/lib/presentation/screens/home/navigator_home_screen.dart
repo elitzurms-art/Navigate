@@ -72,7 +72,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   String? _lastShownBroadcastId;
 
   Timer? _pollTimer;
-  Timer? _scorePollTimer;
+  StreamSubscription<List<Map<String, dynamic>>>? _scoreSubscription;
   Timer? _debounceTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
   StreamSubscription<String>? _syncSubscription;
@@ -399,7 +399,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   void dispose() {
     _debounceTimer?.cancel();
     _pollTimer?.cancel();
-    _scorePollTimer?.cancel();
+    _scoreSubscription?.cancel();
     _navigationListener?.cancel();
     _syncSubscription?.cancel();
     _emergencySubscription?.cancel();
@@ -578,52 +578,39 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   }
 
   /// טעינת ציון מנווט מ-Firestore (אם בשלב תחקור/אישור)
-  Future<void> _loadNavigatorScore() async {
+  /// משתמשת ב-Firestore realtime listener במקום polling
+  void _loadNavigatorScore() {
     final nav = _currentNavigation;
     final user = _currentUser;
     if (nav == null || user == null) return;
 
     final status = nav.status;
     if (status != 'approval' && status != 'review') {
-      _scorePollTimer?.cancel();
-      _scorePollTimer = null;
+      _scoreSubscription?.cancel();
+      _scoreSubscription = null;
       if (_navigatorScore != null) {
         setState(() => _navigatorScore = null);
       }
       return;
     }
 
-    try {
-      final scores = await _navigationRepo.fetchScoresFromFirestore(nav.id);
+    // כבר מאזינים לניווט הזה — לא צריך listener חדש
+    if (_scoreSubscription != null) return;
+
+    _scoreSubscription = _navigationRepo
+        .watchScoresFromFirestore(nav.id)
+        .listen((scores) {
+      if (!mounted) return;
       final myScores =
           scores.where((s) => s['navigatorId'] == user.uid).toList();
-      if (!mounted) return;
       if (myScores.isNotEmpty) {
         final score = NavigationScore.fromMap(myScores.first);
         setState(() => _navigatorScore = score);
-        // ציון הגיע — ביטול טיימר סקירה מהירה
-        _scorePollTimer?.cancel();
-        _scorePollTimer = null;
       } else {
         setState(() => _navigatorScore = null);
-        // ציון עדיין לא הגיע — התחלת סקירה מהירה כל 15 שניות
-        _startScorePollIfNeeded();
       }
-    } catch (_) {
+    }, onError: (_) {
       // שקט — לא חוסם
-      _startScorePollIfNeeded();
-    }
-  }
-
-  /// התחלת טיימר סקירת ציון מהירה (כל 15 שניות) אם בשלב תחקור וציון לא הגיע
-  void _startScorePollIfNeeded() {
-    if (_scorePollTimer != null) return; // כבר רץ
-    final status = _currentNavigation?.status;
-    if (status != 'approval' && status != 'review') return;
-    if (_navigatorScore != null) return;
-
-    _scorePollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _loadNavigatorScore();
     });
   }
 

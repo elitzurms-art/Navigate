@@ -217,6 +217,17 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       return;
     }
 
+    // חובה לבחור נקודת התחלה וסיום
+    if (_startPointId == null || _endPointId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('חובה לבחור נקודת התחלה ונקודת סיום'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     // וידוא נקודות התחלה וסיום
     if (_navigationType == 'star') {
       if (_startPointId == null || _endPointId == null || _startPointId != _endPointId) {
@@ -894,15 +905,18 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               value: _startPointId,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                labelText: 'נקודת התחלה (משותפת)',
+                labelText: 'נקודת התחלה (משותפת) *',
               ),
               items: [
-                const DropdownMenuItem(value: null, child: Text('בחר נקודה')),
                 ..._checkpoints.map((cp) => DropdownMenuItem(
                   value: cp.id,
                   child: Text('${cp.name} (${cp.sequenceNumber})'),
                 )),
               ],
+              validator: (value) {
+                if (value == null) return 'חובה לבחור נקודת התחלה';
+                return null;
+              },
               onChanged: (value) {
                 setState(() => _startPointId = value);
               },
@@ -914,15 +928,18 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               value: _endPointId,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                labelText: 'נקודת סיום (משותפת)',
+                labelText: 'נקודת סיום (משותפת) *',
               ),
               items: [
-                const DropdownMenuItem(value: null, child: Text('בחר נקודה')),
                 ..._checkpoints.map((cp) => DropdownMenuItem(
                   value: cp.id,
                   child: Text('${cp.name} (${cp.sequenceNumber})'),
                 )),
               ],
+              validator: (value) {
+                if (value == null) return 'חובה לבחור נקודת סיום';
+                return null;
+              },
               onChanged: (value) {
                 setState(() => _endPointId = value);
               },

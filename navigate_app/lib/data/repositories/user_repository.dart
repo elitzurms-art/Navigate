@@ -268,24 +268,34 @@ class UserRepository {
     }
   }
 
-  /// עדכון תפקיד משתמש (מקומי + תור סנכרון)
+  /// עדכון תפקיד משתמש (מקומי + Firestore ישיר)
   Future<void> updateUserRole(String uid, String role) async {
     final db = _localDatabase ?? AppDatabase();
     try {
       final now = DateTime.now();
+      // Drift מקומי — UI מיידי
       await (db.update(db.users)..where((tbl) => tbl.uid.equals(uid)))
           .write(UsersCompanion(
         role: Value(role),
         updatedAt: Value(now),
       ));
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: {'role': role, 'updatedAt': now.toIso8601String()},
-        priority: SyncPriority.high,
-      );
+      // כתיבה ישירה ל-Firestore (עוקף את sync queue שמסיר role)
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.usersCollection)
+            .doc(uid)
+            .update({'role': role, 'updatedAt': FieldValue.serverTimestamp()});
+      } catch (e) {
+        print('DEBUG: Direct Firestore failed for updateUserRole, queueing: $e');
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: uid,
+          operation: 'update',
+          data: {'role': role, 'updatedAt': now.toIso8601String()},
+          priority: SyncPriority.high,
+        );
+      }
       // Custom claims updated automatically by onUserWrite Cloud Function trigger
     } catch (e) {
       print('DEBUG: Error in updateUserRole: $e');
@@ -450,7 +460,7 @@ class UserRepository {
     }
   }
 
-  /// הוספה ידנית של משתמש ליחידה — isApproved=true מיידית
+  /// הוספה ידנית של משתמש ליחידה — isApproved=true מיידית (Firestore ישיר)
   Future<void> addUserToUnit(String uid, String unitId) async {
     final db = _localDatabase ?? AppDatabase();
     try {
@@ -463,17 +473,30 @@ class UserRepository {
         updatedAt: Value(now),
       ));
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.usersCollection,
-        documentId: uid,
-        operation: 'update',
-        data: {
+      // כתיבה ישירה ל-Firestore (עוקף את sync queue שמסיר isApproved)
+      try {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.usersCollection)
+            .doc(uid)
+            .set({
           'unitId': unitId,
           'isApproved': true,
-          'updatedAt': now.toIso8601String(),
-        },
-        priority: SyncPriority.high,
-      );
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (e) {
+        print('DEBUG: Direct Firestore failed for addUserToUnit, queueing: $e');
+        await _syncManager.queueOperation(
+          collection: AppConstants.usersCollection,
+          documentId: uid,
+          operation: 'update',
+          data: {
+            'unitId': unitId,
+            'isApproved': true,
+            'updatedAt': now.toIso8601String(),
+          },
+          priority: SyncPriority.high,
+        );
+      }
       // Custom claims updated automatically by onUserWrite Cloud Function trigger
     } catch (e) {
       print('DEBUG: Error in addUserToUnit: $e');
@@ -556,19 +579,35 @@ class UserRepository {
           updatedAt: Value(now),
         ));
 
-        await _syncManager.queueOperation(
-          collection: AppConstants.usersCollection,
-          documentId: user.uid,
-          operation: 'update',
-          data: {
-            'unitId': null,
-            'isApproved': false,
-            'approvalStatus': null,
-            if (shouldResetRole) 'role': 'navigator',
-            'updatedAt': now.toIso8601String(),
-          },
-          priority: SyncPriority.high,
-        );
+        // כתיבה ישירה ל-Firestore (עוקף את sync queue שמסיר role+isApproved+approvalStatus)
+        final firestoreData = {
+          'unitId': null,
+          'isApproved': false,
+          'approvalStatus': null,
+          if (shouldResetRole) 'role': 'navigator',
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+        try {
+          await FirebaseFirestore.instance
+              .collection(AppConstants.usersCollection)
+              .doc(user.uid)
+              .update(firestoreData);
+        } catch (e) {
+          print('DEBUG: Direct Firestore failed for resetUser ${user.uid}, queueing: $e');
+          await _syncManager.queueOperation(
+            collection: AppConstants.usersCollection,
+            documentId: user.uid,
+            operation: 'update',
+            data: {
+              'unitId': null,
+              'isApproved': false,
+              'approvalStatus': null,
+              if (shouldResetRole) 'role': 'navigator',
+              'updatedAt': now.toIso8601String(),
+            },
+            priority: SyncPriority.high,
+          );
+        }
         // Custom claims updated automatically by onUserWrite Cloud Function trigger
 
         // הסרת המשתמש מניווטים של יחידות אחרות
@@ -707,6 +746,31 @@ class UserRepository {
       });
     } catch (e) {
       print('DEBUG: Error in cancelAndChooseNewUnit: $e');
+    }
+  }
+
+  /// קבלת משתמשים "אבודים" — לא מאושרים, לא ממתינים, ולא מדלגים על onboarding
+  /// כולל: ללא יחידה, יחידה לא קיימת, נדחו, או ללא סטטוס
+  Future<List<domain.User>> getLostUsers() async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final allUsers = await db.select(db.users).get();
+      final lost = <domain.User>[];
+      for (final row in allUsers) {
+        final user = _userFromRow(row);
+        // דילוג על admin/developer — מדלגים על onboarding
+        if (user.bypassesOnboarding) continue;
+        // דילוג על מאושרים
+        if (user.isApproved) continue;
+        // דילוג על ממתינים (pending)
+        if (user.isPending) continue;
+        // מה שנשאר = "אבוד"
+        lost.add(user);
+      }
+      return lost;
+    } catch (e) {
+      print('DEBUG: Error in getLostUsers: $e');
+      return [];
     }
   }
 

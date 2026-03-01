@@ -100,9 +100,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _enablePdr = true;
   bool _enablePdrCellHybrid = true;
 
-  bool _autoVerification = false;
+  bool _autoVerification = true;
   String _verificationType = 'approved_failed'; // approved_failed, score_by_distance
-  int _approvalDistance = 20;
+  int _approvalDistance = 40;
   List<DistanceScoreRange> _scoreRanges = [
     const DistanceScoreRange(maxDistance: 50, scorePercentage: 100),
   ];
@@ -118,7 +118,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _requireSoloQuiz = false;
 
   // תקשורת (ווקי טוקי)
-  bool _walkieTalkieEnabled = false;
+  bool _walkieTalkieEnabled = true;
 
   // חישוב זמנים
   bool _timeCalcEnabled = true;
@@ -1478,7 +1478,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     ),
                     keyboardType: TextInputType.number,
                     onChanged: (value) {
-                      _approvalDistance = int.tryParse(value) ?? 20;
+                      _approvalDistance = int.tryParse(value) ?? 40;
                       _onSettingChanged();
                     },
                   ),

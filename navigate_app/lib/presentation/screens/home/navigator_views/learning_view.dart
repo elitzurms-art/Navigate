@@ -451,8 +451,8 @@ class _LearningViewState extends State<LearningView>
               const SizedBox(height: 8),
               Builder(builder: (context) {
                 final settings = nav.timeCalculationSettings;
-                final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                  routeLengthKm: route.routeLengthKm,
+                final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                  route: route,
                   settings: settings,
                 );
                 final walkMinutes = ((route.routeLengthKm / settings.walkingSpeedKmh) * 60).ceil();

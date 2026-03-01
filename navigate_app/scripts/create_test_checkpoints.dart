@@ -102,10 +102,11 @@ Future<void> _createCheckpointsInBoundary(
           utm: _convertToUTM(lat, lng),
         ),
         sequenceNumber: created + 1,
+        createdBy: 'script',
         createdAt: DateTime.now(),
       );
 
-      await repo.add(checkpoint);
+      await repo.create(checkpoint);
       created++;
       print('✓ נוצרה נקודה ${created}/20: ${checkpoint.name} (${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)})');
     }
@@ -150,10 +151,11 @@ Future<void> _createCheckpointsInDefaultArea(
         utm: _convertToUTM(lat, lng),
       ),
       sequenceNumber: i + 1,
+      createdBy: 'script',
       createdAt: DateTime.now(),
     );
 
-    await repo.add(checkpoint);
+    await repo.create(checkpoint);
     print('✓ נוצרה נקודה ${i + 1}/20: ${checkpoint.name}');
   }
 }

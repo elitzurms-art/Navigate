@@ -208,20 +208,21 @@ class _ReviewViewState extends State<ReviewView> {
       _punches =
           _punches.where((p) => p.navigationId == navId).toList();
 
-      // ציונים
-      try {
-        final scores =
-            await _navRepo.fetchScoresFromFirestore(navId);
-        final myScoreMap =
-            scores.where((s) => s['navigatorId'] == userId).toList();
-        if (myScoreMap.isNotEmpty) {
-          _score = NavigationScore.fromMap(myScoreMap.first);
-        } else if (widget.initialScore != null) {
-          _score = widget.initialScore;
-        }
-      } catch (_) {
-        if (widget.initialScore != null) {
-          _score = widget.initialScore;
+      // ציונים — שימוש ב-initialScore מה-listener של NavigatorHomeScreen
+      // שליפה עצמאית מ-Firestore רק כ-fallback
+      if (widget.initialScore != null) {
+        _score = widget.initialScore;
+      } else {
+        try {
+          final scores =
+              await _navRepo.fetchScoresFromFirestore(navId);
+          final myScoreMap =
+              scores.where((s) => s['navigatorId'] == userId).toList();
+          if (myScoreMap.isNotEmpty) {
+            _score = NavigationScore.fromMap(myScoreMap.first);
+          }
+        } catch (_) {
+          // שקט — לא חוסם
         }
       }
 

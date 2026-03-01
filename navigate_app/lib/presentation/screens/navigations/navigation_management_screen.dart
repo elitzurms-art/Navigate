@@ -3694,8 +3694,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           final navigatorExtMinutes = _extensionRequests
                               .where((r) => r.navigatorId == navigatorId && r.status == ExtensionRequestStatus.approved)
                               .fold<int>(0, (sum, r) => sum + (r.approvedMinutes ?? 0));
-                          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                            routeLengthKm: route.routeLengthKm,
+                          final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                            route: route,
                             settings: widget.navigation.timeCalculationSettings,
                             extensionMinutes: navigatorExtMinutes,
                           );

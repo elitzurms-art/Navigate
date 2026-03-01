@@ -114,14 +114,35 @@ class UnitRepository {
 
       print('DEBUG: Unit deleted locally');
 
-      // Queue for sync — high priority to ensure delete reaches Firestore before potential reinstall
-      await _syncManager.queueOperation(
-        collection: AppConstants.unitsCollection,
-        documentId: id,
-        operation: 'delete',
-        data: {'id': id},
-        priority: SyncPriority.high,
-      );
+      // Hard-delete from Firestore (not soft-delete which only marks deletedAt)
+      try {
+        // 1. Delete members subcollection
+        final membersSnapshot = await _firestore
+            .collection(AppConstants.unitsCollection)
+            .doc(id)
+            .collection(AppConstants.unitMembersSubcollection)
+            .get()
+            .timeout(const Duration(seconds: 10));
+        for (final memberDoc in membersSnapshot.docs) {
+          await memberDoc.reference.delete();
+        }
+
+        // 2. Hard-delete unit document
+        await _firestore
+            .collection(AppConstants.unitsCollection)
+            .doc(id)
+            .delete()
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        print('DEBUG: Direct Firestore unit delete failed, queueing: $e');
+        await _syncManager.queueOperation(
+          collection: AppConstants.unitsCollection,
+          documentId: id,
+          operation: 'hard_delete',
+          data: {'id': id},
+          priority: SyncPriority.high,
+        );
+      }
     } catch (e) {
       print('DEBUG: Error deleting unit: $e');
       rethrow;
@@ -164,16 +185,25 @@ class UnitRepository {
         }
       }
 
-      // Delete trees
+      // Delete trees — hard-delete from Firestore (not soft-delete which only marks deletedAt)
       for (final treeId in treesToDelete) {
         await (_db.delete(_db.navigationTrees)..where((t) => t.id.equals(treeId))).go();
-        await _syncManager.queueOperation(
-          collection: AppConstants.navigatorTreesCollection,
-          documentId: treeId,
-          operation: 'delete',
-          data: {'id': treeId},
-          priority: SyncPriority.high,
-        );
+        try {
+          await _firestore
+              .collection(AppConstants.navigatorTreesCollection)
+              .doc(treeId)
+              .delete()
+              .timeout(const Duration(seconds: 10));
+        } catch (e) {
+          print('DEBUG: Direct Firestore tree delete failed, queueing: $e');
+          await _syncManager.queueOperation(
+            collection: AppConstants.navigatorTreesCollection,
+            documentId: treeId,
+            operation: 'hard_delete',
+            data: {'id': treeId},
+            priority: SyncPriority.high,
+          );
+        }
       }
 
       // Reset users belonging to deleted units (clear unitId + isApproved)
@@ -183,16 +213,37 @@ class UnitRepository {
         await userRepo.resetUsersForUnit(unitId);
       }
 
-      // Delete all units (children first, then parent)
+      // Delete all units (children first, then parent) — hard-delete from Firestore + cleanup members
       for (final unitId in allIdsToDelete.reversed) {
         await (_db.delete(_db.units)..where((t) => t.id.equals(unitId))).go();
-        await _syncManager.queueOperation(
-          collection: AppConstants.unitsCollection,
-          documentId: unitId,
-          operation: 'delete',
-          data: {'id': unitId},
-          priority: SyncPriority.high,
-        );
+        try {
+          // 1. Delete members subcollection
+          final membersSnapshot = await _firestore
+              .collection(AppConstants.unitsCollection)
+              .doc(unitId)
+              .collection(AppConstants.unitMembersSubcollection)
+              .get()
+              .timeout(const Duration(seconds: 10));
+          for (final memberDoc in membersSnapshot.docs) {
+            await memberDoc.reference.delete();
+          }
+
+          // 2. Hard-delete unit document
+          await _firestore
+              .collection(AppConstants.unitsCollection)
+              .doc(unitId)
+              .delete()
+              .timeout(const Duration(seconds: 10));
+        } catch (e) {
+          print('DEBUG: Direct Firestore unit delete failed, queueing: $e');
+          await _syncManager.queueOperation(
+            collection: AppConstants.unitsCollection,
+            documentId: unitId,
+            operation: 'hard_delete',
+            data: {'id': unitId},
+            priority: SyncPriority.high,
+          );
+        }
       }
 
       print('DEBUG: Cascade delete complete for unit $id');

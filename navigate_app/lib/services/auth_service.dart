@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -11,6 +12,13 @@ import '../data/repositories/user_repository.dart';
 import '../data/sync/sync_manager.dart';
 import 'session_service.dart';
 import 'notification_service.dart';
+
+/// תוצאת בדיקת session פעיל במכשיר אחר
+enum ActiveSessionCheckResult {
+  noActiveSession,    // אין session פעיל — המשך רגיל
+  activeSessionExists, // יש session במכשיר אחר — חסום כניסה
+  checkFailed,        // Firestore לא זמין — המשך (offline-first)
+}
 
 /// שירות אימות — מבוסס מספר אישי + SMS / Email Link
 class AuthService {
@@ -965,6 +973,82 @@ class AuthService {
       'role': role,
       'updatedAt': DateTime.now().toIso8601String(),
     });
+  }
+
+  /// בדיקה אם יש session פעיל במכשיר אחר
+  Future<ActiveSessionCheckResult> checkActiveSession(String personalNumber) async {
+    try {
+      // ודא אימות אנונימי (לגישת Firestore)
+      if (_auth.currentUser == null) {
+        try {
+          await _auth.signInAnonymously();
+        } catch (e) {
+          print('DEBUG checkActiveSession: anonymous sign-in failed: $e');
+          return ActiveSessionCheckResult.checkFailed;
+        }
+      }
+
+      // קריאה מהשרת בלבד — לא cache, כדי לוודא שזה ה-sessionId העדכני
+      final doc = await _firestore
+          .collection('users')
+          .doc(personalNumber)
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+
+      if (!doc.exists || doc.data() == null) {
+        print('DEBUG checkActiveSession: doc missing for $personalNumber');
+        return ActiveSessionCheckResult.noActiveSession;
+      }
+
+      final serverSessionId = doc.data()!['activeSessionId'] as String?;
+      print('DEBUG checkActiveSession: serverSessionId=$serverSessionId');
+
+      if (serverSessionId == null || serverSessionId.isEmpty) {
+        return ActiveSessionCheckResult.noActiveSession;
+      }
+
+      // בדיקה מול session ID מקומי
+      final prefs = await SharedPreferences.getInstance();
+      final localSessionId = prefs.getString(_sessionIdKey);
+      print('DEBUG checkActiveSession: localSessionId=$localSessionId');
+
+      if (localSessionId == serverSessionId) {
+        return ActiveSessionCheckResult.noActiveSession;
+      }
+
+      print('DEBUG checkActiveSession: BLOCKING — session mismatch');
+      return ActiveSessionCheckResult.activeSessionExists;
+    } catch (e) {
+      print('DEBUG checkActiveSession: failed: $e');
+      return ActiveSessionCheckResult.checkFailed;
+    }
+  }
+
+  /// דיאלוג אזהרה — מכשיר אחר מחובר
+  /// מחזיר true אם המשתמש בחר "כניסת כוח", false אם ביטל
+  static Future<bool> showActiveSessionDialog(BuildContext context) async {
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('מכשיר אחר מחובר'),
+        content: const Text(
+          'המשתמש מחובר כרגע ממכשיר אחר.\n'
+          'יש להתנתק מהמכשיר הקודם לפני כניסה מחדש.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('כניסת כוח'),
+          ),
+        ],
+      ),
+    ) ?? false;
   }
 
   /// יציאה

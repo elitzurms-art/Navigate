@@ -1462,19 +1462,20 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 _currentNavigation.timeCalculationSettings.enabled) ...[
               const SizedBox(height: 4),
               Builder(builder: (context) {
-                final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                  routeLengthKm: route.routeLengthKm,
+                final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                  route: route,
                   settings: _currentNavigation.timeCalculationSettings,
                 );
+                final isManual = route.manualTimeMinutes != null;
                 final breakMinutes = _currentNavigation.timeCalculationSettings
                     .breakDurationMinutes(route.routeLengthKm);
                 return Row(
                   children: [
-                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                    Icon(Icons.access_time, size: 16, color: isManual ? Colors.orange.shade800 : Colors.grey[600]),
                     const SizedBox(width: 6),
                     Text(
                       'זמן: ${GeometryUtils.formatNavigationTime(totalMinutes)}',
-                      style: TextStyle(color: Colors.grey[700]),
+                      style: TextStyle(color: isManual ? Colors.orange.shade800 : Colors.grey[700]),
                     ),
                     if (breakMinutes > 0) ...[
                       const SizedBox(width: 16),
@@ -1541,6 +1542,118 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         ),
       ),
     );
+  }
+
+  Future<void> _editManualTime(String navigatorId) async {
+    final route = _currentNavigation.routes[navigatorId];
+    if (route == null) return;
+
+    final settings = _currentNavigation.timeCalculationSettings;
+    final autoMinutes = GeometryUtils.calculateNavigationTimeMinutes(
+      routeLengthKm: route.routeLengthKm,
+      settings: settings,
+    );
+    final currentManual = route.manualTimeMinutes;
+
+    int hours = currentManual != null ? currentManual ~/ 60 : autoMinutes ~/ 60;
+    int minutes = currentManual != null ? currentManual % 60 : autoMinutes % 60;
+
+    final result = await showDialog<int?>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Text('עריכת זמן ניווט'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'זמן מחושב: ${GeometryUtils.formatNavigationTime(autoMinutes)}',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // דקות
+                    Column(
+                      children: [
+                        const Text('דקות', style: TextStyle(fontSize: 12)),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: 70,
+                          child: TextFormField(
+                            initialValue: minutes.toString(),
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            onChanged: (v) => setDialogState(() => minutes = int.tryParse(v) ?? minutes),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(':', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    ),
+                    // שעות
+                    Column(
+                      children: [
+                        const Text('שעות', style: TextStyle(fontSize: 12)),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: 70,
+                          child: TextFormField(
+                            initialValue: hours.toString(),
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            onChanged: (v) => setDialogState(() => hours = int.tryParse(v) ?? hours),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                if (currentManual != null) ...[
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    onPressed: () => Navigator.pop(ctx, -1), // סימון לאיפוס
+                    icon: const Icon(Icons.restart_alt, size: 18),
+                    label: const Text('חזרה לחישוב אוטומטי'),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('ביטול')),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, hours * 60 + minutes),
+                child: const Text('שמירה'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+
+    if (result == null || !mounted) return;
+
+    final updatedRoute = result == -1
+        ? route.copyWith(clearManualTimeMinutes: true)
+        : route.copyWith(manualTimeMinutes: result);
+
+    final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
+    updatedRoutes[navigatorId] = updatedRoute;
+    final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes);
+    await _navRepo.update(updatedNav);
+    setState(() => _currentNavigation = updatedNav);
   }
 
   Widget _buildTimesView() {
@@ -1622,10 +1735,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 rows: approvedRoutes.entries.map((entry) {
                   final uid = entry.key;
                   final route = entry.value;
-                  final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                    routeLengthKm: route.routeLengthKm,
+                  final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                    route: route,
                     settings: settings,
                   );
+                  final isManual = route.manualTimeMinutes != null;
                   final walkMinutes = ((route.routeLengthKm / settings.walkingSpeedKmh) * 60).ceil();
                   final breakMinutes = settings.breakDurationMinutes(route.routeLengthKm);
                   if (totalMinutes > maxMinutes) maxMinutes = totalMinutes;
@@ -1636,10 +1750,29 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     DataCell(Text('${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש')),
                     DataCell(Text(GeometryUtils.formatNavigationTime(walkMinutes))),
                     DataCell(Text(breakMinutes > 0 ? '$breakMinutes דק\'' : '-')),
-                    DataCell(Text(
-                      GeometryUtils.formatNavigationTime(totalMinutes),
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    )),
+                    DataCell(
+                      InkWell(
+                        onTap: () => _editManualTime(uid),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              GeometryUtils.formatNavigationTime(totalMinutes),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: isManual ? Colors.orange.shade800 : null,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              isManual ? Icons.edit : Icons.edit_outlined,
+                              size: 16,
+                              color: isManual ? Colors.orange.shade800 : Colors.grey,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ]);
                 }).toList(),
               ),

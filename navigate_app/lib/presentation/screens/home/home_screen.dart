@@ -16,6 +16,7 @@ import '../settings/settings_screen.dart';
 import '../units/units_list_screen.dart';
 import '../units/unit_members_screen.dart';
 import '../onboarding/pending_approvals_screen.dart';
+import '../admin/lost_users_screen.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 
@@ -270,6 +271,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
+            if (_userRole == 'developer')
+              ListTile(
+                leading: const Icon(Icons.person_off, color: Colors.red),
+                title: const Text('משתמשים אבודים'),
+                trailing: FutureBuilder<int>(
+                  future: _getLostUsersCount(),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data ?? 0;
+                    if (count == 0) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '$count',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LostUsersScreen()),
+                  );
+                },
+              ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.settings),
@@ -337,6 +368,15 @@ class _HomeScreenState extends State<HomeScreen> {
       final allUnitIds = [unitId, ...descendantIds];
       final pending = await UserRepository().getPendingApprovalUsers(allUnitIds);
       return pending.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<int> _getLostUsersCount() async {
+    try {
+      final lost = await UserRepository().getLostUsers();
+      return lost.length;
     } catch (_) {
       return 0;
     }

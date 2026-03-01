@@ -461,8 +461,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
       final verifiableCheckpointsCount = routeCps
           .where((cp) => cp.type == 'checkpoint')
           .length;
-      final plannedTimeMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-        routeLengthKm: route.routeLengthKm,
+      final plannedTimeMinutes = GeometryUtils.getEffectiveTimeMinutes(
+        route: route,
         settings: widget.navigation.timeCalculationSettings,
       );
 

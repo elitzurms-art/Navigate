@@ -243,8 +243,8 @@ class _DataExportScreenState extends State<DataExportScreen> {
 
         row.add(route.routeLengthKm.toStringAsFixed(2));
         if (widget.navigation.timeCalculationSettings.enabled) {
-          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-            routeLengthKm: route.routeLengthKm,
+          final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+            route: route,
             settings: widget.navigation.timeCalculationSettings,
           );
           row.add(GeometryUtils.formatNavigationTime(totalMinutes));
@@ -349,8 +349,8 @@ class _DataExportScreenState extends State<DataExportScreen> {
         }
         cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
         if (widget.navigation.timeCalculationSettings.enabled) {
-          final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-            routeLengthKm: route.routeLengthKm,
+          final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+            route: route,
             settings: widget.navigation.timeCalculationSettings,
           );
           cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));
@@ -1419,8 +1419,8 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             }
             cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
             if (timeEnabled) {
-              final totalMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                routeLengthKm: route.routeLengthKm,
+              final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                route: route,
                 settings: widget.navigation.timeCalculationSettings,
               );
               cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));

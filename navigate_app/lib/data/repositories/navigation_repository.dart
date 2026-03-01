@@ -749,6 +749,22 @@ class NavigationRepository {
     }
   }
 
+  /// Realtime stream of scores for a navigation from Firestore
+  Stream<List<Map<String, dynamic>>> watchScoresFromFirestore(
+    String navigationId,
+  ) {
+    return _firestore
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId)
+        .collection(AppConstants.navScoresSubcollection)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) {
+              final data = doc.data();
+              data['navigatorId'] = doc.id;
+              return data;
+            }).toList());
+  }
+
   // ----------------------------- Routes ------------------------------------
 
   /// Queue a route assignment for push to /navigations/{navId}/routes/{navigatorId}

@@ -112,7 +112,7 @@ class VerificationSettings extends Equatable {
 
   factory VerificationSettings.fromMap(Map<String, dynamic> map) {
     return VerificationSettings(
-      autoVerification: map['autoVerification'] as bool? ?? false,
+      autoVerification: map['autoVerification'] as bool? ?? true,
       verificationType: map['verificationType'] as String?,
       approvalDistance: map['approvalDistance'] as int?,
       scoreRanges: map['scoreRanges'] != null
@@ -819,7 +819,7 @@ class CommunicationSettings extends Equatable {
   final bool walkieTalkieEnabled;
 
   const CommunicationSettings({
-    this.walkieTalkieEnabled = false,
+    this.walkieTalkieEnabled = true,
   });
 
   CommunicationSettings copyWith({
@@ -838,7 +838,7 @@ class CommunicationSettings extends Equatable {
 
   factory CommunicationSettings.fromMap(Map<String, dynamic> map) {
     return CommunicationSettings(
-      walkieTalkieEnabled: map['walkieTalkieEnabled'] as bool? ?? false,
+      walkieTalkieEnabled: map['walkieTalkieEnabled'] as bool? ?? true,
     );
   }
 

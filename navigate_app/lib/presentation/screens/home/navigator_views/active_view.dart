@@ -2434,8 +2434,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                 // ספירה לאחור — זמן שנותר (עם שניות)
                 Expanded(
                   child: Builder(builder: (context) {
-                    final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-                      routeLengthKm: _route!.routeLengthKm,
+                    final missionMinutes = GeometryUtils.getEffectiveTimeMinutes(
+                      route: _route!,
                       settings: _nav.timeCalculationSettings,
                       extensionMinutes: _totalApprovedExtensionMinutes,
                     );
@@ -3036,8 +3036,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     final windowMinutes = settings.extensionWindowMinutes ?? 0;
     if (windowMinutes <= 0) return false;
 
-    final missionMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-      routeLengthKm: _route!.routeLengthKm,
+    final missionMinutes = GeometryUtils.getEffectiveTimeMinutes(
+      route: _route!,
       settings: settings,
       extensionMinutes: _totalApprovedExtensionMinutes,
     );

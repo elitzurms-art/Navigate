@@ -5,7 +5,6 @@ import 'package:navigate_app/domain/entities/navigation_tree.dart';
 import 'package:navigate_app/domain/entities/navigation_settings.dart';
 import 'package:navigate_app/domain/entities/checkpoint.dart';
 import 'package:navigate_app/domain/entities/coordinate.dart';
-import 'package:navigate_app/domain/entities/security_violation.dart';
 
 // ---------------------------------------------------------------------------
 // Test helpers

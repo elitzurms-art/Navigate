@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../../services/auth_service.dart';
+import '../../../services/auth_service.dart' show AuthService, ActiveSessionCheckResult;
 import '../../../services/session_service.dart';
 import 'sms_verification_screen.dart' show VerificationPurpose;
 
@@ -100,6 +100,17 @@ class _EmailCodeVerificationScreenState
 
     try {
       if (widget.purpose == VerificationPurpose.login) {
+        // בדיקת session פעיל במכשיר אחר
+        final sessionCheck = await _authService.checkActiveSession(widget.personalNumber);
+        if (!mounted) return;
+
+        if (sessionCheck == ActiveSessionCheckResult.activeSessionExists) {
+          setState(() => _isLoading = false);
+          final forceLogin = await AuthService.showActiveSessionDialog(context);
+          if (!forceLogin || !mounted) return;
+          setState(() => _isLoading = true);
+        }
+
         await _authService.completeLogin(widget.personalNumber);
         await SessionService().clearSession();
         if (mounted) {

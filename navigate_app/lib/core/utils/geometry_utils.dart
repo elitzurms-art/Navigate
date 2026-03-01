@@ -246,6 +246,22 @@ class GeometryUtils {
     return (walkingMinutes + breakMinutes).ceil() + extensionMinutes;
   }
 
+  /// זמן אפקטיבי למנווט — manualTimeMinutes אם קיים, אחרת חישוב אוטומטי
+  static int getEffectiveTimeMinutes({
+    required AssignedRoute route,
+    required TimeCalculationSettings settings,
+    int extensionMinutes = 0,
+  }) {
+    if (route.manualTimeMinutes != null) {
+      return route.manualTimeMinutes! + extensionMinutes;
+    }
+    return calculateNavigationTimeMinutes(
+      routeLengthKm: route.routeLengthKm,
+      settings: settings,
+      extensionMinutes: extensionMinutes,
+    );
+  }
+
   /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר), כולל הארכות
   static DateTime? calculateSafetyTime({
     required DateTime activeStartTime,
@@ -256,8 +272,8 @@ class GeometryUtils {
     if (!settings.enabled || routes.isEmpty) return null;
     int maxMinutes = 0;
     for (final route in routes.values) {
-      final minutes = calculateNavigationTimeMinutes(
-        routeLengthKm: route.routeLengthKm,
+      final minutes = getEffectiveTimeMinutes(
+        route: route,
         settings: settings,
       );
       if (minutes > maxMinutes) maxMinutes = minutes;
