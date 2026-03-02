@@ -109,7 +109,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     if (route == null || route.groupId == null) return null;
     final composition = widget.navigation.forceComposition;
     if (!composition.isGrouped) return null;
-    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : 'קבוצה');
+    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : (composition.isGuard ? 'מאבטח' : 'קבוצה'));
     // מספר קבוצה — מ-groupId (מ-1)
     final groupIds = _filteredRoutes.values
         .where((r) => r.groupId != null)
@@ -603,9 +603,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           ],
         ),
         // שורות
-        ...routes.entries.map((entry) {
-          final navigatorId = entry.key;
-          final route = entry.value;
+        ...widget.navigation.sortByGroup(routes.keys).map((navigatorId) {
+          final route = routes[navigatorId]!;
           final color = _getRouteColor(route.status);
           final hasShared = route.checkpointIds.any((id) => _sharedCheckpointIds.contains(id));
 

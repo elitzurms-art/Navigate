@@ -188,6 +188,21 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
     return uid;
   }
 
+  /// תווית קבוצה (צמד/חוליה/מאבטח) למנווט
+  String? _getGroupLabel(String navigatorId) {
+    final route = widget.navigation.routes[navigatorId];
+    if (route == null || route.groupId == null) return null;
+    final composition = widget.navigation.forceComposition;
+    if (!composition.isGrouped) return null;
+    final typeLabel = composition.type == 'pair'
+        ? 'צמד'
+        : (composition.type == 'squad' ? 'חוליה' : (composition.isGuard ? 'מאבטח' : 'קבוצה'));
+    final groupIds = widget.navigation.routes.values
+        .where((r) => r.groupId != null).map((r) => r.groupId!).toSet().toList()..sort();
+    final groupNum = groupIds.indexOf(route.groupId!) + 1;
+    return '$typeLabel $groupNum';
+  }
+
   /// בניית רצף סופי: התחלה → [רשימת המנווט] → סיום
   /// במצב מאבטח, כל מנווט מקבל start/end שונים (swap point)
   List<String> _buildFullSequence(List<String> navigatorCps, {String? startOverride, String? endOverride}) {
@@ -791,7 +806,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            for (final uid in _navigatorIds) ...[
+            for (final uid in widget.navigation.sortByGroup(_navigatorIds)) ...[
               _buildNavigatorTile(uid),
               if (_expandedNavigatorId == uid)
                 _buildInlineMap(uid),
@@ -853,6 +868,11 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                           _getNavigatorName(uid),
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
+                        if (_getGroupLabel(uid) != null)
+                          Text(
+                            _getGroupLabel(uid)!,
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                          ),
                         if (cps.isNotEmpty)
                           Text(
                             '$manualCount נקודות${_intermediatePointIds.isNotEmpty ? ' + ${_intermediatePointIds.length} חובה' : ''} · ${lengthKm.toStringAsFixed(1)} ק"מ',

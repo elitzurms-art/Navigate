@@ -344,7 +344,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   String? _getGroupLabel(String groupId) {
     final composition = _currentNavigation.forceComposition;
     if (!composition.isGrouped) return null;
-    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : 'קבוצה');
+    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : (composition.isGuard ? 'מאבטח' : 'קבוצה'));
     final groupIds = _currentNavigation.routes.values
         .where((r) => r.groupId != null)
         .map((r) => r.groupId!)
@@ -1221,9 +1221,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           const SizedBox(height: 16),
 
           // טבלת צירים
-          ..._currentNavigation.routes.entries.map((entry) {
-            final navigatorId = entry.key;
-            final route = entry.value;
+          ..._currentNavigation.sortByGroup(_currentNavigation.routes.keys).map((navigatorId) {
+            final route = _currentNavigation.routes[navigatorId]!;
 
             return _buildRouteCard(navigatorId, route);
           }),
@@ -1737,9 +1736,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                   DataColumn(label: Text('הפסקות')),
                   DataColumn(label: Text('סה"כ')),
                 ],
-                rows: approvedRoutes.entries.map((entry) {
-                  final uid = entry.key;
-                  final route = entry.value;
+                rows: _currentNavigation.sortByGroup(approvedRoutes.keys).map((uid) {
+                  final route = approvedRoutes[uid]!;
                   final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
                     route: route,
                     settings: settings,

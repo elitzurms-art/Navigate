@@ -6,6 +6,7 @@ import '../../../core/map_config.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/map_download_record.dart';
 import '../../../services/elevation_service.dart';
 import '../../../services/tile_cache_service.dart';
 
@@ -177,6 +178,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
       mapType: _selectedMapType,
       minZoom: _minZoom,
       maxZoom: _maxZoom,
+      boundaryName: _selectedBoundary!.name,
     );
   }
 
@@ -318,6 +320,10 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
   }
 
   Widget _buildStatsSection() {
+    final downloadRecords = _tileCacheService.records;
+    final isDownloading = _tileCacheService.isRegionDownloading ||
+        _tileCacheService.isIsraelDownloading;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -345,6 +351,13 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
                   ? '${(_sizeMB * 1024).toStringAsFixed(0)} KB'
                   : '${_sizeMB.toStringAsFixed(1)} MB',
             ),
+            if (downloadRecords.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 4),
+              ...downloadRecords.map((record) =>
+                _buildRecordTile(record, isDownloading)),
+            ],
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -357,6 +370,86 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
             ),
           ],
         ]),
+      ),
+    );
+  }
+
+  Widget _buildRecordTile(MapDownloadRecord record, bool isDownloading) {
+    final isCompleted = record.status == 'completed';
+    final isFailed = record.status == 'failed';
+    final isActive = record.status == 'downloading';
+
+    final icon = isCompleted
+        ? const Icon(Icons.check_circle, color: Colors.green, size: 20)
+        : isActive
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.warning_amber, color: Colors.orange, size: 20);
+
+    final tilesText = isCompleted
+        ? '${record.downloadedTiles} אריחים'
+        : '${record.downloadedTiles} / ${record.totalTiles}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              icon,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      record.displayLabel,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    Text(
+                      tilesText,
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (isFailed)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, right: 28),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: isDownloading
+                        ? null
+                        : () => _tileCacheService.resumeDownload(record),
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('המשך הורדה', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    onPressed: () => _tileCacheService.removeRecord(record.id),
+                    icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                    label: const Text('הסרה',
+                        style: TextStyle(fontSize: 12, color: Colors.red)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

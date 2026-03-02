@@ -20,6 +20,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/constants/hospitals_data.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
@@ -147,6 +148,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   // הדגשה חד-פעמית (מרכז פעם אחת)
   String? _oneTimeCenteredNavigatorId;
+
+  // תפריט טקטי (overlay)
+  OverlayEntry? _tacticalMenuEntry;
+  String? _openTacticalNavigatorId;
   StreamSubscription? _oneTimeGestureSubscription;
 
   // שמות משתמשים (מנווטים + מפקדים)
@@ -182,7 +187,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     });
     // רענון מראה סמנים כל 30 שניות — מעבר ירוק→אפור→נעלם
     _stalenessTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        // סגירת תפריט טקטי אם מנווט נעלם מהנתונים
+        if (_tacticalMenuEntry != null && _openTacticalNavigatorId != null &&
+            !_navigatorData.containsKey(_openTacticalNavigatorId!)) {
+          _removeTacticalMenu();
+        }
+        setState(() {});
+      }
     });
   }
 
@@ -209,6 +221,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _autoRetryTimer?.cancel();
     _cancelAckListener?.cancel();
     _cancelAutoRetryTimer?.cancel();
+    _removeTacticalMenu();
     _tabController.dispose();
     _voiceService?.dispose();
     super.dispose();
@@ -2136,6 +2149,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
+  /// תווית קבוצה (צמד/חוליה/מאבטח) למנווט
+  String? _getGroupLabel(String navigatorId) {
+    final route = widget.navigation.routes[navigatorId];
+    if (route == null || route.groupId == null) return null;
+    final composition = widget.navigation.forceComposition;
+    if (!composition.isGrouped) return null;
+    final typeLabel = composition.type == 'pair'
+        ? 'צמד'
+        : (composition.type == 'squad' ? 'חוליה' : (composition.isGuard ? 'מאבטח' : 'קבוצה'));
+    final groupIds = widget.navigation.routes.values
+        .where((r) => r.groupId != null).map((r) => r.groupId!).toSet().toList()..sort();
+    final groupNum = groupIds.indexOf(route.groupId!) + 1;
+    return '$typeLabel $groupNum';
+  }
+
   IconData _getStatusIcon(NavigatorLiveData data) {
     switch (data.personalStatus) {
       case NavigatorPersonalStatus.waiting:
@@ -2253,6 +2281,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               tooltip: 'כבה מצב חירום',
               onPressed: _showDeactivateConfirmation,
             ),
+          IconButton(
+            icon: const Icon(Icons.local_hospital, color: Colors.red),
+            tooltip: 'נווט לבית חולים',
+            onPressed: _showNearestHospitalsDialog,
+          ),
           IconButton(
             icon: const Icon(Icons.campaign, color: Colors.red),
             tooltip: 'שידור חירום',
@@ -2734,9 +2767,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ),
 
         // כרטיסי מנווטים
-        ..._navigatorData.entries.map((entry) {
-          final navigatorId = entry.key;
-          final data = entry.value;
+        ...widget.navigation.sortByGroup(_navigatorData.keys).map((navigatorId) {
+          final data = _navigatorData[navigatorId]!;
           final statusColor = _getNavigatorStatusColor(data);
           final arrivals = _getCheckpointArrivals(data);
           final reachedCount = arrivals.where((a) => a.reached).length;
@@ -2764,9 +2796,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         Icon(_getStatusIcon(data), color: statusColor, size: 28),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            _userNames[navigatorId] ?? navigatorId,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _userNames[navigatorId] ?? navigatorId,
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                              ),
+                              if (_getGroupLabel(navigatorId) != null)
+                                Text(
+                                  _getGroupLabel(navigatorId)!,
+                                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                ),
+                            ],
                           ),
                         ),
                         if (data.isDisqualified)
@@ -2980,10 +3022,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (data.trackPoints.isEmpty) continue;
 
-      // מנווט מוצג אם _showTracks (גלובלי) או _showNavigatorTrack (פר-מנווט) דלוקים
-      final showGlobal = _showTracks;
-      final showPerNavigator = _showNavigatorTrack[navigatorId] ?? false;
-      if (!showGlobal && !showPerNavigator) continue;
+      // master switch + per-navigator AND
+      if (!_showTracks) continue;
+      if (!(_showNavigatorTrack[navigatorId] ?? false)) continue;
 
       final points = data.trackPoints
           .map((tp) => LatLng(tp.coordinate.lat, tp.coordinate.lng))
@@ -3044,6 +3085,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       final data = entry.value;
 
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
+      if (!(_showNavigatorTrack[navigatorId] ?? false)) continue;
 
       final activePunches = data.punches.where((p) => !p.isDeleted).toList();
       final navName = _userNames[navigatorId] ?? navigatorId;
@@ -3263,9 +3305,22 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           point: data.currentPosition!,
           width: isCentered ? 68 : 60,
           height: isCentered ? 68 : 60,
-          child: markerOpacity < 1.0
-              ? Opacity(opacity: markerOpacity, child: markerChild)
-              : markerChild,
+          child: Builder(
+            builder: (markerContext) {
+              return GestureDetector(
+                onSecondaryTapDown: (details) {
+                  _showDesktopTacticalMenu(markerContext, details.globalPosition, navigatorId, data);
+                },
+                onLongPressStart: (details) {
+                  HapticFeedback.mediumImpact();
+                  _showMobileTacticalSheet(navigatorId, data);
+                },
+                child: markerOpacity < 1.0
+                    ? Opacity(opacity: markerOpacity, child: markerChild)
+                    : markerChild,
+              );
+            },
+          ),
         ),
       );
     }
@@ -3417,6 +3472,112 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
+  void _showNearestHospitalsDialog() {
+    if (_selfPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('אין מיקום GPS זמין')),
+      );
+      return;
+    }
+    final myCoord = Coordinate(
+      lat: _selfPosition!.latitude,
+      lng: _selfPosition!.longitude,
+      utm: '',
+    );
+    final sorted = List<Hospital>.from(kIsraelHospitals)
+      ..sort((a, b) {
+        final da = GeometryUtils.distanceBetweenMeters(
+          myCoord, Coordinate(lat: a.lat, lng: a.lng, utm: ''));
+        final db = GeometryUtils.distanceBetweenMeters(
+          myCoord, Coordinate(lat: b.lat, lng: b.lng, utm: ''));
+        return da.compareTo(db);
+      });
+    final top3 = sorted.take(3).toList();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('בתי חולים קרובים'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: top3.length,
+            separatorBuilder: (_, __) => const Divider(),
+            itemBuilder: (_, i) {
+              final h = top3[i];
+              final distMeters = GeometryUtils.distanceBetweenMeters(
+                myCoord, Coordinate(lat: h.lat, lng: h.lng, utm: ''));
+              final distKm = (distMeters / 1000).toStringAsFixed(1);
+              return ListTile(
+                leading: Icon(
+                  h.isTraumaCenter ? Icons.star : Icons.local_hospital,
+                  color: h.isTraumaCenter ? Colors.amber : Colors.red,
+                ),
+                title: Text(h.name),
+                subtitle: Text('${h.classification} · $distKm ק״מ'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showHospitalNavigationOptions(h);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('סגור'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showHospitalNavigationOptions(Hospital hospital) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('ניווט ל${hospital.name}'),
+        content: const Text('בחר אפליקציית ניווט:'),
+        actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.directions_car),
+            label: const Text('Waze'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _launchHospitalNavigation(hospital, 'waze');
+            },
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.map),
+            label: const Text('Google Maps'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _launchHospitalNavigation(hospital, 'google_maps');
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _launchHospitalNavigation(Hospital hospital, String app) async {
+    final Uri uri;
+    if (app == 'waze') {
+      uri = Uri.parse('https://waze.com/ul?ll=${hospital.lat},${hospital.lng}&navigate=yes');
+    } else {
+      uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${hospital.lat},${hospital.lng}&travelmode=driving');
+    }
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('לא ניתן לפתוח ${app == 'waze' ? 'Waze' : 'Google Maps'}')),
+        );
+      }
+    }
+  }
+
   Future<void> _navigateToCheckpoint(Checkpoint cp, String app) async {
     double? lat;
     double? lng;
@@ -3449,6 +3610,301 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         );
       }
     }
+  }
+
+  // === תפריט טקטי ===
+
+  void _removeTacticalMenu() {
+    _tacticalMenuEntry?.remove();
+    _tacticalMenuEntry = null;
+    _openTacticalNavigatorId = null;
+  }
+
+  Future<void> _navigateToNavigator(LatLng position, String app) async {
+    final lat = position.latitude;
+    final lng = position.longitude;
+    final Uri uri;
+    if (app == 'waze') {
+      uri = Uri.parse('https://waze.com/ul?ll=$lat,$lng&navigate=yes');
+    } else {
+      uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
+    }
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('לא ניתן לפתוח ${app == 'waze' ? 'Waze' : 'Google Maps'}')),
+        );
+      }
+    }
+  }
+
+  Widget _tacticalHeader(String navigatorId, NavigatorLiveData data) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _getNavigatorStatusColor(data),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _userNames[navigatorId] ?? navigatorId,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tacticalItem({
+    required IconData icon,
+    required String text,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        hoverColor: Colors.greenAccent.withValues(alpha: 0.1),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.greenAccent, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildTacticalMenuItems(String navigatorId, NavigatorLiveData data, {required bool dismissOnTap}) {
+    void dismiss() {
+      if (dismissOnTap) _removeTacticalMenu();
+    }
+
+    final trackOn = _showNavigatorTrack[navigatorId] ?? false;
+
+    return [
+      _tacticalItem(
+        icon: trackOn ? Icons.visibility_off : Icons.visibility,
+        text: trackOn ? 'הסתר מסלול בפועל' : 'הצג מסלול בפועל',
+        onTap: () {
+          dismiss();
+          setState(() {
+            _showNavigatorTrack[navigatorId] = !trackOn;
+          });
+        },
+      ),
+      _tacticalItem(
+        icon: Icons.gps_fixed,
+        text: 'עקוב',
+        onTap: () {
+          dismiss();
+          _cycleNavigatorCenteringMode(navigatorId);
+        },
+      ),
+      Opacity(
+        opacity: data.currentPosition != null ? 1.0 : 0.4,
+        child: _tacticalItem(
+          icon: Icons.navigation,
+          text: 'נווט ב-Waze',
+          onTap: data.currentPosition != null
+              ? () { dismiss(); _navigateToNavigator(data.currentPosition!, 'waze'); }
+              : null,
+        ),
+      ),
+      Opacity(
+        opacity: data.currentPosition != null ? 1.0 : 0.4,
+        child: _tacticalItem(
+          icon: Icons.map,
+          text: 'נווט ב-Google Maps',
+          onTap: data.currentPosition != null
+              ? () { dismiss(); _navigateToNavigator(data.currentPosition!, 'google'); }
+              : null,
+        ),
+      ),
+      const Divider(color: Colors.white24, height: 1),
+      _tacticalItem(
+        icon: Icons.info_outline,
+        text: 'פרטי מנווט',
+        onTap: () {
+          dismiss();
+          _showEnhancedNavigatorDetails(navigatorId, data);
+        },
+      ),
+    ];
+  }
+
+  void _showDesktopTacticalMenu(BuildContext markerContext, Offset position, String navigatorId, NavigatorLiveData data) {
+    _removeTacticalMenu();
+
+    if (!_navigatorData.containsKey(navigatorId)) return;
+
+    _openTacticalNavigatorId = navigatorId;
+
+    const double menuWidth = 220;
+    const double menuHeight = 310;
+    final screenSize = MediaQuery.of(markerContext).size;
+    final left = position.dx.clamp(8.0, screenSize.width - menuWidth - 8.0);
+    final top = position.dy.clamp(8.0, screenSize.height - menuHeight - 8.0);
+
+    _tacticalMenuEntry = OverlayEntry(
+      builder: (overlayContext) {
+        return Stack(
+          children: [
+            // שכבת רקע שקופה לסגירה בלחיצה
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _removeTacticalMenu,
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            // ESC dismiss
+            Positioned.fill(
+              child: FocusScope(
+                autofocus: true,
+                child: Focus(
+                  autofocus: true,
+                  onKeyEvent: (node, event) {
+                    if (event.logicalKey == LogicalKeyboardKey.escape) {
+                      _removeTacticalMenu();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: const SizedBox.shrink(),
+                ),
+              ),
+            ),
+            // התפריט עצמו
+            Positioned(
+              left: left,
+              top: top,
+              child: _AnimatedTacticalContainer(
+                child: Container(
+                  width: menuWidth,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.5), width: 1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!_navigatorData.containsKey(navigatorId))
+                          const SizedBox.shrink()
+                        else ...[
+                          _tacticalHeader(navigatorId, _navigatorData[navigatorId]!),
+                          const Divider(color: Colors.white24, height: 1),
+                          ..._buildTacticalMenuItems(navigatorId, _navigatorData[navigatorId]!, dismissOnTap: true),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    Overlay.of(markerContext).insert(_tacticalMenuEntry!);
+  }
+
+  void _showMobileTacticalSheet(String navigatorId, NavigatorLiveData data) {
+    if (!_navigatorData.containsKey(navigatorId)) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // drag handle
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                if (!_navigatorData.containsKey(navigatorId))
+                  const SizedBox.shrink()
+                else ...[
+                  _tacticalHeader(navigatorId, _navigatorData[navigatorId]!),
+                  const Divider(color: Colors.white24, height: 1),
+                  ..._buildTacticalMenuItems(navigatorId, _navigatorData[navigatorId]!, dismissOnTap: false).map(
+                    (item) {
+                      if (item is Opacity || item is Divider) return item;
+                      // עטיפת כל פריט כדי לסגור את ה-sheet אחרי לחיצה
+                      if (item is Material) {
+                        final inkWell = (item.child as InkWell);
+                        final originalOnTap = inkWell.onTap;
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: originalOnTap != null
+                                ? () { Navigator.pop(sheetContext); originalOnTap(); }
+                                : null,
+                            child: inkWell.child,
+                          ),
+                        );
+                      }
+                      return item;
+                    },
+                  ),
+                ],
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showEnhancedNavigatorDetails(String navigatorId, NavigatorLiveData data) {
@@ -5610,6 +6066,57 @@ class _CheckpointArrival {
         // אין סוג אימות מוגדר — fallback למרחק סביר (100 מ')
         return dist <= 100;
     }
+  }
+}
+
+/// קונטיינר מונפש לתפריט טקטי (fade + scale)
+class _AnimatedTacticalContainer extends StatefulWidget {
+  final Widget child;
+
+  const _AnimatedTacticalContainer({required this.child});
+
+  @override
+  State<_AnimatedTacticalContainer> createState() => _AnimatedTacticalContainerState();
+}
+
+class _AnimatedTacticalContainerState extends State<_AnimatedTacticalContainer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fadeAnimation;
+  late final Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+    );
+    _scaleAnimation = Tween<double>(begin: 0.92, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: ScaleTransition(
+        scale: _scaleAnimation,
+        alignment: Alignment.topRight,
+        child: widget.child,
+      ),
+    );
   }
 }
 

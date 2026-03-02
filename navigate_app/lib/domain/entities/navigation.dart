@@ -768,6 +768,37 @@ class Navigation extends Equatable {
     updatedAt,
   ];
 
+  /// Sorts navigator IDs by force composition groups and execution order.
+  /// For pair/squad: groups together. For guard: first_half before second_half.
+  List<String> sortByGroup(Iterable<String> navigatorIds) {
+    final ids = navigatorIds.toList();
+    if (forceComposition.isSolo) return ids;
+
+    final sortedGroupIds = routes.values
+        .where((r) => r.groupId != null)
+        .map((r) => r.groupId!)
+        .toSet()
+        .toList()
+      ..sort();
+
+    ids.sort((a, b) {
+      final groupA = routes[a]?.groupId;
+      final groupB = routes[b]?.groupId;
+      if (groupA == null && groupB == null) return 0;
+      if (groupA == null) return 1;
+      if (groupB == null) return -1;
+      final cmp = sortedGroupIds.indexOf(groupA).compareTo(sortedGroupIds.indexOf(groupB));
+      if (cmp != 0) return cmp;
+      if (forceComposition.isGuard) {
+        const segOrder = {'first_half': 0, 'full': 1, 'second_half': 2};
+        return (segOrder[routes[a]?.segmentType] ?? 1)
+            .compareTo(segOrder[routes[b]?.segmentType] ?? 1);
+      }
+      return 0;
+    });
+    return ids;
+  }
+
   @override
   String toString() => 'Navigation(id: $id, name: $name, status: $status)';
 }

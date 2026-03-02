@@ -1694,9 +1694,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     ),
                     Slider(
                       value: _healthCheckIntervalMinutes.toDouble(),
-                      min: 30,
+                      min: 15,
                       max: 600,
-                      divisions: 19,
+                      divisions: 39,
                       label: _healthCheckIntervalMinutes >= 60
                           ? '${(_healthCheckIntervalMinutes / 60).toStringAsFixed(_healthCheckIntervalMinutes % 60 == 0 ? 0 : 1)} שעות'
                           : '$_healthCheckIntervalMinutes דקות',
