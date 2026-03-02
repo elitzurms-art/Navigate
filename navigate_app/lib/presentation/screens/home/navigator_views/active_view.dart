@@ -2277,7 +2277,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                     Icon(Icons.people, color: Colors.orange[700], size: 32),
                     const SizedBox(height: 8),
                     Text(
-                      'ממתין למנווט הראשון לסיים',
+                      'תמתין שהמנווט הראשון יסיים',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,

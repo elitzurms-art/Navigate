@@ -37,6 +37,9 @@ import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+/// מצב הצגת נקודות ציון
+enum _NzDisplayMode { selectedNavigators, participatingOnly, allCheckpoints }
+
 /// מסך ניהול ניווט פעיל (למפקד)
 class NavigationManagementScreen extends StatefulWidget {
   final domain.Navigation navigation;
@@ -100,6 +103,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   // שכבות
   bool _showNZ = true;
+  _NzDisplayMode _nzMode = _NzDisplayMode.participatingOnly;
   bool _showGG = true;
   bool _showTracks = true;
   bool _showPunches = true;
@@ -1979,6 +1983,71 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // Helper methods — חישובים ופורמט
   // ===========================================================================
 
+  /// אוסף מזהי נקודות ציון המשתתפות במסלולים
+  Set<String> _collectParticipatingCheckpointIds({bool selectedOnly = false}) {
+    final ids = <String>{};
+    for (final entry in widget.navigation.routes.entries) {
+      if (selectedOnly && _selectedNavigators[entry.key] != true) continue;
+      final route = entry.value;
+      if (route.startPointId != null) ids.add(route.startPointId!);
+      if (route.endPointId != null) ids.add(route.endPointId!);
+      if (route.swapPointId != null) ids.add(route.swapPointId!);
+      ids.addAll(route.checkpointIds);
+      ids.addAll(route.waypointIds);
+    }
+    // fallback — הגדרות ניווט (לפני חלוקת צירים)
+    if (!selectedOnly) {
+      if (widget.navigation.startPoint != null) ids.add(widget.navigation.startPoint!);
+      if (widget.navigation.endPoint != null) ids.add(widget.navigation.endPoint!);
+      if (widget.navigation.waypointSettings.enabled) {
+        for (final wp in widget.navigation.waypointSettings.waypoints) {
+          ids.add(wp.checkpointId);
+        }
+      }
+    }
+    return ids;
+  }
+
+  /// מחזיר נקודות ציון מסוננות לפי מצב התצוגה הנבחר
+  List<Checkpoint> _getCheckpointsForDisplay() {
+    final base = _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
+    switch (_nzMode) {
+      case _NzDisplayMode.selectedNavigators:
+        final ids = _collectParticipatingCheckpointIds(selectedOnly: true);
+        return base.where((cp) => ids.contains(cp.id)).toList();
+      case _NzDisplayMode.participatingOnly:
+        final ids = _collectParticipatingCheckpointIds();
+        return base.where((cp) => ids.contains(cp.id)).toList();
+      case _NzDisplayMode.allCheckpoints:
+        return base;
+    }
+  }
+
+  /// בורר מצב הצגת נקודות ציון — 3 chips
+  Widget _buildNzModeSelector() {
+    const modes = [
+      (_NzDisplayMode.selectedNavigators, 'מנווטים נבחרים'),
+      (_NzDisplayMode.participatingOnly, 'משתתפות בניווט'),
+      (_NzDisplayMode.allCheckpoints, 'כל הנקודות'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 2,
+        children: modes.map((m) => ChoiceChip(
+          label: Text(m.$2, style: const TextStyle(fontSize: 10)),
+          selected: _nzMode == m.$1,
+          onSelected: (_) => setState(() => _nzMode = m.$1),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: EdgeInsets.zero,
+        )).toList(),
+      ),
+    );
+  }
+
   List<_CheckpointArrival> _getCheckpointArrivals(NavigatorLiveData data) {
     final route = widget.navigation.routes[data.navigatorId];
     if (route == null) return [];
@@ -2358,7 +2427,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               // נקודות ציון — עם סימון התחלה/סיום/ביניים
               if (_showNZ)
                 MarkerLayer(
-                  markers: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).map((cp) {
+                  markers: _getCheckpointsForDisplay().map((cp) {
                     // זיהוי סוג נקודה: התחלה / סיום / ביניים (עם fallback להגדרות ניווט)
                     final startIds = <String>{};
                     final endIds = <String>{};
@@ -2469,6 +2538,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     opacity: _nzOpacity,
                     onVisibilityChanged: (v) => setState(() => _showNZ = v),
                     onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                    child: _buildNzModeSelector(),
                   ),
                   MapLayerConfig(
                     id: 'gg',
@@ -2529,6 +2599,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           id: 'nz', label: 'נקודות ציון', color: Colors.blue,
                           visible: _showNZ, opacity: _nzOpacity,
                           onVisibilityChanged: (_) {},
+                          child: _buildNzModeSelector(),
                         ),
                         MapLayerConfig(
                           id: 'gg', label: 'גבול גזרה', color: Colors.black,
@@ -2805,9 +2876,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       // נקודות ציון
       if (showNZ)
         MarkerLayer(
-          markers: _checkpoints
-              .where((cp) => !cp.isPolygon && cp.coordinates != null)
-              .map((cp) {
+          markers: _getCheckpointsForDisplay().map((cp) {
             final startIds = <String>{};
             final endIds = <String>{};
             final waypointIds = <String>{};
