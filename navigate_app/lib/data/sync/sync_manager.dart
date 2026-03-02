@@ -1337,6 +1337,8 @@ class SyncManager {
         level: Value((data['level'] as num?)?.toInt()),
         isNavigators: Value(data['isNavigators'] as bool? ?? false),
         isGeneral: Value(data['isGeneral'] as bool? ?? false),
+        checklistsJson: Value(data['checklistsJson'] as String? ??
+            (data['checklists'] != null ? jsonEncode(data['checklists']) : null)),
       ),
     );
   }
@@ -1444,6 +1446,8 @@ class SyncManager {
             (data['variablesSheet'] != null ? jsonEncode(data['variablesSheet']) : null)),
         forceCompositionJson: Value(data['forceCompositionJson'] as String? ??
             (data['forceComposition'] != null ? jsonEncode(data['forceComposition']) : null)),
+        checklistCompletionJson: Value(data['checklistCompletionJson'] as String? ??
+            (data['checklistCompletion'] != null ? jsonEncode(data['checklistCompletion']) : null)),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),

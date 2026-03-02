@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../domain/entities/navigation.dart' as domain;
+import '../../../domain/entities/unit_checklist.dart';
 import '../../../domain/entities/user.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
+import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../services/auth_service.dart';
 import 'create_navigation_screen.dart';
@@ -38,12 +40,14 @@ class _NavigationPreparationScreenState
   late domain.Navigation _navigation;
   bool _isLoading = false;
   User? _currentUser;
+  List<UnitChecklist> _unitChecklists = [];
 
   @override
   void initState() {
     super.initState();
     _navigation = widget.navigation;
     _loadCurrentUser();
+    _loadUnitChecklists();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -56,6 +60,19 @@ class _NavigationPreparationScreenState
       }
     } catch (e) {
       print('DEBUG: Error loading current user: $e');
+    }
+  }
+
+  Future<void> _loadUnitChecklists() async {
+    try {
+      final unitId = _navigation.selectedUnitId;
+      if (unitId == null) return;
+      final unit = await UnitRepository().getById(unitId);
+      if (unit != null && mounted) {
+        setState(() => _unitChecklists = unit.checklists);
+      }
+    } catch (e) {
+      print('DEBUG: Error loading unit checklists: $e');
     }
   }
 
@@ -435,6 +452,48 @@ class _NavigationPreparationScreenState
           'לא בוצעה בדיקת מערכות - לא וידאת תקינות של כלל המשתתפים ויכולות להיווצר תקלות');
     }
 
+    // בדיקת צ'קליסטים חובה
+    final completion = _navigation.checklistCompletion;
+    for (final cl in _unitChecklists) {
+      if (cl.isMandatory) {
+        final isComplete =
+            completion?.isChecklistComplete(cl.id, cl) ?? false;
+        final isSigned = completion?.getSignature(cl.id) != null;
+        if (!isComplete || !isSigned) {
+          // חובה — חוסם
+          if (!mounted) return;
+          await showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.block, color: Colors.red, size: 28),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('צ\'קליסט חובה לא הושלם')),
+                ],
+              ),
+              content: Text(
+                  'הצ\'קליסט "${cl.title}" הוא חובה ולא הושלם/נחתם. יש להשלים ולחתום לפני המעבר לאימון.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('הבנתי'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+      } else {
+        // אופציונלי — אזהרה (לא חוסם)
+        final isComplete =
+            completion?.isChecklistComplete(cl.id, cl) ?? false;
+        if (!isComplete) {
+          warnings.add('הצ\'קליסט "${cl.title}" לא הושלם (אופציונלי)');
+        }
+      }
+    }
+
     if (warnings.isEmpty) {
       // כל השלבים הושלמו - דיאלוג אישור פשוט
       final confirmed = await showDialog<bool>(
@@ -690,6 +749,11 @@ class _NavigationPreparationScreenState
                           onTap: _openVariablesSheet,
                         ),
                       ],
+                      // צ'קליסטים מרמת היחידה
+                      for (final cl in _unitChecklists) ...[
+                        const SizedBox(height: 10),
+                        _buildChecklistCard(cl),
+                      ],
                     ],
                   ),
                 ),
@@ -871,6 +935,301 @@ class _NavigationPreparationScreenState
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildChecklistCard(UnitChecklist cl) {
+    final completion = _navigation.checklistCompletion;
+    final isDone = completion?.isChecklistComplete(cl.id, cl) ?? false;
+    final signature = completion?.getSignature(cl.id);
+    final completedCount = completion?.completedCount(cl.id) ?? 0;
+    final totalItems = cl.totalItems;
+    final pct = totalItems > 0 ? (completedCount / totalItems * 100).round() : 0;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+          color: isDone && signature != null
+              ? Colors.green.withOpacity(0.3)
+              : Colors.grey.withOpacity(0.2),
+          width: 1,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _openChecklistSheet(cl),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              // Icon
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: isDone && signature != null
+                      ? Colors.green.withOpacity(0.15)
+                      : Colors.grey.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.checklist,
+                  size: 20,
+                  color: isDone && signature != null
+                      ? Colors.green
+                      : Colors.grey[600],
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(cl.title,
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        if (cl.isMandatory) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: Colors.red.withOpacity(0.3)),
+                            ),
+                            child: const Text('חובה',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Text(
+                          '$completedCount/$totalItems · $pct%',
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey[600]),
+                        ),
+                        if (signature != null) ...[
+                          const SizedBox(width: 8),
+                          Icon(Icons.verified, size: 14, color: Colors.green[600]),
+                          const SizedBox(width: 2),
+                          Text(
+                            'נחתם ע"י ${signature.completedByName}',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.green[700]),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                isDone && signature != null
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked,
+                color: isDone && signature != null
+                    ? Colors.green
+                    : Colors.grey,
+                size: 28,
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_left, color: Colors.grey[400], size: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openChecklistSheet(UnitChecklist cl) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final completion =
+                _navigation.checklistCompletion ?? const ChecklistCompletion();
+            final completedCount = completion.completedCount(cl.id);
+            final totalItems = cl.totalItems;
+            final pct =
+                totalItems > 0 ? (completedCount / totalItems * 100).round() : 0;
+            final allDone = completion.isChecklistComplete(cl.id, cl);
+            final signature = completion.getSignature(cl.id);
+
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.75,
+              minChildSize: 0.4,
+              maxChildSize: 0.95,
+              builder: (_, scrollController) {
+                return Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: Column(
+                    children: [
+                      // Handle
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      // Header
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(cl.title,
+                                  style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: allDone
+                                    ? Colors.green[50]
+                                    : Colors.orange[50],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '$completedCount/$totalItems · $pct%',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: allDone
+                                      ? Colors.green[700]
+                                      : Colors.orange[700],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (signature != null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              Icon(Icons.verified,
+                                  size: 16, color: Colors.green[600]),
+                              const SizedBox(width: 4),
+                              Text(
+                                'נחתם ע"י ${signature.completedByName}',
+                                style: TextStyle(
+                                    fontSize: 13, color: Colors.green[700]),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const Divider(),
+                      // Items list
+                      Expanded(
+                        child: ListView(
+                          controller: scrollController,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          children: [
+                            for (final section in cl.sections) ...[
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    8, 12, 8, 4),
+                                child: Text(
+                                  section.title,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15),
+                                ),
+                              ),
+                              const Divider(height: 1),
+                              for (final item in section.items)
+                                CheckboxListTile(
+                                  title: Text(item.title,
+                                      style: const TextStyle(fontSize: 14)),
+                                  value: completion
+                                          .completions[cl.id]?[item.id] ??
+                                      false,
+                                  dense: true,
+                                  onChanged: (val) async {
+                                    final updated =
+                                        completion.toggleItem(cl.id, item.id);
+                                    final updatedNav = _navigation.copyWith(
+                                      checklistCompletion: updated,
+                                      updatedAt: DateTime.now(),
+                                    );
+                                    await _repository.update(updatedNav);
+                                    setState(() => _navigation = updatedNav);
+                                    setSheetState(() {});
+                                  },
+                                ),
+                            ],
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+                      ),
+                      // Sign button
+                      if (signature == null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: allDone && _currentUser != null
+                                  ? () async {
+                                      final signed = completion.signChecklist(
+                                          cl.id, _currentUser!);
+                                      final updatedNav =
+                                          _navigation.copyWith(
+                                        checklistCompletion: signed,
+                                        updatedAt: DateTime.now(),
+                                      );
+                                      await _repository.update(updatedNav);
+                                      setState(
+                                          () => _navigation = updatedNav);
+                                      setSheetState(() {});
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.verified),
+                              label: const Text('אשר צ\'קליסט'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 

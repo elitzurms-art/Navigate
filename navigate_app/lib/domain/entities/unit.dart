@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
+import 'unit_checklist.dart';
 
 /// יחידה צבאית
 class Unit extends Equatable {
@@ -16,6 +17,7 @@ class Unit extends Equatable {
   final int? level; // רמת היחידה (1=אוגדה .. 5=מחלקה)
   final bool isNavigators; // יחידת מנווטים
   final bool isGeneral; // יחידה כללית
+  final List<UnitChecklist> checklists; // צ'קליסטים למפקדים
 
   const Unit({
     required this.id,
@@ -31,6 +33,7 @@ class Unit extends Equatable {
     this.level,
     this.isNavigators = false,
     this.isGeneral = false,
+    this.checklists = const [],
   });
 
   Unit copyWith({
@@ -47,6 +50,7 @@ class Unit extends Equatable {
     int? level,
     bool? isNavigators,
     bool? isGeneral,
+    List<UnitChecklist>? checklists,
   }) {
     return Unit(
       id: id ?? this.id,
@@ -62,6 +66,7 @@ class Unit extends Equatable {
       level: level ?? this.level,
       isNavigators: isNavigators ?? this.isNavigators,
       isGeneral: isGeneral ?? this.isGeneral,
+      checklists: checklists ?? this.checklists,
     );
   }
 
@@ -80,6 +85,8 @@ class Unit extends Equatable {
       if (level != null) 'level': level,
       'isNavigators': isNavigators,
       'isGeneral': isGeneral,
+      if (checklists.isNotEmpty)
+        'checklists': checklists.map((c) => c.toMap()).toList(),
     };
   }
 
@@ -98,11 +105,16 @@ class Unit extends Equatable {
       level: (map['level'] as num?)?.toInt(),
       isNavigators: map['isNavigators'] as bool? ?? false,
       isGeneral: map['isGeneral'] as bool? ?? false,
+      checklists: map['checklists'] != null
+          ? (map['checklists'] as List)
+              .map((c) => UnitChecklist.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : const [],
     );
   }
 
   @override
-  List<Object?> get props => [id, name, type, parentUnitId, updatedAt, isClassified, level, isNavigators, isGeneral];
+  List<Object?> get props => [id, name, type, parentUnitId, updatedAt, isClassified, level, isNavigators, isGeneral, checklists];
 
   /// קבלת שם סוג היחידה
   String getTypeName() {

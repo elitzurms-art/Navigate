@@ -50,6 +50,7 @@ class Units extends Table {
   IntColumn get level => integer().nullable()(); // רמת היחידה (1=אוגדה .. 5=מחלקה)
   BoolColumn get isNavigators => boolean().withDefault(const Constant(false))(); // יחידת מנווטים
   BoolColumn get isGeneral => boolean().withDefault(const Constant(false))(); // יחידה כללית
+  TextColumn get checklistsJson => text().nullable()(); // JSON צ'קליסטים
 
   @override
   Set<Column> get primaryKey => {id};
@@ -213,6 +214,7 @@ class Navigations extends Table {
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
   DateTimeColumn get activeStartTime => dateTime().nullable()();
+  TextColumn get checklistCompletionJson => text().nullable()(); // JSON מילוי צ'קליסטים
   DateTimeColumn get deletedAt => dateTime().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -408,7 +410,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 36;
+  int get schemaVersion => 37;
 
   @override
   MigrationStrategy get migration {
@@ -648,6 +650,10 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from <= 35 && to >= 36) {
           await safeAddColumn(navigations, navigations.deletedAt);
+        }
+        if (from <= 36 && to >= 37) {
+          await safeAddColumn(units, units.checklistsJson);
+          await safeAddColumn(navigations, navigations.checklistCompletionJson);
         }
       },
     );

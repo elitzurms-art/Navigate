@@ -15,6 +15,7 @@ import '../settings/settings_screen.dart';
 
 import '../units/units_list_screen.dart';
 import '../units/unit_members_screen.dart';
+import '../units/checklist_management_screen.dart';
 import '../onboarding/pending_approvals_screen.dart';
 import '../admin/lost_users_screen.dart';
 import '../../../data/repositories/user_repository.dart';
@@ -252,6 +253,25 @@ class _HomeScreenState extends State<HomeScreen> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const PendingApprovalsScreen(),
+                      ),
+                    );
+                  }
+                },
+              ),
+            // ניהול צ'קליסטים — מנהלי יחידות ומפתחים
+            if (_userRole == 'unit_admin' || _userRole == 'developer' || _userRole == 'admin')
+              ListTile(
+                leading: const Icon(Icons.checklist, color: Colors.teal),
+                title: const Text('ניהול צ\'קליסטים'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final user = await _authService.getCurrentUser();
+                  if (user?.unitId != null && user!.unitId!.isNotEmpty && mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            ChecklistManagementScreen(unitId: user.unitId!),
                       ),
                     );
                   }

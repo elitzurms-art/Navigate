@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import '../../core/constants/app_constants.dart';
 import '../../domain/entities/navigation.dart' as domain;
 import '../../domain/entities/navigation_settings.dart' as domain;
+import '../../domain/entities/unit_checklist.dart' as domain;
 import '../../domain/entities/variables_sheet.dart' as domain;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
@@ -134,6 +135,9 @@ class NavigationRepository {
               forceCompositionJson: Value(!navigation.forceComposition.isSolo
                   ? jsonEncode(navigation.forceComposition.toMap())
                   : null),
+              checklistCompletionJson: Value(navigation.checklistCompletion != null
+                  ? jsonEncode(navigation.checklistCompletion!.toMap())
+                  : null),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
@@ -220,6 +224,9 @@ class NavigationRepository {
           forceCompositionJson: Value(!navigation.forceComposition.isSolo
               ? jsonEncode(navigation.forceComposition.toMap())
               : null),
+          checklistCompletionJson: Value(navigation.checklistCompletion != null
+              ? jsonEncode(navigation.checklistCompletion!.toMap())
+              : null),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
           updatedAt: Value(navigation.updatedAt),
         ),
@@ -241,6 +248,19 @@ class NavigationRepository {
       print('DEBUG: Error updating navigation: $e');
       rethrow;
     }
+  }
+
+  /// Update only checklist completion for a navigation
+  Future<void> updateChecklistCompletion(
+    String navId,
+    domain.ChecklistCompletion completion,
+  ) async {
+    final nav = await getById(navId);
+    if (nav == null) return;
+    await update(nav.copyWith(
+      checklistCompletion: completion,
+      updatedAt: DateTime.now(),
+    ));
   }
 
   /// עדכון סטטוס בלבד — שולח רק שדות שהשתנו ל-Firestore (חיסכון ברוחב פס)
@@ -430,6 +450,9 @@ class NavigationRepository {
           : const domain.TimeCalculationSettings(),
       variablesSheet: data.variablesSheetJson != null && _parseJsonAsMap(data.variablesSheetJson!) != null
           ? domain.VariablesSheet.fromMap(_parseJsonAsMap(data.variablesSheetJson!)!)
+          : null,
+      checklistCompletion: data.checklistCompletionJson != null && _parseJsonAsMap(data.checklistCompletionJson!) != null
+          ? domain.ChecklistCompletion.fromMap(_parseJsonAsMap(data.checklistCompletionJson!)!)
           : null,
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)

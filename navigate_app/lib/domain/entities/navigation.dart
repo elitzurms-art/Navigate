@@ -3,6 +3,7 @@ import 'coordinate.dart';
 import 'narration_entry.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
+import 'unit_checklist.dart';
 import 'variables_sheet.dart';
 
 /// מסלול מוקצה למנווט
@@ -367,6 +368,9 @@ class Navigation extends Equatable {
   // Variables sheet (דף משתנים)
   final VariablesSheet? variablesSheet;
 
+  // Checklists completion (צ'קליסטים)
+  final ChecklistCompletion? checklistCompletion;
+
   // Time calculation
   final TimeCalculationSettings timeCalculationSettings;
 
@@ -425,6 +429,7 @@ class Navigation extends Equatable {
     this.forceComposition = const ForceComposition(),
     this.communicationSettings = const CommunicationSettings(),
     this.variablesSheet,
+    this.checklistCompletion,
     this.timeCalculationSettings = const TimeCalculationSettings(),
     required this.permissions,
     required this.createdAt,
@@ -491,6 +496,8 @@ class Navigation extends Equatable {
     CommunicationSettings? communicationSettings,
     VariablesSheet? variablesSheet,
     bool clearVariablesSheet = false,
+    ChecklistCompletion? checklistCompletion,
+    bool clearChecklistCompletion = false,
     TimeCalculationSettings? timeCalculationSettings,
     NavigationPermissions? permissions,
     DateTime? createdAt,
@@ -545,6 +552,7 @@ class Navigation extends Equatable {
       forceComposition: forceComposition ?? this.forceComposition,
       communicationSettings: communicationSettings ?? this.communicationSettings,
       variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
+      checklistCompletion: clearChecklistCompletion ? null : (checklistCompletion ?? this.checklistCompletion),
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
@@ -608,6 +616,7 @@ class Navigation extends Equatable {
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
       if (variablesSheet != null) 'variablesSheet': variablesSheet!.toMap(),
+      if (checklistCompletion != null) 'checklistCompletion': checklistCompletion!.toMap(),
       // Computed field for Firestore security rules — not stored in Drift
       'participants': {
         ...selectedParticipantIds,
@@ -701,6 +710,9 @@ class Navigation extends Equatable {
       variablesSheet: map['variablesSheet'] is Map
           ? VariablesSheet.fromMap(map['variablesSheet'] as Map<String, dynamic>)
           : null,
+      checklistCompletion: map['checklistCompletion'] is Map
+          ? ChecklistCompletion.fromMap(map['checklistCompletion'] as Map<String, dynamic>)
+          : null,
       timeCalculationSettings: map['timeCalculationSettings'] is Map
           ? TimeCalculationSettings.fromMap(map['timeCalculationSettings'] as Map<String, dynamic>)
           : const TimeCalculationSettings(),
@@ -762,6 +774,7 @@ class Navigation extends Equatable {
     forceComposition,
     communicationSettings,
     variablesSheet,
+    checklistCompletion,
     timeCalculationSettings,
     permissions,
     createdAt,

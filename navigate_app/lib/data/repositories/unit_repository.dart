@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/constants/default_checklists.dart';
 import '../../domain/entities/unit.dart' as domain;
+import '../../domain/entities/unit_checklist.dart';
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
 import 'user_repository.dart';
@@ -25,22 +27,30 @@ class UnitRepository {
   Future<domain.Unit> create(domain.Unit unit) async {
     print('DEBUG: Creating unit: ${unit.name}');
     try {
+      // Auto-populate default checklists if none provided
+      final effectiveUnit = unit.checklists.isEmpty
+          ? unit.copyWith(checklists: kDefaultUnitChecklists.toList())
+          : unit;
+
       // Local save
       await _db.into(_db.units).insert(
             UnitsCompanion.insert(
-              id: unit.id,
-              name: unit.name,
-              description: unit.description,
-              type: unit.type,
-              parentUnitId: Value(unit.parentUnitId),
-              managerIdsJson: jsonEncode(unit.managerIds),
-              createdBy: unit.createdBy,
-              createdAt: unit.createdAt,
-              updatedAt: unit.updatedAt,
-              isClassified: Value(unit.isClassified),
-              level: Value(unit.level),
-              isNavigators: Value(unit.isNavigators),
-              isGeneral: Value(unit.isGeneral),
+              id: effectiveUnit.id,
+              name: effectiveUnit.name,
+              description: effectiveUnit.description,
+              type: effectiveUnit.type,
+              parentUnitId: Value(effectiveUnit.parentUnitId),
+              managerIdsJson: jsonEncode(effectiveUnit.managerIds),
+              createdBy: effectiveUnit.createdBy,
+              createdAt: effectiveUnit.createdAt,
+              updatedAt: effectiveUnit.updatedAt,
+              isClassified: Value(effectiveUnit.isClassified),
+              level: Value(effectiveUnit.level),
+              isNavigators: Value(effectiveUnit.isNavigators),
+              isGeneral: Value(effectiveUnit.isGeneral),
+              checklistsJson: Value(effectiveUnit.checklists.isNotEmpty
+                  ? jsonEncode(effectiveUnit.checklists.map((c) => c.toMap()).toList())
+                  : null),
             ),
           );
 
@@ -49,14 +59,14 @@ class UnitRepository {
       // Queue for sync
       await _syncManager.queueOperation(
         collection: AppConstants.unitsCollection,
-        documentId: unit.id,
+        documentId: effectiveUnit.id,
         operation: 'create',
-        data: unit.toMap(),
+        data: effectiveUnit.toMap(),
         priority: SyncPriority.high,
       );
 
       print('DEBUG: Unit queued for sync');
-      return unit;
+      return effectiveUnit;
     } catch (e) {
       print('DEBUG: Error creating unit: $e');
       rethrow;
@@ -80,6 +90,9 @@ class UnitRepository {
           level: Value(unit.level),
           isNavigators: Value(unit.isNavigators),
           isGeneral: Value(unit.isGeneral),
+          checklistsJson: Value(unit.checklists.isNotEmpty
+              ? jsonEncode(unit.checklists.map((c) => c.toMap()).toList())
+              : null),
         ),
       );
 
@@ -99,6 +112,16 @@ class UnitRepository {
       print('DEBUG: Error updating unit: $e');
       rethrow;
     }
+  }
+
+  /// Update only checklists for a unit
+  Future<void> updateChecklists(String unitId, List<UnitChecklist> checklists) async {
+    final unit = await getById(unitId);
+    if (unit == null) return;
+    await update(unit.copyWith(
+      checklists: checklists,
+      updatedAt: DateTime.now(),
+    ));
   }
 
   /// Delete a unit
@@ -531,7 +554,20 @@ class UnitRepository {
       level: row.level,
       isNavigators: row.isNavigators,
       isGeneral: row.isGeneral,
+      checklists: _parseChecklists(row.checklistsJson),
     );
+  }
+
+  List<UnitChecklist> _parseChecklists(String? json) {
+    if (json == null || json.isEmpty) return const [];
+    try {
+      final list = jsonDecode(json) as List;
+      return list
+          .map((c) => UnitChecklist.fromMap(c as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Parse manager IDs JSON string to list
