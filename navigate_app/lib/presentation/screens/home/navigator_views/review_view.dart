@@ -29,7 +29,7 @@ import '../../../widgets/route_playback_widget.dart';
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
 const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
 const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
-const _kEndColor = Color(0xFFF44336); // אדום — S (סיום)
+const _kEndColor = Color(0xFFF44336); // אדום — F (סיום)
 const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
 const _kBoundaryColor = Colors.black;
 const _kSafetyColor = Color(0xFFFF9800); // כתום
@@ -536,25 +536,32 @@ class _ReviewViewState extends State<ReviewView> {
                       final route = widget.navigation.routes[widget.currentUser.uid];
                       final startId = route?.startPointId;
                       final endId = route?.endPointId;
+                      final swapId = route?.swapPointId;
 
                       return MarkerLayer(
                         markers: pointCps.map((cp) {
                           Color bgColor;
                           String letter;
+                          Color borderOverride = Colors.white;
 
+                          final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
                           final isStart = (startId != null &&
                                   (cp.id == startId || cp.sourceId == startId)) ||
                               cp.type == 'start';
-                          final isEnd = (endId != null &&
+                          final isEnd = !isSwapPoint && ((endId != null &&
                                   (cp.id == endId || cp.sourceId == endId)) ||
-                              cp.type == 'end';
+                              cp.type == 'end');
 
-                          if (isStart) {
+                          if (isSwapPoint) {
+                            bgColor = Colors.white;
+                            borderOverride = Colors.grey[700]!;
+                            letter = 'S';
+                          } else if (isStart) {
                             bgColor = _kStartColor;
                             letter = 'H';
                           } else if (isEnd) {
                             bgColor = _kEndColor;
-                            letter = 'S';
+                            letter = 'F';
                           } else {
                             bgColor = _kCheckpointColor;
                             letter = 'B';
@@ -573,7 +580,7 @@ class _ReviewViewState extends State<ReviewView> {
                                   color: bgColor,
                                   shape: BoxShape.circle,
                                   border: Border.all(
-                                      color: Colors.white, width: 2),
+                                      color: borderOverride, width: 2),
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withOpacity(0.3),
@@ -584,8 +591,8 @@ class _ReviewViewState extends State<ReviewView> {
                                 child: Center(
                                   child: Text(
                                     label,
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -738,7 +745,8 @@ class _ReviewViewState extends State<ReviewView> {
                     _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
                     _legendItem(_kActualRouteColor, 'מסלול בפועל'),
                     _legendItem(_kStartColor, 'התחלה (H)'),
-                    _legendItem(_kEndColor, 'סיום (S)'),
+                    _legendItem(_kEndColor, 'סיום (F)'),
+                    _legendItem(Colors.white, 'החלפה (S)'),
                   ],
                 ),
               ),
@@ -1009,6 +1017,7 @@ class _ReviewViewState extends State<ReviewView> {
             navigatorName: widget.currentUser.fullName,
             startPointId: route?.startPointId,
             endPointId: route?.endPointId,
+            swapPointId: route?.swapPointId,
             defaultMap: widget.navigation.displaySettings.defaultMap,
           );
         },
@@ -1031,6 +1040,7 @@ class _FullscreenReviewMap extends StatefulWidget {
   final String navigatorName;
   final String? startPointId;
   final String? endPointId;
+  final String? swapPointId;
   final String? defaultMap;
 
   const _FullscreenReviewMap({
@@ -1046,6 +1056,7 @@ class _FullscreenReviewMap extends StatefulWidget {
     required this.navigatorName,
     this.startPointId,
     this.endPointId,
+    this.swapPointId,
     this.defaultMap,
   });
 
@@ -1202,25 +1213,32 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                 Builder(builder: (_) {
                   final startId = widget.startPointId;
                   final endId = widget.endPointId;
+                  final swapId = widget.swapPointId;
 
                   return MarkerLayer(
                     markers: pointCps.map((cp) {
                       Color bgColor;
                       String letter;
+                      Color borderOverride = Colors.white;
 
+                      final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
                       final isStart = (startId != null &&
                               (cp.id == startId || cp.sourceId == startId)) ||
                           cp.type == 'start';
-                      final isEnd = (endId != null &&
+                      final isEnd = !isSwapPoint && ((endId != null &&
                               (cp.id == endId || cp.sourceId == endId)) ||
-                          cp.type == 'end';
+                          cp.type == 'end');
 
-                      if (isStart) {
+                      if (isSwapPoint) {
+                        bgColor = Colors.white;
+                        borderOverride = Colors.grey[700]!;
+                        letter = 'S';
+                      } else if (isStart) {
                         bgColor = _kStartColor;
                         letter = 'H';
                       } else if (isEnd) {
                         bgColor = _kEndColor;
-                        letter = 'S';
+                        letter = 'F';
                       } else {
                         bgColor = _kCheckpointColor;
                         letter = 'B';
@@ -1238,7 +1256,7 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                               color: bgColor,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                  color: Colors.white, width: 2),
+                                  color: borderOverride, width: 2),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.3),
@@ -1249,8 +1267,8 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                             child: Center(
                               child: Text(
                                 label,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),

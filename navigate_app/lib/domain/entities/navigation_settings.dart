@@ -983,6 +983,8 @@ class ForceComposition extends Equatable {
   bool get isSolo => type == 'solo';
   bool get isGuard => type == 'guard';
   bool get isGrouped => type != 'solo';
+  /// צמד/חוליה — קבוצתי "אמיתי" (לא מאבטח, שהוא שני ניווטי בדד רצופים)
+  bool get isGroupedPairOrSquad => type == 'pair' || type == 'squad';
 
   /// נציג למידה לקבוצה
   String? getLearningRepresentative(String? groupId) =>

@@ -2363,11 +2363,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     final startIds = <String>{};
                     final endIds = <String>{};
                     final waypointIds = <String>{};
+                    final swapIds = <String>{};
                     for (final route in widget.navigation.routes.values) {
                       if (route.startPointId != null) startIds.add(route.startPointId!);
                       if (route.endPointId != null) endIds.add(route.endPointId!);
+                      if (route.swapPointId != null) swapIds.add(route.swapPointId!);
                       waypointIds.addAll(route.waypointIds);
                     }
+                    endIds.removeAll(swapIds);
                     // fallback — הגדרות ניווט (לפני חלוקת צירים)
                     if (widget.navigation.startPoint != null) startIds.add(widget.navigation.startPoint!);
                     if (widget.navigation.endPoint != null) endIds.add(widget.navigation.endPoint!);
@@ -2380,15 +2383,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     final isStart = startIds.contains(cp.id) || cp.isStart;
                     final isEnd = endIds.contains(cp.id) || cp.isEnd;
                     final isWaypoint = waypointIds.contains(cp.id);
+                    final isSwapPoint = swapIds.contains(cp.id);
 
                     Color cpColor;
                     String letter;
-                    if (isStart) {
+                    if (isSwapPoint) {
+                      cpColor = Colors.white;
+                      letter = 'S';
+                    } else if (isStart) {
                       cpColor = const Color(0xFF4CAF50); // ירוק — התחלה
                       letter = 'H';
                     } else if (isEnd) {
                       cpColor = const Color(0xFFF44336); // אדום — סיום
-                      letter = 'S';
+                      letter = 'F';
                     } else if (isWaypoint) {
                       cpColor = const Color(0xFFFFC107); // צהוב — ביניים
                       letter = 'B';
@@ -2408,7 +2415,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           children: [
                             Icon(
                               Icons.place,
-                              color: cpColor.withValues(alpha: _nzOpacity),
+                              color: isSwapPoint
+                                  ? Colors.grey[700]!.withValues(alpha: _nzOpacity)
+                                  : cpColor.withValues(alpha: _nzOpacity),
                               size: 32,
                             ),
                             Text(
@@ -2416,7 +2425,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
-                                color: cpColor,
+                                color: isSwapPoint ? Colors.grey[800] : cpColor,
                               ),
                             ),
                           ],
@@ -2802,11 +2811,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             final startIds = <String>{};
             final endIds = <String>{};
             final waypointIds = <String>{};
+            final swapIds = <String>{};
             for (final route in widget.navigation.routes.values) {
               if (route.startPointId != null) startIds.add(route.startPointId!);
               if (route.endPointId != null) endIds.add(route.endPointId!);
+              if (route.swapPointId != null) swapIds.add(route.swapPointId!);
               waypointIds.addAll(route.waypointIds);
             }
+            endIds.removeAll(swapIds);
             for (final wp in widget.navigation.waypointSettings.waypoints) {
               waypointIds.add(wp.checkpointId);
             }
@@ -2814,15 +2826,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             final isStart = startIds.contains(cp.id) || cp.isStart;
             final isEnd = endIds.contains(cp.id) || cp.isEnd;
             final isWaypoint = waypointIds.contains(cp.id);
+            final isSwapPoint = swapIds.contains(cp.id);
 
             Color cpColor;
             String letter;
-            if (isStart) {
+            if (isSwapPoint) {
+              cpColor = Colors.white;
+              letter = 'S';
+            } else if (isStart) {
               cpColor = const Color(0xFF4CAF50);
               letter = 'H';
             } else if (isEnd) {
               cpColor = const Color(0xFFF44336);
-              letter = 'S';
+              letter = 'F';
             } else if (isWaypoint) {
               cpColor = const Color(0xFFFFC107);
               letter = 'B';
@@ -2840,7 +2856,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 children: [
                   Icon(
                     Icons.place,
-                    color: cpColor.withValues(alpha: nzOp),
+                    color: isSwapPoint
+                        ? Colors.grey[700]!.withValues(alpha: nzOp)
+                        : cpColor.withValues(alpha: nzOp),
                     size: 32,
                   ),
                   Text(
@@ -2848,7 +2866,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: cpColor,
+                      color: isSwapPoint ? Colors.grey[800] : cpColor,
                     ),
                   ),
                 ],
@@ -3249,10 +3267,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     final typeName = letter == 'H'
         ? 'נקודת התחלה'
         : letter == 'S'
-            ? 'נקודת סיום'
-            : letter == 'B'
-                ? 'נקודת ביניים'
-                : 'נקודה';
+            ? 'נקודת החלפה'
+            : letter == 'F'
+                ? 'נקודת סיום'
+                : letter == 'B'
+                    ? 'נקודת ביניים'
+                    : 'נקודה';
 
     showDialog(
       context: context,

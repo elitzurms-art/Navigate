@@ -34,7 +34,7 @@ import '../../../data/repositories/user_repository.dart';
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
 const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
 const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
-const _kEndColor = Color(0xFFF44336); // אדום — S (סיום)
+const _kEndColor = Color(0xFFF44336); // אדום — F (סיום)
 const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
 const _kBoundaryColor = Colors.black;
 const _kSafetyColor = Color(0xFFFF9800); // כתום
@@ -1358,17 +1358,23 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     // זיהוי סוג לפי הציר (startPointId/endPointId) — fallback ל-cp.type
     final startIds = <String>{};
     final endIds = <String>{};
+    final swapIds = <String>{};
     for (final route in _currentNavigation.routes.values) {
       if (route.startPointId != null) startIds.add(route.startPointId!);
       if (route.endPointId != null) endIds.add(route.endPointId!);
+      if (route.swapPointId != null) swapIds.add(route.swapPointId!);
     }
+    // swap point לא נחשב נקודת סיום
+    endIds.removeAll(swapIds);
 
     return [
       MarkerLayer(
         markers: pointCps.map((cp) {
           Color bgColor;
           String letter;
+          Color? borderColorOverride;
 
+          final isSwapPoint = swapIds.contains(cp.id) || swapIds.contains(cp.sourceId);
           final isStart = startIds.contains(cp.id) ||
               startIds.contains(cp.sourceId) ||
               cp.type == 'start';
@@ -1376,12 +1382,16 @@ class _ApprovalScreenState extends State<ApprovalScreen>
               endIds.contains(cp.sourceId) ||
               cp.type == 'end';
 
-          if (isStart) {
+          if (isSwapPoint) {
+            bgColor = Colors.white;
+            borderColorOverride = Colors.grey[700]!;
+            letter = 'S';
+          } else if (isStart) {
             bgColor = _kStartColor;
             letter = 'H';
           } else if (isEnd) {
             bgColor = _kEndColor;
-            letter = 'S';
+            letter = 'F';
           } else {
             bgColor = _kCheckpointColor;
             letter = 'B';
@@ -1398,7 +1408,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 decoration: BoxDecoration(
                   color: bgColor,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+                  border: Border.all(color: borderColorOverride ?? Colors.white, width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.3),
@@ -1409,8 +1419,8 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                 child: Center(
                   child: Text(
                     label,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                     ),

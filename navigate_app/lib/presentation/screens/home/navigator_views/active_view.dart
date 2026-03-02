@@ -82,6 +82,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // קבוצה (צמד/חוליה) — משני לא מפעיל GPS ולא דוקר
   bool _isGroupSecondary = false;
 
+  // מאבטח — מנווט second_half ממתין ל-first_half לסיים
+  bool _isGuardSecondHalf = false;
+  bool _guardPartnerFinished = false;
+  StreamSubscription<QuerySnapshot>? _guardPartnerListener;
+
   // דריסות מפה פר-מנווט (מהמפקד)
   bool _overrideAllowOpenMap = false;
   bool _overrideShowSelfLocation = false;
@@ -212,6 +217,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _alertPlayer.dispose();
     _extensionListener?.cancel();
     _barburAlertListener?.cancel();
+    _guardPartnerListener?.cancel();
     super.dispose();
   }
 
@@ -289,6 +295,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       if (mounted) {
         _isGroupSecondary = effectiveTrack?.isGroupSecondary ?? false;
+
+        // מאבטח — זיהוי second_half + בדיקת סיום partner
+        final myRoute = _nav.routes[widget.currentUser.uid];
+        _isGuardSecondHalf = _nav.forceComposition.isGuard &&
+            myRoute?.segmentType == 'second_half';
+
+        if (_isGuardSecondHalf && status == NavigatorPersonalStatus.waiting) {
+          // בדיקה ראשונית אם ה-partner כבר סיים
+          await _checkGuardPartnerStatus();
+          // התחלת listener ל-track של ה-partner
+          _startGuardPartnerListener();
+          // נעילת טלפון בזמן המתנה (לפני תחילת ניווט)
+          _startSecurity();
+        }
+
         setState(() {
           _track = effectiveTrack;
           _personalStatus = status;
@@ -307,8 +328,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _hadGpsFix = false;
           _startElapsedTimer();
           _startSecurity();
-          // GPS + שירותים — רק לנציג (לא למשני)
-          if (!_isGroupSecondary) {
+          // GPS + שירותים — רק לנציג (לא למשני בצמד/חוליה)
+          // מאבטח: שני המנווטים primary — כל אחד בחצי שלו
+          if (!_isGroupSecondary || _nav.forceComposition.isGuard) {
             _startGpsTracking();
             _startGpsSourceCheck();
             _startHealthCheck();
@@ -455,6 +477,65 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _securityActive = false;
   }
 
+  // ===========================================================================
+  // מאבטח — המתנה ל-first_half partner
+  // ===========================================================================
+
+  /// בדיקה חד-פעמית אם ה-partner (first_half) כבר סיים
+  Future<void> _checkGuardPartnerStatus() async {
+    final partnerId = _getGuardFirstHalfPartnerId();
+    if (partnerId == null) return;
+
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: _nav.id)
+          .where('navigatorUserId', isEqualTo: partnerId)
+          .get();
+      if (snap.docs.isNotEmpty) {
+        final data = snap.docs.first.data();
+        final isActive = data['isActive'] as bool? ?? true;
+        if (!isActive && mounted) {
+          _guardPartnerFinished = true;
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// listener ל-track של ה-first_half partner — מעדכן כש-partner מסיים
+  void _startGuardPartnerListener() {
+    final partnerId = _getGuardFirstHalfPartnerId();
+    if (partnerId == null) return;
+
+    _guardPartnerListener?.cancel();
+    _guardPartnerListener = FirebaseFirestore.instance
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: _nav.id)
+        .where('navigatorUserId', isEqualTo: partnerId)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      if (snap.docs.isNotEmpty) {
+        final data = snap.docs.first.data();
+        final isActive = data['isActive'] as bool? ?? true;
+        if (!isActive && !_guardPartnerFinished) {
+          setState(() => _guardPartnerFinished = true);
+        }
+      }
+    });
+  }
+
+  /// מציאת מנווט ה-first_half ב-guard
+  String? _getGuardFirstHalfPartnerId() {
+    try {
+      return _nav.routes.entries
+          .firstWhere((e) => e.value.segmentType == 'first_half')
+          .key;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// פסילת מנווט — סיום ניווט + סימון ב-track + שליחת התראה למפקד
   /// מיפוי סוג חריגה לסיבת פסילה קריאה
   String _getDisqualificationReason(ViolationType type) {
@@ -497,10 +578,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // סימון isDisqualified=true ב-track (Drift + Firestore)
       await _trackRepo.disqualifyNavigator(_track!.id, reason: _disqualificationReason);
 
-      // פסילה קבוצתית — אם המנווט בקבוצה (צמד/חוליה), פסול את כל חברי הקבוצה
+      // פסילה קבוצתית — רק צמד/חוליה (לא מאבטח — שם כל מנווט עצמאי)
       final route = _nav.routes[widget.currentUser.uid];
       final groupId = route?.groupId;
-      if (groupId != null && _nav.forceComposition.isGrouped) {
+      if (groupId != null && _nav.forceComposition.isGroupedPairOrSquad) {
         final groupMembers = _nav.routes.entries
             .where((e) => e.value.groupId == groupId && e.key != widget.currentUser.uid)
             .map((e) => e.key);
@@ -1433,11 +1514,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _isStarting = true;
     setState(() => _isLoading = true);
     try {
-      // 0. בדיקת נציג קבוצתי (צמד/חוליה)
+      // 0. בדיקת נציג קבוצתי (צמד/חוליה — לא מאבטח)
       final route = _nav.routes[widget.currentUser.uid];
       final groupId = route?.groupId;
       final composition = _nav.forceComposition;
-      final isGrouped = composition.isGrouped && groupId != null;
+      // מאבטח = שני ניווטי בדד רצופים, לא צמד/חוליה — אין נציג/משני
+      final isGrouped = composition.isGroupedPairOrSquad && groupId != null;
 
       bool isRepresentative = true; // ברירת מחדל: solo → נציג
 
@@ -1500,8 +1582,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         print('DEBUG ActiveView: sync error (non-blocking): $e');
       });
 
-      // 6. GPS + שמירת נקודה ראשונה — רק לנציג (לא למשני)
-      if (!_isGroupSecondary) {
+      // 6. GPS + שמירת נקודה ראשונה — רק לנציג (לא למשני בצמד/חוליה)
+      // מאבטח: שני המנווטים primary — כל אחד בחצי שלו
+      if (!_isGroupSecondary || _nav.forceComposition.isGuard) {
         _startGpsTracking().then((_) {
           _saveTrackPointsLocal();
           _syncTrackToFirestore(); // סנכרון ראשוני ל-Firestore
@@ -1510,8 +1593,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         });
       }
 
-      // 7. שירותים נלווים — רק לנציג
-      if (!_isGroupSecondary) {
+      // 7. שירותים נלווים — רק לנציג (מאבטח: שניהם primary)
+      if (!_isGroupSecondary || _nav.forceComposition.isGuard) {
         _startGpsSourceCheck();
         _startHealthCheck();
         _startAlertMonitoring();
@@ -2075,8 +2158,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         content = _buildFinishedView();
     }
 
-    // PopScope — מניעת חזרה בזמן ניווט פעיל (שכבת הגנה נוספת)
-    if (_personalStatus == NavigatorPersonalStatus.active && _securityActive) {
+    // PopScope — מניעת חזרה בזמן ניווט פעיל או המתנת מאבטח (שכבת הגנה נוספת)
+    final isGuardWaiting = _isGuardSecondHalf && !_guardPartnerFinished && _securityActive;
+    if ((_personalStatus == NavigatorPersonalStatus.active && _securityActive) || isGuardWaiting) {
       return PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, _) {
@@ -2094,6 +2178,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ---------------------------------------------------------------------------
 
   Widget _buildWaitingView() {
+    // מאבטח second_half — ממתין ל-first_half partner לסיים
+    if (_isGuardSecondHalf && !_guardPartnerFinished) {
+      return _buildGuardWaitingView();
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -2140,6 +2229,78 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // מאבטח — מסך המתנה ל-second_half (ה-partner עדיין מנווט)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildGuardWaitingView() {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _securityActive) _showUnlockDialog();
+      },
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.hourglass_top,
+                size: 80,
+                color: Colors.orange[300],
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'ניווט ${_nav.name}',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange[300]!),
+                ),
+                child: Column(
+                  children: [
+                    Icon(Icons.people, color: Colors.orange[700], size: 32),
+                    const SizedBox(height: 8),
+                    Text(
+                      'ממתין למנווט הראשון לסיים',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange[800],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'הטלפון נעול. כאשר המנווט הראשון יסיים — תוכל להתחיל את הניווט שלך.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+              const CircularProgressIndicator(),
+            ],
+          ),
         ),
       ),
     );

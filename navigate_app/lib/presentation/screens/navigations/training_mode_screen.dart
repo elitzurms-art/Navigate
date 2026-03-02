@@ -1277,14 +1277,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         ? route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList()
         : <LatLng>[];
 
-    // נקודות ציון של המנווט לפי סדר ה-sequence
-    final routeCheckpoints = <Checkpoint>[];
-    for (final cpId in route.sequence) {
-      try {
-        routeCheckpoints.add(_checkpoints.firstWhere((cp) => cp.id == cpId));
-      } catch (_) {}
-    }
-
     // נקודות התחלה/סיום
     Checkpoint? startCheckpoint;
     Checkpoint? endCheckpoint;
@@ -1296,6 +1288,19 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (route.endPointId != null) {
       try {
         endCheckpoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
+      } catch (_) {}
+    }
+
+    // נקודות ציון של המנווט לפי סדר ה-sequence — ללא התחלה/סיום
+    final excludeIds = <String>{
+      if (route.startPointId != null) route.startPointId!,
+      if (route.endPointId != null) route.endPointId!,
+    };
+    final routeCheckpoints = <Checkpoint>[];
+    for (final cpId in route.sequence) {
+      if (excludeIds.contains(cpId)) continue;
+      try {
+        routeCheckpoints.add(_checkpoints.firstWhere((cp) => cp.id == cpId));
       } catch (_) {}
     }
 
@@ -2120,13 +2125,19 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   List<Marker> _buildNavigationMarkers() {
     final startPointIds = <String>{};
     final endPointIds = <String>{};
+    final swapPointIds = <String>{};
     final routeCheckpointIds = <String>{};
 
     for (final route in _currentNavigation.routes.values) {
       if (route.startPointId != null) startPointIds.add(route.startPointId!);
       if (route.endPointId != null) endPointIds.add(route.endPointId!);
+      if (route.swapPointId != null) swapPointIds.add(route.swapPointId!);
       routeCheckpointIds.addAll(route.sequence);
     }
+
+    // נקודת החלפה לא נחשבת התחלה או סיום
+    startPointIds.removeAll(swapPointIds);
+    endPointIds.removeAll(swapPointIds);
 
     final markers = <Marker>[];
 
@@ -2162,10 +2173,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         : _checkpoints.where((cp) =>
             routeCheckpointIds.contains(cp.id) ||
             startPointIds.contains(cp.id) ||
-            endPointIds.contains(cp.id)).toList();
+            endPointIds.contains(cp.id) ||
+            swapPointIds.contains(cp.id)).toList();
 
     for (final cp in checkpointsToShow) {
-      if (startPointIds.contains(cp.id) || endPointIds.contains(cp.id)) continue;
+      if (startPointIds.contains(cp.id) || endPointIds.contains(cp.id) || swapPointIds.contains(cp.id)) continue;
       if (cp.isPolygon || cp.coordinates == null) continue;
       markers.add(Marker(
         point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
@@ -2194,7 +2206,33 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       ));
     }
 
-    // נקודות סיום (אדום S)
+    // נקודות החלפה (לבן S)
+    for (final swId in swapPointIds) {
+      try {
+        final cp = _checkpoints.firstWhere((c) => c.id == swId);
+        if (cp.isPolygon || cp.coordinates == null) continue;
+        markers.add(Marker(
+          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: 'החלפה: ${cp.name}',
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.grey[700]!, width: 2),
+              ),
+              child: Center(
+                child: Text('S', style: TextStyle(color: Colors.grey[800], fontSize: 14, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        ));
+      } catch (_) {}
+    }
+
+    // נקודות סיום (אדום F)
     for (final epId in endPointIds) {
       if (startPointIds.contains(epId)) continue; // אותה נקודה גם התחלה וגם סיום
       try {
@@ -2213,7 +2251,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 border: Border.all(color: Colors.white, width: 2),
               ),
               child: const Center(
-                child: Text('S', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                child: Text('F', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
               ),
             ),
           ),
@@ -2343,7 +2381,7 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
     final allPoints = [...widget.referencePoints, ...widget.plannedPathPoints];
     final bounds = allPoints.length > 1 ? LatLngBounds.fromPoints(allPoints) : null;
 
-    // בניית markers: התחלה (ירוק H), נקודות ציון (כחול ממוספר), סיום (אדום S)
+    // בניית markers: התחלה (ירוק H), נקודות ציון (כחול ממוספר), סיום (אדום F)
     final markers = <Marker>[];
 
     if (widget.startCheckpoint != null && !widget.startCheckpoint!.isPolygon && widget.startCheckpoint!.coordinates != null) {
@@ -2411,7 +2449,7 @@ class _RouteViewScreenState extends State<_RouteViewScreen> {
               border: Border.all(color: Colors.white, width: 2),
             ),
             child: const Center(
-              child: Text('S', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+              child: Text('F', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
             ),
           ),
         ),

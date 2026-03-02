@@ -530,6 +530,16 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     final bounds = hasBounds ? LatLngBounds.fromPoints(boundsPoints) : null;
     final center = bounds?.center ?? (cpPoints.isNotEmpty ? cpPoints.first : const LatLng(31.5, 34.75));
 
+    // בניית ציר רפרנס מלא: התחלה → נקודות ציון → סיום
+    final refPoints = <LatLng>[];
+    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
+      refPoints.add(_startCheckpoint!.coordinates!.toLatLng());
+    }
+    refPoints.addAll(cpPoints);
+    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
+      refPoints.add(_endCheckpoint!.coordinates!.toLatLng());
+    }
+
     // markers לנקודות ציון קבועות (עיגול כחול עם מספר)
     final cpMarkers = <Marker>[];
     for (var i = 0; i < widget.checkpoints.length; i++) {
@@ -885,11 +895,11 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                           strokeWidth: 3.0,
                         ),
                       ]),
-                    // קו בין נקודות ציון (רפרנס)
-                    if (_showRoutes && cpPoints.length > 1)
+                    // קו בין נקודות ציון (רפרנס) — כולל התחלה וסיום
+                    if (_showRoutes && refPoints.length > 1)
                       PolylineLayer(polylines: [
                         Polyline(
-                          points: cpPoints,
+                          points: refPoints,
                           color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
                           strokeWidth: 2.0,
                         ),

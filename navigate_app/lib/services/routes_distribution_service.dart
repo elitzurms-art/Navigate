@@ -385,6 +385,8 @@ class RoutesDistributionService {
 
         // מיון נ"צ לפי סדרן ברצף — מבטיח חלוקה גיאוגרפית נכונה
         final orderedCps = List<String>.from(route.checkpointIds);
+        // נקודת החלפה לא נחשבת נקודה של מנווט (לא ניקוד, לא דקירה)
+        if (swapId != null) orderedCps.remove(swapId);
         orderedCps.sort((a, b) {
           final ai = seq.indexOf(a);
           final bi = seq.indexOf(b);

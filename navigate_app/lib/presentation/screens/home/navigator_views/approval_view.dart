@@ -27,7 +27,7 @@ import '../../../widgets/voice_messages_panel.dart';
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
 const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
 const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
-const _kEndColor = Color(0xFFF44336); // אדום — S (סיום)
+const _kEndColor = Color(0xFFF44336); // אדום — F (סיום)
 const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
 const _kBoundaryColor = Colors.black;
 const _kSafetyColor = Color(0xFFFF9800); // כתום
@@ -462,25 +462,32 @@ class _ApprovalViewState extends State<ApprovalView> {
                   final route = widget.navigation.routes[widget.currentUser.uid];
                   final startId = route?.startPointId;
                   final endId = route?.endPointId;
+                  final swapId = route?.swapPointId;
 
                   return MarkerLayer(
                     markers: pointCps.map((cp) {
                       Color bgColor;
                       String letter;
+                      Color borderOverride = Colors.white;
 
+                      final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
                       final isStart = (startId != null &&
                               (cp.id == startId || cp.sourceId == startId)) ||
                           cp.type == 'start';
-                      final isEnd = (endId != null &&
+                      final isEnd = !isSwapPoint && ((endId != null &&
                               (cp.id == endId || cp.sourceId == endId)) ||
-                          cp.type == 'end';
+                          cp.type == 'end');
 
-                      if (isStart) {
+                      if (isSwapPoint) {
+                        bgColor = Colors.white;
+                        borderOverride = Colors.grey[700]!;
+                        letter = 'S';
+                      } else if (isStart) {
                         bgColor = _kStartColor;
                         letter = 'H';
                       } else if (isEnd) {
                         bgColor = _kEndColor;
-                        letter = 'S';
+                        letter = 'F';
                       } else {
                         bgColor = _kCheckpointColor;
                         letter = 'B';
@@ -497,7 +504,7 @@ class _ApprovalViewState extends State<ApprovalView> {
                             color: bgColor,
                             shape: BoxShape.circle,
                             border:
-                                Border.all(color: Colors.white, width: 2),
+                                Border.all(color: borderOverride, width: 2),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.3),
@@ -508,8 +515,8 @@ class _ApprovalViewState extends State<ApprovalView> {
                           child: Center(
                             child: Text(
                               label,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -596,6 +603,7 @@ class _ApprovalViewState extends State<ApprovalView> {
                   layerBuilder: (visibility, opacity) {
                     final startId = route?.startPointId;
                     final endId = route?.endPointId;
+                    final swapId = route?.swapPointId;
                     return [
                       if (visibility['boundary'] == true && _boundaries.isNotEmpty)
                         PolygonLayer(
@@ -634,10 +642,13 @@ class _ApprovalViewState extends State<ApprovalView> {
                           markers: pointCps.map((cp) {
                             Color bgColor;
                             String letter;
+                            Color borderColor = Colors.white;
+                            final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
                             final isStart = (startId != null && (cp.id == startId || cp.sourceId == startId)) || cp.type == 'start';
-                            final isEnd = (endId != null && (cp.id == endId || cp.sourceId == endId)) || cp.type == 'end';
-                            if (isStart) { bgColor = _kStartColor; letter = 'H'; }
-                            else if (isEnd) { bgColor = _kEndColor; letter = 'S'; }
+                            final isEnd = !isSwapPoint && ((endId != null && (cp.id == endId || cp.sourceId == endId)) || cp.type == 'end');
+                            if (isSwapPoint) { bgColor = Colors.white; borderColor = Colors.grey[700]!; letter = 'S'; }
+                            else if (isStart) { bgColor = _kStartColor; letter = 'H'; }
+                            else if (isEnd) { bgColor = _kEndColor; letter = 'F'; }
                             else { bgColor = _kCheckpointColor; letter = 'B'; }
                             final label = '${cp.sequenceNumber}$letter';
                             return Marker(
@@ -647,11 +658,11 @@ class _ApprovalViewState extends State<ApprovalView> {
                                 decoration: BoxDecoration(
                                   color: bgColor,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
+                                  border: Border.all(color: borderColor, width: 2),
                                   boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)],
                                 ),
                                 child: Center(
-                                  child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  child: Text(label, style: TextStyle(color: isSwapPoint ? Colors.grey[800]! : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
                                 ),
                               ),
                             );
@@ -731,7 +742,8 @@ class _ApprovalViewState extends State<ApprovalView> {
                     _legendItem(_kPlannedRouteColor, 'ציר מתוכנן'),
                     _legendItem(_kActualRouteColor, 'מסלול בפועל'),
                     _legendItem(_kStartColor, 'התחלה (H)'),
-                    _legendItem(_kEndColor, 'סיום (S)'),
+                    _legendItem(_kEndColor, 'סיום (F)'),
+                    _legendItem(Colors.white, 'החלפה (S)'),
                   ],
                 ),
               ),

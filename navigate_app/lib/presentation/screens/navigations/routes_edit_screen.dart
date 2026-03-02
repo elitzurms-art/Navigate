@@ -133,6 +133,16 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
         }
       }
 
+      // guard: endPointId הוא סוף ה-second_half, לא ה-swap
+      if (widget.navigation.forceComposition.isGuard) {
+        for (final entry in routes.entries) {
+          if (entry.value.segmentType == 'second_half' && entry.value.endPointId != null) {
+            endPointId = entry.value.endPointId;
+            break;
+          }
+        }
+      }
+
       // fallback מהגדרות ניווט
       startPointId ??= widget.navigation.startPoint;
       endPointId ??= widget.navigation.endPoint;
@@ -179,12 +189,15 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
   }
 
   /// בניית רצף סופי: התחלה → [רשימת המנווט] → סיום
-  List<String> _buildFullSequence(List<String> navigatorCps) {
+  /// במצב מאבטח, כל מנווט מקבל start/end שונים (swap point)
+  List<String> _buildFullSequence(List<String> navigatorCps, {String? startOverride, String? endOverride}) {
     if (navigatorCps.isEmpty) return [];
     final result = <String>[];
-    if (_startPointId != null) result.add(_startPointId!);
+    final start = startOverride ?? _startPointId;
+    final end = endOverride ?? _endPointId;
+    if (start != null) result.add(start);
     result.addAll(navigatorCps);
-    if (_endPointId != null) result.add(_endPointId!);
+    if (end != null) result.add(end);
     return result;
   }
 
@@ -371,26 +384,43 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
   List<Marker> _buildMarkers({String? navigatorId}) {
     final markers = <Marker>[];
+    final navRoute = navigatorId != null ? widget.navigation.routes[navigatorId] : null;
     final sequence = navigatorId != null
-        ? _buildFullSequence(_navigatorCheckpoints[navigatorId] ?? [])
+        ? _buildFullSequence(
+            _navigatorCheckpoints[navigatorId] ?? [],
+            startOverride: navRoute?.startPointId,
+            endOverride: navRoute?.endPointId,
+          )
         : null;
     final sequenceSet = sequence?.toSet();
 
+    // מזהי נקודות החלפה (מאבטח)
+    final swapIds = widget.navigation.routes.values
+        .where((r) => r.swapPointId != null)
+        .map((r) => r.swapPointId!)
+        .toSet();
+
     for (final cp in _checkpoints) {
       if (cp.coordinates == null) continue;
+      final isSwapPoint = swapIds.contains(cp.id);
       final isStart = cp.id == _startPointId;
-      final isEnd = cp.id == _endPointId;
+      final isEnd = cp.id == _endPointId && !isSwapPoint;
       final isIntermediate = _intermediatePointIds.contains(cp.id);
       final isInSequence = sequenceSet?.contains(cp.id) ?? false;
 
       Color bgColor;
       String letter;
-      if (isStart) {
+      Color borderColor = Colors.white;
+      if (isSwapPoint) {
+        bgColor = Colors.white;
+        borderColor = Colors.grey[700]!;
+        letter = 'S';
+      } else if (isStart) {
         bgColor = const Color(0xFF4CAF50);
         letter = 'H';
       } else if (isEnd) {
         bgColor = const Color(0xFFF44336);
-        letter = 'S';
+        letter = 'F';
       } else if (isIntermediate) {
         bgColor = const Color(0xFFFFC107);
         letter = 'B';
@@ -413,7 +443,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
           decoration: BoxDecoration(
             color: bgColor,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
+            border: Border.all(color: borderColor, width: 2),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.3),
@@ -424,8 +454,8 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
           child: Center(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
               ),
@@ -457,7 +487,11 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
     for (final uid in _navigatorIds) {
       final cps = _navigatorCheckpoints[uid] ?? [];
       if (cps.isEmpty) continue;
-      final seq = _buildFullSequence(cps);
+      final route = widget.navigation.routes[uid];
+      final seq = _buildFullSequence(cps,
+        startOverride: route?.startPointId,
+        endOverride: route?.endPointId,
+      );
       final points = <LatLng>[];
       for (final cpId in seq) {
         final cp = _getCheckpoint(cpId);
@@ -502,18 +536,21 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
         final cps = _navigatorCheckpoints[uid] ?? [];
         final manualCps = cps.where((c) => !mandatorySet.contains(c)).toList();
 
-        final sequence = _buildFullSequence(cps);
+        final existingRoute = widget.navigation.routes[uid];
+        final sequence = _buildFullSequence(cps,
+          startOverride: existingRoute?.startPointId,
+          endOverride: existingRoute?.endPointId,
+        );
         final lengthKm = _calculateRouteLength(sequence);
         final status = _getRouteStatus(lengthKm);
 
-        // שמירת ה-route הקיים עם עדכון הנקודות
-        final existingRoute = widget.navigation.routes[uid];
+        // שמירת ה-route הקיים עם עדכון הנקודות (שימור start/end per-navigator למאבטח)
         routes[uid] = domain.AssignedRoute(
           checkpointIds: manualCps,
           routeLengthKm: lengthKm,
           sequence: sequence,
-          startPointId: _startPointId,
-          endPointId: _endPointId,
+          startPointId: existingRoute?.startPointId ?? _startPointId,
+          endPointId: existingRoute?.endPointId ?? _endPointId,
           waypointIds: _intermediatePointIds,
           status: status,
           isVerified: false,
@@ -771,7 +808,13 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
     final mandatorySet = _intermediatePointIds.toSet();
     final manualCount = cps.where((c) => !mandatorySet.contains(c)).length;
     final hasCheckpoints = manualCount > 0;
-    final sequence = cps.isNotEmpty ? _buildFullSequence(cps) : <String>[];
+    final navRoute = widget.navigation.routes[uid];
+    final sequence = cps.isNotEmpty
+        ? _buildFullSequence(cps,
+            startOverride: navRoute?.startPointId,
+            endOverride: navRoute?.endPointId,
+          )
+        : <String>[];
     final lengthKm = cps.isNotEmpty ? _calculateRouteLength(sequence) : 0.0;
 
     return Container(

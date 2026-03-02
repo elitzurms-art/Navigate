@@ -101,7 +101,17 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       // טעינת נקודות ציון — סינון לנקודות שמוקצות למנווט הנוכחי
       final allCheckpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
       final route = widget.navigation.routes[widget.currentUser.uid];
-      final assignedIds = route?.checkpointIds.toSet() ?? <String>{};
+      final assignedIds = <String>{};
+      if (route != null) {
+        assignedIds.addAll(route.checkpointIds);
+        if (route.startPointId != null) assignedIds.add(route.startPointId!);
+        if (route.endPointId != null) assignedIds.add(route.endPointId!);
+        if (route.swapPointId != null) assignedIds.add(route.swapPointId!);
+        assignedIds.addAll(route.waypointIds);
+      }
+      for (final wp in widget.navigation.waypointSettings.waypoints) {
+        assignedIds.add(wp.checkpointId);
+      }
       final checkpoints = assignedIds.isNotEmpty
           ? allCheckpoints.where((cp) => assignedIds.contains(cp.id)).toList()
           : allCheckpoints;
@@ -305,11 +315,15 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
     final endIds = <String>{};
     final waypointIds = <String>{};
 
+    final swapIds = <String>{};
     if (route != null) {
       if (route.startPointId != null) startIds.add(route.startPointId!);
       if (route.endPointId != null) endIds.add(route.endPointId!);
+      if (route.swapPointId != null) swapIds.add(route.swapPointId!);
       waypointIds.addAll(route.waypointIds);
     }
+    // swap point לא נחשב נקודת סיום
+    endIds.removeAll(swapIds);
     for (final wp in widget.navigation.waypointSettings.waypoints) {
       waypointIds.add(wp.checkpointId);
     }
@@ -317,18 +331,22 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
     return _checkpoints
         .where((cp) => !cp.isPolygon && cp.coordinates != null)
         .map((cp) {
+      final isSwapPoint = swapIds.contains(cp.id);
       final isStart = startIds.contains(cp.id) || cp.isStart;
       final isEnd = endIds.contains(cp.id) || cp.isEnd;
       final isWaypoint = waypointIds.contains(cp.id);
 
       Color cpColor;
       String letter;
-      if (isStart) {
+      if (isSwapPoint) {
+        cpColor = Colors.white;
+        letter = 'S';
+      } else if (isStart) {
         cpColor = const Color(0xFF4CAF50);
         letter = 'H';
       } else if (isEnd) {
         cpColor = const Color(0xFFF44336);
-        letter = 'S';
+        letter = 'F';
       } else if (isWaypoint) {
         cpColor = const Color(0xFFFFC107);
         letter = 'B';
@@ -337,27 +355,39 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
         letter = '';
       }
 
+      final isSpecial = isStart || isEnd || isWaypoint || isSwapPoint;
+      final markerSize = isSpecial ? 40.0 : 36.0;
+      final label = isSpecial ? letter : '${cp.sequenceNumber}';
+
       return Marker(
         point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-        width: 48,
-        height: 48,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.place,
-              color: cpColor.withValues(alpha: _nzOpacity),
-              size: 32,
+        width: markerSize,
+        height: markerSize,
+        child: Tooltip(
+          message: cp.name,
+          child: Container(
+            decoration: BoxDecoration(
+              color: cpColor,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: cpColor.withValues(alpha: 0.4),
+                  blurRadius: 4,
+                ),
+              ],
             ),
-            Text(
-              '${cp.sequenceNumber}$letter',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: cpColor,
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: isSwapPoint ? Colors.black : Colors.white,
+                  fontSize: isSpecial ? 18 : 13,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ],
+          ),
         ),
       );
     }).toList();

@@ -1842,6 +1842,14 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     return ids;
   }
 
+  Set<String> _collectSwapPointIds() {
+    final ids = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      if (route.swapPointId != null) ids.add(route.swapPointId!);
+    }
+    return ids;
+  }
+
   /// מחזיר נקודות ציון מסוננות לפי מצב התצוגה הנבחר (commander only)
   List<nav.NavCheckpoint> _getCheckpointsForDisplay() {
     switch (_nzMode) {
@@ -1929,13 +1937,18 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     // זיהוי סוג לפי הציר (startPointId/endPointId) — fallback ל-cp.type
     final startIds = _collectStartPointIds();
     final endIds = _collectEndPointIds();
+    final swapIds = _collectSwapPointIds();
+    // swap point לא נחשב נקודת סיום
+    endIds.removeAll(swapIds);
 
     return [
       MarkerLayer(
         markers: pointCps.map((cp) {
           Color bgColor;
           String letter;
+          Color? borderColorOverride;
 
+          final isSwapPoint = swapIds.contains(cp.id) || swapIds.contains(cp.sourceId);
           // בדיקה לפי מזהה ציר (id או sourceId) — מקור אמין יותר מ-cp.type
           final isStart = startIds.contains(cp.id) ||
               startIds.contains(cp.sourceId) ||
@@ -1944,12 +1957,16 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               endIds.contains(cp.sourceId) ||
               cp.type == 'end';
 
-          if (isStart) {
+          if (isSwapPoint) {
+            bgColor = Colors.white;
+            borderColorOverride = Colors.grey[700]!;
+            letter = 'S';
+          } else if (isStart) {
             bgColor = _kStartColor;
             letter = 'H';
           } else if (isEnd) {
             bgColor = _kEndColor;
-            letter = 'S';
+            letter = 'F';
           } else {
             bgColor = _kCheckpointColor;
             letter = 'B';
@@ -1967,7 +1984,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 decoration: BoxDecoration(
                   color: bgColor,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+                  border: Border.all(color: borderColorOverride ?? Colors.white, width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.3),
@@ -1978,8 +1995,8 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                 child: Center(
                   child: Text(
                     label,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                     ),
@@ -3753,7 +3770,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                       _legendItem(
                           _kActualRouteColor, 'מסלול בפועל'),
                       _legendItem(_kStartColor, 'התחלה (H)'),
-                      _legendItem(_kEndColor, 'סיום (S)'),
+                      _legendItem(_kEndColor, 'סיום (F)'),
                     ],
                   ),
                 ),

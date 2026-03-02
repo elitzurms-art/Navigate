@@ -268,12 +268,28 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     return widget.navigation.startPoint;
   }
 
-  /// נקודת סיום (S) — מחפש בצירים ואז fallback להגדרות ניווט
+  /// נקודת סיום (F) — מחפש בצירים ואז fallback להגדרות ניווט
+  /// במאבטח: מחזיר את נקודת הסיום של second_half (לא את swap point)
   String? get _endPointId {
+    if (widget.navigation.forceComposition.isGuard) {
+      for (final route in _filteredRoutes.values) {
+        if (route.segmentType == 'second_half' && route.endPointId != null) {
+          return route.endPointId;
+        }
+      }
+    }
     for (final route in _filteredRoutes.values) {
       if (route.endPointId != null) return route.endPointId;
     }
     return widget.navigation.endPoint;
+  }
+
+  /// מזהי נקודות החלפה (swap) — רלוונטי רק למאבטח
+  Set<String> get _swapPointIds {
+    return widget.navigation.routes.values
+        .where((r) => r.swapPointId != null)
+        .map((r) => r.swapPointId!)
+        .toSet();
   }
 
   /// איסוף כל מזהי waypoints מכל הצירים
@@ -500,7 +516,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildLegendItem('התחלה (H)', const Color(0xFF4CAF50)),
-                _buildLegendItem('סיום (S)', const Color(0xFFF44336)),
+                _buildLegendItem('סיום (F)', const Color(0xFFF44336)),
+                if (_swapPointIds.isNotEmpty)
+                  _buildLegendItem('החלפה (S)', Colors.white),
                 if (_allWaypointIds.isNotEmpty)
                   _buildLegendIconItem('נקודת ביניים', Icons.star, Colors.purple),
                 if (_sharedCheckpointIds.isNotEmpty)
@@ -756,23 +774,30 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                               : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
                           .map((cp) {
                         final isShared = _sharedCheckpointIds.contains(cp.id);
+                        final isSwapPoint = _swapPointIds.contains(cp.id);
                         final isStart = cp.id == _startPointId;
                         final isEnd = cp.id == _endPointId;
                         final isWaypoint = waypointIds.contains(cp.id);
 
                         Color markerColor;
+                        Color borderColor = Colors.white;
                         String label;
-                        if (isStart) {
+                        if (isSwapPoint) {
+                          markerColor = Colors.white; // לבן — נקודת החלפה
+                          borderColor = Colors.grey[700]!;
+                          label = '${cp.sequenceNumber}S';
+                        } else if (isStart) {
                           markerColor = const Color(0xFF4CAF50); // ירוק — התחלה
                           label = '${cp.sequenceNumber}H';
                         } else if (isEnd) {
                           markerColor = const Color(0xFFF44336); // אדום — סיום
-                          label = '${cp.sequenceNumber}S';
+                          label = '${cp.sequenceNumber}F';
                         } else if (isWaypoint) {
                           markerColor = const Color(0xFFFFC107); // צהוב — ביניים
                           label = '${cp.sequenceNumber}B';
                         } else if (isShared) {
                           markerColor = Colors.orange;
+                          borderColor = Colors.orange[900]!;
                           label = '';
                         } else {
                           markerColor = Colors.blue;
@@ -790,7 +815,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                 color: markerColor,
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: isShared ? Colors.orange[900]! : Colors.white,
+                                  color: isShared ? Colors.orange[900]! : borderColor,
                                   width: isShared ? 3 : 2,
                                 ),
                               ),
@@ -799,8 +824,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                     ? const Icon(Icons.people, size: 14, color: Colors.white)
                                     : Text(
                                         label,
-                                        style: const TextStyle(
-                                          color: Colors.white,
+                                        style: TextStyle(
+                                          color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                                           fontSize: 11,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -914,23 +939,30 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                     : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
                                 .map((cp) {
                               final isShared = _sharedCheckpointIds.contains(cp.id);
+                              final isSwapPoint = _swapPointIds.contains(cp.id);
                               final isStart = cp.id == _startPointId;
                               final isEnd = cp.id == _endPointId;
                               final isWaypoint = waypointIds.contains(cp.id);
 
                               Color markerColor;
+                              Color borderColor = Colors.white;
                               String label;
-                              if (isStart) {
+                              if (isSwapPoint) {
+                                markerColor = Colors.white; // לבן — נקודת החלפה
+                                borderColor = Colors.grey[700]!;
+                                label = '${cp.sequenceNumber}S';
+                              } else if (isStart) {
                                 markerColor = const Color(0xFF4CAF50); // ירוק — התחלה
                                 label = '${cp.sequenceNumber}H';
                               } else if (isEnd) {
                                 markerColor = const Color(0xFFF44336); // אדום — סיום
-                                label = '${cp.sequenceNumber}S';
+                                label = '${cp.sequenceNumber}F';
                               } else if (isWaypoint) {
                                 markerColor = const Color(0xFFFFC107); // צהוב — ביניים
                                 label = '${cp.sequenceNumber}B';
                               } else if (isShared) {
                                 markerColor = Colors.orange;
+                                borderColor = Colors.orange[900]!;
                                 label = '';
                               } else {
                                 markerColor = Colors.blue;
@@ -948,7 +980,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                       color: markerColor,
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                        color: isShared ? Colors.orange[900]! : Colors.white,
+                                        color: isShared ? Colors.orange[900]! : borderColor,
                                         width: isShared ? 3 : 2,
                                       ),
                                     ),
@@ -957,7 +989,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                           ? const Icon(Icons.people, size: 14, color: Colors.white)
                                           : Text(
                                               label,
-                                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                              style: TextStyle(color: isSwapPoint ? Colors.grey[800]! : Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                                             ),
                                     ),
                                   ),

@@ -433,22 +433,34 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         : null;
     final sequenceSet = sequence?.toSet();
 
+    // מזהי נקודות החלפה (מאבטח)
+    final swapIds = widget.navigation.routes.values
+        .where((r) => r.swapPointId != null)
+        .map((r) => r.swapPointId!)
+        .toSet();
+
     for (final cp in _checkpoints) {
       if (cp.coordinates == null) continue;
+      final isSwapPoint = swapIds.contains(cp.id);
       final isStart = cp.id == _startPointId;
-      final isEnd = cp.id == _endPointId;
+      final isEnd = cp.id == _endPointId && !isSwapPoint;
       final isIntermediate = _intermediatePointIds.contains(cp.id);
       final isInSequence = sequenceSet?.contains(cp.id) ?? false;
 
-      // סטנדרט H/S/B כמו בשאר האפליקציה
+      // סטנדרט H/F/S/B כמו בשאר האפליקציה
       Color bgColor;
       String letter;
-      if (isStart) {
+      Color borderColor = Colors.white;
+      if (isSwapPoint) {
+        bgColor = Colors.white; // לבן — נקודת החלפה
+        borderColor = Colors.grey[700]!;
+        letter = 'S';
+      } else if (isStart) {
         bgColor = const Color(0xFF4CAF50); // ירוק — התחלה
         letter = 'H';
       } else if (isEnd) {
         bgColor = const Color(0xFFF44336); // אדום — סיום
-        letter = 'S';
+        letter = 'F';
       } else if (isIntermediate) {
         bgColor = const Color(0xFFFFC107); // צהוב — ביניים
         letter = 'B';
@@ -471,7 +483,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
           decoration: BoxDecoration(
             color: bgColor,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
+            border: Border.all(color: borderColor, width: 2),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha:0.3),
@@ -482,8 +494,8 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
           child: Center(
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: isSwapPoint ? Colors.grey[800]! : Colors.white,
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
               ),
