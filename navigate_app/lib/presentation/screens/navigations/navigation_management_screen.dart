@@ -158,6 +158,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Map<String, String> _userNames = {};
   app_user.User? _currentUser;
 
+  // ניווט נוכחי (mutable — מתעדכן אחרי כל שמירה)
+  late domain.Navigation _currentNavigation;
+
   // מיקום עצמי של המפקד
   LatLng? _selfPosition;
   Timer? _selfGpsTimer;
@@ -170,6 +173,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   @override
   void initState() {
     super.initState();
+    _currentNavigation = widget.navigation;
     _tabController = TabController(length: 4, vsync: this);
     _loadData();
     _initializeNavigators();
@@ -2275,6 +2279,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'הגדרות ניווט',
+            onPressed: _showGlobalSettingsSheet,
+          ),
           if (_emergencyActive)
             IconButton(
               icon: const Icon(Icons.crisis_alert, color: Colors.orange),
@@ -4411,6 +4420,250 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
+  // ===========================================================================
+  // Global Settings Sheet
+  // ===========================================================================
+
+  void _showGlobalSettingsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => _GlobalSettingsContent(
+          navigation: _currentNavigation,
+          scrollController: scrollController,
+          onSettingChanged: (updatedNav, settingName, overrideType) async {
+            final saved = await _handleSettingChange(
+              settingName: settingName,
+              updatedNavigation: updatedNav,
+              overrideType: overrideType,
+            );
+            if (saved) return _currentNavigation;
+            return null; // ביטול — החזר null
+          },
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // Global Settings — scope dialog + save + clear overrides
+  // ===========================================================================
+
+  /// דיאלוג היקף שינוי: ברירת מחדל / כל המנווטים / ביטול
+  /// מחזיר 'default', 'all' או null (ביטול)
+  Future<String?> _showSettingScopeDialog(String settingName) async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'שינוי הגדרה',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '"$settingName"',
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'בחר את היקף השינוי:',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              _scopeOptionTile(
+                ctx: ctx,
+                title: 'ברירת מחדל בלבד',
+                subtitle: 'שינוי רק למי שלא הוגדר לו אחרת',
+                icon: Icons.person_outline,
+                value: 'default',
+              ),
+              const SizedBox(height: 8),
+              _scopeOptionTile(
+                ctx: ctx,
+                title: 'כל המנווטים',
+                subtitle: 'עדכון רוחבי מלא כולל דריסת הגדרה אישית',
+                icon: Icons.group,
+                value: 'all',
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('ביטול', style: TextStyle(color: Colors.grey)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scopeOptionTile({
+    required BuildContext ctx,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required String value,
+  }) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.pop(ctx, value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white70, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_left, color: Colors.white38),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// שמירת שינוי הגדרה גלובלית
+  Future<void> _saveNavigationSetting(domain.Navigation updated) async {
+    try {
+      await _navRepo.update(updated);
+      setState(() => _currentNavigation = updated);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בשמירת הגדרה: $e')),
+        );
+      }
+    }
+  }
+
+  /// ניקוי דריסות פר-מנווט עבור סוג הגדרה
+  Future<void> _clearOverridesForSetting(String settingType) async {
+    final nav = _currentNavigation;
+    for (final navigatorId in nav.routes.keys) {
+      String? trackId = _navigatorTrackIds[navigatorId];
+      if (trackId == null) {
+        try {
+          final snapshot = await FirebaseFirestore.instance
+              .collection(AppConstants.navigationTracksCollection)
+              .where('navigationId', isEqualTo: nav.id)
+              .where('navigatorUserId', isEqualTo: navigatorId)
+              .limit(1)
+              .get();
+          if (snapshot.docs.isNotEmpty) {
+            trackId = snapshot.docs.first.id;
+            _navigatorTrackIds[navigatorId] = trackId;
+          }
+        } catch (_) {}
+      }
+      if (trackId == null) continue;
+
+      switch (settingType) {
+        case 'allowOpenMap':
+          _navigatorOverrideAllowOpenMap[navigatorId] = nav.allowOpenMap;
+          await _trackRepo.updateMapOverrides(
+            trackId,
+            allowOpenMap: nav.allowOpenMap,
+            showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? nav.showSelfLocation,
+            showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? nav.showRouteOnMap,
+          );
+          break;
+        case 'showSelfLocation':
+          _navigatorOverrideShowSelfLocation[navigatorId] = nav.showSelfLocation;
+          await _trackRepo.updateMapOverrides(
+            trackId,
+            allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? nav.allowOpenMap,
+            showSelfLocation: nav.showSelfLocation,
+            showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? nav.showRouteOnMap,
+          );
+          break;
+        case 'showRouteOnMap':
+          _navigatorOverrideShowRouteOnMap[navigatorId] = nav.showRouteOnMap;
+          await _trackRepo.updateMapOverrides(
+            trackId,
+            allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? nav.allowOpenMap,
+            showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? nav.showSelfLocation,
+            showRouteOnMap: nav.showRouteOnMap,
+          );
+          break;
+        case 'walkieTalkie':
+          _navigatorOverrideWalkieTalkieEnabled[navigatorId] = nav.communicationSettings.walkieTalkieEnabled;
+          await _trackRepo.updateWalkieTalkieOverride(trackId, enabled: nav.communicationSettings.walkieTalkieEnabled);
+          break;
+        case 'gpsInterval':
+          _navigatorGpsIntervalOverride[navigatorId] = null;
+          break;
+        case 'positionSources':
+          _navigatorPositionSourcesOverride[navigatorId] = null;
+          await _trackRepo.updatePositionSourcesOverride(trackId, enabledSources: null);
+          break;
+        case 'alertToggle':
+          // איפוס כל דריסות ההתראות לערכי ברירת מחדל של הניווט
+          final alerts = nav.alerts;
+          _navigatorAlertOverrides[navigatorId] = {
+            AlertType.speed: alerts.speedAlertEnabled,
+            AlertType.noMovement: alerts.noMovementAlertEnabled,
+            AlertType.boundary: alerts.ggAlertEnabled,
+            AlertType.routeDeviation: alerts.routesAlertEnabled,
+            AlertType.safetyPoint: alerts.nbAlertEnabled,
+            AlertType.proximity: alerts.navigatorProximityAlertEnabled,
+            AlertType.battery: alerts.batteryAlertEnabled,
+            AlertType.noReception: alerts.noReceptionAlertEnabled,
+            AlertType.healthCheckExpired: alerts.healthCheckEnabled,
+          };
+          break;
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// טיפול בשינוי הגדרה: הצגת דיאלוג היקף ← שמירה/ביטול
+  Future<bool> _handleSettingChange({
+    required String settingName,
+    required domain.Navigation updatedNavigation,
+    String? overrideType,
+  }) async {
+    final scope = await _showSettingScopeDialog(settingName);
+    if (scope == null) return false; // ביטול
+
+    await _saveNavigationSetting(updatedNavigation);
+    if (scope == 'all' && overrideType != null) {
+      await _clearOverridesForSetting(overrideType);
+    }
+    return true;
+  }
+
   Widget _deviceChip({
     required IconData icon,
     required String label,
@@ -6153,4 +6406,686 @@ class _CommanderLocation {
     required this.position,
     required this.lastUpdate,
   });
+}
+
+// =============================================================================
+// Global Settings Content — StatefulWidget inside bottom sheet
+// =============================================================================
+
+class _GlobalSettingsContent extends StatefulWidget {
+  final domain.Navigation navigation;
+  final ScrollController scrollController;
+  /// callback: (updatedNav, settingName, overrideType) → saved nav or null if cancelled
+  final Future<domain.Navigation?> Function(domain.Navigation, String, String?) onSettingChanged;
+
+  const _GlobalSettingsContent({
+    required this.navigation,
+    required this.scrollController,
+    required this.onSettingChanged,
+  });
+
+  @override
+  State<_GlobalSettingsContent> createState() => _GlobalSettingsContentState();
+}
+
+class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
+  late domain.Navigation _nav;
+
+  @override
+  void initState() {
+    super.initState();
+    _nav = widget.navigation;
+  }
+
+  @override
+  void didUpdateWidget(covariant _GlobalSettingsContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.navigation != widget.navigation) {
+      _nav = widget.navigation;
+    }
+  }
+
+  Future<void> _applySetting(domain.Navigation updated, String name, String? overrideType) async {
+    final result = await widget.onSettingChanged(updated, name, overrideType);
+    if (result != null && mounted) {
+      setState(() => _nav = result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Handle
+        Container(
+          margin: const EdgeInsets.only(top: 12, bottom: 8),
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: Colors.white38,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Text(
+            'הגדרות ניווט',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const Divider(color: Colors.white24),
+        Expanded(
+          child: ListView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            children: [
+              _buildMapPermissionsGroup(),
+              _buildAlertsGroup(),
+              _buildGpsGroup(),
+              _buildCommunicationGroup(),
+              _buildTimeExtensionsGroup(),
+              _buildVerificationGroup(),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Group 1: הרשאות מפה ────────────────────────────────────────────────────
+
+  Widget _buildMapPermissionsGroup() {
+    return _settingsGroup(
+      title: 'הרשאות מפה',
+      icon: Icons.map_outlined,
+      children: [
+        _toggleTile(
+          label: 'אפשר ניווט עם מפה פתוחה',
+          value: _nav.allowOpenMap,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(allowOpenMap: v),
+            'אפשר ניווט עם מפה פתוחה',
+            'allowOpenMap',
+          ),
+        ),
+        _toggleTile(
+          label: 'הצגת מיקום עצמי',
+          value: _nav.showSelfLocation,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(showSelfLocation: v),
+            'הצגת מיקום עצמי',
+            'showSelfLocation',
+          ),
+        ),
+        _toggleTile(
+          label: 'הצגת ציר על המפה',
+          value: _nav.showRouteOnMap,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(showRouteOnMap: v),
+            'הצגת ציר על המפה',
+            'showRouteOnMap',
+          ),
+        ),
+        _toggleTile(
+          label: 'אפשר דיווח מיקום ידני',
+          value: _nav.allowManualPosition,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(allowManualPosition: v),
+            'אפשר דיווח מיקום ידני',
+            null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Group 2: התראות ────────────────────────────────────────────────────────
+
+  Widget _buildAlertsGroup() {
+    final alerts = _nav.alerts;
+    return _settingsGroup(
+      title: 'התראות',
+      icon: Icons.notifications_outlined,
+      children: [
+        // טוגלים עם סלידרים
+        _alertToggleWithSlider(
+          label: 'מהירות',
+          enabled: alerts.speedAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(speedAlertEnabled: v)),
+            'התראת מהירות',
+            'alertToggle',
+          ),
+          sliderLabel: 'מהירות מקסימלית',
+          sliderSuffix: ' קמ"ש',
+          value: (alerts.maxSpeed ?? 30).toDouble(),
+          min: 10,
+          max: 120,
+          divisions: 22,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(maxSpeed: v.round())),
+            'מהירות מקסימלית',
+            null,
+          ),
+          showSlider: alerts.speedAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'ללא תנועה',
+          enabled: alerts.noMovementAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(noMovementAlertEnabled: v)),
+            'התראת ללא תנועה',
+            'alertToggle',
+          ),
+          sliderLabel: 'דקות ללא תנועה',
+          sliderSuffix: ' דק\'',
+          value: (alerts.noMovementMinutes ?? 10).toDouble(),
+          min: 1,
+          max: 60,
+          divisions: 59,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(noMovementMinutes: v.round())),
+            'זמן ללא תנועה',
+            null,
+          ),
+          showSlider: alerts.noMovementAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'חריגה מג"ג',
+          enabled: alerts.ggAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(ggAlertEnabled: v)),
+            'התראת חריגה מג"ג',
+            'alertToggle',
+          ),
+          sliderLabel: 'טווח התראה',
+          sliderSuffix: ' מ\'',
+          value: (alerts.ggAlertRange ?? 50).toDouble(),
+          min: 10,
+          max: 500,
+          divisions: 49,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(ggAlertRange: v.round())),
+            'טווח התראת ג"ג',
+            null,
+          ),
+          showSlider: alerts.ggAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'סטייה מציר',
+          enabled: alerts.routesAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(routesAlertEnabled: v)),
+            'התראת סטייה מציר',
+            'alertToggle',
+          ),
+          sliderLabel: 'טווח סטייה',
+          sliderSuffix: ' מ\'',
+          value: (alerts.routesAlertRange ?? 50).toDouble(),
+          min: 10,
+          max: 500,
+          divisions: 49,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(routesAlertRange: v.round())),
+            'טווח סטייה מציר',
+            null,
+          ),
+          showSlider: alerts.routesAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'נ"ב',
+          enabled: alerts.nbAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(nbAlertEnabled: v)),
+            'התראת נ"ב',
+            'alertToggle',
+          ),
+          sliderLabel: 'טווח נ"ב',
+          sliderSuffix: ' מ\'',
+          value: (alerts.nbAlertRange ?? 50).toDouble(),
+          min: 10,
+          max: 500,
+          divisions: 49,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(nbAlertRange: v.round())),
+            'טווח נ"ב',
+            null,
+          ),
+          showSlider: alerts.nbAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'קרבה בין מנווטים',
+          enabled: alerts.navigatorProximityAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(navigatorProximityAlertEnabled: v)),
+            'התראת קרבה בין מנווטים',
+            'alertToggle',
+          ),
+          sliderLabel: 'מרחק קרבה',
+          sliderSuffix: ' מ\'',
+          value: (alerts.proximityDistance ?? 20).toDouble(),
+          min: 5,
+          max: 200,
+          divisions: 39,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(proximityDistance: v.round())),
+            'מרחק קרבה',
+            null,
+          ),
+          showSlider: alerts.navigatorProximityAlertEnabled,
+          extraSlider: alerts.navigatorProximityAlertEnabled
+              ? _sliderRow(
+                  label: 'זמן קרבה',
+                  suffix: ' דק\'',
+                  value: (alerts.proximityMinTime ?? 5).toDouble(),
+                  min: 1,
+                  max: 30,
+                  divisions: 29,
+                  onChanged: (v) => _applySetting(
+                    _nav.copyWith(alerts: alerts.copyWith(proximityMinTime: v.round())),
+                    'זמן קרבה מינימלי',
+                    null,
+                  ),
+                )
+              : null,
+        ),
+        _alertToggleWithSlider(
+          label: 'סוללה',
+          enabled: alerts.batteryAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(batteryAlertEnabled: v)),
+            'התראת סוללה',
+            'alertToggle',
+          ),
+          sliderLabel: 'סף סוללה',
+          sliderSuffix: '%',
+          value: (alerts.batteryPercentage ?? 20).toDouble(),
+          min: 5,
+          max: 50,
+          divisions: 9,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(batteryPercentage: v.round())),
+            'סף סוללה',
+            null,
+          ),
+          showSlider: alerts.batteryAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'היעדר קליטה',
+          enabled: alerts.noReceptionAlertEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(noReceptionAlertEnabled: v)),
+            'התראת היעדר קליטה',
+            'alertToggle',
+          ),
+          sliderLabel: 'זמן ללא קליטה',
+          sliderSuffix: ' שנ\'',
+          value: (alerts.noReceptionMinTime ?? 60).toDouble(),
+          min: 10,
+          max: 300,
+          divisions: 29,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(noReceptionMinTime: v.round())),
+            'זמן ללא קליטה',
+            null,
+          ),
+          showSlider: alerts.noReceptionAlertEnabled,
+        ),
+        _alertToggleWithSlider(
+          label: 'תקינות מכשיר',
+          enabled: alerts.healthCheckEnabled,
+          onToggle: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(healthCheckEnabled: v)),
+            'בדיקת תקינות',
+            'alertToggle',
+          ),
+          sliderLabel: 'תדירות בדיקה',
+          sliderSuffix: ' דק\'',
+          value: alerts.healthCheckIntervalMinutes.toDouble(),
+          min: 30,
+          max: 600,
+          divisions: 19,
+          onSliderChanged: (v) => _applySetting(
+            _nav.copyWith(alerts: alerts.copyWith(healthCheckIntervalMinutes: v.round())),
+            'תדירות בדיקת תקינות',
+            null,
+          ),
+          showSlider: alerts.healthCheckEnabled,
+        ),
+      ],
+    );
+  }
+
+  // ── Group 3: GPS ומיקום ────────────────────────────────────────────────────
+
+  Widget _buildGpsGroup() {
+    final sources = _nav.enabledPositionSources;
+    return _settingsGroup(
+      title: 'GPS ומיקום',
+      icon: Icons.gps_fixed,
+      children: [
+        _sliderRow(
+          label: 'תדירות עדכון GPS',
+          suffix: ' שנ\'',
+          value: _nav.gpsUpdateIntervalSeconds.toDouble(),
+          min: 5,
+          max: 120,
+          divisions: 23,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(gpsUpdateIntervalSeconds: v.round()),
+            'תדירות עדכון GPS',
+            'gpsInterval',
+          ),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('מקורות מיקום', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                children: [
+                  _sourceChip('GPS', 'gps', sources),
+                  _sourceChip('Cell Tower', 'cellTower', sources),
+                  _sourceChip('PDR', 'pdr', sources),
+                  _sourceChip('PDR+Cell', 'pdrCellHybrid', sources),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        _toggleTile(
+          label: 'זיהוי זיוף GPS',
+          value: _nav.gpsSpoofingDetectionEnabled,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(gpsSpoofingDetectionEnabled: v),
+            'זיהוי זיוף GPS',
+            null,
+          ),
+        ),
+        if (_nav.gpsSpoofingDetectionEnabled)
+          _sliderRow(
+            label: 'סף זיוף',
+            suffix: ' ק"מ',
+            value: _nav.gpsSpoofingMaxDistanceKm.toDouble(),
+            min: 1,
+            max: 100,
+            divisions: 99,
+            onChanged: (v) => _applySetting(
+              _nav.copyWith(gpsSpoofingMaxDistanceKm: v.round()),
+              'סף זיוף GPS',
+              null,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _sourceChip(String label, String source, List<String> enabledSources) {
+    final isEnabled = enabledSources.contains(source);
+    return FilterChip(
+      label: Text(label, style: TextStyle(color: isEnabled ? Colors.white : Colors.white54, fontSize: 12)),
+      selected: isEnabled,
+      selectedColor: Colors.blue.withValues(alpha: 0.4),
+      backgroundColor: Colors.white.withValues(alpha: 0.08),
+      checkmarkColor: Colors.white,
+      onSelected: (selected) {
+        final updated = List<String>.from(enabledSources);
+        if (selected) {
+          updated.add(source);
+        } else {
+          if (updated.length > 1) updated.remove(source);
+        }
+        _applySetting(
+          _nav.copyWith(enabledPositionSources: updated),
+          'מקורות מיקום',
+          'positionSources',
+        );
+      },
+    );
+  }
+
+  // ── Group 4: תקשורת ───────────────────────────────────────────────────────
+
+  Widget _buildCommunicationGroup() {
+    return _settingsGroup(
+      title: 'תקשורת',
+      icon: Icons.headset_mic_outlined,
+      children: [
+        _toggleTile(
+          label: 'ווקי טוקי',
+          value: _nav.communicationSettings.walkieTalkieEnabled,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(communicationSettings: _nav.communicationSettings.copyWith(walkieTalkieEnabled: v)),
+            'ווקי טוקי',
+            'walkieTalkie',
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Group 5: זמנים והארכות ─────────────────────────────────────────────────
+
+  Widget _buildTimeExtensionsGroup() {
+    final ts = _nav.timeCalculationSettings;
+    return _settingsGroup(
+      title: 'זמנים והארכות',
+      icon: Icons.timer_outlined,
+      children: [
+        _toggleTile(
+          label: 'אפשר בקשות הארכה',
+          value: ts.allowExtensionRequests,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(timeCalculationSettings: ts.copyWith(allowExtensionRequests: v)),
+            'אפשר בקשות הארכה',
+            null,
+          ),
+        ),
+        if (ts.allowExtensionRequests) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('חלון בקשות', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    _windowTypeChip('כל הניווט', 'all', ts.extensionWindowType),
+                    const SizedBox(width: 8),
+                    _windowTypeChip('זמן מוגדר', 'timed', ts.extensionWindowType),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (ts.extensionWindowType == 'timed')
+            _sliderRow(
+              label: 'דקות לפני סיום',
+              suffix: ' דק\'',
+              value: (ts.extensionWindowMinutes ?? 30).toDouble(),
+              min: 5,
+              max: 120,
+              divisions: 23,
+              onChanged: (v) => _applySetting(
+                _nav.copyWith(timeCalculationSettings: ts.copyWith(extensionWindowMinutes: v.round())),
+                'דקות לפני סיום',
+                null,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _windowTypeChip(String label, String type, String currentType) {
+    final isSelected = currentType == type;
+    return ChoiceChip(
+      label: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white54, fontSize: 12)),
+      selected: isSelected,
+      selectedColor: Colors.blue.withValues(alpha: 0.4),
+      backgroundColor: Colors.white.withValues(alpha: 0.08),
+      onSelected: (selected) {
+        if (!selected) return;
+        _applySetting(
+          _nav.copyWith(timeCalculationSettings: _nav.timeCalculationSettings.copyWith(extensionWindowType: type)),
+          'חלון בקשות הארכה',
+          null,
+        );
+      },
+    );
+  }
+
+  // ── Group 6: אישור נקודות ──────────────────────────────────────────────────
+
+  Widget _buildVerificationGroup() {
+    final vs = _nav.verificationSettings;
+    return _settingsGroup(
+      title: 'אישור נקודות',
+      icon: Icons.check_circle_outline,
+      children: [
+        _toggleTile(
+          label: 'אישור אוטומטי',
+          value: vs.autoVerification,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(verificationSettings: vs.copyWith(autoVerification: v)),
+            'אישור אוטומטי',
+            null,
+          ),
+        ),
+        if (vs.autoVerification)
+          _sliderRow(
+            label: 'מרחק אישור',
+            suffix: ' מ\'',
+            value: (vs.approvalDistance ?? 50).toDouble(),
+            min: 5,
+            max: 500,
+            divisions: 99,
+            onChanged: (v) => _applySetting(
+              _nav.copyWith(verificationSettings: vs.copyWith(approvalDistance: v.round())),
+              'מרחק אישור',
+              null,
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ── Shared Building Blocks ─────────────────────────────────────────────────
+
+  Widget _settingsGroup({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Card(
+      color: Colors.white.withValues(alpha: 0.06),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ExpansionTile(
+        leading: Icon(icon, color: Colors.white70, size: 22),
+        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        iconColor: Colors.white54,
+        collapsedIconColor: Colors.white38,
+        childrenPadding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+        children: children,
+      ),
+    );
+  }
+
+  Widget _toggleTile({
+    required String label,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      title: Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
+      value: value,
+      onChanged: onChanged,
+      dense: true,
+      activeColor: Colors.blue,
+      contentPadding: EdgeInsets.zero,
+    );
+  }
+
+  Widget _sliderRow({
+    required String label,
+    required String suffix,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              Text('${value.round()}$suffix', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          SliderTheme(
+            data: SliderThemeData(
+              activeTrackColor: Colors.blue,
+              inactiveTrackColor: Colors.white.withValues(alpha: 0.15),
+              thumbColor: Colors.blue,
+              overlayColor: Colors.blue.withValues(alpha: 0.2),
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChangeEnd: onChanged,
+              onChanged: (_) {},
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _alertToggleWithSlider({
+    required String label,
+    required bool enabled,
+    required ValueChanged<bool> onToggle,
+    required String sliderLabel,
+    required String sliderSuffix,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onSliderChanged,
+    required bool showSlider,
+    Widget? extraSlider,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _toggleTile(label: label, value: enabled, onChanged: onToggle),
+        if (showSlider)
+          _sliderRow(
+            label: sliderLabel,
+            suffix: sliderSuffix,
+            value: value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onSliderChanged,
+          ),
+        if (extraSlider != null) extraSlider,
+      ],
+    );
+  }
 }
