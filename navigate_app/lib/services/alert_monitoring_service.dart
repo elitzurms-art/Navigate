@@ -18,7 +18,7 @@ class AlertMonitoringService {
   final String navigationId;
   final String navigatorId;
   final String navigatorName;
-  final NavigationAlerts alertsConfig;
+  NavigationAlerts alertsConfig;
   final GPSTrackingService gpsTracker;
   final NavigatorAlertRepository alertRepository;
   final String? areaId;
@@ -138,6 +138,43 @@ class AlertMonitoringService {
     _safetyPoints = [];
     _otherPositions.clear();
     _lastAlertTime.clear();
+  }
+
+  // ===========================================================================
+  // Dynamic Config Update
+  // ===========================================================================
+
+  /// עדכון הגדרות התראות בזמן אמת (כשהמפקד משנה הגדרות)
+  void updateAlertConfig(NavigationAlerts newConfig) {
+    final oldConfig = alertsConfig;
+    alertsConfig = newConfig;
+
+    if (!_isRunning) return;
+
+    // עדכון טיימר חוסר תנועה
+    if (oldConfig.noMovementAlertEnabled != newConfig.noMovementAlertEnabled ||
+        oldConfig.noMovementMinutes != newConfig.noMovementMinutes) {
+      _noMovementTimer?.cancel();
+      _noMovementTimer = null;
+      if (newConfig.noMovementAlertEnabled && newConfig.noMovementMinutes != null) {
+        _lastSignificantMovementTime = DateTime.now();
+        _noMovementTimer = Timer.periodic(
+          const Duration(minutes: 1),
+          (_) => _checkNoMovement(),
+        );
+      }
+    }
+
+    // עדכון polling קרבת מנווטים
+    if (oldConfig.navigatorProximityAlertEnabled != newConfig.navigatorProximityAlertEnabled) {
+      _proximityPollTimer?.cancel();
+      _proximityPollTimer = null;
+      if (newConfig.navigatorProximityAlertEnabled) {
+        _startProximityPolling();
+      }
+    }
+
+    print('DEBUG AlertMonitoring: config updated');
   }
 
   // ===========================================================================

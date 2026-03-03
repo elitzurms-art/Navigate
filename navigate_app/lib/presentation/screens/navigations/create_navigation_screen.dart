@@ -1659,15 +1659,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   _onSettingChanged();
                 },
               ),
-              if (_showSelfLocation)
-                SwitchListTile(
-                  title: const Text('הצג ציר ניווט על המפה'),
-                  value: _showRouteOnMap,
-                  onChanged: (value) {
-                    setState(() => _showRouteOnMap = value);
-                    _onSettingChanged();
-                  },
-                ),
             ],
 
             // בדיקת תקינות מנווטים

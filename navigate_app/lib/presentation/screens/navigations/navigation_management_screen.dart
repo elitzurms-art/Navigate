@@ -4608,15 +4608,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             showRouteOnMap: _navigatorOverrideShowRouteOnMap[navigatorId] ?? nav.showRouteOnMap,
           );
           break;
-        case 'showRouteOnMap':
-          _navigatorOverrideShowRouteOnMap[navigatorId] = nav.showRouteOnMap;
-          await _trackRepo.updateMapOverrides(
-            trackId,
-            allowOpenMap: _navigatorOverrideAllowOpenMap[navigatorId] ?? nav.allowOpenMap,
-            showSelfLocation: _navigatorOverrideShowSelfLocation[navigatorId] ?? nav.showSelfLocation,
-            showRouteOnMap: nav.showRouteOnMap,
-          );
-          break;
         case 'walkieTalkie':
           _navigatorOverrideWalkieTalkieEnabled[navigatorId] = nav.communicationSettings.walkieTalkieEnabled;
           await _trackRepo.updateWalkieTalkieOverride(trackId, enabled: nav.communicationSettings.walkieTalkieEnabled);
@@ -6504,29 +6495,25 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
           label: 'אפשר ניווט עם מפה פתוחה',
           value: _nav.allowOpenMap,
           onChanged: (v) => _applySetting(
-            _nav.copyWith(allowOpenMap: v),
+            _nav.copyWith(
+              allowOpenMap: v,
+              showSelfLocation: v ? _nav.showSelfLocation : false,
+              showRouteOnMap: v ? _nav.showRouteOnMap : false,
+            ),
             'אפשר ניווט עם מפה פתוחה',
             'allowOpenMap',
           ),
         ),
-        _toggleTile(
-          label: 'הצגת מיקום עצמי',
-          value: _nav.showSelfLocation,
-          onChanged: (v) => _applySetting(
-            _nav.copyWith(showSelfLocation: v),
-            'הצגת מיקום עצמי',
-            'showSelfLocation',
+        if (_nav.allowOpenMap)
+          _toggleTile(
+            label: 'הצגת מיקום עצמי',
+            value: _nav.showSelfLocation,
+            onChanged: (v) => _applySetting(
+              _nav.copyWith(showSelfLocation: v),
+              'הצגת מיקום עצמי',
+              'showSelfLocation',
+            ),
           ),
-        ),
-        _toggleTile(
-          label: 'הצגת ציר על המפה',
-          value: _nav.showRouteOnMap,
-          onChanged: (v) => _applySetting(
-            _nav.copyWith(showRouteOnMap: v),
-            'הצגת ציר על המפה',
-            'showRouteOnMap',
-          ),
-        ),
         _toggleTile(
           label: 'אפשר דיווח מיקום ידני',
           value: _nav.allowManualPosition,
@@ -6733,19 +6720,19 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
           showSlider: alerts.noReceptionAlertEnabled,
         ),
         _alertToggleWithSlider(
-          label: 'תקינות מכשיר',
+          label: 'דיווח תקינות',
           enabled: alerts.healthCheckEnabled,
           onToggle: (v) => _applySetting(
             _nav.copyWith(alerts: alerts.copyWith(healthCheckEnabled: v)),
-            'בדיקת תקינות',
+            'דיווח תקינות',
             'alertToggle',
           ),
           sliderLabel: 'תדירות בדיקה',
           sliderSuffix: ' דק\'',
           value: alerts.healthCheckIntervalMinutes.toDouble(),
-          min: 30,
+          min: 15,
           max: 600,
-          divisions: 19,
+          divisions: 39,
           onSliderChanged: (v) => _applySetting(
             _nav.copyWith(alerts: alerts.copyWith(healthCheckIntervalMinutes: v.round())),
             'תדירות בדיקת תקינות',
@@ -6765,17 +6752,39 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
       title: 'GPS ומיקום',
       icon: Icons.gps_fixed,
       children: [
-        _sliderRow(
-          label: 'תדירות עדכון GPS',
-          suffix: ' שנ\'',
-          value: _nav.gpsUpdateIntervalSeconds.toDouble(),
-          min: 5,
-          max: 120,
-          divisions: 23,
-          onChanged: (v) => _applySetting(
-            _nav.copyWith(gpsUpdateIntervalSeconds: v.round()),
-            'תדירות עדכון GPS',
-            'gpsInterval',
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('איכות דגימת מיקום', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 30, label: Text('חסכוני'), icon: Icon(Icons.battery_saver)),
+                    ButtonSegment(value: 5, label: Text('דינמי'), icon: Icon(Icons.speed)),
+                    ButtonSegment(value: 1, label: Text('מדויק'), icon: Icon(Icons.gps_fixed)),
+                  ],
+                  selected: {_nav.gpsUpdateIntervalSeconds <= 2 ? 1 : _nav.gpsUpdateIntervalSeconds <= 10 ? 5 : 30},
+                  onSelectionChanged: (Set<int> sel) => _applySetting(
+                    _nav.copyWith(gpsUpdateIntervalSeconds: sel.first),
+                    'איכות דגימת מיקום',
+                    'gpsInterval',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _nav.gpsUpdateIntervalSeconds <= 2
+                    ? 'GPS רציף + PDR — צריכת סוללה גבוהה'
+                    : _nav.gpsUpdateIntervalSeconds <= 10
+                        ? 'איזון מושלם — דגימה כל 5 שניות'
+                        : 'חיסכון סוללה — דגימה כל 30 שניות, ללא PDR',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 8),

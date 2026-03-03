@@ -35,7 +35,7 @@ import '../../../../data/repositories/boundary_repository.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'manual_position_pin_screen.dart';
 import '../../../../services/voice_service.dart';
-import '../../../widgets/voice_messages_panel.dart';
+import '../../../widgets/push_to_talk_button.dart';
 import '../../../../data/repositories/voice_message_repository.dart';
 import '../../../../data/repositories/extension_request_repository.dart';
 import '../../../../domain/entities/extension_request.dart';
@@ -198,6 +198,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         widget.navigation.showSelfLocation || _overrideShowSelfLocation,
         widget.navigation.showRouteOnMap || _overrideShowRouteOnMap,
       );
+    }
+    // עדכון הגדרות התראות בזמן אמת
+    if (oldWidget.navigation.alerts != widget.navigation.alerts) {
+      _alertMonitoringService?.updateAlertConfig(widget.navigation.alerts);
     }
   }
 
@@ -2325,9 +2329,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Widget _buildActiveView() {
     final hasPtt = _overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled;
-    return Stack(
-      children: [
-        Column(
+    return Column(
           children: [
             // Health check alarm banner
             if (_healthCheckService != null && _healthCheckService!.isAlarming)
@@ -2491,7 +2493,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             _buildExtensionButton(),
             // כפתור סיום ניווט
             Padding(
-              padding: EdgeInsets.fromLTRB(16, 4, 16, hasPtt ? 16 : 8),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
               child: SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -2512,23 +2514,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            // ווקי טוקי — כפתור PTT בלבד, ממורכז
+            if (hasPtt)
+              Builder(builder: (context) {
+                _voiceService ??= VoiceService();
+                return PushToTalkButton(
+                  enabled: true,
+                  voiceService: _voiceService!,
+                  onRecordingComplete: _onPttRecordingComplete,
+                  onRecordingCanceled: () {},
+                );
+              }),
+            const SizedBox(height: 8),
           ],
-        ),
-        // PTT FAB + clock
-        if (hasPtt)
-          PositionedDirectional(
-            bottom: 56,
-            start: 16,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildPttFab(),
-                const SizedBox(width: 10),
-                _buildClockChip(),
-              ],
-            ),
-          ),
-      ],
     );
   }
 
@@ -3176,6 +3174,28 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Extension Request — בקשת הארכה
   // ===========================================================================
 
+  Future<void> _onPttRecordingComplete(String filePath, double duration) async {
+    try {
+      final repo = VoiceMessageRepository();
+      await repo.sendMessage(
+        navigationId: widget.navigation.id,
+        filePath: filePath,
+        duration: duration,
+        senderId: widget.currentUser.uid,
+        senderName: widget.currentUser.fullName,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בשליחת הודעה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   void _startPttListener() {
     final hasPtt = _overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled;
     if (!hasPtt) return;
@@ -3194,94 +3214,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         setState(() => _pttUnreadCount = newUnread);
       }
     });
-  }
-
-  Widget _buildPttFab() {
-    return FloatingActionButton(
-      heroTag: 'ptt_fab',
-      onPressed: _showPttSheet,
-      backgroundColor: Theme.of(context).colorScheme.primary,
-      child: Badge(
-        isLabelVisible: _pttUnreadCount > 0,
-        label: Text('$_pttUnreadCount'),
-        child: const Icon(Icons.mic, color: Colors.white, size: 28),
-      ),
-    );
-  }
-
-  Widget _buildClockChip() {
-    final now = DateTime.now();
-    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Text(
-        timeStr,
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.bold,
-          fontFamily: 'monospace',
-          color: Colors.grey[700],
-        ),
-      ),
-    );
-  }
-
-  void _showPttSheet() {
-    // Mark all current messages as read
-    setState(() {
-      _pttTotalSeen += _pttUnreadCount;
-      _pttUnreadCount = 0;
-    });
-    _voiceService ??= VoiceService();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => FractionallySizedBox(
-        heightFactor: 0.6,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Column(
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[400],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Expanded(
-                child: VoiceMessagesPanel(
-                  navigationId: widget.navigation.id,
-                  currentUser: widget.currentUser,
-                  voiceService: _voiceService!,
-                  isCommander: false,
-                  enabled: true,
-                  embedded: true,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   void _startExtensionListener() {
