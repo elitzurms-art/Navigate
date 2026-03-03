@@ -1,7 +1,9 @@
 import '../../domain/entities/unit_checklist.dart';
 
 /// 4 צ'קליסטים ברירת מחדל ליחידה חדשה
-const List<UnitChecklist> kDefaultUnitChecklists = [
+List<UnitChecklist> kDefaultUnitChecklists() {
+  final now = DateTime.now();
+  return [
   // ──────────────────────────────────────────────
   // 1. צ'ק ליסט חפ"ק
   // ──────────────────────────────────────────────
@@ -9,6 +11,8 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
     id: 'default_hafkak',
     title: 'צ\'ק ליסט חפ"ק',
     isMandatory: false,
+    createdAt: now,
+    updatedAt: now,
     sections: [
       ChecklistSection(id: 'ds_haf_vehicle', title: 'רכב', items: [
         ChecklistItem(id: 'di_haf_v1', title: 'ג\'יפ רנגלר / סופה'),
@@ -57,7 +61,7 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
         ChecklistItem(id: 'di_haf_m6', title: 'אלונקה תקינה'),
         ChecklistItem(id: 'di_haf_m7', title: '2 מכלי מים 20 ליטר'),
         ChecklistItem(id: 'di_haf_m8', title: '2 שמיכות'),
-        ChecklistItem(id: 'di_haf_m9', title: '2 שקי שינה (לחימום)'),
+        ChecklistItem(id: 'di_haf_m9', title: '2 שק"ש (לחימום)'),
       ]),
       ChecklistSection(id: 'ds_haf_emrg', title: 'חירום', items: [
         ChecklistItem(id: 'di_haf_e1', title: 'מספרי טלפון חיוניים - מסוקים, חמ"ל, בתי חולים, רופא זמין'),
@@ -77,6 +81,8 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
     id: 'default_pinui',
     title: 'צ\'ק ליסט רכב פינוי',
     isMandatory: false,
+    createdAt: now,
+    updatedAt: now,
     sections: [
       ChecklistSection(id: 'ds_pin_vehicle', title: 'רכב', items: [
         ChecklistItem(id: 'di_pin_v1', title: 'רכב 4*4 אשר מאפשר פינוי פצוע במצב שכיבה'),
@@ -129,6 +135,8 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
     id: 'default_siyur',
     title: 'צ\'ק ליסט סיור שטח',
     isMandatory: false,
+    createdAt: now,
+    updatedAt: now,
     sections: [
       ChecklistSection(id: 'ds_siy_pre', title: 'מקדים', items: [
         ChecklistItem(id: 'di_siy_p1', title: 'וידוא תיאום שטח הניווט מול המתא"ם רלוונטי'),
@@ -164,6 +172,8 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
     id: 'default_hotzaa',
     title: 'צ\'ק ליסט הוצאת ניווט',
     isMandatory: false,
+    createdAt: now,
+    updatedAt: now,
     sections: [
       ChecklistSection(id: 'ds_hot_prep', title: 'הכנות מקדימות', items: [
         ChecklistItem(id: 'di_hot_pr1', title: 'סיור שטח'),
@@ -217,3 +227,4 @@ const List<UnitChecklist> kDefaultUnitChecklists = [
     ],
   ),
 ];
+}

@@ -78,7 +78,8 @@ class HealthCheckService {
     if (_lastReportTime == null) return;
 
     final elapsed = DateTime.now().difference(_lastReportTime!);
-    final warningThreshold = Duration(minutes: intervalMinutes - 5);
+    final warningMinutes = (intervalMinutes - 5).clamp(1, intervalMinutes);
+    final warningThreshold = Duration(minutes: warningMinutes);
     final expiredThreshold = Duration(minutes: intervalMinutes);
 
     if (elapsed >= warningThreshold) {
@@ -90,11 +91,11 @@ class HealthCheckService {
         _alarmMessage = 'לא דיווחת תקינות! עברו $overdue דקות מעבר לזמן';
       }
 
+      // צפצוף רק במעבר למצב alarm — לא בכל בדיקה
       if (!_isAlarming) {
         _isAlarming = true;
+        onAlarmStateChanged?.call(true, _alarmMessage);
       }
-
-      onAlarmStateChanged?.call(true, _alarmMessage);
 
       // שליחת התראה למפקדים אחרי שעבר הזמן המלא
       if (elapsed >= expiredThreshold && !_alertSent) {

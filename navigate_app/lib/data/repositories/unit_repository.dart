@@ -29,7 +29,7 @@ class UnitRepository {
     try {
       // Auto-populate default checklists if none provided
       final effectiveUnit = unit.checklists.isEmpty
-          ? unit.copyWith(checklists: kDefaultUnitChecklists.toList())
+          ? unit.copyWith(checklists: kDefaultUnitChecklists())
           : unit;
 
       // Local save

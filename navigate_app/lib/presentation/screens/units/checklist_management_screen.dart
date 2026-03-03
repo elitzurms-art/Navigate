@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import '../../../core/constants/default_checklists.dart';
+import '../../../domain/entities/unit.dart' as domain;
 import '../../../domain/entities/unit_checklist.dart';
 import '../../../data/repositories/unit_repository.dart';
 
@@ -19,6 +21,10 @@ class _ChecklistManagementScreenState
   final UnitRepository _unitRepo = UnitRepository();
   List<UnitChecklist> _checklists = [];
   bool _isLoading = true;
+  domain.Unit? _parentUnit;
+  List<UnitChecklist> _parentChecklists = [];
+
+  static final _dateFormat = DateFormat('dd/MM/yyyy');
 
   @override
   void initState() {
@@ -31,8 +37,19 @@ class _ChecklistManagementScreenState
     try {
       final unit = await _unitRepo.getById(widget.unitId);
       if (unit != null && mounted) {
+        // Load parent unit if exists
+        domain.Unit? parent;
+        List<UnitChecklist> parentCl = [];
+        if (unit.parentUnitId != null) {
+          parent = await _unitRepo.getById(unit.parentUnitId!);
+          if (parent != null) {
+            parentCl = parent.checklists;
+          }
+        }
         setState(() {
           _checklists = List.from(unit.checklists);
+          _parentUnit = parent;
+          _parentChecklists = parentCl;
           _isLoading = false;
         });
       }
@@ -65,7 +82,7 @@ class _ChecklistManagementScreenState
       ),
     );
     if (confirmed == true) {
-      setState(() => _checklists = kDefaultUnitChecklists.toList());
+      setState(() => _checklists = kDefaultUnitChecklists());
       await _save();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -128,14 +145,119 @@ class _ChecklistManagementScreenState
     }
   }
 
+  // ─────────────────────────────────────────────
+  // Import from parent unit
+  // ─────────────────────────────────────────────
+
+  Future<void> _showImportDialog() async {
+    if (_parentUnit == null || _parentChecklists.isEmpty) return;
+
+    final selected = await showDialog<List<UnitChecklist>>(
+      context: context,
+      builder: (ctx) => _ImportChecklistsDialog(
+        parentUnitName: _parentUnit!.name,
+        parentChecklists: _parentChecklists,
+        localChecklists: _checklists,
+      ),
+    );
+
+    if (selected != null && selected.isNotEmpty) {
+      int imported = 0;
+      for (final source in selected) {
+        final success = await _importChecklist(source);
+        if (success) imported++;
+      }
+      await _save();
+      if (mounted && imported > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('יובאו $imported צ\'קליסטים בהצלחה')),
+        );
+      }
+    }
+  }
+
+  /// Returns true if a checklist was actually added
+  Future<bool> _importChecklist(UnitChecklist source) async {
+    final localMatch = _checklists
+        .where((c) => c.copiedFromChecklistId == source.id)
+        .firstOrNull;
+
+    if (localMatch == null) {
+      // First import — create copy
+      _addCopy(source);
+      return true;
+    }
+
+    // Already imported — ask user
+    if (!mounted) return false;
+    final createNew = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final dateStr = localMatch.copiedAt != null
+            ? _dateFormat.format(localMatch.copiedAt!)
+            : '?';
+        return AlertDialog(
+          title: const Text('צ\'קליסט כבר יובא'),
+          content: Text(
+            'הצ\'קליסט "${source.title}" כבר יובא בתאריך $dateStr.\n'
+            'ליצור עותק חדש?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('צור עותק חדש'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (createNew == true) {
+      _addCopy(source);
+      return true;
+    }
+    return false;
+  }
+
+  void _addCopy(UnitChecklist source) {
+    final now = DateTime.now();
+    final copy = source.copyWith(
+      id: 'cp_${now.millisecondsSinceEpoch}',
+      copiedFromUnitId: _parentUnit!.id,
+      copiedFromChecklistId: source.id,
+      copiedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    );
+    setState(() => _checklists.add(copy));
+  }
+
+  /// Check if source was updated since local copy
+  bool _sourceUpdatedSinceCopy(UnitChecklist source, UnitChecklist local) {
+    if (source.updatedAt == null || local.copiedAt == null) return false;
+    return source.updatedAt!.isAfter(local.copiedAt!);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasParentChecklists =
+        _parentUnit != null && _parentChecklists.isNotEmpty;
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('ניהול צ\'קליסטים'),
           actions: [
+            if (hasParentChecklists)
+              IconButton(
+                icon: const Icon(Icons.download),
+                tooltip: 'ייבוא מיחידת אם',
+                onPressed: _showImportDialog,
+              ),
             IconButton(
               icon: const Icon(Icons.restore),
               tooltip: 'איפוס לברירת מחדל',
@@ -165,6 +287,14 @@ class _ChecklistManagementScreenState
                           icon: const Icon(Icons.restore),
                           label: const Text('טען ברירת מחדל'),
                         ),
+                        if (hasParentChecklists) ...[
+                          const SizedBox(height: 4),
+                          TextButton.icon(
+                            onPressed: _showImportDialog,
+                            icon: const Icon(Icons.download),
+                            label: const Text('ייבוא מיחידת אם'),
+                          ),
+                        ],
                       ],
                     ),
                   )
@@ -190,6 +320,19 @@ class _ChecklistManagementScreenState
   }
 
   Widget _buildChecklistTile(UnitChecklist cl, int index) {
+    // Check if this checklist was imported and if source has newer version
+    final isCopied = cl.copiedFromUnitId != null;
+    UnitChecklist? sourceInParent;
+    bool hasNewerVersion = false;
+    if (isCopied && cl.copiedFromChecklistId != null) {
+      sourceInParent = _parentChecklists
+          .where((p) => p.id == cl.copiedFromChecklistId)
+          .firstOrNull;
+      if (sourceInParent != null) {
+        hasNewerVersion = _sourceUpdatedSinceCopy(sourceInParent, cl);
+      }
+    }
+
     return Card(
       key: ValueKey(cl.id),
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -232,9 +375,40 @@ class _ChecklistManagementScreenState
               ),
           ],
         ),
-        subtitle: Text(
-          '${cl.sections.length} קטגוריות · ${cl.totalItems} פריטים',
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${cl.sections.length} קטגוריות · ${cl.totalItems} פריטים',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            if (isCopied) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.copy, size: 12, color: Colors.blue[400]),
+                  const SizedBox(width: 4),
+                  Text(
+                    'הועתק מיחידת אם${cl.copiedAt != null ? ' · ${_dateFormat.format(cl.copiedAt!)}' : ''}',
+                    style: TextStyle(fontSize: 11, color: Colors.blue[600]),
+                  ),
+                ],
+              ),
+              if (hasNewerVersion) ...[
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Icon(Icons.warning_amber, size: 12, color: Colors.orange[700]),
+                    const SizedBox(width: 4),
+                    Text(
+                      'קיימת גרסה חדשה במקור',
+                      style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -267,8 +441,10 @@ class _ChecklistManagementScreenState
                           Icon(Icons.check_box_outline_blank,
                               size: 16, color: Colors.grey[400]),
                           const SizedBox(width: 6),
-                          Text(item.title,
-                              style: const TextStyle(fontSize: 13)),
+                          Expanded(
+                            child: Text(item.title,
+                                style: const TextStyle(fontSize: 13)),
+                          ),
                         ],
                       ),
                     ),
@@ -277,6 +453,124 @@ class _ChecklistManagementScreenState
               ),
             ),
           const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Import dialog — select checklists from parent unit
+// ─────────────────────────────────────────────────────────────────
+
+class _ImportChecklistsDialog extends StatefulWidget {
+  final String parentUnitName;
+  final List<UnitChecklist> parentChecklists;
+  final List<UnitChecklist> localChecklists;
+
+  const _ImportChecklistsDialog({
+    required this.parentUnitName,
+    required this.parentChecklists,
+    required this.localChecklists,
+  });
+
+  @override
+  State<_ImportChecklistsDialog> createState() =>
+      _ImportChecklistsDialogState();
+}
+
+class _ImportChecklistsDialogState extends State<_ImportChecklistsDialog> {
+  final Set<String> _selectedIds = {};
+  static final _dateFormat = DateFormat('dd/MM/yyyy');
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: Text('ייבוא מ-${widget.parentUnitName}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: widget.parentChecklists.length,
+            itemBuilder: (ctx, index) {
+              final source = widget.parentChecklists[index];
+              final localMatch = widget.localChecklists
+                  .where((c) => c.copiedFromChecklistId == source.id)
+                  .firstOrNull;
+
+              final alreadyImported = localMatch != null;
+              final hasNewerVersion = alreadyImported &&
+                  source.updatedAt != null &&
+                  localMatch.copiedAt != null &&
+                  source.updatedAt!.isAfter(localMatch.copiedAt!);
+
+              return CheckboxListTile(
+                value: _selectedIds.contains(source.id),
+                onChanged: (v) {
+                  setState(() {
+                    if (v == true) {
+                      _selectedIds.add(source.id);
+                    } else {
+                      _selectedIds.remove(source.id);
+                    }
+                  });
+                },
+                title: Text(source.title),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${source.sections.length} קטגוריות · ${source.totalItems} פריטים',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    if (alreadyImported) ...[
+                      const SizedBox(height: 2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: hasNewerVersion
+                              ? Colors.orange[50]
+                              : Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          hasNewerVersion
+                              ? 'גרסה חדשה זמינה'
+                              : 'יובא כבר · ${localMatch.copiedAt != null ? _dateFormat.format(localMatch.copiedAt!) : ''}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: hasNewerVersion
+                                ? Colors.orange[800]
+                                : Colors.blue[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ביטול'),
+          ),
+          ElevatedButton(
+            onPressed: _selectedIds.isEmpty
+                ? null
+                : () {
+                    final selected = widget.parentChecklists
+                        .where((c) => _selectedIds.contains(c.id))
+                        .toList();
+                    Navigator.pop(context, selected);
+                  },
+            child: Text('ייבוא (${_selectedIds.length})'),
+          ),
         ],
       ),
     );
@@ -409,11 +703,18 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
       return;
     }
 
+    final now = DateTime.now();
+    final existing = widget.checklist;
     final result = UnitChecklist(
-      id: widget.checklist?.id ?? _generateId('cl'),
+      id: existing?.id ?? _generateId('cl'),
       title: title,
       sections: sections,
       isMandatory: _isMandatory,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      copiedFromUnitId: existing?.copiedFromUnitId,
+      copiedFromChecklistId: existing?.copiedFromChecklistId,
+      copiedAt: existing?.copiedAt,
     );
 
     Navigator.pop(context, result);

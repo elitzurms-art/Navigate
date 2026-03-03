@@ -24,6 +24,7 @@ class VoiceMessagesPanel extends StatefulWidget {
   final bool isCommander;
   final bool enabled;
   final List<NavigatorInfo>? navigators;
+  final bool embedded;
 
   const VoiceMessagesPanel({
     super.key,
@@ -33,6 +34,7 @@ class VoiceMessagesPanel extends StatefulWidget {
     this.isCommander = false,
     this.enabled = true,
     this.navigators,
+    this.embedded = false,
   });
 
   @override
@@ -112,6 +114,90 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) return _buildEmbeddedContent();
+    return _buildCollapsiblePanel();
+  }
+
+  /// Embedded mode — content only (messages + PTT), no container/shadow/header
+  Widget _buildEmbeddedContent() {
+    return Column(
+      children: [
+        // בורר יעד (מפקד בלבד)
+        if (widget.isCommander &&
+            widget.navigators != null &&
+            widget.navigators!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: DropdownButtonFormField<String?>(
+              value: _selectedTargetId,
+              decoration: const InputDecoration(
+                labelText: 'שלח ל',
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('כולם'),
+                ),
+                ...widget.navigators!.map((nav) =>
+                    DropdownMenuItem<String?>(
+                      value: nav.id,
+                      child: Text(nav.name),
+                    )),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedTargetId = value;
+                  _selectedTargetName = value != null
+                      ? widget.navigators!
+                          .firstWhere((n) => n.id == value)
+                          .name
+                      : null;
+                });
+              },
+            ),
+          ),
+
+        // רשימת הודעות
+        Expanded(
+          child: _messages.isEmpty
+              ? Center(
+                  child: Text(
+                    'אין הודעות עדיין',
+                    style: TextStyle(color: Colors.grey[500]),
+                  ),
+                )
+              : ListView.builder(
+                  reverse: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: _messages.length,
+                  itemBuilder: (context, index) {
+                    final msg = _messages[index];
+                    return VoiceMessageBubble(
+                      message: msg,
+                      isMine: msg.senderId == widget.currentUser.uid,
+                      voiceService: widget.voiceService,
+                    );
+                  },
+                ),
+        ),
+
+        const Divider(height: 1),
+
+        // chip מענה פרטי
+        if (!widget.isCommander && _replyToId != null)
+          _buildReplyChip(),
+
+        // כפתור PTT
+        _buildPttButton(),
+      ],
+    );
+  }
+
+  /// Original collapsible panel mode
+  Widget _buildCollapsiblePanel() {
     final theme = Theme.of(context);
 
     return AnimatedContainer(
@@ -232,7 +318,7 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
 
             // רשימת הודעות
             SizedBox(
-              height: 250,
+              height: 200,
               child: _messages.isEmpty
                   ? Center(
                       child: Text(
@@ -258,80 +344,85 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
             const Divider(height: 1),
           ],
 
-          // chip מענה פרטי (מנווט בלבד — כשהמפקד שלח הודעה פרטית)
+          // chip מענה פרטי
           if (!widget.isCommander && _replyToId != null)
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.orange.shade300),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.reply, size: 14, color: Colors.orange[700]),
-                    const SizedBox(width: 6),
-                    Text(
-                      'מענה פרטי ← $_replyToName',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.orange[700],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () => setState(() {
-                        _replyToId = null;
-                        _replyToName = null;
-                      }),
-                      child: Icon(Icons.close,
-                          size: 14, color: Colors.orange[700]),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            _buildReplyChip(),
 
           // כפתור PTT — תמיד מוצג
-          PushToTalkButton(
-            enabled: widget.enabled,
-            voiceService: widget.voiceService,
-            onRecordingComplete: (filePath, duration) async {
-              final effectiveTargetId =
-                  widget.isCommander ? _selectedTargetId : _replyToId;
-              final effectiveTargetName =
-                  widget.isCommander ? _selectedTargetName : _replyToName;
-              try {
-                await _repo.sendMessage(
-                  navigationId: widget.navigationId,
-                  filePath: filePath,
-                  duration: duration,
-                  senderId: widget.currentUser.uid,
-                  senderName: widget.currentUser.fullName,
-                  targetId: effectiveTargetId,
-                  targetName: effectiveTargetName,
-                );
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('שגיאה בשליחת הודעה: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
-            },
-            onRecordingCanceled: () {},
-          ),
+          _buildPttButton(),
         ],
       ),
+    );
+  }
+
+  Widget _buildReplyChip() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.orange.shade300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.reply, size: 14, color: Colors.orange[700]),
+            const SizedBox(width: 6),
+            Text(
+              'מענה פרטי ← $_replyToName',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() {
+                _replyToId = null;
+                _replyToName = null;
+              }),
+              child: Icon(Icons.close, size: 14, color: Colors.orange[700]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPttButton() {
+    return PushToTalkButton(
+      enabled: widget.enabled,
+      voiceService: widget.voiceService,
+      onRecordingComplete: (filePath, duration) async {
+        final effectiveTargetId =
+            widget.isCommander ? _selectedTargetId : _replyToId;
+        final effectiveTargetName =
+            widget.isCommander ? _selectedTargetName : _replyToName;
+        try {
+          await _repo.sendMessage(
+            navigationId: widget.navigationId,
+            filePath: filePath,
+            duration: duration,
+            senderId: widget.currentUser.uid,
+            senderName: widget.currentUser.fullName,
+            targetId: effectiveTargetId,
+            targetName: effectiveTargetName,
+          );
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('שגיאה בשליחת הודעה: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      },
+      onRecordingCanceled: () {},
     );
   }
 }

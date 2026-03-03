@@ -62,12 +62,22 @@ class UnitChecklist extends Equatable {
   final String title;
   final List<ChecklistSection> sections;
   final bool isMandatory;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? copiedFromUnitId;       // מזהה יחידת המקור
+  final String? copiedFromChecklistId;  // מזהה הצ'קליסט המקורי
+  final DateTime? copiedAt;             // תאריך ההעתקה
 
   const UnitChecklist({
     required this.id,
     required this.title,
     required this.sections,
     this.isMandatory = false,
+    this.createdAt,
+    this.updatedAt,
+    this.copiedFromUnitId,
+    this.copiedFromChecklistId,
+    this.copiedAt,
   });
 
   int get totalItems => sections.fold(0, (s, sec) => s + sec.items.length);
@@ -81,12 +91,22 @@ class UnitChecklist extends Equatable {
     String? title,
     List<ChecklistSection>? sections,
     bool? isMandatory,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? copiedFromUnitId,
+    String? copiedFromChecklistId,
+    DateTime? copiedAt,
   }) {
     return UnitChecklist(
       id: id ?? this.id,
       title: title ?? this.title,
       sections: sections ?? this.sections,
       isMandatory: isMandatory ?? this.isMandatory,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      copiedFromUnitId: copiedFromUnitId ?? this.copiedFromUnitId,
+      copiedFromChecklistId: copiedFromChecklistId ?? this.copiedFromChecklistId,
+      copiedAt: copiedAt ?? this.copiedAt,
     );
   }
 
@@ -95,6 +115,11 @@ class UnitChecklist extends Equatable {
         'title': title,
         'sections': sections.map((s) => s.toMap()).toList(),
         'isMandatory': isMandatory,
+        if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+        if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
+        if (copiedFromUnitId != null) 'copiedFromUnitId': copiedFromUnitId,
+        if (copiedFromChecklistId != null) 'copiedFromChecklistId': copiedFromChecklistId,
+        if (copiedAt != null) 'copiedAt': copiedAt!.toIso8601String(),
       };
 
   factory UnitChecklist.fromMap(Map<String, dynamic> map) {
@@ -105,11 +130,16 @@ class UnitChecklist extends Equatable {
           .map((s) => ChecklistSection.fromMap(s as Map<String, dynamic>))
           .toList(),
       isMandatory: map['isMandatory'] as bool? ?? false,
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt'] as String) : null,
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt'] as String) : null,
+      copiedFromUnitId: map['copiedFromUnitId'] as String?,
+      copiedFromChecklistId: map['copiedFromChecklistId'] as String?,
+      copiedAt: map['copiedAt'] != null ? DateTime.parse(map['copiedAt'] as String) : null,
     );
   }
 
   @override
-  List<Object?> get props => [id, title, sections, isMandatory];
+  List<Object?> get props => [id, title, sections, isMandatory, createdAt, updatedAt, copiedFromUnitId, copiedFromChecklistId, copiedAt];
 }
 
 /// חתימה על צ'קליסט שהושלם
