@@ -1,41 +1,16 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart' as nav;
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
-import '../../../data/repositories/safety_point_repository.dart';
-import '../../../core/constants/app_constants.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
-import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
-import '../../widgets/map_controls.dart';
-import '../../../core/map_config.dart';
-import '../../widgets/fullscreen_map_screen.dart';
-import '../../../domain/entities/navigation_settings.dart';
-import '../../../data/repositories/user_repository.dart';
-
-/// פלטת צבעים למנווטים מרובים
-const _kNavigatorColors = [
-  Color(0xFF2196F3),
-  Color(0xFF4CAF50),
-  Color(0xFFFF9800),
-  Color(0xFF9C27B0),
-  Color(0xFF00BCD4),
-  Color(0xFFFF5722),
-  Color(0xFF3F51B5),
-  Color(0xFFE91E63),
-  Color(0xFF009688),
-  Color(0xFF795548),
-];
-
-/// מצב הצגת נקודות ציון
-enum _NzDisplayMode { participatingOnly, allCheckpoints }
 
 /// מסך מצב למידה לניווט
 class TrainingModeScreen extends StatefulWidget {
@@ -56,79 +31,41 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final NavigationRepository _navRepo = NavigationRepository();
-  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
-  List<SafetyPoint> _safetyPoints = [];
   Map<String, bool> _selectedNavigators = {};
   // _routeApprovals הוסר — סטטוס נגזר מ-approvalStatus ב-AssignedRoute
   bool _isLoading = false;
   bool _learningStarted = false;
 
-  bool _measureMode = false;
-  final List<LatLng> _measurePoints = [];
+  // שכבות ניווט
+  List<nav.NavSafetyPoint> _safetyPoints = [];
+  List<nav.NavCluster> _clusters = [];
 
-  // שכבות
-  bool _showGG = true;
-  double _ggOpacity = 1.0;
-  bool _showNZ = true;
-  double _nzOpacity = 1.0;
-  bool _showNB = false;
-  double _nbOpacity = 1.0;
-  bool _showRoutes = true;
-  double _routesOpacity = 1.0;
-  _NzDisplayMode _nzMode = _NzDisplayMode.participatingOnly;
-
-  // הגדרות למידה
-  bool _enableLearningWithPhones = true;
-  bool _showAllCheckpoints = false;
-  bool _showNavigationDetails = true;
-  bool _showMissionTimes = true;
-  bool _showLearningRoutes = true;
-  bool _allowRouteEditing = true;
-  bool _allowRouteNarration = true;
-  bool _autoLearningTimes = false;
-  DateTime _learningDate = DateTime.now();
-  TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
-  TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
-
-  // הגדרות מבחן בדד
-  bool _quizOpenManually = false;
-  bool _autoQuizTimes = false;
-  DateTime _quizDate = DateTime.now();
-  TimeOfDay _quizStartTime = const TimeOfDay(hour: 8, minute: 0);
-  TimeOfDay _quizEndTime = const TimeOfDay(hour: 17, minute: 0);
-
-  // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
-  StreamSubscription<domain.Navigation?>? _navigationListener;
-  // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
-  Timer? _navigationPollTimer;
-
-  // טיימרים ללמידה אוטומטית
-  Timer? _autoStartTimer;
-  Timer? _autoEndTimer;
+  // בקרת שכבות
+  bool _layerControlsExpanded = false;
+  bool _showBoundary = true;
+  bool _showSafetyPoints = true;
+  bool _showClusters = true;
+  double _boundaryOpacity = 1.0;
+  double _safetyPointsOpacity = 1.0;
+  double _clustersOpacity = 1.0;
 
   // עותק מקומי של הניווט שנשמר ומתעדכן עם כל שינוי
   late domain.Navigation _currentNavigation;
 
-  // שמות מנווטים
-  final Map<String, String> _userNames = {};
-
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _currentNavigation = widget.navigation;
     _learningStarted = widget.navigation.status == 'learning';
-    _initLearningSettings();
-    _scheduleAutoLearning();
     _loadData();
     _reloadNavigationFromDb();
-    _startNavigationListener();
-    _startNavigationPolling();
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
@@ -138,183 +75,49 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   @override
   void dispose() {
-    _navigationListener?.cancel();
-    _navigationPollTimer?.cancel();
-    _autoStartTimer?.cancel();
-    _autoEndTimer?.cancel();
     _tabController.dispose();
     super.dispose();
-  }
-
-  void _initLearningSettings() {
-    final ls = _currentNavigation.learningSettings;
-    _enableLearningWithPhones = ls.enabledWithPhones;
-    _showAllCheckpoints = ls.showAllCheckpoints;
-    _showNavigationDetails = ls.showNavigationDetails;
-    _showMissionTimes = ls.showMissionTimes;
-    _showLearningRoutes = ls.showRoutes;
-    _allowRouteEditing = ls.allowRouteEditing;
-    _allowRouteNarration = ls.allowRouteNarration;
-    _autoLearningTimes = ls.autoLearningTimes;
-    if (ls.learningDate != null) {
-      _learningDate = ls.learningDate!;
-    }
-    if (ls.learningStartTime != null) {
-      final parts = ls.learningStartTime!.split(':');
-      if (parts.length == 2) {
-        _learningStartTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 8,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-    if (ls.learningEndTime != null) {
-      final parts = ls.learningEndTime!.split(':');
-      if (parts.length == 2) {
-        _learningEndTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 17,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-    // מבחן בדד
-    _quizOpenManually = ls.quizOpenManually;
-    _autoQuizTimes = ls.autoQuizTimes;
-    if (ls.quizDate != null) {
-      _quizDate = ls.quizDate!;
-    }
-    if (ls.quizStartTime != null) {
-      final parts = ls.quizStartTime!.split(':');
-      if (parts.length == 2) {
-        _quizStartTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 8,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-    if (ls.quizEndTime != null) {
-      final parts = ls.quizEndTime!.split(':');
-      if (parts.length == 2) {
-        _quizEndTime = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? 17,
-          minute: int.tryParse(parts[1]) ?? 0,
-        );
-      }
-    }
-  }
-
-  /// תזמון התחלה/סיום אוטומטיים של למידה לפי ההגדרות
-  void _scheduleAutoLearning() {
-    _autoStartTimer?.cancel();
-    _autoEndTimer?.cancel();
-
-    if (!_autoLearningTimes) return;
-    if (!widget.isCommander) return;
-
-    final now = DateTime.now();
-
-    // בניית DateTime מלא מתאריך + שעה
-    final startDateTime = DateTime(
-      _learningDate.year,
-      _learningDate.month,
-      _learningDate.day,
-      _learningStartTime.hour,
-      _learningStartTime.minute,
-    );
-    final endDateTime = DateTime(
-      _learningDate.year,
-      _learningDate.month,
-      _learningDate.day,
-      _learningEndTime.hour,
-      _learningEndTime.minute,
-    );
-
-    // התחלת למידה אוטומטית
-    if (!_learningStarted && startDateTime.isAfter(now)) {
-      final delay = startDateTime.difference(now);
-      _autoStartTimer = Timer(delay, () {
-        if (!mounted) return;
-        if (_learningStarted) return; // כבר הופעל ידנית
-        _startLearning();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('למידה הופעלה אוטומטית לפי הזמן שהוגדר'),
-            backgroundColor: Colors.blue,
-            duration: Duration(seconds: 4),
-          ),
-        );
-      });
-    }
-
-    // סיום למידה אוטומטי
-    if (endDateTime.isAfter(now)) {
-      final delay = endDateTime.difference(now);
-      _autoEndTimer = Timer(delay, () {
-        if (!mounted) return;
-        if (!_learningStarted) return; // הלמידה לא פעילה — אין מה לסיים
-        _autoFinishLearning();
-      });
-    }
-  }
-
-  /// סיום למידה אוטומטי — ללא דיאלוג אישור
-  Future<void> _autoFinishLearning() async {
-    final updatedNav = _currentNavigation.copyWith(
-      status: 'preparation',
-      trainingStartTime: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-    await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('למידה הסתיימה אוטומטית לפי הזמן שהוגדר'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 4),
-        ),
-      );
-      Navigator.pop(context, true);
-    }
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
-      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
 
       Boundary? boundary;
       if (widget.navigation.boundaryLayerId != null) {
         boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
       }
 
-      // טעינת שמות מנווטים
-      final userRepo = UserRepository();
-      for (final navId in _currentNavigation.routes.keys) {
-        final user = await userRepo.getUser(navId);
-        if (user != null) {
-          _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
-        }
+      // טעינת שכבות ניווט
+      List<nav.NavSafetyPoint> safetyPoints = [];
+      try {
+        safetyPoints = await _navLayerRepo.getSafetyPointsByNavigation(widget.navigation.id);
+      } catch (e) {
+        print('DEBUG: Error loading safety points: $e');
+      }
+
+      List<nav.NavCluster> clusters = [];
+      try {
+        clusters = await _navLayerRepo.getClustersByNavigation(widget.navigation.id);
+      } catch (e) {
+        print('DEBUG: Error loading clusters: $e');
       }
 
       setState(() {
         _checkpoints = checkpoints;
-        _safetyPoints = safetyPoints;
         _boundary = boundary;
+        _safetyPoints = safetyPoints;
+        _clusters = clusters;
         _isLoading = false;
       });
 
       // התמקד במרכז הגבול — דחייה עד שהמפה נבנית
       if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        final center = GeometryUtils.getPolygonCenter(boundary.coordinates);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
-            _mapController.fitCamera(CameraFit.bounds(
-              bounds: LatLngBounds.fromPoints(points),
-              padding: const EdgeInsets.all(30),
-            ));
+            _mapController.move(LatLng(center.lat, center.lng), 13.0);
           } catch (_) {
             // MapController עדיין לא מאותחל — נתעלם
           }
@@ -330,43 +133,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
   }
 
-  String _getNavigatorDisplayName(String navigatorId) {
-    final name = _userNames[navigatorId] ?? navigatorId;
-    final route = _currentNavigation.routes[navigatorId];
-    if (route != null && route.groupId != null) {
-      final label = _getGroupLabel(route.groupId!);
-      if (label != null) return '$name ($label)';
-    }
-    return name;
-  }
-
-  /// תווית קבוצה (צמד/חוליה)
-  String? _getGroupLabel(String groupId) {
-    final composition = _currentNavigation.forceComposition;
-    if (!composition.isGrouped) return null;
-    final typeLabel = composition.type == 'pair' ? 'צמד' : (composition.type == 'squad' ? 'חוליה' : (composition.isGuard ? 'מאבטח' : 'קבוצה'));
-    final groupIds = _currentNavigation.routes.values
-        .where((r) => r.groupId != null)
-        .map((r) => r.groupId!)
-        .toSet()
-        .toList()
-      ..sort();
-    final groupNum = groupIds.indexOf(groupId) + 1;
-    if (groupNum <= 0) return null;
-    return '$typeLabel $groupNum';
-  }
-
-  /// האם מנווט הוא משני (לא נציג) בקבוצה
-  bool _isSecondaryInGroup(String navigatorId) {
-    final route = _currentNavigation.routes[navigatorId];
-    if (route == null || route.groupId == null) return false;
-    final composition = _currentNavigation.forceComposition;
-    if (!composition.isGrouped) return false;
-    final rep = composition.getLearningRepresentative(route.groupId);
-    // משני = יש נציג אחר בקבוצה
-    return rep != null && rep != navigatorId;
-  }
-
   /// טעינת הניווט העדכני מה-DB
   Future<void> _reloadNavigationFromDb() async {
     try {
@@ -379,84 +145,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     } catch (_) {}
   }
 
-  // ===========================================================================
-  // Navigation listener — realtime route/status updates from Firestore
-  // ===========================================================================
-
-  void _startNavigationListener() {
-    _navigationListener = _navRepo.watchNavigation(widget.navigation.id).listen(
-      (nav) {
-        if (!mounted || nav == null) {
-          print('DEBUG TrainingMode: listener fired but nav is null or not mounted');
-          return;
-        }
-        // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
-        // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
-        if (_currentNavigation.routes != nav.routes ||
-            _currentNavigation.status != nav.status) {
-          for (final entry in nav.routes.entries) {
-            final oldRoute = _currentNavigation.routes[entry.key];
-            if (oldRoute?.approvalStatus != entry.value.approvalStatus) {
-              print('DEBUG TrainingMode listener: route ${entry.key} approval changed: '
-                  '${oldRoute?.approvalStatus} → ${entry.value.approvalStatus}');
-            }
-          }
-          setState(() {
-            _currentNavigation = nav;
-            _learningStarted = nav.status == 'learning';
-          });
-        }
-      },
-      onError: (e) {
-        print('DEBUG TrainingMode: navigation listener error: $e');
-      },
-    );
-  }
-
-  // ===========================================================================
-  // Navigation polling fallback — direct Firestore .get() every 3 seconds
-  // (bypasses Windows threading bug with .snapshots() listeners)
-  // ===========================================================================
-
-  void _startNavigationPolling() {
-    // שאילתה ראשונית מיידית
-    _pollNavigation();
-    _navigationPollTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _pollNavigation(),
-    );
-  }
-
-  Future<void> _pollNavigation() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .get();
-
-      if (!mounted || !snapshot.exists || snapshot.data() == null) return;
-
-      final data = snapshot.data()!;
-      data['id'] = snapshot.id;
-      final nav = domain.Navigation.fromMap(data);
-
-      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
-      // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
-      final routesChanged = _currentNavigation.routes != nav.routes;
-      final statusChanged = _currentNavigation.status != nav.status;
-      if (routesChanged || statusChanged) {
-        setState(() {
-          _currentNavigation = nav;
-          _learningStarted = nav.status == 'learning';
-        });
-        // עדכון DB מקומי כדי לשמור על סנכרון Drift
-        await _navRepo.upsertLocalFromFirestore(nav);
-      }
-    } catch (e) {
-      print('DEBUG TrainingMode: poll error: $e');
-    }
-  }
-
   Future<void> _approveRoute(String navigatorId) async {
     final route = _currentNavigation.routes[navigatorId];
     if (route == null || route.approvalStatus != 'pending_approval') return;
@@ -465,7 +153,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('אישור ציר'),
-        content: Text('האם לאשר את הציר של ${_getNavigatorDisplayName(navigatorId)}?'),
+        content: Text('האם לאשר את הציר של $navigatorId?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -483,20 +171,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (confirmed == true) {
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
       updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'approved');
-
-      // אישור קבוצתי — אם המנווט שייך לקבוצה, מאשר את כל חברי הקבוצה
-      final route = updatedRoutes[navigatorId]!;
-      if (route.groupId != null && _currentNavigation.forceComposition.isGrouped) {
-        for (final entry in updatedRoutes.entries.toList()) {
-          if (entry.value.groupId == route.groupId && entry.key != navigatorId) {
-            updatedRoutes[entry.key] = entry.value.copyWith(
-              approvalStatus: 'approved',
-              clearRejectionNotes: true,
-            );
-          }
-        }
-      }
-
       final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
       await _navRepo.update(updatedNav);
       setState(() => _currentNavigation = updatedNav);
@@ -504,7 +178,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('הציר של ${_getNavigatorDisplayName(navigatorId)} אושר'),
+            content: Text('הציר של $navigatorId אושר'),
             backgroundColor: Colors.green,
           ),
         );
@@ -513,63 +187,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _rejectRoute(String navigatorId) async {
-    final notesController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('פסילת ציר'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('פסילת הציר של ${_getNavigatorDisplayName(navigatorId)}.\nרשום הערות ותיקונים למנווט:'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: notesController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: 'הערות ותיקונים...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('פסול ציר'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
     final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(
-      approvalStatus: 'rejected',
-      rejectionNotes: notesController.text.isNotEmpty ? notesController.text : null,
-    );
-
-    // פסילה קבוצתית — אם המנווט שייך לקבוצה, פוסל את כל חברי הקבוצה
-    final route = updatedRoutes[navigatorId]!;
-    if (route.groupId != null && _currentNavigation.forceComposition.isGrouped) {
-      for (final entry in updatedRoutes.entries.toList()) {
-        if (entry.value.groupId == route.groupId && entry.key != navigatorId) {
-          updatedRoutes[entry.key] = entry.value.copyWith(
-            approvalStatus: 'rejected',
-            rejectionNotes: notesController.text.isNotEmpty ? notesController.text : null,
-          );
-        }
-      }
-    }
-
+    updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(approvalStatus: 'not_submitted');
     final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
     await _navRepo.update(updatedNav);
     setState(() => _currentNavigation = updatedNav);
@@ -577,79 +196,46 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('הציר של ${_getNavigatorDisplayName(navigatorId)} נפסל'),
-          backgroundColor: Colors.red,
+          content: Text('הציר של $navigatorId נדחה - דורש תיקון'),
+          backgroundColor: Colors.orange,
         ),
       );
     }
   }
 
+  void _viewNavigatorRoute(String navigatorId) {
+    final route = _currentNavigation.routes[navigatorId];
+    if (route == null) return;
 
-  Future<void> _startLearning() async {
-    if (_learningStarted) return;
-
-    // הצגת עיגול טעינה
     showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('מפעיל מצב למידה...'),
-              ],
-            ),
-          ),
-        ),
+      useSafeArea: false,
+      builder: (context) => _RouteViewDialog(
+        navigatorId: navigatorId,
+        route: route,
+        checkpoints: _checkpoints,
+        boundary: _boundary,
+        safetyPoints: _safetyPoints,
       ),
     );
+  }
 
-    try {
-      final updatedNav = _currentNavigation.copyWith(
-        status: 'learning',
-        updatedAt: DateTime.now(),
+  Future<void> _startLearning() async {
+    final updatedNav = _currentNavigation.copyWith(
+      status: 'learning',
+      updatedAt: DateTime.now(),
+    );
+    await _navRepo.update(updatedNav);
+    _currentNavigation = updatedNav;
+
+    if (mounted) {
+      setState(() => _learningStarted = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('מצב למידה הופעל — המנווטים יראו את המסך שלהם'),
+          backgroundColor: Colors.blue,
+        ),
       );
-      await _navRepo.update(updatedNav);
-      _currentNavigation = updatedNav;
-
-      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
-      try {
-        await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(updatedNav.id)
-            .set({
-          'status': 'learning',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      } catch (_) {
-        // best-effort — תור הסנכרון הוא ה-fallback
-      }
-
-      if (mounted) {
-        Navigator.pop(context); // סגירת עיגול טעינה
-        setState(() => _learningStarted = true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('מצב למידה הופעל — המנווטים יראו את המסך שלהם'),
-            backgroundColor: Colors.blue,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // סגירת עיגול טעינה
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה בהפעלת למידה: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     }
   }
 
@@ -691,6 +277,74 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     if (mounted) {
       Navigator.pop(context, true);
     }
+  }
+
+  Future<void> _showRejectRouteDialog(String navigatorId) async {
+    final notesController = TextEditingController();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('פסילת ציר — $navigatorId'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('הערות ותיקונים:'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: notesController,
+                  maxLines: 4,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: const InputDecoration(
+                    hintText: 'פרט את הסיבה לפסילת הציר והתיקונים הנדרשים...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: notesController.text.trim().isNotEmpty
+                  ? () => Navigator.pop(context, true)
+                  : null,
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('שלח פסילה'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == true) {
+      final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
+      updatedRoutes[navigatorId] = updatedRoutes[navigatorId]!.copyWith(
+        approvalStatus: 'rejected',
+        rejectionNotes: notesController.text.trim(),
+      );
+      final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes, updatedAt: DateTime.now());
+      await _navRepo.update(updatedNav);
+      setState(() => _currentNavigation = updatedNav);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('הציר של $navigatorId נפסל — המנווט יקבל הודעה'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+
+    notesController.dispose();
   }
 
   Future<void> _deleteNavigation() async {
@@ -760,9 +414,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             controller: _tabController,
             labelColor: Colors.white,
             tabs: const [
-              Tab(icon: Icon(Icons.settings), text: 'הגדרות'),
               Tab(icon: Icon(Icons.table_chart), text: 'טבלה'),
-              Tab(icon: Icon(Icons.access_time), text: 'זמנים'),
               Tab(icon: Icon(Icons.map), text: 'מפה'),
             ],
           ),
@@ -772,9 +424,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildSettingsView(),
                 _buildTableView(),
-                _buildTimesView(),
                 _buildMapView(),
               ],
             ),
@@ -829,368 +479,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  Widget _buildSettingsView() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.school, color: Colors.blue[700]),
-                  const SizedBox(width: 8),
-                  Text(
-                    'הגדרות למידה',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              SwitchListTile(
-                title: const Text('אפשר למידה עם פלאפונים'),
-                value: _enableLearningWithPhones,
-                onChanged: (value) {
-                  setState(() => _enableLearningWithPhones = value);
-                  _autoSaveLearningSettings();
-                },
-              ),
-
-              if (_enableLearningWithPhones) ...[
-                SwitchListTile(
-                  title: const Text('אפשר לראות את כל הנקודות של כל המנווטים'),
-                  value: _showAllCheckpoints,
-                  onChanged: (value) {
-                    setState(() => _showAllCheckpoints = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('הצגת פרטי ניווט'),
-                  value: _showNavigationDetails,
-                  onChanged: (value) {
-                    setState(() => _showNavigationDetails = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-                if (_showNavigationDetails)
-                  SwitchListTile(
-                    title: const Text('הצג זמני משימה'),
-                    value: _showMissionTimes,
-                    onChanged: (value) {
-                      setState(() => _showMissionTimes = value);
-                      _autoSaveLearningSettings();
-                    },
-                  ),
-                SwitchListTile(
-                  title: const Text('הצגת צירים'),
-                  value: _showLearningRoutes,
-                  onChanged: (value) {
-                    setState(() => _showLearningRoutes = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('אפשר עריכת צירים'),
-                  value: _allowRouteEditing,
-                  onChanged: (value) {
-                    setState(() => _allowRouteEditing = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-                SwitchListTile(
-                  title: const Text('אפשר סיפור דרך'),
-                  value: _allowRouteNarration,
-                  onChanged: (value) {
-                    setState(() => _allowRouteNarration = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-              ],
-
-              const Divider(),
-
-              SwitchListTile(
-                title: const Text('הגדר זמני לימוד אוטומטיים'),
-                value: _autoLearningTimes,
-                onChanged: (value) {
-                  setState(() => _autoLearningTimes = value);
-                  _autoSaveLearningSettings();
-                },
-              ),
-
-              if (_autoLearningTimes) ...[
-                const SizedBox(height: 16),
-                ListTile(
-                  title: const Text('תאריך לימוד'),
-                  subtitle: Text(
-                    '${_learningDate.day}/${_learningDate.month}/${_learningDate.year}',
-                  ),
-                  trailing: const Icon(Icons.calendar_today),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      initialDate: _learningDate,
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime.now().add(const Duration(days: 60)),
-                    );
-                    if (date != null) {
-                      setState(() => _learningDate = date);
-                      _autoSaveLearningSettings();
-                    }
-                  },
-                ),
-                ListTile(
-                  title: const Text('שעת התחלה'),
-                  subtitle: Text(_learningStartTime.format(context)),
-                  trailing: const Icon(Icons.access_time),
-                  onTap: () async {
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: _learningStartTime,
-                    );
-                    if (time != null) {
-                      setState(() => _learningStartTime = time);
-                      _autoSaveLearningSettings();
-                    }
-                  },
-                ),
-                ListTile(
-                  title: const Text('שעת סיום'),
-                  subtitle: Text(_learningEndTime.format(context)),
-                  trailing: const Icon(Icons.access_time),
-                  onTap: () async {
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: _learningEndTime,
-                    );
-                    if (time != null) {
-                      setState(() => _learningEndTime = time);
-                      _autoSaveLearningSettings();
-                    }
-                  },
-                ),
-              ],
-
-              // סטטוס למידה אוטומטית
-              if (_autoLearningTimes && _currentNavigation.learningSettings.autoLearningTimes) ...[
-                const SizedBox(height: 16),
-                Builder(builder: (_) {
-                  final now = DateTime.now();
-                  final ls = _currentNavigation.learningSettings;
-                  DateTime? startDt;
-                  DateTime? endDt;
-                  if (ls.learningDate != null && ls.learningStartTime != null && ls.learningEndTime != null) {
-                    final sp = ls.learningStartTime!.split(':');
-                    final ep = ls.learningEndTime!.split(':');
-                    if (sp.length == 2 && ep.length == 2) {
-                      startDt = DateTime(ls.learningDate!.year, ls.learningDate!.month, ls.learningDate!.day,
-                          int.tryParse(sp[0]) ?? 0, int.tryParse(sp[1]) ?? 0);
-                      endDt = DateTime(ls.learningDate!.year, ls.learningDate!.month, ls.learningDate!.day,
-                          int.tryParse(ep[0]) ?? 0, int.tryParse(ep[1]) ?? 0);
-                    }
-                  }
-
-                  final String statusText;
-                  final Color statusColor;
-                  final IconData statusIcon;
-
-                  if (startDt == null || endDt == null) {
-                    statusText = 'זמנים לא הוגדרו כראוי';
-                    statusColor = Colors.orange;
-                    statusIcon = Icons.warning;
-                  } else if (endDt.isBefore(now)) {
-                    statusText = 'זמן הלמידה האוטומטית עבר';
-                    statusColor = Colors.grey;
-                    statusIcon = Icons.history;
-                  } else if (_learningStarted) {
-                    statusText = 'למידה פעילה — סיום אוטומטי ב-${ls.learningEndTime}';
-                    statusColor = Colors.blue;
-                    statusIcon = Icons.timer;
-                  } else if (startDt.isAfter(now)) {
-                    statusText = 'התחלה אוטומטית ב-${ls.learningStartTime} (${ls.learningDate!.day}/${ls.learningDate!.month})';
-                    statusColor = Colors.green;
-                    statusIcon = Icons.schedule;
-                  } else {
-                    statusText = 'זמן ההתחלה עבר — ניתן להפעיל ידנית';
-                    statusColor = Colors.orange;
-                    statusIcon = Icons.warning;
-                  }
-
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: statusColor.withValues(alpha: 0.5)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(statusIcon, color: statusColor, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(statusText,
-                            style: TextStyle(color: statusColor, fontWeight: FontWeight.w600, fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ],
-
-              // הגדרות מבחן בדד (רק אם requireSoloQuiz מופעל)
-              if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
-                const Divider(),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(Icons.quiz, color: Colors.purple[700]),
-                    const SizedBox(width: 8),
-                    Text(
-                      _currentNavigation.learningSettings.quizType == 'regular' ? 'מבחן ניווט' : 'מבחן ניווט בדד',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-
-                SwitchListTile(
-                  title: const Text('פתח ידנית מבחן למנווטים'),
-                  subtitle: const Text('המבחן יופיע בתפריט המנווטים'),
-                  value: _quizOpenManually,
-                  onChanged: (value) {
-                    setState(() => _quizOpenManually = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-
-                SwitchListTile(
-                  title: const Text('הגדר זמני מבחן אוטומטי'),
-                  value: _autoQuizTimes,
-                  onChanged: (value) {
-                    setState(() => _autoQuizTimes = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-
-                if (_autoQuizTimes) ...[
-                  const SizedBox(height: 8),
-                  ListTile(
-                    title: const Text('תאריך מבחן'),
-                    subtitle: Text(
-                      '${_quizDate.day}/${_quizDate.month}/${_quizDate.year}',
-                    ),
-                    trailing: const Icon(Icons.calendar_today),
-                    onTap: () async {
-                      final date = await showDatePicker(
-                        context: context,
-                        initialDate: _quizDate,
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 60)),
-                      );
-                      if (date != null) {
-                        setState(() => _quizDate = date);
-                        _autoSaveLearningSettings();
-                      }
-                    },
-                  ),
-                  ListTile(
-                    title: const Text('שעת התחלה'),
-                    subtitle: Text(_quizStartTime.format(context)),
-                    trailing: const Icon(Icons.access_time),
-                    onTap: () async {
-                      final time = await showTimePicker(
-                        context: context,
-                        initialTime: _quizStartTime,
-                      );
-                      if (time != null) {
-                        setState(() => _quizStartTime = time);
-                        _autoSaveLearningSettings();
-                      }
-                    },
-                  ),
-                  ListTile(
-                    title: const Text('שעת סיום'),
-                    subtitle: Text(_quizEndTime.format(context)),
-                    trailing: const Icon(Icons.access_time),
-                    onTap: () async {
-                      final time = await showTimePicker(
-                        context: context,
-                        initialTime: _quizEndTime,
-                      );
-                      if (time != null) {
-                        setState(() => _quizEndTime = time);
-                        _autoSaveLearningSettings();
-                      }
-                    },
-                  ),
-                ],
-              ],
-
-              const SizedBox(height: 24),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// שמירה אוטומטית של הגדרות למידה — נקראת אחרי כל שינוי
-  Future<void> _autoSaveLearningSettings() async {
-    final newSettings = LearningSettings(
-      enabledWithPhones: _enableLearningWithPhones,
-      showAllCheckpoints: _showAllCheckpoints,
-      showNavigationDetails: _showNavigationDetails,
-      showMissionTimes: _showMissionTimes,
-      showRoutes: _showLearningRoutes,
-      allowRouteEditing: _allowRouteEditing,
-      allowRouteNarration: _allowRouteNarration,
-      autoLearningTimes: _autoLearningTimes,
-      learningDate: _autoLearningTimes ? _learningDate : null,
-      learningStartTime: _autoLearningTimes
-          ? '${_learningStartTime.hour}:${_learningStartTime.minute}'
-          : null,
-      learningEndTime: _autoLearningTimes
-          ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
-          : null,
-      requireSoloQuiz: _currentNavigation.learningSettings.requireSoloQuiz,
-      quizType: _currentNavigation.learningSettings.quizType,
-      quizOpenManually: _quizOpenManually,
-      autoQuizTimes: _autoQuizTimes,
-      quizDate: _autoQuizTimes ? _quizDate : null,
-      quizStartTime: _autoQuizTimes
-          ? '${_quizStartTime.hour}:${_quizStartTime.minute}'
-          : null,
-      quizEndTime: _autoQuizTimes
-          ? '${_quizEndTime.hour}:${_quizEndTime.minute}'
-          : null,
-    );
-
-    if (newSettings == _currentNavigation.learningSettings) return;
-
-    try {
-      final updatedNav = _currentNavigation.copyWith(
-        learningSettings: newSettings,
-        updatedAt: DateTime.now(),
-      );
-      await _navRepo.update(updatedNav);
-      if (mounted) {
-        setState(() => _currentNavigation = updatedNav);
-      }
-      _scheduleAutoLearning();
-    } catch (e) {
-      print('DEBUG TrainingMode: auto-save error: $e');
-    }
-  }
-
   Widget _buildTableView() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -1222,8 +510,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           const SizedBox(height: 16),
 
           // טבלת צירים
-          ..._currentNavigation.sortByGroup(_currentNavigation.routes.keys).map((navigatorId) {
-            final route = _currentNavigation.routes[navigatorId]!;
+          ..._currentNavigation.routes.entries.map((entry) {
+            final navigatorId = entry.key;
+            final route = entry.value;
 
             return _buildRouteCard(navigatorId, route);
           }),
@@ -1241,7 +530,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _buildLegendItem('לא הוגש', Colors.grey),
-            _buildLegendItem('ממתין', Colors.orange),
+            _buildLegendItem('ממתין לאישור', Colors.orange),
             _buildLegendItem('מאושר', Colors.green),
             _buildLegendItem('נפסל', Colors.red),
           ],
@@ -1267,72 +556,8 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  void _viewNavigatorRoute(String navigatorId, domain.AssignedRoute route) {
-    // בניית ציר רפרנס: התחלה → נקודות ציון → סיום
-    final referencePoints = _buildReferenceRoute(route);
-
-    // ציר שצייר המנווט (אם יש)
-    final hasPlannedPath = route.plannedPath.isNotEmpty;
-    final plannedPathPoints = hasPlannedPath
-        ? route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList()
-        : <LatLng>[];
-
-    // נקודות התחלה/סיום
-    Checkpoint? startCheckpoint;
-    Checkpoint? endCheckpoint;
-    if (route.startPointId != null) {
-      try {
-        startCheckpoint = _checkpoints.firstWhere((cp) => cp.id == route.startPointId);
-      } catch (_) {}
-    }
-    if (route.endPointId != null) {
-      try {
-        endCheckpoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
-      } catch (_) {}
-    }
-
-    // נקודות ציון של המנווט לפי סדר ה-sequence — ללא התחלה/סיום
-    final excludeIds = <String>{
-      if (route.startPointId != null) route.startPointId!,
-      if (route.endPointId != null) route.endPointId!,
-    };
-    final routeCheckpoints = <Checkpoint>[];
-    for (final cpId in route.sequence) {
-      if (excludeIds.contains(cpId)) continue;
-      try {
-        routeCheckpoints.add(_checkpoints.firstWhere((cp) => cp.id == cpId));
-      } catch (_) {}
-    }
-
-    final allPoints = [...referencePoints, ...plannedPathPoints];
-    final center = allPoints.isNotEmpty
-        ? LatLngBounds.fromPoints(allPoints).center
-        : const LatLng(32.0853, 34.7818);
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _RouteViewScreen(
-          navigatorId: navigatorId,
-          navigatorName: _getNavigatorDisplayName(navigatorId),
-          referencePoints: referencePoints,
-          plannedPathPoints: plannedPathPoints,
-          hasPlannedPath: hasPlannedPath,
-          center: center,
-          routeCheckpoints: routeCheckpoints,
-          startCheckpoint: startCheckpoint,
-          endCheckpoint: endCheckpoint,
-          boundary: _boundary,
-          safetyPoints: _safetyPoints,
-          defaultMap: widget.navigation.displaySettings.defaultMap,
-        ),
-      ),
-    );
-  }
-
   Widget _buildRouteCard(String navigatorId, domain.AssignedRoute route) {
     final approvalStatus = route.approvalStatus;
-    final isSecondary = _isSecondaryInGroup(navigatorId);
 
     final Color statusColor;
     final IconData statusIcon;
@@ -1350,7 +575,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         break;
       case 'rejected':
         statusColor = Colors.red;
-        statusIcon = Icons.cancel;
+        statusIcon = Icons.block;
         statusText = 'נפסל';
         break;
       default: // not_submitted
@@ -1361,7 +586,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      color: isSecondary ? Colors.grey[50] : null,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1371,24 +595,12 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
             Row(
               children: [
                 Expanded(
-                  child: Row(
-                    children: [
-                      if (isSecondary)
-                        Padding(
-                          padding: const EdgeInsetsDirectional.only(end: 6),
-                          child: Icon(Icons.lock, size: 16, color: Colors.grey[500]),
-                        ),
-                      Flexible(
-                        child: Text(
-                          _getNavigatorDisplayName(navigatorId),
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: isSecondary ? Colors.grey[600] : null,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    navigatorId,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 Container(
@@ -1416,31 +628,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 ),
               ],
             ),
-
-            // באנר — מנווט משני נעול
-            if (isSecondary) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 14, color: Colors.blue[700]),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'מתעדכן לפי הנציג — פעולות נעולות',
-                        style: TextStyle(fontSize: 12, color: Colors.blue[700]),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
             const SizedBox(height: 12),
 
             // פרטי הציר
@@ -1449,7 +636,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 Icon(Icons.route, size: 16, color: Colors.grey[600]),
                 const SizedBox(width: 6),
                 Text(
-                  'אורך ציר: ${route.routeLengthKm.toStringAsFixed(2)} ק"מ',
+                  'אורך ציר: ${_calculateRouteLengthKm(route).toStringAsFixed(2)} ק"מ',
                   style: TextStyle(color: Colors.grey[700]),
                 ),
                 const SizedBox(width: 16),
@@ -1462,38 +649,31 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               ],
             ),
 
-            // זמן ניווט — כשהציר מאושר וחישוב זמנים מופעל
-            if (route.approvalStatus == 'approved' &&
-                _currentNavigation.timeCalculationSettings.enabled) ...[
-              const SizedBox(height: 4),
-              Builder(builder: (context) {
-                final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
-                  route: route,
-                  settings: _currentNavigation.timeCalculationSettings,
-                );
-                final isManual = route.manualTimeMinutes != null;
-                final breakMinutes = _currentNavigation.timeCalculationSettings
-                    .breakDurationMinutes(route.routeLengthKm);
-                return Row(
+            // הערות פסילה — אם הציר נפסל
+            if (route.approvalStatus == 'rejected' && route.rejectionNotes.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.access_time, size: 16, color: isManual ? Colors.orange.shade800 : Colors.grey[600]),
-                    const SizedBox(width: 6),
-                    Text(
-                      'זמן: ${GeometryUtils.formatNavigationTime(totalMinutes)}',
-                      style: TextStyle(color: isManual ? Colors.orange.shade800 : Colors.grey[700]),
-                    ),
-                    if (breakMinutes > 0) ...[
-                      const SizedBox(width: 16),
-                      Icon(Icons.pause_circle, size: 16, color: Colors.grey[600]),
-                      const SizedBox(width: 6),
-                      Text(
-                        'הפסקות: $breakMinutes דק\'',
-                        style: TextStyle(color: Colors.grey[700]),
+                    Icon(Icons.info_outline, size: 16, color: Colors.red[700]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        route.rejectionNotes,
+                        style: TextStyle(color: Colors.red[700], fontSize: 13),
                       ),
-                    ],
+                    ),
                   ],
-                );
-              }),
+                ),
+              ),
             ],
 
             // כפתורי פעולה - רק למפקדים
@@ -1501,10 +681,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
               const SizedBox(height: 16),
               Row(
                 children: [
-                  // כפתור אישור — פעיל רק אם pending_approval ולא משני
+                  // כפתור אישור — פעיל רק אם pending_approval
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: (!isSecondary && approvalStatus == 'pending_approval')
+                      onPressed: approvalStatus == 'pending_approval'
                           ? () => _approveRoute(navigatorId)
                           : null,
                       icon: const Icon(Icons.check_circle, size: 18),
@@ -1514,14 +694,25 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                       ),
                     ),
                   ),
+                  if (approvalStatus == 'approved') ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _rejectRoute(navigatorId),
+                        icon: const Icon(Icons.cancel, size: 18),
+                        label: const Text('בטל אישור'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.orange,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 8),
-                  // כפתור פסילת ציר — לא פעיל למשני
+                  // כפתור פסילת ציר — ספציפי למנווט
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: (!isSecondary && (approvalStatus == 'pending_approval' || approvalStatus == 'approved'))
-                          ? () => _rejectRoute(navigatorId)
-                          : null,
-                      icon: const Icon(Icons.cancel, size: 18),
+                      onPressed: () => _showRejectRouteDialog(navigatorId),
+                      icon: const Icon(Icons.block, size: 18),
                       label: const Text('פסילת ציר'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
@@ -1529,10 +720,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // כפתור צפה בציר — תמיד פעיל (גם למשני)
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _viewNavigatorRoute(navigatorId, route),
+                      onPressed: () => _viewNavigatorRoute(navigatorId),
                       icon: const Icon(Icons.visibility, size: 18),
                       label: const Text('צפה בציר'),
                       style: OutlinedButton.styleFrom(
@@ -1549,265 +739,47 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  Future<void> _editManualTime(String navigatorId) async {
-    final route = _currentNavigation.routes[navigatorId];
-    if (route == null) return;
-
-    final settings = _currentNavigation.timeCalculationSettings;
-    final autoMinutes = GeometryUtils.calculateNavigationTimeMinutes(
-      routeLengthKm: route.routeLengthKm,
-      settings: settings,
-    );
-    final currentManual = route.manualTimeMinutes;
-
-    int hours = currentManual != null ? currentManual ~/ 60 : autoMinutes ~/ 60;
-    int minutes = currentManual != null ? currentManual % 60 : autoMinutes % 60;
-
-    final result = await showDialog<int?>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setDialogState) {
-          return AlertDialog(
-            title: const Text('עריכת זמן ניווט'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'זמן מחושב: ${GeometryUtils.formatNavigationTime(autoMinutes)}',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // דקות
-                    Column(
-                      children: [
-                        const Text('דקות', style: TextStyle(fontSize: 12)),
-                        const SizedBox(height: 4),
-                        SizedBox(
-                          width: 70,
-                          child: TextFormField(
-                            initialValue: minutes.toString(),
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.center,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8),
-                            ),
-                            onChanged: (v) => setDialogState(() => minutes = int.tryParse(v) ?? minutes),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(':', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                    ),
-                    // שעות
-                    Column(
-                      children: [
-                        const Text('שעות', style: TextStyle(fontSize: 12)),
-                        const SizedBox(height: 4),
-                        SizedBox(
-                          width: 70,
-                          child: TextFormField(
-                            initialValue: hours.toString(),
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.center,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8),
-                            ),
-                            onChanged: (v) => setDialogState(() => hours = int.tryParse(v) ?? hours),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (currentManual != null) ...[
-                  const SizedBox(height: 12),
-                  TextButton.icon(
-                    onPressed: () => Navigator.pop(ctx, -1), // סימון לאיפוס
-                    icon: const Icon(Icons.restart_alt, size: 18),
-                    label: const Text('חזרה לחישוב אוטומטי'),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('ביטול')),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, hours * 60 + minutes),
-                child: const Text('שמירה'),
-              ),
-            ],
-          );
-        });
-      },
-    );
-
-    if (result == null || !mounted) return;
-
-    final updatedRoute = result == -1
-        ? route.copyWith(clearManualTimeMinutes: true)
-        : route.copyWith(manualTimeMinutes: result);
-
-    final updatedRoutes = Map<String, domain.AssignedRoute>.from(_currentNavigation.routes);
-    updatedRoutes[navigatorId] = updatedRoute;
-    final updatedNav = _currentNavigation.copyWith(routes: updatedRoutes);
-    await _navRepo.update(updatedNav);
-    setState(() => _currentNavigation = updatedNav);
-  }
-
-  Widget _buildTimesView() {
-    final settings = _currentNavigation.timeCalculationSettings;
-    if (!settings.enabled) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.timer_off, size: 48, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('חישוב זמנים לא מופעל לניווט זה'),
-          ],
-        ),
-      );
+  /// איסוף כל נקודות הציון המחולקות למנווטים
+  Set<String> _collectDistributedCheckpointIds() {
+    final Set<String> ids = {};
+    for (final route in _currentNavigation.routes.values) {
+      ids.addAll(route.checkpointIds);
+      if (route.startPointId != null) ids.add(route.startPointId!);
+      if (route.endPointId != null) ids.add(route.endPointId!);
     }
-
-    // איסוף צירים מאושרים
-    final approvedRoutes = <String, domain.AssignedRoute>{};
-    for (final entry in _currentNavigation.routes.entries) {
-      if (entry.value.approvalStatus == 'approved') {
-        approvedRoutes[entry.key] = entry.value;
+    // נקודות ביניים
+    if (_currentNavigation.waypointSettings.enabled) {
+      for (final wp in _currentNavigation.waypointSettings.waypoints) {
+        ids.add(wp.checkpointId);
       }
     }
-
-    if (approvedRoutes.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.hourglass_empty, size: 48, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('אין צירים מאושרים להצגת זמנים'),
-          ],
-        ),
-      );
-    }
-
-    int maxMinutes = 0;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // פרטי חישוב
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('פרמטרי חישוב',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text('קצב הליכה: ${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש'),
-                  Text('משקל: ${settings.isHeavyLoad ? "מעל 40%" : "עד 40%"} משקל גוף'),
-                  Text('זמן: ${settings.isNightNavigation ? "לילה" : "יום"}'),
-                  Text('עונה: ${settings.isSummer ? "קיץ" : "חורף"}'),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // טבלת זמנים
-          Card(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('מנווט')),
-                  DataColumn(label: Text('אורך ציר')),
-                  DataColumn(label: Text('קצב')),
-                  DataColumn(label: Text('הליכה')),
-                  DataColumn(label: Text('הפסקות')),
-                  DataColumn(label: Text('סה"כ')),
-                ],
-                rows: _currentNavigation.sortByGroup(approvedRoutes.keys).map((uid) {
-                  final route = approvedRoutes[uid]!;
-                  final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
-                    route: route,
-                    settings: settings,
-                  );
-                  final isManual = route.manualTimeMinutes != null;
-                  final walkMinutes = ((route.routeLengthKm / settings.walkingSpeedKmh) * 60).ceil();
-                  final breakMinutes = settings.breakDurationMinutes(route.routeLengthKm);
-                  if (totalMinutes > maxMinutes) maxMinutes = totalMinutes;
-
-                  return DataRow(cells: [
-                    DataCell(Text(_getNavigatorDisplayName(uid))),
-                    DataCell(Text('${route.routeLengthKm.toStringAsFixed(2)} ק"מ')),
-                    DataCell(Text('${settings.walkingSpeedKmh.toStringAsFixed(1)} קמ"ש')),
-                    DataCell(Text(GeometryUtils.formatNavigationTime(walkMinutes))),
-                    DataCell(Text(breakMinutes > 0 ? '$breakMinutes דק\'' : '-')),
-                    DataCell(
-                      InkWell(
-                        onTap: () => _editManualTime(uid),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              GeometryUtils.formatNavigationTime(totalMinutes),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isManual ? Colors.orange.shade800 : null,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              isManual ? Icons.edit : Icons.edit_outlined,
-                              size: 16,
-                              color: isManual ? Colors.orange.shade800 : Colors.grey,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ]);
-                }).toList(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // שורת סיכום
-          Card(
-            color: Colors.orange.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('סיכום',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text('זמן ציר ארוך ביותר: ${GeometryUtils.formatNavigationTime(maxMinutes)}',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text('שעת בטיחות (זמן מקסימלי + שעה): ${GeometryUtils.formatNavigationTime(maxMinutes + 60)}'),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    return ids;
   }
 
   Widget _buildMapView() {
+    final distributedIds = _collectDistributedCheckpointIds();
+
+    // איסוף נקודות התחלה/סיום לסימון מיוחד
+    final Set<String> startPointIds = {};
+    final Set<String> endPointIds = {};
+    for (final route in _currentNavigation.routes.values) {
+      if (route.startPointId != null) startPointIds.add(route.startPointId!);
+      if (route.endPointId != null) endPointIds.add(route.endPointId!);
+    }
+
+    // איסוף נקודות ביניים
+    final Set<String> waypointIds = {};
+    if (_currentNavigation.waypointSettings.enabled) {
+      for (final wp in _currentNavigation.waypointSettings.waypoints) {
+        waypointIds.add(wp.checkpointId);
+      }
+    }
+
+    // סינון נקודות ציון מחולקות
+    final distributedCheckpoints = _checkpoints.where(
+      (cp) => distributedIds.contains(cp.id),
+    ).toList();
+
     return Column(
       children: [
         // בורר מנווטים
@@ -1833,7 +805,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     break;
                   case 'rejected':
                     chipColor = Colors.red;
-                    chipIcon = Icons.cancel;
+                    chipIcon = Icons.block;
                     break;
                   default:
                     chipColor = Colors.grey;
@@ -1845,16 +817,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     label: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: _getNavigatorColor(navigatorId),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(_getNavigatorDisplayName(navigatorId)),
+                        Text(navigatorId),
                         const SizedBox(width: 6),
                         Icon(chipIcon, size: 14, color: chipColor),
                       ],
@@ -1877,9 +840,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           child: Stack(
             children: [
               MapWithTypeSelector(
-                showTypeSelector: false,
                 mapController: _mapController,
-                initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                 options: MapOptions(
                   initialCenter: widget.navigation.displaySettings.openingLat != null &&
                           widget.navigation.displaySettings.openingLng != null
@@ -1889,195 +850,106 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                         )
                       : const LatLng(32.0853, 34.7818),
                   initialZoom: 13.0,
-                  onTap: (tapPosition, point) {
-                    if (_measureMode) {
-                      setState(() => _measurePoints.add(point));
-                      return;
-                    }
-                  },
                 ),
                 layers: [
-                  // גבול גזרה (שחור)
-                  if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+                  // גבול גזרה (גג) — שחור
+                  if (_showBoundary && _boundary != null && _boundary!.coordinates.isNotEmpty)
                     PolygonLayer(
                       polygons: [
                         Polygon(
                           points: _boundary!.coordinates
                               .map((coord) => LatLng(coord.lat, coord.lng))
                               .toList(),
-                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                          borderStrokeWidth: _boundary!.strokeWidth,
+                          color: Colors.black.withOpacity(0.1 * _boundaryOpacity),
+                          borderColor: Colors.black.withOpacity(_boundaryOpacity),
+                          borderStrokeWidth: 2,
                           isFilled: true,
                         ),
                       ],
                     ),
 
-                  // צירי המנווטים
-                  if (_showRoutes)
-                    ..._buildRoutePolylines(),
-
-                  // נקודות ציון רלוונטיות לניווט בלבד (התחלה/סיום/נקודות מנווטים)
-                  if (_showNZ)
-                    MarkerLayer(
-                      markers: _buildNavigationMarkers().map((m) => Marker(
-                        point: m.point,
-                        width: m.width,
-                        height: m.height,
-                        child: Opacity(opacity: _nzOpacity, child: m.child),
-                      )).toList(),
-                    ),
-
-                  // נת"ב - נקודות
-                  if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
-                    MarkerLayer(
-                      markers: _safetyPoints
-                          .where((p) => p.type == 'point' && p.coordinates != null)
-                          .map((point) => Marker(
-                                point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
-                                width: 30,
-                                height: 30,
-                                child: Opacity(
-                                  opacity: _nbOpacity,
-                                  child: const Icon(Icons.warning, color: Colors.red, size: 30),
-                                ),
-                              ))
-                          .toList(),
-                    ),
-                  // נת"ב - פוליגונים
-                  if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                  // שכבת ב"א (clusters)
+                  if (_showClusters && _clusters.isNotEmpty)
                     PolygonLayer(
-                      polygons: _safetyPoints
-                          .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
-                          .map((point) => Polygon(
-                                points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
-                                borderColor: Colors.red.withValues(alpha: _nbOpacity),
-                                borderStrokeWidth: 2,
-                                isFilled: true,
-                              ))
-                          .toList(),
+                      polygons: _clusters.map((cluster) {
+                        final Color clusterColor = _parseColor(cluster.color);
+                        return Polygon(
+                          points: cluster.coordinates
+                              .map((coord) => LatLng(coord.lat, coord.lng))
+                              .toList(),
+                          color: clusterColor.withOpacity(cluster.fillOpacity * _clustersOpacity),
+                          borderColor: clusterColor.withOpacity(_clustersOpacity),
+                          borderStrokeWidth: cluster.strokeWidth,
+                          isFilled: true,
+                        );
+                      }).toList(),
                     ),
 
-                  // שכבות מדידה
-                  ...MapControls.buildMeasureLayers(_measurePoints),
+                  // שכבת נת"ב - פוליגונים
+                  if (_showSafetyPoints)
+                    ..._buildSafetyPointPolygonLayers(),
+
+                  // צירי המנווטים
+                  ..._buildRoutePolylines(),
+
+                  // נקודות ציון מחולקות
+                  MarkerLayer(
+                    markers: distributedCheckpoints.map((cp) {
+                      final bool isStart = startPointIds.contains(cp.id);
+                      final bool isEnd = endPointIds.contains(cp.id);
+                      final bool isWaypoint = waypointIds.contains(cp.id);
+
+                      final Color markerColor;
+                      final IconData markerIcon;
+                      if (isStart) {
+                        markerColor = Colors.green;
+                        markerIcon = Icons.flag;
+                      } else if (isEnd) {
+                        markerColor = Colors.red;
+                        markerIcon = Icons.flag;
+                      } else if (isWaypoint) {
+                        markerColor = Colors.purple;
+                        markerIcon = Icons.diamond;
+                      } else {
+                        markerColor = Colors.blue;
+                        markerIcon = Icons.place;
+                      }
+
+                      return Marker(
+                        point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                        width: 40,
+                        height: 40,
+                        child: Column(
+                          children: [
+                            Icon(
+                              markerIcon,
+                              color: markerColor,
+                              size: 32,
+                            ),
+                            Text(
+                              '${cp.sequenceNumber}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+
+                  // שכבת נת"ב - נקודות
+                  if (_showSafetyPoints)
+                    ..._buildSafetyPointMarkerLayers(),
                 ],
               ),
-              MapControls(
-                mapController: _mapController,
-                onFullscreen: () {
-                  final camera = _mapController.camera;
-                  Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => FullscreenMapScreen(
-                      title: 'מצב אימון',
-                      initialCenter: camera.center,
-                      initialZoom: camera.zoom,
-                      layerConfigs: [
-                        MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black,
-                          visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                        MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue,
-                          visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                        MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
-                          visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                        MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange,
-                          visible: _showRoutes, opacity: _routesOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                      ],
-                      layerBuilder: (visibility, opacity) => [
-                        if (visibility['gg'] == true && _boundary != null && _boundary!.coordinates.isNotEmpty)
-                          PolygonLayer(
-                            polygons: [
-                              Polygon(
-                                points: _boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                                color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
-                                borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
-                                borderStrokeWidth: _boundary!.strokeWidth,
-                                isFilled: true,
-                              ),
-                            ],
-                          ),
-                        if (visibility['routes'] == true) ..._buildRoutePolylines(),
-                        if (visibility['nz'] == true)
-                          MarkerLayer(
-                            markers: _buildNavigationMarkers().map((m) => Marker(
-                              point: m.point,
-                              width: m.width,
-                              height: m.height,
-                              child: Opacity(opacity: (opacity['nz'] ?? 1.0), child: m.child),
-                            )).toList(),
-                          ),
-                        if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
-                          MarkerLayer(
-                            markers: _safetyPoints
-                                .where((p) => p.type == 'point' && p.coordinates != null)
-                                .map((point) => Marker(
-                                      point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
-                                      width: 30,
-                                      height: 30,
-                                      child: Opacity(
-                                        opacity: (opacity['nb'] ?? 1.0),
-                                        child: const Icon(Icons.warning, color: Colors.red, size: 30),
-                                      ),
-                                    ))
-                                .toList(),
-                          ),
-                        if (visibility['nb'] == true && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
-                          PolygonLayer(
-                            polygons: _safetyPoints
-                                .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
-                                .map((point) => Polygon(
-                                      points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                      color: Colors.red.withValues(alpha: 0.2 * (opacity['nb'] ?? 1.0)),
-                                      borderColor: Colors.red.withValues(alpha: (opacity['nb'] ?? 1.0)),
-                                      borderStrokeWidth: 2,
-                                      isFilled: true,
-                                    ))
-                                .toList(),
-                          ),
-                      ],
-                    ),
-                  ));
-                },
-                measureMode: _measureMode,
-                onMeasureModeChanged: (v) => setState(() {
-                  _measureMode = v;
-                  if (!v) _measurePoints.clear();
-                }),
-                measurePoints: _measurePoints,
-                onMeasureClear: () => setState(() => _measurePoints.clear()),
-                onMeasureUndo: () => setState(() {
-                  if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
-                }),
-                layers: [
-                  MapLayerConfig(
-                    id: 'gg', label: 'גבול גזרה', color: Colors.black,
-                    visible: _showGG,
-                    onVisibilityChanged: (v) => setState(() => _showGG = v),
-                    opacity: _ggOpacity,
-                    onOpacityChanged: (v) => setState(() => _ggOpacity = v),
-                  ),
-                  MapLayerConfig(
-                    id: 'nz', label: 'נקודות ציון', color: Colors.blue,
-                    visible: _showNZ,
-                    onVisibilityChanged: (v) => setState(() => _showNZ = v),
-                    opacity: _nzOpacity,
-                    onOpacityChanged: (v) => setState(() => _nzOpacity = v),
-                    child: _buildNzModeSelector(),
-                  ),
-                  MapLayerConfig(
-                    id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
-                    visible: _showNB,
-                    onVisibilityChanged: (v) => setState(() => _showNB = v),
-                    opacity: _nbOpacity,
-                    onOpacityChanged: (v) => setState(() => _nbOpacity = v),
-                  ),
-                  MapLayerConfig(
-                    id: 'routes', label: 'צירים', color: Colors.orange,
-                    visible: _showRoutes,
-                    onVisibilityChanged: (v) => setState(() => _showRoutes = v),
-                    opacity: _routesOpacity,
-                    onOpacityChanged: (v) => setState(() => _routesOpacity = v),
-                  ),
-                ],
+
+              // בקרת שכבות
+              Positioned(
+                top: 8,
+                left: 8,
+                child: _buildLayerControls(),
               ),
             ],
           ),
@@ -2086,207 +958,231 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
   }
 
-  /// בניית ציר רפרנס (מנקודות ציון) למנווט
-  List<LatLng> _buildReferenceRoute(domain.AssignedRoute route) {
-    final points = <LatLng>[];
+  /// בניית שכבות פוליגון של נקודות בטיחות
+  List<Widget> _buildSafetyPointPolygonLayers() {
+    final polygonPoints = _safetyPoints
+        .where((sp) => sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.isNotEmpty)
+        .toList();
 
-    if (route.startPointId != null) {
-      try {
-        final startPoint = _checkpoints.firstWhere((cp) => cp.id == route.startPointId);
-        if (!startPoint.isPolygon && startPoint.coordinates != null) {
-          points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
-        }
-      } catch (_) {}
-    }
+    if (polygonPoints.isEmpty) return [];
 
-    for (final checkpointId in route.sequence) {
-      try {
-        final checkpoint = _checkpoints.firstWhere((cp) => cp.id == checkpointId);
-        if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
-          points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
-        }
-      } catch (_) {}
-    }
-
-    if (route.endPointId != null && route.endPointId != route.startPointId) {
-      try {
-        final endPoint = _checkpoints.firstWhere((cp) => cp.id == route.endPointId);
-        if (!endPoint.isPolygon && endPoint.coordinates != null) {
-          points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
-        }
-      } catch (_) {}
-    }
-
-    return points;
+    return [
+      PolygonLayer(
+        polygons: polygonPoints.map((sp) {
+          final Color severityColor = _getSeverityColor(sp.severity);
+          return Polygon(
+            points: sp.polygonCoordinates!
+                .map((coord) => LatLng(coord.lat, coord.lng))
+                .toList(),
+            color: severityColor.withOpacity(0.2 * _safetyPointsOpacity),
+            borderColor: severityColor.withOpacity(_safetyPointsOpacity),
+            borderStrokeWidth: 2,
+            isFilled: true,
+          );
+        }).toList(),
+      ),
+    ];
   }
 
-  /// בניית markers לנקודות ציון לפי מצב התצוגה הנבחר
-  List<Marker> _buildNavigationMarkers() {
-    final startPointIds = <String>{};
-    final endPointIds = <String>{};
-    final swapPointIds = <String>{};
-    final routeCheckpointIds = <String>{};
+  /// בניית שכבת סמנים של נקודות בטיחות
+  List<Widget> _buildSafetyPointMarkerLayers() {
+    final pointSafetyPoints = _safetyPoints
+        .where((sp) => sp.type == 'point' && sp.coordinates != null)
+        .toList();
 
-    for (final route in _currentNavigation.routes.values) {
-      if (route.startPointId != null) startPointIds.add(route.startPointId!);
-      if (route.endPointId != null) endPointIds.add(route.endPointId!);
-      if (route.swapPointId != null) swapPointIds.add(route.swapPointId!);
-      routeCheckpointIds.addAll(route.sequence);
-    }
+    if (pointSafetyPoints.isEmpty) return [];
 
-    // נקודת החלפה לא נחשבת התחלה או סיום
-    startPointIds.removeAll(swapPointIds);
-    endPointIds.removeAll(swapPointIds);
-
-    final markers = <Marker>[];
-
-    // נקודות התחלה (ירוק H)
-    for (final spId in startPointIds) {
-      try {
-        final cp = _checkpoints.firstWhere((c) => c.id == spId);
-        if (cp.isPolygon || cp.coordinates == null) continue;
-        markers.add(Marker(
-          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-          width: 32,
-          height: 32,
-          child: Tooltip(
-            message: 'התחלה: ${cp.name}',
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.green,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: const Center(
-                child: Text('H', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+    return [
+      MarkerLayer(
+        markers: pointSafetyPoints.map((sp) {
+          final Color severityColor = _getSeverityColor(sp.severity);
+          return Marker(
+            point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+            width: 36,
+            height: 36,
+            child: Opacity(
+              opacity: _safetyPointsOpacity,
+              child: Icon(
+                Icons.warning_rounded,
+                color: severityColor,
+                size: 32,
               ),
             ),
-          ),
-        ));
-      } catch (_) {}
-    }
+          );
+        }).toList(),
+      ),
+    ];
+  }
 
-    // נקודות ציון — לפי מצב תצוגה
-    final checkpointsToShow = _nzMode == _NzDisplayMode.allCheckpoints
-        ? _checkpoints
-        : _checkpoints.where((cp) =>
-            routeCheckpointIds.contains(cp.id) ||
-            startPointIds.contains(cp.id) ||
-            endPointIds.contains(cp.id) ||
-            swapPointIds.contains(cp.id)).toList();
-
-    for (final cp in checkpointsToShow) {
-      if (startPointIds.contains(cp.id) || endPointIds.contains(cp.id) || swapPointIds.contains(cp.id)) continue;
-      if (cp.isPolygon || cp.coordinates == null) continue;
-      markers.add(Marker(
-        point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: cp.name,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: Center(
-              child: Text(
-                '${cp.sequenceNumber}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+  /// בקרת שכבות (overlay בצד שמאל-עליון של המפה) — מתכווץ/מתרחב
+  Widget _buildLayerControls() {
+    if (!_layerControlsExpanded) {
+      return SizedBox(
+        width: 48,
+        height: 48,
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(8),
+          elevation: 2,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _layerControlsExpanded = true),
+            child: const Icon(Icons.layers, color: Colors.black87),
           ),
         ),
-      ));
+      );
     }
 
-    // נקודות החלפה (לבן S)
-    for (final swId in swapPointIds) {
-      try {
-        final cp = _checkpoints.firstWhere((c) => c.id == swId);
-        if (cp.isPolygon || cp.coordinates == null) continue;
-        markers.add(Marker(
-          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-          width: 32,
-          height: 32,
-          child: Tooltip(
-            message: 'החלפה: ${cp.name}',
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.grey[700]!, width: 2),
-              ),
-              child: Center(
-                child: Text('S', style: TextStyle(color: Colors.grey[800], fontSize: 14, fontWeight: FontWeight.bold)),
+    return Material(
+      color: Colors.white.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(8),
+      elevation: 4,
+      child: SizedBox(
+        width: 220,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // כותרת + כפתור סגירה
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.layers, size: 18),
+                  const SizedBox(width: 4),
+                  const Expanded(child: Text('שכבות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _layerControlsExpanded = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ),
             ),
-          ),
-        ));
-      } catch (_) {}
-    }
-
-    // נקודות סיום (אדום F)
-    for (final epId in endPointIds) {
-      if (startPointIds.contains(epId)) continue; // אותה נקודה גם התחלה וגם סיום
-      try {
-        final cp = _checkpoints.firstWhere((c) => c.id == epId);
-        if (cp.isPolygon || cp.coordinates == null) continue;
-        markers.add(Marker(
-          point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
-          width: 32,
-          height: 32,
-          child: Tooltip(
-            message: 'סיום: ${cp.name}',
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: const Center(
-                child: Text('F', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ג"ג
+                  _buildLayerToggle(
+                    label: 'ג"ג',
+                    value: _showBoundary,
+                    opacity: _boundaryOpacity,
+                    color: Colors.black,
+                    onToggle: (v) => setState(() => _showBoundary = v),
+                    onOpacity: (v) => setState(() => _boundaryOpacity = v),
+                  ),
+                  // נת"ב
+                  _buildLayerToggle(
+                    label: 'נת"ב',
+                    value: _showSafetyPoints,
+                    opacity: _safetyPointsOpacity,
+                    color: Colors.red,
+                    onToggle: (v) => setState(() => _showSafetyPoints = v),
+                    onOpacity: (v) => setState(() => _safetyPointsOpacity = v),
+                  ),
+                  // ב"א
+                  _buildLayerToggle(
+                    label: 'ב"א',
+                    value: _showClusters,
+                    opacity: _clustersOpacity,
+                    color: Colors.green,
+                    onToggle: (v) => setState(() => _showClusters = v),
+                    onOpacity: (v) => setState(() => _clustersOpacity = v),
+                  ),
+                ],
               ),
             ),
-          ),
-        ));
-      } catch (_) {}
-    }
-
-    return markers;
-  }
-
-  Widget _buildNzModeSelector() {
-    const modes = [
-      (_NzDisplayMode.participatingOnly, 'משתתפות בניווט'),
-      (_NzDisplayMode.allCheckpoints, 'כל הנקודות'),
-    ];
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Wrap(
-        spacing: 4,
-        runSpacing: 2,
-        children: modes.map((m) => ChoiceChip(
-          label: Text(m.$2, style: const TextStyle(fontSize: 10)),
-          selected: _nzMode == m.$1,
-          onSelected: (_) => setState(() => _nzMode = m.$1),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: VisualDensity.compact,
-        )).toList(),
+          ],
+        ),
       ),
     );
   }
 
-  /// מיפוי מנווט → צבע לפי אינדקס
-  Color _getNavigatorColor(String navigatorId) {
-    final keys = _currentNavigation.routes.keys.toList();
-    final idx = keys.indexOf(navigatorId);
-    return _kNavigatorColors[(idx >= 0 ? idx : 0) % _kNavigatorColors.length];
+  Widget _buildLayerToggle({
+    required String label,
+    required bool value,
+    required double opacity,
+    required Color color,
+    required ValueChanged<bool> onToggle,
+    required ValueChanged<double> onOpacity,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: Checkbox(
+                value: value,
+                activeColor: color,
+                onChanged: (v) => onToggle(v ?? false),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 13)),
+          ],
+        ),
+        if (value)
+          SizedBox(
+            height: 24,
+            child: Slider(
+              value: opacity,
+              min: 0.1,
+              max: 1.0,
+              activeColor: color,
+              onChanged: onOpacity,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// חישוב אורך ציר — מ-plannedPath אם נערך, אחרת routeLengthKm המקורי
+  double _calculateRouteLengthKm(domain.AssignedRoute route) {
+    if (route.plannedPath.isNotEmpty) {
+      return GeometryUtils.calculatePathLengthKm(route.plannedPath);
+    }
+    return route.routeLengthKm;
+  }
+
+  Color _parseColor(String colorStr) {
+    switch (colorStr.toLowerCase()) {
+      case 'red':
+        return Colors.red;
+      case 'blue':
+        return Colors.blue;
+      case 'green':
+        return Colors.green;
+      case 'orange':
+        return Colors.orange;
+      case 'yellow':
+        return Colors.yellow;
+      case 'purple':
+        return Colors.purple;
+      case 'black':
+        return Colors.black;
+      case 'brown':
+        return Colors.brown;
+      default:
+        // ניסיון לפרסר hex color
+        if (colorStr.startsWith('#') && colorStr.length == 7) {
+          try {
+            return Color(int.parse('FF${colorStr.substring(1)}', radix: 16));
+          } catch (_) {}
+        }
+        return Colors.green;
+    }
+  }
+
+  Color _getSeverityColor(String severity) {
+    // כל הנת"ב מוצגים באדום למפקד
+    return Colors.red;
   }
 
   List<Widget> _buildRoutePolylines() {
@@ -2298,23 +1194,66 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
       if (_selectedNavigators[navigatorId] != true) continue;
 
-      // אם יש ציר מעודכן שהמנווט צייר — מציגים אותו; אחרת רפרנס
-      final List<LatLng> points;
+      // צבע לפי סטטוס אישור — 4 מצבים
+      final Color color;
+      switch (route.approvalStatus) {
+        case 'approved':
+          color = Colors.green;
+          break;
+        case 'pending_approval':
+          color = Colors.orange;
+          break;
+        case 'rejected':
+          color = Colors.red;
+          break;
+        default:
+          color = Colors.grey;
+      }
+
+      // בניית הציר — אם המנווט ערך (plannedPath), מציגים את הציר המעודכן
+      List<LatLng> points = [];
+
       if (route.plannedPath.isNotEmpty) {
-        points = route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
+        // ציר עדכני שהמנווט ערך
+        points = route.plannedPath.map((c) => c.toLatLng()).toList();
       } else {
-        points = _buildReferenceRoute(route);
+        // ציר מקורי מנקודות ציון
+        // נקודת התחלה
+        if (route.startPointId != null) {
+          final startPoint = _checkpoints.firstWhere(
+            (cp) => cp.id == route.startPointId,
+            orElse: () => _checkpoints.first,
+          );
+          points.add(LatLng(startPoint.coordinates.lat, startPoint.coordinates.lng));
+        }
+
+        // נקודות המנווט
+        for (final checkpointId in route.sequence) {
+          final checkpoint = _checkpoints.firstWhere(
+            (cp) => cp.id == checkpointId,
+            orElse: () => _checkpoints.first,
+          );
+          points.add(LatLng(checkpoint.coordinates.lat, checkpoint.coordinates.lng));
+        }
+
+        // נקודת הסיום
+        if (route.endPointId != null && route.endPointId != route.startPointId) {
+          final endPoint = _checkpoints.firstWhere(
+            (cp) => cp.id == route.endPointId,
+            orElse: () => _checkpoints.last,
+          );
+          points.add(LatLng(endPoint.coordinates.lat, endPoint.coordinates.lng));
+        }
       }
 
       if (points.isNotEmpty) {
-        final color = _getNavigatorColor(navigatorId);
         polylines.add(
           PolylineLayer(
             polylines: [
               Polyline(
                 points: points,
-                strokeWidth: 3.0,
-                color: color.withValues(alpha: _routesOpacity),
+                strokeWidth: route.approvalStatus == 'approved' ? 4 : 3,
+                color: color,
               ),
             ],
           ),
@@ -2326,367 +1265,434 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 }
 
-/// מסך צפייה בציר מנווט — עם נקודות התחלה/סיום ו-MapControls סטנדרטי
-class _RouteViewScreen extends StatefulWidget {
+/// דיאלוג מסך מלא לצפייה בציר מנווט
+class _RouteViewDialog extends StatefulWidget {
   final String navigatorId;
-  final String navigatorName;
-  final List<LatLng> referencePoints;
-  final List<LatLng> plannedPathPoints;
-  final bool hasPlannedPath;
-  final LatLng center;
-  final List<Checkpoint> routeCheckpoints;
-  final Checkpoint? startCheckpoint;
-  final Checkpoint? endCheckpoint;
+  final domain.AssignedRoute route;
+  final List<Checkpoint> checkpoints;
   final Boundary? boundary;
-  final List<SafetyPoint> safetyPoints;
-  final String? defaultMap;
+  final List<nav.NavSafetyPoint> safetyPoints;
 
-  const _RouteViewScreen({
+  const _RouteViewDialog({
     required this.navigatorId,
-    required this.navigatorName,
-    required this.referencePoints,
-    required this.plannedPathPoints,
-    required this.hasPlannedPath,
-    required this.center,
-    required this.routeCheckpoints,
-    this.startCheckpoint,
-    this.endCheckpoint,
+    required this.route,
+    required this.checkpoints,
     this.boundary,
     this.safetyPoints = const [],
-    this.defaultMap,
   });
 
   @override
-  State<_RouteViewScreen> createState() => _RouteViewScreenState();
+  State<_RouteViewDialog> createState() => _RouteViewDialogState();
 }
 
-class _RouteViewScreenState extends State<_RouteViewScreen> {
-  final MapController _mapController = MapController();
-  bool _measureMode = false;
-  final List<LatLng> _measurePoints = [];
-
-  // שכבות
-  bool _showGG = true;
-  double _ggOpacity = 1.0;
-  bool _showNZ = true;
-  double _nzOpacity = 1.0;
-  bool _showNB = false;
-  double _nbOpacity = 1.0;
-  bool _showRoutes = true;
-  double _routesOpacity = 1.0;
+class _RouteViewDialogState extends State<_RouteViewDialog> {
+  // בקרת שכבות
+  bool _layerControlsExpanded = false;
+  bool _showRoute = true;
+  bool _showBoundary = true;
+  bool _showSafetyPoints = true;
+  double _routeOpacity = 1.0;
+  double _boundaryOpacity = 1.0;
+  double _safetyPointsOpacity = 1.0;
 
   @override
   Widget build(BuildContext context) {
-    final allPoints = [...widget.referencePoints, ...widget.plannedPathPoints];
-    final bounds = allPoints.length > 1 ? LatLngBounds.fromPoints(allPoints) : null;
+    // בניית נקודות הציר — עדיפות לציר ערוך (plannedPath)
+    List<LatLng> routePoints = [];
 
-    // בניית markers: התחלה (ירוק H), נקודות ציון (כחול ממוספר), סיום (אדום F)
-    final markers = <Marker>[];
+    Checkpoint? startCheckpoint;
+    Checkpoint? endCheckpoint;
+    List<Checkpoint> sequenceCheckpoints = [];
 
-    if (widget.startCheckpoint != null && !widget.startCheckpoint!.isPolygon && widget.startCheckpoint!.coordinates != null) {
-      markers.add(Marker(
-        point: widget.startCheckpoint!.coordinates!.toLatLng(),
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: 'התחלה: ${widget.startCheckpoint!.name}',
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.green,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: const Center(
-              child: Text('H', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ),
-      ));
+    if (widget.route.plannedPath.isNotEmpty) {
+      // ציר עדכני שהמנווט ערך
+      routePoints = widget.route.plannedPath.map((c) => c.toLatLng()).toList();
+    } else {
+      // ציר מקורי מנקודות ציון
+      if (widget.route.startPointId != null) {
+        try {
+          startCheckpoint = widget.checkpoints.firstWhere((cp) => cp.id == widget.route.startPointId);
+          routePoints.add(LatLng(startCheckpoint.coordinates.lat, startCheckpoint.coordinates.lng));
+        } catch (_) {}
+      }
+
+      for (final cpId in widget.route.sequence) {
+        try {
+          final cp = widget.checkpoints.firstWhere((c) => c.id == cpId);
+          sequenceCheckpoints.add(cp);
+          routePoints.add(LatLng(cp.coordinates.lat, cp.coordinates.lng));
+        } catch (_) {}
+      }
+
+      if (widget.route.endPointId != null && widget.route.endPointId != widget.route.startPointId) {
+        try {
+          endCheckpoint = widget.checkpoints.firstWhere((cp) => cp.id == widget.route.endPointId);
+          routePoints.add(LatLng(endCheckpoint.coordinates.lat, endCheckpoint.coordinates.lng));
+        } catch (_) {}
+      }
     }
 
-    for (var i = 0; i < widget.routeCheckpoints.length; i++) {
-      final cp = widget.routeCheckpoints[i];
-      if (cp.isPolygon || cp.coordinates == null) continue;
-      markers.add(Marker(
-        point: cp.coordinates!.toLatLng(),
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: cp.name,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: Center(
-              child: Text(
-                '${i + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
+    // נקודות ציון לסמנים — תמיד מהרצף המקורי
+    if (startCheckpoint == null && widget.route.startPointId != null) {
+      try {
+        startCheckpoint = widget.checkpoints.firstWhere((cp) => cp.id == widget.route.startPointId);
+      } catch (_) {}
+    }
+    if (endCheckpoint == null && widget.route.endPointId != null && widget.route.endPointId != widget.route.startPointId) {
+      try {
+        endCheckpoint = widget.checkpoints.firstWhere((cp) => cp.id == widget.route.endPointId);
+      } catch (_) {}
+    }
+    if (sequenceCheckpoints.isEmpty) {
+      for (final cpId in widget.route.sequence) {
+        try {
+          final cp = widget.checkpoints.firstWhere((c) => c.id == cpId);
+          sequenceCheckpoints.add(cp);
+        } catch (_) {}
+      }
+    }
+
+    // חישוב מרכז הציר
+    LatLng center = const LatLng(32.0853, 34.7818);
+    if (routePoints.isNotEmpty) {
+      double avgLat = 0, avgLng = 0;
+      for (final p in routePoints) {
+        avgLat += p.latitude;
+        avgLng += p.longitude;
+      }
+      center = LatLng(avgLat / routePoints.length, avgLng / routePoints.length);
+    }
+
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('ציר של ${widget.navigatorId}'),
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: Stack(
+          children: [
+            MapWithTypeSelector(
+              options: MapOptions(
+                initialCenter: center,
+                initialZoom: 14.0,
               ),
-            ),
-          ),
-        ),
-      ));
-    }
-
-    if (widget.endCheckpoint != null && !widget.endCheckpoint!.isPolygon && widget.endCheckpoint!.coordinates != null) {
-      markers.add(Marker(
-        point: widget.endCheckpoint!.coordinates!.toLatLng(),
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: 'סיום: ${widget.endCheckpoint!.name}',
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.red,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: const Center(
-              child: Text('F', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ),
-      ));
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('ציר של ${widget.navigatorName}'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-      ),
-      body: Stack(
-        children: [
-          MapWithTypeSelector(
-            mapController: _mapController,
-            showTypeSelector: false,
-            initialMapType: MapConfig.resolveMapType(widget.defaultMap),
-            options: MapOptions(
-              initialCenter: widget.center,
-              initialZoom: 14.0,
-              initialCameraFit: bounds != null
-                  ? CameraFit.bounds(
-                      bounds: bounds,
-                      padding: const EdgeInsets.all(50),
-                    )
-                  : null,
-              onTap: (tapPosition, point) {
-                if (_measureMode) {
-                  setState(() => _measurePoints.add(point));
-                }
-              },
-            ),
-            layers: [
-              // גבול גזרה (שחור)
-              if (_showGG && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
-                PolygonLayer(
-                  polygons: [
-                    Polygon(
-                      points: widget.boundary!.coordinates
-                          .map((coord) => LatLng(coord.lat, coord.lng))
-                          .toList(),
-                      color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                      borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                      borderStrokeWidth: widget.boundary!.strokeWidth,
-                      isFilled: true,
-                    ),
-                  ],
-                ),
-              // ציר רפרנס (כחול בהיר)
-              if (_showRoutes && widget.referencePoints.length > 1)
-                PolylineLayer(polylines: [
-                  Polyline(
-                    points: widget.referencePoints,
-                    color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
-                    strokeWidth: 2.0,
+              layers: [
+                // גבול גזרה (גג) — שחור
+                if (_showBoundary && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
+                  PolygonLayer(
+                    polygons: [
+                      Polygon(
+                        points: widget.boundary!.coordinates
+                            .map((coord) => LatLng(coord.lat, coord.lng))
+                            .toList(),
+                        color: Colors.black.withOpacity(0.1 * _boundaryOpacity),
+                        borderColor: Colors.black.withOpacity(_boundaryOpacity),
+                        borderStrokeWidth: 2,
+                        isFilled: true,
+                      ),
+                    ],
                   ),
-                ]),
-              // ציר שצייר המנווט (כחול)
-              if (_showRoutes && widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
-                PolylineLayer(polylines: [
-                  Polyline(
-                    points: widget.plannedPathPoints,
-                    color: Colors.blue.withValues(alpha: _routesOpacity),
-                    strokeWidth: 3.0,
+
+                // שכבת נת"ב — פוליגונים באדום
+                if (_showSafetyPoints)
+                  ..._buildSafetyPointLayers(),
+
+                // קו הציר — כחול
+                if (_showRoute && routePoints.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: routePoints,
+                        strokeWidth: 4,
+                        color: Colors.blue.withOpacity(_routeOpacity),
+                      ),
+                    ],
                   ),
-                ]),
-              // נת"ב - נקודות
-              if (_showNB && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
-                MarkerLayer(
-                  markers: widget.safetyPoints
-                      .where((p) => p.type == 'point' && p.coordinates != null)
-                      .map((point) => Marker(
-                            point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
-                            width: 30,
-                            height: 30,
-                            child: Opacity(
-                              opacity: _nbOpacity,
-                              child: const Icon(Icons.warning, color: Colors.red, size: 30),
+
+                // סמני נקודות
+                if (_showRoute)
+                  MarkerLayer(
+                    markers: [
+                      // נקודת התחלה
+                      if (startCheckpoint != null)
+                        Marker(
+                          point: LatLng(startCheckpoint.coordinates.lat, startCheckpoint.coordinates.lng),
+                          width: 44,
+                          height: 44,
+                          child: Opacity(
+                            opacity: _routeOpacity,
+                            child: const Column(
+                              children: [
+                                Icon(Icons.flag, color: Colors.green, size: 34),
+                                Text('התחלה', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                              ],
                             ),
-                          ))
-                      .toList(),
-                ),
-              // נת"ב - פוליגונים
-              if (_showNB && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
-                PolygonLayer(
-                  polygons: widget.safetyPoints
-                      .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
-                      .map((point) => Polygon(
-                            points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                            color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
-                            borderColor: Colors.red.withValues(alpha: _nbOpacity),
-                            borderStrokeWidth: 2,
-                            isFilled: true,
-                          ))
-                      .toList(),
-                ),
-              // נקודות ציון
-              if (_showNZ)
-                MarkerLayer(markers: markers.map((m) => Marker(
-                  point: m.point,
-                  width: m.width,
-                  height: m.height,
-                  child: Opacity(opacity: _nzOpacity, child: m.child),
-                )).toList()),
-              ...MapControls.buildMeasureLayers(_measurePoints),
-            ],
-          ),
-          MapControls(
-            mapController: _mapController,
-            onFullscreen: () {
-              final camera = _mapController.camera;
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => FullscreenMapScreen(
-                  title: 'מצב אימון',
-                  initialCenter: camera.center,
-                  initialZoom: camera.zoom,
-                  layerConfigs: [
-                    MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black,
-                      visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                    MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue,
-                      visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                    MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
-                      visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                    MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange,
-                      visible: _showRoutes, opacity: _routesOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                  ],
-                  layerBuilder: (visibility, opacity) => [
-                    if (visibility['gg'] == true && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)
-                      PolygonLayer(
-                        polygons: [
-                          Polygon(
-                            points: widget.boundary!.coordinates.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
-                            color: Colors.black.withValues(alpha: 0.1 * (opacity['gg'] ?? 1.0)),
-                            borderColor: Colors.black.withValues(alpha: (opacity['gg'] ?? 1.0)),
-                            borderStrokeWidth: widget.boundary!.strokeWidth,
-                            isFilled: true,
                           ),
-                        ],
-                      ),
-                    if (visibility['routes'] == true && widget.referencePoints.length > 1)
-                      PolylineLayer(polylines: [
-                        Polyline(
-                          points: widget.referencePoints,
-                          color: Colors.blue.withValues(alpha: 0.3 * (opacity['routes'] ?? 1.0)),
-                          strokeWidth: 2.0,
                         ),
-                      ]),
-                    if (visibility['routes'] == true && widget.hasPlannedPath && widget.plannedPathPoints.isNotEmpty)
-                      PolylineLayer(polylines: [
-                        Polyline(
-                          points: widget.plannedPathPoints,
-                          color: Colors.blue.withValues(alpha: (opacity['routes'] ?? 1.0)),
-                          strokeWidth: 3.0,
-                        ),
-                      ]),
-                    if (visibility['nb'] == true && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
-                      MarkerLayer(
-                        markers: widget.safetyPoints
-                            .where((p) => p.type == 'point' && p.coordinates != null)
-                            .map((point) => Marker(
-                                  point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
-                                  width: 30,
-                                  height: 30,
-                                  child: Opacity(
-                                    opacity: (opacity['nb'] ?? 1.0),
-                                    child: const Icon(Icons.warning, color: Colors.red, size: 30),
+
+                      // נקודות הרצף עם מספרי סדר
+                      ...sequenceCheckpoints.asMap().entries.map((entry) {
+                        final idx = entry.key;
+                        final cp = entry.value;
+                        return Marker(
+                          point: LatLng(cp.coordinates.lat, cp.coordinates.lng),
+                          width: 40,
+                          height: 40,
+                          child: Opacity(
+                            opacity: _routeOpacity,
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white, width: 2),
                                   ),
-                                ))
-                            .toList(),
-                      ),
-                    if (visibility['nb'] == true && widget.safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
-                      PolygonLayer(
-                        polygons: widget.safetyPoints
-                            .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
-                            .map((point) => Polygon(
-                                  points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                  color: Colors.red.withValues(alpha: 0.2 * (opacity['nb'] ?? 1.0)),
-                                  borderColor: Colors.red.withValues(alpha: (opacity['nb'] ?? 1.0)),
-                                  borderStrokeWidth: 2,
-                                  isFilled: true,
-                                ))
-                            .toList(),
-                      ),
-                    if (visibility['nz'] == true)
-                      MarkerLayer(markers: markers.map((m) => Marker(
-                        point: m.point,
-                        width: m.width,
-                        height: m.height,
-                        child: Opacity(opacity: (opacity['nz'] ?? 1.0), child: m.child),
-                      )).toList()),
-                  ],
-                ),
-              ));
-            },
-            measureMode: _measureMode,
-            onMeasureModeChanged: (v) => setState(() {
-              _measureMode = v;
-              if (!v) _measurePoints.clear();
-            }),
-            measurePoints: _measurePoints,
-            onMeasureClear: () => setState(() => _measurePoints.clear()),
-            onMeasureUndo: () => setState(() {
-              if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
-            }),
-            layers: [
-              MapLayerConfig(
-                id: 'gg', label: 'גבול גזרה', color: Colors.black,
-                visible: _showGG,
-                onVisibilityChanged: (v) => setState(() => _showGG = v),
-                opacity: _ggOpacity,
-                onOpacityChanged: (v) => setState(() => _ggOpacity = v),
-              ),
-              MapLayerConfig(
-                id: 'nz', label: 'נקודות ציון', color: Colors.blue,
-                visible: _showNZ,
-                onVisibilityChanged: (v) => setState(() => _showNZ = v),
-                opacity: _nzOpacity,
-                onOpacityChanged: (v) => setState(() => _nzOpacity = v),
-              ),
-              MapLayerConfig(
-                id: 'nb', label: 'נקודות בטיחות', color: Colors.red,
-                visible: _showNB,
-                onVisibilityChanged: (v) => setState(() => _showNB = v),
-                opacity: _nbOpacity,
-                onOpacityChanged: (v) => setState(() => _nbOpacity = v),
-              ),
-              MapLayerConfig(
-                id: 'routes', label: 'צירים', color: Colors.orange,
-                visible: _showRoutes,
-                onVisibilityChanged: (v) => setState(() => _showRoutes = v),
-                opacity: _routesOpacity,
-                onOpacityChanged: (v) => setState(() => _routesOpacity = v),
-              ),
-            ],
-          ),
-        ],
+                                  child: Center(
+                                    child: Text(
+                                      '${idx + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  cp.name,
+                                  style: const TextStyle(fontSize: 8),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+
+                      // נקודת סיום
+                      if (endCheckpoint != null)
+                        Marker(
+                          point: LatLng(endCheckpoint.coordinates.lat, endCheckpoint.coordinates.lng),
+                          width: 44,
+                          height: 44,
+                          child: Opacity(
+                            opacity: _routeOpacity,
+                            child: const Column(
+                              children: [
+                                Icon(Icons.flag, color: Colors.red, size: 34),
+                                Text('סיום', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+
+            // בקרת שכבות
+            Positioned(
+              top: 8,
+              left: 8,
+              child: _buildDialogLayerControls(),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// בניית שכבות נת"ב באדום
+  List<Widget> _buildSafetyPointLayers() {
+    final List<Widget> layers = [];
+
+    // פוליגונים
+    final polygonPoints = widget.safetyPoints
+        .where((sp) => sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.isNotEmpty)
+        .toList();
+
+    if (polygonPoints.isNotEmpty) {
+      layers.add(
+        PolygonLayer(
+          polygons: polygonPoints.map((sp) {
+            return Polygon(
+              points: sp.polygonCoordinates!
+                  .map((coord) => LatLng(coord.lat, coord.lng))
+                  .toList(),
+              color: Colors.red.withOpacity(0.2 * _safetyPointsOpacity),
+              borderColor: Colors.red.withOpacity(_safetyPointsOpacity),
+              borderStrokeWidth: 2,
+              isFilled: true,
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    // נקודות
+    final pointSafetyPoints = widget.safetyPoints
+        .where((sp) => sp.type == 'point' && sp.coordinates != null)
+        .toList();
+
+    if (pointSafetyPoints.isNotEmpty) {
+      layers.add(
+        MarkerLayer(
+          markers: pointSafetyPoints.map((sp) {
+            return Marker(
+              point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+              width: 36,
+              height: 36,
+              child: Opacity(
+                opacity: _safetyPointsOpacity,
+                child: const Icon(
+                  Icons.warning_rounded,
+                  color: Colors.red,
+                  size: 32,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    return layers;
+  }
+
+  /// בקרת שכבות בדיאלוג — מתכווץ/מתרחב
+  Widget _buildDialogLayerControls() {
+    if (!_layerControlsExpanded) {
+      return SizedBox(
+        width: 48,
+        height: 48,
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(8),
+          elevation: 2,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _layerControlsExpanded = true),
+            child: const Icon(Icons.layers, color: Colors.black87),
+          ),
+        ),
+      );
+    }
+
+    return Material(
+      color: Colors.white.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(8),
+      elevation: 4,
+      child: SizedBox(
+        width: 220,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // כותרת + כפתור סגירה
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.layers, size: 18),
+                  const SizedBox(width: 4),
+                  const Expanded(child: Text('שכבות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _layerControlsExpanded = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ציר
+                  _buildToggle(
+                    label: 'ציר',
+                    value: _showRoute,
+                    opacity: _routeOpacity,
+                    color: Colors.blue,
+                    onToggle: (v) => setState(() => _showRoute = v),
+                    onOpacity: (v) => setState(() => _routeOpacity = v),
+                  ),
+                  // ג"ג
+                  _buildToggle(
+                    label: 'ג"ג',
+                    value: _showBoundary,
+                    opacity: _boundaryOpacity,
+                    color: Colors.black,
+                    onToggle: (v) => setState(() => _showBoundary = v),
+                    onOpacity: (v) => setState(() => _boundaryOpacity = v),
+                  ),
+                  // נת"ב
+                  _buildToggle(
+                    label: 'נת"ב',
+                    value: _showSafetyPoints,
+                    opacity: _safetyPointsOpacity,
+                    color: Colors.red,
+                    onToggle: (v) => setState(() => _showSafetyPoints = v),
+                    onOpacity: (v) => setState(() => _safetyPointsOpacity = v),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggle({
+    required String label,
+    required bool value,
+    required double opacity,
+    required Color color,
+    required ValueChanged<bool> onToggle,
+    required ValueChanged<double> onOpacity,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: Checkbox(
+                value: value,
+                activeColor: color,
+                onChanged: (v) => onToggle(v ?? false),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 13)),
+          ],
+        ),
+        if (value)
+          SizedBox(
+            height: 24,
+            child: Slider(
+              value: opacity,
+              min: 0.1,
+              max: 1.0,
+              activeColor: color,
+              onChanged: onOpacity,
+            ),
+          ),
+      ],
     );
   }
 }

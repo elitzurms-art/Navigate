@@ -1,22 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/coordinate.dart';
-import '../../../../data/repositories/boundary_repository.dart';
-import '../../../../data/repositories/checkpoint_repository.dart';
-import '../../../../data/repositories/cluster_repository.dart';
+import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../data/repositories/navigation_repository.dart';
-import '../../../../data/repositories/safety_point_repository.dart';
-import '../../../../domain/entities/safety_point.dart';
-import '../../../../domain/entities/boundary.dart';
-import '../../../../domain/entities/cluster.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../core/utils/geometry_utils.dart';
 import '../../../widgets/map_with_selector.dart';
-import '../../../widgets/map_controls.dart';
-import '../../../../core/map_config.dart';
-import '../../../../services/elevation_service.dart';
 
 /// מסך עריכת ציר על המפה — ציור polyline בין נקודות ציון
 class RouteEditorScreen extends StatefulWidget {
@@ -24,6 +16,9 @@ class RouteEditorScreen extends StatefulWidget {
   final String navigatorUid;
   final List<Checkpoint> checkpoints;
   final ValueChanged<domain.Navigation> onNavigationUpdated;
+  final Checkpoint? startCheckpoint;
+  final Checkpoint? endCheckpoint;
+  final List<Checkpoint> waypointCheckpoints;
 
   const RouteEditorScreen({
     super.key,
@@ -31,6 +26,9 @@ class RouteEditorScreen extends StatefulWidget {
     required this.navigatorUid,
     required this.checkpoints,
     required this.onNavigationUpdated,
+    this.startCheckpoint,
+    this.endCheckpoint,
+    this.waypointCheckpoints = const [],
   });
 
   @override
@@ -40,51 +38,38 @@ class RouteEditorScreen extends StatefulWidget {
 class _RouteEditorScreenState extends State<RouteEditorScreen> {
   final MapController _mapController = MapController();
   final NavigationRepository _navigationRepo = NavigationRepository();
-  final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
 
   late List<LatLng> _waypoints;
   bool _isSaving = false;
   bool _wasApproved = false;
   bool _approvalWarningShown = false;
+
+  // שכבות ניווט
+  List<nav.NavBoundary> _boundaries = [];
+  List<nav.NavSafetyPoint> _safetyPoints = [];
+  bool _showBoundary = true;
+  bool _showSafetyPoints = true;
+  double _boundaryOpacity = 1.0;
+  double _safetyPointsOpacity = 1.0;
+  bool _layerControlsExpanded = false;
+
+  // מדידה על המפה
+  bool _measureMode = false;
+  LatLng? _measurePointA;
+  LatLng? _measurePointB;
+
+  // נקודות התחלה/סיום/ביניים
   Checkpoint? _startCheckpoint;
   Checkpoint? _endCheckpoint;
-
-  final ElevationService _elevationService = ElevationService();
-  int _routeAscent = 0;
-  int _routeDescent = 0;
-  final Map<int, int?> _waypointElevations = {};
-
-  int? _selectedWaypointIndex; // נקודה נבחרת להזזה
-
-  bool _measureMode = false;
-  final List<LatLng> _measurePoints = [];
-
-  List<SafetyPoint> _safetyPoints = [];
-  List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
-  Boundary? _navigationBoundary;
-
-  bool _showGG = true;
-  bool _showNZ = true;
-  bool _showNB = true;
-  bool _showBA = false;
-  bool _showRoutes = true;
-
-  double _ggOpacity = 1.0;
-  double _nzOpacity = 1.0;
-  double _nbOpacity = 1.0;
-  double _baOpacity = 1.0;
-  double _routesOpacity = 1.0;
+  List<Checkpoint> _waypointCheckpoints = [];
 
   @override
   void initState() {
     super.initState();
     // טעינת נתיב קיים אם יש
     final route = widget.navigation.routes[widget.navigatorUid];
-    _wasApproved = route?.approvalStatus == 'approved' || route?.approvalStatus == 'pending_approval';
+    _wasApproved = route?.approvalStatus != 'not_submitted';
     if (route != null && route.plannedPath.isNotEmpty) {
       _waypoints = route.plannedPath
           .map((c) => LatLng(c.lat, c.lng))
@@ -92,80 +77,29 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     } else {
       _waypoints = [];
     }
-    _loadStartEndCheckpoints();
-    _loadMapLayers();
-    if (_waypoints.length >= 2) _computeRouteElevation();
+    _loadLayers();
+    _resolveStartEndWaypoints();
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב
-  Future<void> _loadMapLayers() async {
+  /// טעינת שכבות ג"ג ונת"ב
+  Future<void> _loadLayers() async {
+    // טעינת גבולות גזרה
     try {
-      final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
-      final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
-      final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
-
-      // טעינת הג"ג הספציפי של הניווט
-      Boundary? navBoundary;
-      final boundaryId = widget.navigation.boundaryLayerId;
-      if (boundaryId != null && boundaryId.isNotEmpty) {
-        navBoundary = await _boundaryRepo.getById(boundaryId);
-      }
-
-      if (mounted) {
-        setState(() {
-          _safetyPoints = safetyPoints;
-          _boundaries = boundaries;
-          _clusters = clusters;
-          _navigationBoundary = navBoundary;
-        });
-      }
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
+      if (mounted) setState(() => _boundaries = boundaries);
+    } catch (_) {}
+    // טעינת נקודות בטיחות
+    try {
+      final safetyPoints = await _navLayerRepo.getSafetyPointsByNavigation(widget.navigation.id);
+      if (mounted) setState(() => _safetyPoints = safetyPoints);
     } catch (_) {}
   }
 
-  Future<void> _loadStartEndCheckpoints() async {
-    final route = widget.navigation.routes[widget.navigatorUid];
-    if (route == null) return;
-
-    if (route.startPointId != null) {
-      _startCheckpoint = await _checkpointRepo.getById(route.startPointId!);
-    }
-    if (route.endPointId != null) {
-      _endCheckpoint = await _checkpointRepo.getById(route.endPointId!);
-    }
-
-    // אם ציר חדש (ריק) ויש נקודת התחלה — מוסיף אותה אוטומטית
-    if (_waypoints.isEmpty && _startCheckpoint != null && _startCheckpoint!.coordinates != null) {
-      _waypoints.add(_startCheckpoint!.coordinates!.toLatLng());
-    }
-
-    if (mounted) setState(() {});
-  }
-
-  /// חישוב עליות/ירידות מצטברות מנקודות הציר
-  void _computeRouteElevation() {
-    if (_waypoints.length < 2) {
-      setState(() { _routeAscent = 0; _routeDescent = 0; _waypointElevations.clear(); });
-      return;
-    }
-    Future.wait(
-      _waypoints.map((p) => _elevationService.getElevation(p.latitude, p.longitude)),
-    ).then((elevations) {
-      if (!mounted) return;
-      int ascent = 0, descent = 0;
-      int? prev;
-      for (int i = 0; i < elevations.length; i++) {
-        final e = elevations[i];
-        _waypointElevations[i] = e;
-        if (e == null) { prev = null; continue; }
-        if (prev != null) {
-          final diff = e - prev;
-          if (diff > 0) ascent += diff;
-          else descent += -diff;
-        }
-        prev = e;
-      }
-      setState(() { _routeAscent = ascent; _routeDescent = descent; });
-    }).catchError((_) {});
+  /// שימוש בנקודות התחלה/סיום/ביניים שהועברו מ-LearningView
+  void _resolveStartEndWaypoints() {
+    _startCheckpoint = widget.startCheckpoint;
+    _endCheckpoint = widget.endCheckpoint;
+    _waypointCheckpoints = widget.waypointCheckpoints;
   }
 
   Future<bool> _confirmEditAfterApproval() async {
@@ -202,162 +136,109 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Future<void> _addWaypoint(LatLng point) async {
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
-      if (_selectedWaypointIndex != null) {
-        // מצב הזזה — מזיז את הנקודה הנבחרת למיקום החדש
-        _waypoints[_selectedWaypointIndex!] = point;
-        _selectedWaypointIndex = null;
-      } else {
-        _waypoints.add(point);
-      }
+      _waypoints.add(point);
     });
-    _computeRouteElevation();
   }
 
   Future<void> _undoLastWaypoint() async {
     if (_waypoints.isEmpty) return;
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
-      _selectedWaypointIndex = null;
       _waypoints.removeLast();
     });
-    _computeRouteElevation();
   }
 
   Future<void> _clearWaypoints() async {
     if (!await _confirmEditAfterApproval()) return;
     setState(() {
-      _selectedWaypointIndex = null;
       _waypoints.clear();
-      _routeAscent = 0;
-      _routeDescent = 0;
     });
   }
 
-  /// מחיקת נקודת ציר לפי אינדקס
-  Future<void> _deleteWaypoint(int index) async {
-    if (!await _confirmEditAfterApproval()) return;
-    setState(() {
-      _waypoints.removeAt(index);
-      _selectedWaypointIndex = null;
-    });
-    _computeRouteElevation();
+  /// תרגום חומרה לעברית
+  String _severityLabel(String severity) {
+    switch (severity.toLowerCase()) {
+      case 'high':
+        return 'גבוהה';
+      case 'medium':
+        return 'בינונית';
+      default:
+        return severity;
+    }
   }
 
-  /// הוספת נקודה באמצע — בין waypoint[index] ל-waypoint[index+1]
-  Future<void> _insertMidpoint(int afterIndex) async {
-    if (!await _confirmEditAfterApproval()) return;
-    final a = _waypoints[afterIndex];
-    final b = _waypoints[afterIndex + 1];
-    final mid = LatLng(
-      (a.latitude + b.latitude) / 2,
-      (a.longitude + b.longitude) / 2,
-    );
-    setState(() {
-      _waypoints.insert(afterIndex + 1, mid);
-      _selectedWaypointIndex = afterIndex + 1; // בוחר את הנקודה החדשה להזזה
-    });
-    _computeRouteElevation();
-  }
-
-  /// ולידציה: התחלה/סיום + מעבר בכל נקודות הציון
+  /// ולידציית ציר — בדיקת ג"ג ונת"ב
+  /// מחזיר null אם תקין, או הודעת שגיאה אם לא
   String? _validateRoute() {
-    const threshold = 50.0; // מטרים
+    if (_waypoints.length < 2) return null; // אין ציר לולידציה
 
-    // בדיקת התחלה
-    if (_startCheckpoint != null && _waypoints.isNotEmpty) {
-      final dist = GeometryUtils.distanceBetweenMeters(
-        Coordinate(lat: _waypoints.first.latitude, lng: _waypoints.first.longitude, utm: ''),
-        _startCheckpoint!.coordinates!,
-      );
-      if (dist > threshold) {
-        return 'הציר חייב להתחיל בנקודת ההתחלה. יש להזיז את תחילת הציר לנקודה המסומנת בירוק.';
-      }
-    }
+    final coords = _waypoints
+        .map((ll) => Coordinate(lat: ll.latitude, lng: ll.longitude, utm: ''))
+        .toList();
 
-    // בדיקת סיום
-    if (_endCheckpoint != null && _waypoints.isNotEmpty) {
-      final dist = GeometryUtils.distanceBetweenMeters(
-        Coordinate(lat: _waypoints.last.latitude, lng: _waypoints.last.longitude, utm: ''),
-        _endCheckpoint!.coordinates!,
-      );
-      if (dist > threshold) {
-        return 'הציר חייב להסתיים בנקודת הסיום. יש להזיז את סוף הציר לנקודה המסומנת באדום.';
-      }
-    }
+    // 1. ציר בתוך ג"ג
+    if (_boundaries.isNotEmpty) {
+      final boundary = _boundaries.first;
+      if (boundary.coordinates.isNotEmpty) {
+        final poly = boundary.coordinates;
 
-    // בדיקת מעבר בכל נקודות הציון
-    if (_waypoints.length >= 2) {
-      for (final cp in widget.checkpoints) {
-        bool passesNear = false;
-        for (int i = 0; i < _waypoints.length - 1; i++) {
-          final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
-          final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
-          if (cp.isPolygon || cp.coordinates == null) continue;
-          final dist = GeometryUtils.distanceFromPointToSegmentMeters(
-            cp.coordinates!,
-            segA,
-            segB,
-          );
-          if (dist <= threshold) {
-            passesNear = true;
-            break;
+        // בדיקה שכל נקודת ציר בתוך הגבול
+        for (final wp in coords) {
+          if (!GeometryUtils.isPointInPolygon(wp, poly)) {
+            return 'הציר חורג מגבול הגזרה. יש לערוך את הציר כך שישאר בתוך הג"ג.';
           }
         }
-        if (!passesNear) {
-          return 'הציר לא עובר ליד נקודת ציון ${cp.name}. יש לוודא שהציר עובר ליד כל הנקודות.';
+
+        // בדיקה שאף קטע לא חוצה צלעות הגבול
+        for (int i = 0; i < coords.length - 1; i++) {
+          if (GeometryUtils.doesSegmentCrossPolygonEdge(
+              coords[i], coords[i + 1], poly)) {
+            return 'הציר חורג מגבול הגזרה. יש לערוך את הציר כך שישאר בתוך הג"ג.';
+          }
         }
       }
     }
 
-    // בדיקת ג"ג — הציר חייב להישאר בתוך גבול הגזרה
-    if (_navigationBoundary != null &&
-        _navigationBoundary!.coordinates.length >= 3 &&
-        _waypoints.isNotEmpty) {
-      final boundaryCoords = _navigationBoundary!.coordinates;
+    // 2. לא עובר דרך פוליגון נת"ב (medium/high)
+    final dangerousPolygons = _safetyPoints.where((sp) =>
+        sp.type == 'polygon' &&
+        sp.polygonCoordinates != null &&
+        sp.polygonCoordinates!.length >= 3 &&
+        (sp.severity.toLowerCase() == 'medium' ||
+            sp.severity.toLowerCase() == 'high'));
 
-      // בדיקת כל waypoint בתוך הפוליגון
-      for (final wp in _waypoints) {
-        final coord = Coordinate(lat: wp.latitude, lng: wp.longitude, utm: '');
-        if (!GeometryUtils.isPointInPolygon(coord, boundaryCoords)) {
-          return 'הציר חורג מגבול הגזרה. יש לוודא שכל הציר נמצא בתוך הגבול.';
+    for (final sp in dangerousPolygons) {
+      final poly = sp.polygonCoordinates!;
+
+      // בדיקה שאף waypoint לא בתוך הפוליגון
+      for (final wp in coords) {
+        if (GeometryUtils.isPointInPolygon(wp, poly)) {
+          return 'הציר עובר דרך אזור נת"ב (${sp.name}) בחומרה ${_severityLabel(sp.severity)}. יש לעקוף אזור זה.';
         }
       }
 
+      // בדיקה שאף segment לא חוצה צלעות הפוליגון
+      for (int i = 0; i < coords.length - 1; i++) {
+        if (GeometryUtils.doesSegmentCrossPolygonEdge(
+            coords[i], coords[i + 1], poly)) {
+          return 'הציר עובר דרך אזור נת"ב (${sp.name}) בחומרה ${_severityLabel(sp.severity)}. יש לעקוף אזור זה.';
+        }
+      }
     }
 
-    // בדיקת נת"ב — הציר לא עובר דרך נקודות בטיחות בחומרה בינונית+
-    if (_waypoints.length >= 2) {
-      const dangerousSeverities = {'medium', 'high', 'critical'};
-      const safetyThreshold = 25.0; // מטרים
+    // 3. לא עובר על נקודת נת"ב (medium/high)
+    final dangerousPoints = _safetyPoints.where((sp) =>
+        sp.type == 'point' &&
+        sp.coordinates != null &&
+        (sp.severity.toLowerCase() == 'medium' ||
+            sp.severity.toLowerCase() == 'high'));
 
-      final dangerousSafetyPoints = _safetyPoints
-          .where((sp) => dangerousSeverities.contains(sp.severity))
-          .toList();
-
-      for (final sp in dangerousSafetyPoints) {
-        if (sp.type == 'point' && sp.coordinates != null) {
-          // נת"ב נקודה — בדיקת מרחק מכל מקטע
-          for (int i = 0; i < _waypoints.length - 1; i++) {
-            final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
-            final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
-            final dist = GeometryUtils.distanceFromPointToSegmentMeters(
-              sp.coordinates!,
-              segA,
-              segB,
-            );
-            if (dist <= safetyThreshold) {
-              return 'הציר עובר דרך אזור מסוכן: ${sp.name}. יש לתכנן מסלול שעוקף אזורים מסוכנים.';
-            }
-          }
-        } else if (sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.length >= 3) {
-          // נת"ב פוליגון — בדיקה אם מקטע כלשהו חותך/נכנס לפוליגון
-          for (int i = 0; i < _waypoints.length - 1; i++) {
-            final segA = Coordinate(lat: _waypoints[i].latitude, lng: _waypoints[i].longitude, utm: '');
-            final segB = Coordinate(lat: _waypoints[i + 1].latitude, lng: _waypoints[i + 1].longitude, utm: '');
-            if (GeometryUtils.doesSegmentIntersectPolygon(segA, segB, sp.polygonCoordinates!)) {
-              return 'הציר עובר דרך אזור מסוכן: ${sp.name}. יש לתכנן מסלול שעוקף אזורים מסוכנים.';
-            }
-          }
+    for (final sp in dangerousPoints) {
+      for (int i = 0; i < coords.length - 1; i++) {
+        final dist = GeometryUtils.distanceFromPointToSegmentMeters(
+            sp.coordinates!, coords[i], coords[i + 1]);
+        if (dist <= 50) {
+          return 'הציר עובר בקרבת נקודת נת"ב (${sp.name}) בחומרה ${_severityLabel(sp.severity)}. יש להתרחק מנקודה זו.';
         }
       }
     }
@@ -366,17 +247,17 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   }
 
   Future<void> _save() async {
-    // ולידציה לפני שמירה
-    final error = _validateRoute();
-    if (error != null) {
+    // ולידציית ציר לפני שמירה
+    final validationError = _validateRoute();
+    if (validationError != null) {
       await showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('ציר לא תקין'),
-          content: Text(error),
+        builder: (context) => AlertDialog(
+          title: const Text('לא ניתן לשמור את הציר'),
+          content: Text(validationError),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () => Navigator.pop(context),
               child: const Text('הבנתי'),
             ),
           ],
@@ -392,37 +273,18 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         return Coordinate(lat: ll.latitude, lng: ll.longitude, utm: '');
       }).toList();
 
-      // חישוב אורך ציר מעודכן מהנתיב שצויר
-      final pathLengthKm = GeometryUtils.calculatePathLengthKm(plannedPath);
-
       final route = widget.navigation.routes[widget.navigatorUid]!;
       final updatedRoute = route.copyWith(
         plannedPath: plannedPath,
-        routeLengthKm: pathLengthKm,
         approvalStatus: _wasApproved && !_approvalWarningShown
             ? route.approvalStatus
             : 'not_submitted',
-        clearRejectionNotes: true,
       );
 
       final updatedRoutes = Map<String, domain.AssignedRoute>.from(
         widget.navigation.routes,
       );
       updatedRoutes[widget.navigatorUid] = updatedRoute;
-
-      // עדכון כל חברי הקבוצה (צמד/חוליה) — סנכרון ציר
-      if (route.groupId != null) {
-        for (final entry in updatedRoutes.entries) {
-          if (entry.value.groupId == route.groupId && entry.key != widget.navigatorUid) {
-            updatedRoutes[entry.key] = entry.value.copyWith(
-              plannedPath: plannedPath,
-              routeLengthKm: pathLengthKm,
-              approvalStatus: updatedRoute.approvalStatus,
-              clearRejectionNotes: true,
-            );
-          }
-        }
-      }
 
       final updatedNav = widget.navigation.copyWith(
         routes: updatedRoutes,
@@ -448,113 +310,39 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     }
   }
 
-  /// סרגל נתוני מדידה בזמן ציור — מקטע אחרון + אורך כולל
-  Widget _buildRouteInfoBar() {
-    final from = Coordinate(
-      lat: _waypoints[_waypoints.length - 2].latitude,
-      lng: _waypoints[_waypoints.length - 2].longitude,
-      utm: '',
-    );
-    final to = Coordinate(
-      lat: _waypoints.last.latitude,
-      lng: _waypoints.last.longitude,
-      utm: '',
-    );
-    final segmentDistance = GeometryUtils.distanceBetweenMeters(from, to);
-    final segmentBearing = GeometryUtils.bearingBetween(from, to);
-
-    final coords = _waypoints
-        .map((p) => Coordinate(lat: p.latitude, lng: p.longitude, utm: ''))
-        .toList();
-    final totalKm = GeometryUtils.calculatePathLengthKm(coords);
-    final totalMeters = (totalKm * 1000).round();
-
-    return Container(
-      padding: const EdgeInsets.only(top: 4),
-      child: Row(
-        children: [
-          Icon(Icons.straighten, size: 16, color: Colors.orange[700]),
-          const SizedBox(width: 6),
-          Text(
-            () {
-              var s = 'מקטע: ${segmentBearing.round()}° / ${segmentDistance.round()}מ\'';
-              final fromElev = _waypointElevations[_waypoints.length - 2];
-              final toElev = _waypointElevations[_waypoints.length - 1];
-              if (fromElev != null && toElev != null) {
-                final diff = toElev - fromElev;
-                final sign = diff >= 0 ? '+' : '';
-                s += ' ${sign}${diff}מ\'';
-              }
-              return s;
-            }(),
-            style: TextStyle(fontSize: 12, color: Colors.orange[800], fontWeight: FontWeight.w500),
-            textDirection: TextDirection.rtl,
-          ),
-          const SizedBox(width: 12),
-          Text(
-            'כולל: ${totalMeters}מ\'',
-            style: TextStyle(fontSize: 12, color: Colors.grey[700], fontWeight: FontWeight.w500),
-            textDirection: TextDirection.rtl,
-          ),
-          if (_routeAscent > 0 || _routeDescent > 0) ...[
-            const SizedBox(width: 12),
-            Icon(Icons.arrow_upward, size: 13, color: Colors.green[700]),
-            Text('${_routeAscent}מ\'',
-                style: TextStyle(fontSize: 11, color: Colors.green[700], fontWeight: FontWeight.w600)),
-            const SizedBox(width: 4),
-            Icon(Icons.arrow_downward, size: 13, color: Colors.red[700]),
-            Text('${_routeDescent}מ\'',
-                style: TextStyle(fontSize: 11, color: Colors.red[700], fontWeight: FontWeight.w600)),
-          ],
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // חישוב bounds מנקודות הציון
+    // חישוב bounds מנקודות הציון כולל התחלה/סיום
     final cpPoints = widget.checkpoints
-        .where((cp) => !cp.isPolygon && cp.coordinates != null)
-        .map((cp) => cp.coordinates!.toLatLng())
+        .map((cp) => cp.coordinates.toLatLng())
         .toList();
     final allPoints = [...cpPoints, ..._waypoints];
-    // עדיפות לגבול גזרה אם קיים
-    final boundaryPoints = _boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty
-        ? _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
-        : <LatLng>[];
-    final boundsPoints = boundaryPoints.isNotEmpty
-        ? boundaryPoints
-        : allPoints;
-    final hasBounds = boundsPoints.length > 1;
-    final bounds = hasBounds ? LatLngBounds.fromPoints(boundsPoints) : null;
+    if (_startCheckpoint != null) allPoints.add(_startCheckpoint!.coordinates.toLatLng());
+    if (_endCheckpoint != null) allPoints.add(_endCheckpoint!.coordinates.toLatLng());
+    final hasBounds = allPoints.length > 1;
+    final bounds = hasBounds ? LatLngBounds.fromPoints(allPoints) : null;
     final center = bounds?.center ?? (cpPoints.isNotEmpty ? cpPoints.first : const LatLng(31.5, 34.75));
 
-    // בניית ציר רפרנס מלא: התחלה → נקודות ציון → סיום
-    final refPoints = <LatLng>[];
-    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
-      refPoints.add(_startCheckpoint!.coordinates!.toLatLng());
-    }
-    refPoints.addAll(cpPoints);
-    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
-      refPoints.add(_endCheckpoint!.coordinates!.toLatLng());
-    }
-
-    // markers לנקודות ציון קבועות (עיגול כחול עם מספר)
+    // markers לנקודות ציון קבועות
     final cpMarkers = <Marker>[];
     for (var i = 0; i < widget.checkpoints.length; i++) {
       final cp = widget.checkpoints[i];
-      if (cp.isPolygon || cp.coordinates == null) continue;
+      final isFirst = i == 0;
+      final isLast = i == widget.checkpoints.length - 1;
 
       cpMarkers.add(Marker(
-        point: cp.coordinates!.toLatLng(),
+        point: cp.coordinates.toLatLng(),
         width: 36,
         height: 36,
         child: Tooltip(
           message: cp.name,
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.blue,
+              color: isFirst
+                  ? Colors.green
+                  : isLast
+                      ? Colors.red
+                      : Colors.blue,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: [
@@ -579,149 +367,31 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
       ));
     }
 
-    // markers לנקודות התחלה/סיום
-    final startEndMarkers = <Marker>[];
-    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
-      startEndMarkers.add(Marker(
-        point: _startCheckpoint!.coordinates!.toLatLng(),
-        width: 40,
-        height: 40,
-        child: Tooltip(
-          message: 'נקודת התחלה: ${_startCheckpoint!.name}',
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.green,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 4,
-                ),
-              ],
-            ),
-            child: const Center(
-              child: Text(
-                'H',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ));
-    }
-    if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
-      startEndMarkers.add(Marker(
-        point: _endCheckpoint!.coordinates!.toLatLng(),
-        width: 40,
-        height: 40,
-        child: Tooltip(
-          message: 'נקודת סיום: ${_endCheckpoint!.name}',
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.red,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 4,
-                ),
-              ],
-            ),
-            child: const Center(
-              child: Text(
-                'S',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ));
-    }
-
-    // markers לנקודות ציר שצייר המנווט — לחיצה לבחירה, לחיצה ארוכה למחיקה
+    // markers לנקודות ציר שצייר המנווט
     final wpMarkers = _waypoints.asMap().entries.map((entry) {
-      final isSelected = _selectedWaypointIndex == entry.key;
       return Marker(
         point: entry.value,
-        width: isSelected ? 30 : 24,
-        height: isSelected ? 30 : 24,
-        child: GestureDetector(
-          onTap: () {
-            setState(() {
-              if (_selectedWaypointIndex == entry.key) {
-                _selectedWaypointIndex = null; // ביטול בחירה
-              } else {
-                _selectedWaypointIndex = entry.key; // בחירת נקודה
-              }
-            });
-          },
-          onLongPress: () => _deleteWaypoint(entry.key),
-          child: Container(
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.green : Colors.orange,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isSelected ? Colors.greenAccent : Colors.white,
-                width: isSelected ? 3 : 2,
-              ),
-              boxShadow: isSelected
-                  ? [BoxShadow(color: Colors.green.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)]
-                  : null,
-            ),
-            child: Center(
-              child: Text(
-                '${entry.key + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
+        width: 24,
+        height: 24,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.orange,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: Center(
+            child: Text(
+              '${entry.key + 1}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
         ),
       );
     }).toList();
-
-    // markers לנקודות אמצע — "+" בין כל שתי נקודות עוקבות להוספת נקודה חדשה
-    final midpointMarkers = <Marker>[];
-    if (_waypoints.length >= 2) {
-      for (int i = 0; i < _waypoints.length - 1; i++) {
-        final a = _waypoints[i];
-        final b = _waypoints[i + 1];
-        final midLat = (a.latitude + b.latitude) / 2;
-        final midLng = (a.longitude + b.longitude) / 2;
-        final idx = i;
-        midpointMarkers.add(Marker(
-          point: LatLng(midLat, midLng),
-          width: 22,
-          height: 22,
-          child: GestureDetector(
-            onTap: () => _insertMidpoint(idx),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.5),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1.5),
-              ),
-              child: const Center(
-                child: Icon(Icons.add, size: 14, color: Colors.white),
-              ),
-            ),
-          ),
-        ));
-      }
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -757,60 +427,35 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: Colors.grey[200],
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      _selectedWaypointIndex != null ? Icons.open_with : Icons.touch_app,
-                      size: 20,
-                      color: _selectedWaypointIndex != null ? Colors.green[700] : Colors.grey[700],
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _selectedWaypointIndex != null
-                            ? 'לחץ על המפה להזיז נקודה ${_selectedWaypointIndex! + 1}'
-                            : _waypoints.isEmpty
-                                ? 'לחץ על המפה לציור הציר'
-                                : 'נקודות ציר: ${_waypoints.length}',
-                        style: TextStyle(
-                          color: _selectedWaypointIndex != null ? Colors.green[700] : Colors.grey[700],
-                          fontWeight: _selectedWaypointIndex != null ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                    ),
-                    if (_selectedWaypointIndex != null)
-                      IconButton(
-                        icon: Icon(Icons.close, size: 20, color: Colors.green[700]),
-                        onPressed: () => setState(() => _selectedWaypointIndex = null),
-                        tooltip: 'בטל בחירה',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    if (_waypoints.isNotEmpty) ...[
-                      IconButton(
-                        icon: const Icon(Icons.undo, size: 20),
-                        onPressed: _undoLastWaypoint,
-                        tooltip: 'בטל נקודה אחרונה',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.clear, size: 20),
-                        onPressed: _clearWaypoints,
-                        tooltip: 'נקה הכל',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ],
+                Icon(Icons.touch_app, size: 20, color: Colors.grey[700]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _waypoints.isEmpty
+                        ? 'לחץ על המפה לציור הציר'
+                        : 'נקודות ציר: ${_waypoints.length}',
+                    style: TextStyle(color: Colors.grey[700]),
+                  ),
                 ),
-                // נתוני מדידה בזמן ציור
-                if (_waypoints.length >= 2)
-                  _buildRouteInfoBar(),
+                if (_waypoints.isNotEmpty) ...[
+                  IconButton(
+                    icon: const Icon(Icons.undo, size: 20),
+                    onPressed: _undoLastWaypoint,
+                    tooltip: 'בטל נקודה אחרונה',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.clear, size: 20),
+                    onPressed: _clearWaypoints,
+                    tooltip: 'נקה הכל',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
               ],
             ),
           ),
@@ -820,8 +465,6 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
               children: [
                 MapWithTypeSelector(
                   mapController: _mapController,
-                  showTypeSelector: false,
-                  initialMapType: MapConfig.resolveMapType(widget.navigation.displaySettings.defaultMap),
                   options: MapOptions(
                     initialCenter: center,
                     initialZoom: 14.0,
@@ -833,119 +476,471 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                         : null,
                     onTap: (tapPosition, point) async {
                       if (_measureMode) {
-                        setState(() => _measurePoints.add(point));
-                        return;
+                        _onMeasureTap(point);
+                      } else {
+                        await _addWaypoint(point);
                       }
-                      await _addWaypoint(point);
                     },
                   ),
                   layers: [
-                    // ג"ג
-                    if (_showGG && _boundaries.isNotEmpty)
+                    // גבול גזרה (ג"ג)
+                    if (_showBoundary && _boundaries.isNotEmpty)
                       PolygonLayer(
-                        polygons: _boundaries.map((b) => Polygon(
-                          points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                          borderStrokeWidth: b.strokeWidth,
-                          isFilled: true,
-                        )).toList(),
-                      ),
-                    // נת"ב - נקודות
-                    if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
-                      MarkerLayer(
-                        markers: _safetyPoints
-                            .where((p) => p.type == 'point' && p.coordinates != null)
-                            .map((point) => Marker(
-                                  point: LatLng(point.coordinates!.lat, point.coordinates!.lng),
-                                  width: 30, height: 30,
-                                  child: Opacity(opacity: _nbOpacity, child: const Icon(Icons.warning, color: Colors.red, size: 30)),
+                        polygons: _boundaries
+                            .where((b) => b.coordinates.isNotEmpty)
+                            .map((b) => Polygon(
+                                  points: b.coordinates
+                                      .map((coord) => LatLng(coord.lat, coord.lng))
+                                      .toList(),
+                                  color: Colors.black.withOpacity(0.1 * _boundaryOpacity),
+                                  borderColor: Colors.black.withOpacity(_boundaryOpacity),
+                                  borderStrokeWidth: b.strokeWidth,
+                                  isFilled: true,
                                 ))
                             .toList(),
                       ),
-                    // נת"ב - פוליגונים
-                    if (_showNB && _safetyPoints.where((p) => p.type == 'polygon').isNotEmpty)
+                    // נקודות בטיחות (נת"ב) — פוליגונים
+                    if (_showSafetyPoints)
                       PolygonLayer(
                         polygons: _safetyPoints
-                            .where((p) => p.type == 'polygon' && p.polygonCoordinates != null)
-                            .map((point) => Polygon(
-                                  points: point.polygonCoordinates!.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                  color: Colors.red.withValues(alpha: 0.2 * _nbOpacity),
-                                  borderColor: Colors.red.withValues(alpha: _nbOpacity), borderStrokeWidth: 2, isFilled: true,
+                            .where((sp) =>
+                                sp.type == 'polygon' &&
+                                sp.polygonCoordinates != null &&
+                                sp.polygonCoordinates!.isNotEmpty)
+                            .map((sp) => Polygon(
+                                  points: sp.polygonCoordinates!
+                                      .map((coord) => LatLng(coord.lat, coord.lng))
+                                      .toList(),
+                                  color: _severityColor(sp.severity)
+                                      .withOpacity(0.2 * _safetyPointsOpacity),
+                                  borderColor: _severityColor(sp.severity)
+                                      .withOpacity(_safetyPointsOpacity),
+                                  borderStrokeWidth: 2.0,
+                                  isFilled: true,
                                 ))
                             .toList(),
                       ),
-                    // א"ב
-                    if (_showBA && _clusters.isNotEmpty)
-                      PolygonLayer(
-                        polygons: _clusters.map((cluster) => Polygon(
-                          points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                          borderColor: Colors.green.withValues(alpha: _baOpacity),
-                          borderStrokeWidth: cluster.strokeWidth,
-                          isFilled: true,
-                        )).toList(),
-                      ),
-                    // polyline של הנתיב שצייר המנווט (תמיד מוצג — מטרת העריכה)
+                    // polyline של הנתיב שצייר המנווט
                     if (_waypoints.length > 1)
                       PolylineLayer(polylines: [
                         Polyline(
                           points: _waypoints,
-                          color: Colors.blue,
+                          color: Colors.orange,
                           strokeWidth: 3.0,
                         ),
                       ]),
-                    // קו בין נקודות ציון (רפרנס) — כולל התחלה וסיום
-                    if (_showRoutes && refPoints.length > 1)
+                    // קו בין נקודות ציון כולל התחלה/סיום (רפרנס)
+                    if (cpPoints.isNotEmpty)
                       PolylineLayer(polylines: [
                         Polyline(
-                          points: refPoints,
-                          color: Colors.blue.withValues(alpha: 0.3 * _routesOpacity),
+                          points: [
+                            if (_startCheckpoint != null) _startCheckpoint!.coordinates.toLatLng(),
+                            ...cpPoints,
+                            if (_endCheckpoint != null) _endCheckpoint!.coordinates.toLatLng(),
+                          ],
+                          color: Colors.blue.withOpacity(0.3),
                           strokeWidth: 2.0,
                         ),
                       ]),
+                    // נקודות בטיחות (נת"ב) — נקודות (markers)
+                    if (_showSafetyPoints)
+                      MarkerLayer(
+                        markers: _safetyPoints
+                            .where((sp) => sp.type == 'point' && sp.coordinates != null)
+                            .map((sp) => Marker(
+                                  point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),
+                                  width: 36,
+                                  height: 36,
+                                  child: Opacity(
+                                    opacity: _safetyPointsOpacity,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: _severityColor(sp.severity),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white, width: 2),
+                                      ),
+                                      child: const Center(
+                                        child: Icon(Icons.warning, color: Colors.white, size: 18),
+                                      ),
+                                    ),
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                    // נקודת התחלה
+                    if (_startCheckpoint != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _startCheckpoint!.coordinates.toLatLng(),
+                            width: 40,
+                            height: 40,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: const Center(
+                                child: Text('H',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    // נקודת סיום
+                    if (_endCheckpoint != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _endCheckpoint!.coordinates.toLatLng(),
+                            width: 40,
+                            height: 40,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: const Center(
+                                child: Text('S',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    // נקודות ביניים (waypoints)
+                    if (_waypointCheckpoints.isNotEmpty)
+                      MarkerLayer(
+                        markers: _waypointCheckpoints.map((wp) {
+                          return Marker(
+                            point: wp.coordinates.toLatLng(),
+                            width: 40,
+                            height: 40,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.purple,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: const Center(
+                                child: Text('B',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
                     // נקודות ציון קבועות
-                    if (_showNZ)
-                      MarkerLayer(markers: cpMarkers.map((m) => Marker(
-                        point: m.point,
-                        width: m.width,
-                        height: m.height,
-                        child: Opacity(opacity: _nzOpacity, child: m.child),
-                      )).toList()),
-                    // נקודות התחלה/סיום (תמיד מוצג)
-                    if (startEndMarkers.isNotEmpty)
-                      MarkerLayer(markers: startEndMarkers),
-                    // נקודות אמצע — כפתורי "+" להוספת נקודה חדשה
-                    if (midpointMarkers.isNotEmpty)
-                      MarkerLayer(markers: midpointMarkers),
-                    // נקודות ציר של המנווט (תמיד מוצג — מטרת העריכה)
+                    MarkerLayer(markers: cpMarkers),
+                    // נקודות ציר של המנווט
                     MarkerLayer(markers: wpMarkers),
-                    ...MapControls.buildMeasureLayers(_measurePoints),
+                    // קו מדידה
+                    if (_measurePointA != null && _measurePointB != null)
+                      PolylineLayer(polylines: [
+                        Polyline(
+                          points: [_measurePointA!, _measurePointB!],
+                          color: Colors.yellow,
+                          strokeWidth: 2.0,
+                        ),
+                      ]),
+                    // סמני מדידה
+                    if (_measurePointA != null)
+                      MarkerLayer(markers: [
+                        Marker(
+                          point: _measurePointA!,
+                          width: 12, height: 12,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.yellow,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.black, width: 1.5),
+                            ),
+                          ),
+                        ),
+                        if (_measurePointB != null)
+                          Marker(
+                            point: _measurePointB!,
+                            width: 12, height: 12,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.yellow,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.black, width: 1.5),
+                              ),
+                            ),
+                          ),
+                      ]),
                   ],
                 ),
-                MapControls(
-                  mapController: _mapController,
-                  measureMode: _measureMode,
-                  onMeasureModeChanged: (v) => setState(() {
-                    _measureMode = v;
-                    if (!v) _measurePoints.clear();
-                  }),
-                  measurePoints: _measurePoints,
-                  onMeasureClear: () => setState(() => _measurePoints.clear()),
-                  onMeasureUndo: () => setState(() {
-                    if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
-                  }),
-                  layers: [
-                    MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
-                    MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
-                    MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
-                    MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
-                    MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
-                  ],
+                // חץ צפון
+                Positioned(top: 8, left: 8, child: _buildNorthArrow()),
+                // פקדי שכבות
+                Positioned(
+                  top: 8,
+                  left: 56,
+                  child: _buildLayerControls(),
                 ),
+                // כפתור מדידה
+                Positioned(top: 8, right: 8, child: _buildMeasureButton()),
+                // תוצאת מדידה
+                if (_measurePointA != null && _measurePointB != null)
+                  Positioned(
+                    bottom: 8, left: 8, right: 8,
+                    child: _buildMeasurementResult(),
+                  ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ===================== שכבות — helper methods =====================
+
+  /// קבלת צבע לפי חומרת נקודת בטיחות
+  Color _severityColor(String severity) {
+    switch (severity.toLowerCase()) {
+      case 'high':
+        return Colors.red;
+      case 'medium':
+        return Colors.orange;
+      case 'low':
+        return Colors.yellow[700]!;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  /// חץ צפון
+  Widget _buildNorthArrow() {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(8),
+        elevation: 2,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('N', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red[700])),
+              Icon(Icons.navigation, size: 18, color: Colors.red[700]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// כפתור מצב מדידה
+  Widget _buildMeasureButton() {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Material(
+        color: _measureMode ? Colors.yellow[100] : Colors.white.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(8),
+        elevation: 2,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() {
+              _measureMode = !_measureMode;
+              if (!_measureMode) {
+                _measurePointA = null;
+                _measurePointB = null;
+              }
+            });
+          },
+          child: Icon(
+            Icons.straighten,
+            size: 20,
+            color: _measureMode ? Colors.orange[800] : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// טיפול בלחיצה על המפה במצב מדידה
+  void _onMeasureTap(LatLng point) {
+    setState(() {
+      if (_measurePointA == null || _measurePointB != null) {
+        _measurePointA = point;
+        _measurePointB = null;
+      } else {
+        _measurePointB = point;
+      }
+    });
+  }
+
+  /// תצוגת תוצאת מדידה
+  Widget _buildMeasurementResult() {
+    if (_measurePointA == null || _measurePointB == null) return const SizedBox.shrink();
+
+    final from = Coordinate(lat: _measurePointA!.latitude, lng: _measurePointA!.longitude, utm: '');
+    final to = Coordinate(lat: _measurePointB!.latitude, lng: _measurePointB!.longitude, utm: '');
+    final distanceM = GeometryUtils.distanceBetweenMeters(from, to);
+    final bearing = GeometryUtils.bearingBetween(from, to);
+
+    final String distanceStr;
+    if (distanceM >= 1000) {
+      distanceStr = '${(distanceM / 1000).toStringAsFixed(2)} ק"מ';
+    } else {
+      distanceStr = '${distanceM.toStringAsFixed(0)} מ\'';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.straighten, size: 16, color: Colors.yellow),
+          const SizedBox(width: 6),
+          Text(distanceStr, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(width: 12),
+          const Icon(Icons.explore, size: 16, color: Colors.yellow),
+          const SizedBox(width: 6),
+          Text('${bearing.toStringAsFixed(1)}°', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => setState(() { _measurePointA = null; _measurePointB = null; }),
+            child: const Icon(Icons.close, size: 16, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLayerControls() {
+    return Card(
+      elevation: 4,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: _layerControlsExpanded ? 220 : 48,
+        child: _layerControlsExpanded
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // כותרת + כפתור סגירה
+                  InkWell(
+                    onTap: () => setState(() => _layerControlsExpanded = false),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: const [
+                          Text('שכבות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          Icon(Icons.close, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  // ג"ג — גבול גזרה
+                  _buildLayerRow(
+                    label: 'ג"ג',
+                    color: Colors.black,
+                    enabled: _showBoundary,
+                    opacity: _boundaryOpacity,
+                    onToggle: (val) => setState(() => _showBoundary = val),
+                    onOpacity: (val) => setState(() => _boundaryOpacity = val),
+                  ),
+                  // נת"ב — נקודות בטיחות
+                  _buildLayerRow(
+                    label: 'נת"ב',
+                    color: Colors.orange,
+                    enabled: _showSafetyPoints,
+                    opacity: _safetyPointsOpacity,
+                    onToggle: (val) => setState(() => _showSafetyPoints = val),
+                    onOpacity: (val) => setState(() => _safetyPointsOpacity = val),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              )
+            : InkWell(
+                onTap: () => setState(() => _layerControlsExpanded = true),
+                child: const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Icon(Icons.layers, size: 24),
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildLayerRow({
+    required String label,
+    required Color color,
+    required bool enabled,
+    required double opacity,
+    required ValueChanged<bool> onToggle,
+    required ValueChanged<double> onOpacity,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.6),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color, width: 1.5),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(label, style: const TextStyle(fontSize: 13)),
+              const Spacer(),
+              SizedBox(
+                height: 28,
+                child: Switch(
+                  value: enabled,
+                  onChanged: onToggle,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+          if (enabled)
+            SizedBox(
+              height: 24,
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                ),
+                child: Slider(
+                  value: opacity,
+                  min: 0.1,
+                  max: 1.0,
+                  onChanged: onOpacity,
+                ),
+              ),
+            ),
         ],
       ),
     );

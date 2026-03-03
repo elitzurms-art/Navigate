@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:latlong2/latlong.dart' show LatLng, Distance, LengthUnit;
 import '../../domain/entities/coordinate.dart';
 import '../../domain/entities/navigation.dart';
 import '../../domain/entities/navigation_settings.dart';
@@ -302,6 +303,87 @@ class GeometryUtils {
       final coords = getCoordinates(polygon);
       return doPolygonsIntersect(coords, boundary);
     }).toList();
+  }
+
+  /// חישוב אורך מסלול מרשימת קואורדינטות (בק"מ)
+  static double calculatePathLengthKm(List<Coordinate> path) {
+    if (path.length < 2) return 0.0;
+    const distance = Distance();
+    double total = 0;
+    for (int i = 0; i < path.length - 1; i++) {
+      total += distance.as(
+        LengthUnit.Kilometer,
+        LatLng(path[i].lat, path[i].lng),
+        LatLng(path[i + 1].lat, path[i + 1].lng),
+      );
+    }
+    return total;
+  }
+
+  /// חישוב מרחק בין שתי נקודות (במטרים)
+  static double distanceBetweenMeters(Coordinate a, Coordinate b) {
+    const distance = Distance();
+    return distance.as(
+      LengthUnit.Meter,
+      LatLng(a.lat, a.lng),
+      LatLng(b.lat, b.lng),
+    );
+  }
+
+  /// חישוב אזימוט (bearing) בין שתי נקודות (במעלות, 0-360)
+  static double bearingBetween(Coordinate from, Coordinate to) {
+    final fromLatRad = from.lat * pi / 180;
+    final toLatRad = to.lat * pi / 180;
+    final dLngRad = (to.lng - from.lng) * pi / 180;
+
+    final y = sin(dLngRad) * cos(toLatRad);
+    final x = cos(fromLatRad) * sin(toLatRad) -
+        sin(fromLatRad) * cos(toLatRad) * cos(dLngRad);
+    final bearing = atan2(y, x) * 180 / pi;
+    return (bearing + 360) % 360;
+  }
+
+  /// בדיקה אם קטע קו (a→b) חוצה צלע כלשהי של פוליגון
+  static bool doesSegmentCrossPolygonEdge(
+    Coordinate a,
+    Coordinate b,
+    List<Coordinate> polygon,
+  ) {
+    if (polygon.length < 3) return false;
+
+    for (int i = 0; i < polygon.length; i++) {
+      final j = (i + 1) % polygon.length;
+      if (_doSegmentsIntersect(a, b, polygon[i], polygon[j])) return true;
+    }
+    return false;
+  }
+
+  /// מרחק מינימלי (במטרים) מנקודה לקטע קו
+  /// הקרנה אורתוגונלית + fallback לקצוות
+  static double distanceFromPointToSegmentMeters(
+    Coordinate point,
+    Coordinate segA,
+    Coordinate segB,
+  ) {
+    final dx = segB.lng - segA.lng;
+    final dy = segB.lat - segA.lat;
+    final lenSq = dx * dx + dy * dy;
+
+    if (lenSq == 0) {
+      // segA == segB — מרחק לנקודה
+      return distanceBetweenMeters(point, segA);
+    }
+
+    // t = הקרנה של point על הקו (0..1 = על הקטע)
+    var t = ((point.lng - segA.lng) * dx + (point.lat - segA.lat) * dy) / lenSq;
+    t = t.clamp(0.0, 1.0);
+
+    final proj = Coordinate(
+      lat: segA.lat + t * dy,
+      lng: segA.lng + t * dx,
+      utm: '',
+    );
+    return distanceBetweenMeters(point, proj);
   }
 
   /// חישוב bounding box של פוליגון
