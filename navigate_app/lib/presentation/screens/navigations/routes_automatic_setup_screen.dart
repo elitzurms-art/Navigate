@@ -605,6 +605,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                             ),
                           ),
                         ),
+                        SizedBox(height: MediaQuery.of(context).padding.bottom),
                       ],
                     ),
                   ),

@@ -2348,18 +2348,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                 if (widget.navigation.communicationSettings.walkieTalkieEnabled && _currentUser != null)
                   Builder(builder: (context) {
                     _voiceService ??= VoiceService();
-                    return VoiceMessagesPanel(
-                      navigationId: widget.navigation.id,
-                      currentUser: _currentUser!,
-                      voiceService: _voiceService!,
-                      isCommander: true,
-                      enabled: true,
-                      navigators: _navigatorData.entries
-                          .map((e) => NavigatorInfo(
-                                id: e.key,
-                                name: _userNames[e.key] ?? e.key,
-                              ))
-                          .toList(),
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        VoiceMessagesPanel(
+                          navigationId: widget.navigation.id,
+                          currentUser: _currentUser!,
+                          voiceService: _voiceService!,
+                          isCommander: true,
+                          enabled: true,
+                          navigators: _navigatorData.entries
+                              .map((e) => NavigatorInfo(
+                                    id: e.key,
+                                    name: _userNames[e.key] ?? e.key,
+                                  ))
+                              .toList(),
+                        ),
+                        SizedBox(height: MediaQuery.of(context).padding.bottom),
+                      ],
                     );
                   }),
               ],

@@ -37,6 +37,7 @@ import 'manual_position_pin_screen.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/push_to_talk_button.dart';
 import '../../../../data/repositories/voice_message_repository.dart';
+import '../../../../domain/entities/voice_message.dart';
 import '../../../../data/repositories/extension_request_repository.dart';
 import '../../../../domain/entities/extension_request.dart';
 
@@ -135,8 +136,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   VoiceService? _voiceService;
   bool? _overrideWalkieTalkieEnabled;
   int _pttUnreadCount = 0;
-  StreamSubscription<List<dynamic>>? _pttMessagesSub;
-  int _pttTotalSeen = 0;
+  StreamSubscription<List<VoiceMessage>>? _pttMessagesSub;
+  final Set<String> _seenPttMessageIds = {};
   bool _pttInitialLoad = true;
 
   // בקשות הארכה
@@ -202,6 +203,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     // עדכון הגדרות התראות בזמן אמת
     if (oldWidget.navigation.alerts != widget.navigation.alerts) {
       _alertMonitoringService?.updateAlertConfig(widget.navigation.alerts);
+    }
+    // הפעלת listener בקשות הארכה אם הופעל בזמן אמת ע"י המפקד
+    if (!oldWidget.navigation.timeCalculationSettings.allowExtensionRequests &&
+        widget.navigation.timeCalculationSettings.allowExtensionRequests) {
+      _startExtensionListener();
     }
   }
 
@@ -3200,16 +3206,31 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     final hasPtt = _overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled;
     if (!hasPtt) return;
     _pttMessagesSub?.cancel();
+    _voiceService ??= VoiceService();
+    int pttInitialCount = 0;
     final repo = VoiceMessageRepository();
     _pttMessagesSub = repo
         .watchMessages(widget.navigation.id, currentUserId: widget.currentUser.uid)
         .listen((messages) {
       if (!mounted) return;
+
       if (_pttInitialLoad) {
-        _pttTotalSeen = messages.length;
+        // טעינה ראשונה — סימון כ"נראו" בלי השמעה
+        _seenPttMessageIds.addAll(messages.map((m) => m.id));
+        pttInitialCount = messages.length;
         _pttInitialLoad = false;
+      } else {
+        // הודעות חדשות מאחרים — הכנסה לתור השמעה (מהישנה לחדשה)
+        for (final msg in messages.reversed) {
+          if (!_seenPttMessageIds.contains(msg.id) &&
+              msg.senderId != widget.currentUser.uid) {
+            _voiceService!.enqueueMessage(msg.audioUrl, msg.id);
+          }
+          _seenPttMessageIds.add(msg.id);
+        }
       }
-      final newUnread = (messages.length - _pttTotalSeen).clamp(0, 999);
+
+      final newUnread = (messages.length - pttInitialCount).clamp(0, 999);
       if (newUnread != _pttUnreadCount) {
         setState(() => _pttUnreadCount = newUnread);
       }
