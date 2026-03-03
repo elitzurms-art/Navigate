@@ -333,6 +333,7 @@ class LearningSettings extends Equatable {
   final String? learningStartTime; // שעת התחלה (HH:mm)
   final String? learningEndTime; // שעת סיום (HH:mm)
   final bool requireSoloQuiz; // חובת מבחן ניווט בדד
+  final String quizType; // סוג מבחן: 'solo' (בדד) או 'regular' (רגיל)
   final bool quizOpenManually; // מפקד פתח מבחן ידנית
   final bool autoQuizTimes; // זמני מבחן אוטומטיים
   final DateTime? quizDate; // תאריך מבחן
@@ -352,6 +353,7 @@ class LearningSettings extends Equatable {
     this.learningStartTime,
     this.learningEndTime,
     this.requireSoloQuiz = false,
+    this.quizType = 'solo',
     this.quizOpenManually = false,
     this.autoQuizTimes = false,
     this.quizDate,
@@ -372,6 +374,7 @@ class LearningSettings extends Equatable {
     String? learningStartTime,
     String? learningEndTime,
     bool? requireSoloQuiz,
+    String? quizType,
     bool? quizOpenManually,
     bool? autoQuizTimes,
     DateTime? quizDate,
@@ -391,6 +394,7 @@ class LearningSettings extends Equatable {
       learningStartTime: learningStartTime ?? this.learningStartTime,
       learningEndTime: learningEndTime ?? this.learningEndTime,
       requireSoloQuiz: requireSoloQuiz ?? this.requireSoloQuiz,
+      quizType: quizType ?? this.quizType,
       quizOpenManually: quizOpenManually ?? this.quizOpenManually,
       autoQuizTimes: autoQuizTimes ?? this.autoQuizTimes,
       quizDate: quizDate ?? this.quizDate,
@@ -414,6 +418,7 @@ class LearningSettings extends Equatable {
       if (learningStartTime != null) 'learningStartTime': learningStartTime,
       if (learningEndTime != null) 'learningEndTime': learningEndTime,
       'requireSoloQuiz': requireSoloQuiz,
+      'quizType': quizType,
       'quizOpenManually': quizOpenManually,
       'autoQuizTimes': autoQuizTimes,
       if (quizDate != null)
@@ -439,6 +444,7 @@ class LearningSettings extends Equatable {
       learningStartTime: map['learningStartTime'] as String?,
       learningEndTime: map['learningEndTime'] as String?,
       requireSoloQuiz: map['requireSoloQuiz'] as bool? ?? false,
+      quizType: map['quizType'] as String? ?? 'solo',
       quizOpenManually: map['quizOpenManually'] as bool? ?? false,
       autoQuizTimes: map['autoQuizTimes'] as bool? ?? false,
       quizDate: map['quizDate'] != null
@@ -482,6 +488,7 @@ class LearningSettings extends Equatable {
         learningStartTime,
         learningEndTime,
         requireSoloQuiz,
+        quizType,
         quizOpenManually,
         autoQuizTimes,
         quizDate,

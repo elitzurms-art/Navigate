@@ -5,15 +5,17 @@ import '../../../domain/entities/user.dart';
 import '../../../data/repositories/solo_quiz_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 
-/// מסך מבחן ניווט בדד — שני שלבים: הצהרות מוכנות + מבחן ידע
+/// מסך מבחן ניווט — שני שלבים: הצהרות מוכנות + מבחן ידע (בדד) או מבחן ידע בלבד (רגיל)
 class SoloQuizScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final User currentUser;
+  final String quizType; // 'solo' או 'regular'
 
   const SoloQuizScreen({
     super.key,
     required this.navigation,
     required this.currentUser,
+    this.quizType = 'solo',
   });
 
   @override
@@ -50,8 +52,13 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         _error = null;
       });
 
-      final questions = await _quizRepo.getQuestions();
-      final passingScore = await _quizRepo.getPassingScore();
+      final bool isRegular = widget.quizType == 'regular';
+      final questions = isRegular
+          ? await _quizRepo.getRegularQuestions()
+          : await _quizRepo.getQuestions();
+      final passingScore = isRegular
+          ? await _quizRepo.getRegularPassingScore()
+          : await _quizRepo.getPassingScore();
 
       if (questions.isEmpty) {
         setState(() {
@@ -61,7 +68,9 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         return;
       }
 
-      final readiness = questions.where((q) => q.isReadiness).toList();
+      final readiness = isRegular
+          ? <SoloQuizQuestion>[]
+          : questions.where((q) => q.isReadiness).toList();
       final knowledge = questions.where((q) => !q.isReadiness).toList();
 
       // טעינת תשובות קיימות (אם יש)
@@ -70,7 +79,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         navigatorId: widget.currentUser.uid,
       );
 
-      int phase = 0;
+      int phase = readiness.isEmpty ? 1 : 0;
       int readinessIndex = 0;
       Map<String, dynamic> answers = {};
 
@@ -78,13 +87,15 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         answers = Map<String, dynamic>.from(existing.answers);
 
         // בדיקה אם כל שאלות המוכנות נענו ב"כן"
-        final allReadinessPassed = readiness.every((q) {
-          final answer = answers[q.id];
-          return answer != null && answer == 0; // 0 = כן
-        });
+        if (readiness.isNotEmpty) {
+          final allReadinessPassed = readiness.every((q) {
+            final answer = answers[q.id];
+            return answer != null && answer == 0; // 0 = כן
+          });
 
-        if (allReadinessPassed) {
-          phase = 1;
+          if (allReadinessPassed) {
+            phase = 1;
+          }
         }
       }
 
@@ -198,7 +209,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         passed: passed,
       );
 
-      if (passed) {
+      if (passed && widget.quizType == 'solo') {
         final updatedUser = widget.currentUser.copyWith(
           soloQuizPassedAt: DateTime.now(),
           soloQuizScore: score,
@@ -255,9 +266,9 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
                 if (passed) {
                   Navigator.pop(context);
                 } else {
-                  // איפוס מלא — חזרה לשלב 1
+                  // איפוס — חזרה לשלב המתאים
                   setState(() {
-                    _phase = 0;
+                    _phase = _readinessQuestions.isEmpty ? 1 : 0;
                     _readinessIndex = 0;
                     _answers = {};
                   });
@@ -293,7 +304,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('מבחן ניווט בדד'),
+        title: Text(widget.quizType == 'regular' ? 'מבחן ניווט' : 'מבחן ניווט בדד'),
         backgroundColor: Colors.purple,
         foregroundColor: Colors.white,
       ),
@@ -506,7 +517,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           color: Colors.purple[50],
           child: Text(
-            'שלב 2 מתוך 2 — מבחן ידע',
+            _readinessQuestions.isEmpty ? 'מבחן ידע' : 'שלב 2 מתוך 2 — מבחן ידע',
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.bold,
@@ -555,10 +566,10 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
 
         // כפתור הגשה
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: SizedBox(
             width: double.infinity,
-            height: 48,
+            height: 56,
             child: ElevatedButton.icon(
               onPressed: _isSubmitting ? null : _submitQuiz,
               icon: _isSubmitting

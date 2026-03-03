@@ -1053,7 +1053,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                     Icon(Icons.quiz, color: Colors.purple[700]),
                     const SizedBox(width: 8),
                     Text(
-                      'מבחן ניווט בדד',
+                      _currentNavigation.learningSettings.quizType == 'regular' ? 'מבחן ניווט' : 'מבחן ניווט בדד',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
@@ -1162,6 +1162,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
           : null,
       requireSoloQuiz: _currentNavigation.learningSettings.requireSoloQuiz,
+      quizType: _currentNavigation.learningSettings.quizType,
       quizOpenManually: _quizOpenManually,
       autoQuizTimes: _autoQuizTimes,
       quizDate: _autoQuizTimes ? _quizDate : null,

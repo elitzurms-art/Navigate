@@ -60,6 +60,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   bool _reverseRevealShown = false;
 
+  // מבחן ניווט — בדיקת passed מ-Firestore
+  bool? _quizPassed;
+
   // שידור חירום
   AudioPlayer? _emergencyPlayer;
   StreamSubscription<RemoteMessage>? _emergencySubscription;
@@ -626,6 +629,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         });
       }
 
+      // בדיקת מבחן ניווט מ-Firestore
+      _loadQuizStatus();
+
       // טעינת ציון אם בשלב תחקור/אישור
       _loadNavigatorScore();
     } catch (e) {
@@ -635,6 +641,31 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           _error = e.toString();
         });
       }
+    }
+  }
+
+  /// בדיקת סטטוס מבחן ניווט מ-Firestore
+  Future<void> _loadQuizStatus() async {
+    final nav = _currentNavigation;
+    final user = _currentUser;
+    if (nav == null || user == null || !nav.learningSettings.requireSoloQuiz) {
+      _quizPassed = null;
+      return;
+    }
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('navigations')
+          .doc(nav.id)
+          .collection('quiz_answers')
+          .doc(user.uid)
+          .get();
+      if (mounted) {
+        setState(() {
+          _quizPassed = doc.exists && doc.data()?['passed'] == true;
+        });
+      }
+    } catch (_) {
+      // שקט — לא חוסם
     }
   }
 
@@ -1041,43 +1072,37 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   Widget _buildQuizDrawerItem() {
     final user = _currentUser;
-    if (user == null) return const SizedBox.shrink();
+    final nav = _currentNavigation;
+    if (user == null || nav == null) return const SizedBox.shrink();
 
-    if (user.hasSoloQuizValid) {
-      // עבר בהצלחה ב-4 חודשים האחרונים
-      return const ListTile(
-        leading: Icon(Icons.quiz, color: Colors.green),
-        title: Text('מבחן ניווט בדד — בוצע בהצלחה'),
+    final quizType = nav.learningSettings.quizType;
+    final quizLabel = quizType == 'regular' ? 'מבחן ניווט' : 'מבחן ניווט בדד';
+
+    if (_quizPassed == true) {
+      return ListTile(
+        leading: const Icon(Icons.quiz, color: Colors.green),
+        title: Text('$quizLabel — בוצע בהצלחה'),
         enabled: false,
       );
     }
 
-    final hasFailed = user.soloQuizPassedAt == null && user.soloQuizScore != null;
     return ListTile(
-      leading: Icon(
-        Icons.quiz,
-        color: hasFailed ? Colors.red : Colors.purple,
-      ),
-      title: Text(
-        hasFailed ? 'מבחן ניווט בדד — נכשל' : 'מבחן ניווט בדד',
-      ),
+      leading: const Icon(Icons.quiz, color: Colors.purple),
+      title: Text(quizLabel),
       onTap: () {
         Navigator.pop(context);
-        final nav = _currentNavigation;
-        if (nav != null) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SoloQuizScreen(
-                navigation: nav,
-                currentUser: user,
-              ),
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SoloQuizScreen(
+              navigation: nav,
+              currentUser: user,
+              quizType: quizType,
             ),
-          ).then((_) {
-            // רענון משתמש אחרי מבחן
-            _loadState(silent: true);
-          });
-        }
+          ),
+        ).then((_) {
+          _loadState(silent: true);
+        });
       },
     );
   }

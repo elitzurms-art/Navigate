@@ -359,6 +359,194 @@ class SoloQuizRepository {
     },
   ];
 
+  /// טעינת שאלות מבחן ניווט רגיל
+  Future<List<SoloQuizQuestion>> getRegularQuestions() async {
+    try {
+      final snapshot = await _firestore
+          .collection('regular_quiz_questions')
+          .orderBy('order')
+          .get();
+      if (snapshot.docs.isNotEmpty) {
+        return snapshot.docs
+            .map((doc) => SoloQuizQuestion.fromMap(doc.data(), doc.id))
+            .toList();
+      }
+    } catch (_) {
+      // Firestore לא זמין / אין הרשאות — fallback לשאלות מקומיות
+    }
+    return _defaultRegularQuestions
+        .asMap()
+        .entries
+        .map((e) => SoloQuizQuestion.fromMap(e.value, 'regular_${e.key}'))
+        .toList();
+  }
+
+  /// טעינת הגדרות מבחן רגיל (אחוז מעבר)
+  Future<int> getRegularPassingScore() async {
+    try {
+      final doc = await _firestore
+          .collection('regular_quiz_config')
+          .doc('settings')
+          .get();
+      if (doc.exists) {
+        return doc.data()?['passingScore'] as int? ?? 100;
+      }
+    } catch (_) {
+      // Firestore לא זמין / אין הרשאות — fallback לברירת מחדל
+    }
+    return 100;
+  }
+
+  /// זריעת שאלות מבחן רגיל (10 שאלות) + הגדרות
+  Future<void> seedDefaultRegularQuestions() async {
+    final batch = _firestore.batch();
+
+    final questions = _defaultRegularQuestions;
+    for (final q in questions) {
+      final docRef = _firestore.collection('regular_quiz_questions').doc();
+      batch.set(docRef, q);
+    }
+
+    batch.set(
+      _firestore.collection('regular_quiz_config').doc('settings'),
+      {'passingScore': 100},
+    );
+
+    await batch.commit();
+  }
+
+  static List<Map<String, dynamic>> get _defaultRegularQuestions => [
+    {
+      'order': 1,
+      'type': 'single',
+      'question': 'מהו התנאי לביצוע ניווט לילה על פי המנחה?',
+      'options': [
+        'אישור של מפקד בדרגת אל"ם',
+        'הימצאות פנס לכל חייל',
+        'ביצוע ניווט יום מוצלח באורך 3 קילומטרים לפחות',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 2,
+      'type': 'single',
+      'question': 'מהו "נוהל רוויה" הנדרש לפני תחילת הניווט?',
+      'options': [
+        'שתיית חצי ליטר מים מיד עם ההגעה לשטח',
+        'שתייה של 2 ליטר מים במהלך הלילה שלפני',
+        'שתייה מצטברת של 1 ליטר מים במהלך השעתיים שלפני הפעילות',
+        'שתיית מים רק לפי תחושת צמא במהלך התדריך',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 3,
+      'type': 'single',
+      'question': 'כיצד יש לפעול אם נתקלת במכשול (בור, באר, מצוק) שלא סומן במפה?',
+      'options': [
+        'להמשיך בניווט כרגיל ולהתעלם',
+        'לסמן את המכשול על המפה האישית בלבד',
+        'לעקוף את המכשול, לדווח עליו מיד לחפ"ק ולסמנו במידת האפשר',
+        'לעצור את הניווט ולחכות שהחפ"ק יגיע לפנות את המכשול',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 4,
+      'type': 'single',
+      'question': 'מהו פרק הזמן המינימלי להפסקה מבוקרת בנקודת בקרה (נ.ב) בעונת הקיץ?',
+      'options': [
+        '5 דקות',
+        '10 דקות',
+        '15 דקות',
+        '30 דקות',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 5,
+      'type': 'single',
+      'question': 'מהו הציוד המינימלי הנדרש לאיתות מצוקה ללא מכשיר קשר?',
+      'options': [
+        'פנס בלבד',
+        'צעקות ונופוף בידיים',
+        'עיפרון זיקוקים ו-5 זיקוקים או מחסנית נותבים',
+        'סטיקלייט ירוק',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 6,
+      'type': 'single',
+      'question': 'חציית כביש במהלך ניווט תתבצע:',
+      'options': [
+        'בכל נקודה שנוחה למנווט כדי לקצר את הדרך',
+        'בריצה מהירה ללא תיאום',
+        'בנקודה מוגדרת שאושרה ומסומנת במפה, ובאישור החפ"ק',
+        'רק במעבר חציה מסומן בתוך עיר',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 7,
+      'type': 'single',
+      'question': 'מה עליך לעשות אם הבנת שלא תעמוד ב"שעת הגג" שנקבעה?',
+      'options': [
+        'להגביר את קצב ההליכה כדי להגיע בזמן בכל מחיר',
+        'לדווח לחפ"ק, לבקש הארכה ובמידה ואין לכנוס ישירות לנקודת הסיום',
+        'להמשיך בניווט עד להשלמת כל הנקודות',
+        'לכבות את מכשיר הקשר כדי לא להילחץ מהדיווחים',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 8,
+      'type': 'single',
+      'question': 'מהו נוהל "ברבור" (איבוד התמצאות) הראשוני בשטח?',
+      'options': [
+        'להמשיך ללכת עד שמוצאים נקודה מוכרת',
+        'חזרה בציר עד לנקודת זיהוי ועלייה למקום גבוה להזדהות',
+        'ירי זיקוק מידי',
+        'להמתין במקום עד שהחפ"ק יאתר אותך ב-GPS',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 9,
+      'type': 'single',
+      'question': 'מהן ההנחיות לגבי נשיאת נשק במהלך הניווט?',
+      'options': [
+        'ניתן להוריד את הנשק בזמן מנוחה',
+        'הנשק יהיה במצב "הצלב", ואין להורידו מהגוף',
+        'על פי שיקול דעת המנווט',
+        'ניתן להניח את הנשק בתוך התיק',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 10,
+      'type': 'single',
+      'question': 'מתי מותר לשתות מים ממקור מים בשטח (מעיין, באר)?',
+      'options': [
+        'בכל פעם שנגמרים המים במימייה',
+        'אם המים נראים צלולים',
+        'בחירום בלבד ולאחר טיהורם לפי הוראות קרפ"ר',
+        'חל איסור מוחלט בכל מצב',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+  ];
+
   /// חישוב ציון מבחן
   int calculateScore(
     List<SoloQuizQuestion> questions,

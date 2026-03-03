@@ -63,6 +63,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   Map<String, domain_user.User> _usersCache = {};
   // שמות מנווטים מ-Firestore (fallback כשאין ב-usersCache)
   final Map<String, String> _navigatorNames = {};
+  // מבחן ניווט — cache של תוצאות (navigatorId → passed)
+  Map<String, bool> _quizPassedByNavigator = {};
 
   // מנווט ממוקד במפה (עיגול כחול)
   String? _focusedNavigatorId;
@@ -403,6 +405,32 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       } catch (_) {}
     }
     if (mounted) setState(() {});
+
+    // טעינת תוצאות מבחן ניווט (אם מופעל)
+    if (_currentNavigation.learningSettings.requireSoloQuiz) {
+      _loadQuizResults();
+    }
+  }
+
+  /// טעינת תוצאות מבחן ניווט מ-Firestore — batch אחד לכל המנווטים
+  Future<void> _loadQuizResults() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('navigations')
+          .doc(_currentNavigation.id)
+          .collection('quiz_answers')
+          .get();
+
+      final results = <String, bool>{};
+      for (final doc in snapshot.docs) {
+        results[doc.id] = doc.data()['passed'] == true;
+      }
+      if (mounted) {
+        setState(() => _quizPassedByNavigator = results);
+      }
+    } catch (_) {
+      // שקט — לא חוסם
+    }
   }
 
   /// האזנה בזמן אמת לסטטוס מנווטים מ-Firestore (למפקד)
@@ -1064,19 +1092,15 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Color _getQuizStatusColor(String navigatorId) {
-    final user = _usersCache[navigatorId];
-    if (user == null) return Colors.grey;
-    if (user.hasSoloQuizValid) return Colors.green;
-    if (user.soloQuizPassedAt != null) return Colors.red; // עבר אבל פג תוקף
-    return Colors.red; // לא ביצע
+    final passed = _quizPassedByNavigator[navigatorId];
+    if (passed == null) return Colors.red; // לא ביצע
+    return passed ? Colors.green : Colors.red;
   }
 
   String _getQuizStatusText(String navigatorId) {
-    final user = _usersCache[navigatorId];
-    if (user == null) return 'לא זמין';
-    if (user.hasSoloQuizValid) return 'עבר בהצלחה';
-    if (user.soloQuizPassedAt != null) return 'נכשל';
-    return 'לא ביצע';
+    final passed = _quizPassedByNavigator[navigatorId];
+    if (passed == null) return 'לא ביצע';
+    return passed ? 'עבר בהצלחה' : 'נכשל';
   }
 
   IconData _getBatteryIcon(NavigatorStatus status) {
@@ -1334,10 +1358,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                       const Divider(),
                     ],
 
-                    // מבחן בדד (רק אם מופעל)
+                    // מבחן ניווט (רק אם מופעל)
                     if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
                       _buildDetailRow(
-                        'מבחן בדד',
+                        _currentNavigation.learningSettings.quizType == 'regular' ? 'מבחן ניווט' : 'מבחן בדד',
                         _getQuizStatusText(navigatorId),
                         Icons.quiz,
                         _getQuizStatusColor(navigatorId),

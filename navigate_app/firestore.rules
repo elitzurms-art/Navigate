@@ -338,6 +338,20 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // /regular_quiz_questions/{questionId} -- Regular quiz questions (read-only)
+    // /regular_quiz_config/{docId} -- Regular quiz configuration
+    // =========================================================================
+    match /regular_quiz_questions/{questionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isDeveloperOrAdmin();
+    }
+
+    match /regular_quiz_config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isDeveloperOrAdmin();
+    }
+
+    // =========================================================================
     // Legacy flat collections (backward compatibility)
     // =========================================================================
     match /navigation_tracks/{trackId} {

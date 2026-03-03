@@ -2437,6 +2437,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+            const SizedBox(height: 12),
             // 2×2 grid — fixed height, no centering gaps
             SizedBox(
               height: 260,
@@ -2655,7 +2656,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Widget _buildTimerChip() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.green.withOpacity(0.15),
         borderRadius: BorderRadius.circular(8),
@@ -2663,12 +2664,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.timer, size: 18, color: Colors.green[700]),
-          const SizedBox(width: 4),
+          Icon(Icons.timer, size: 16, color: Colors.green[700]),
+          const SizedBox(width: 3),
           Text(
             _formatDuration(_elapsed),
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
               color: Colors.green[700],
               fontFamily: 'monospace',
@@ -2714,7 +2715,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     final color = isOvertime ? Colors.red : Colors.blue;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(8),
@@ -2722,12 +2723,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.flag, size: 14, color: color[700]),
-          const SizedBox(width: 4),
+          Icon(Icons.flag, size: 16, color: color[700]),
+          const SizedBox(width: 3),
           Text(
             isOvertime ? '+$timeStr' : timeStr,
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: FontWeight.bold,
               fontFamily: 'monospace',
               color: color[700],

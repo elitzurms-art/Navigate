@@ -818,9 +818,9 @@ class RoutesDistributionService {
     _InternalDistribution? best;
     final targetLength = (minRoute + maxRoute) / 2;
 
-    // 100 בניות התחלתיות × SA על כל אחת
-    final constructionRounds = min(100, maxIterations);
-    final saStepsPerRound = 200;
+    // 500 בניות התחלתיות × SA על כל אחת (חיפוש מקיף)
+    final constructionRounds = min(500, maxIterations);
+    final saStepsPerRound = 800;
 
     for (int iter = 0; iter < constructionRounds; iter++) {
       // דיווח התקדמות
@@ -876,6 +876,10 @@ class RoutesDistributionService {
         distMatrix: distMatrix,
       );
 
+      // ולידציית K: דילוג על פתרון שבור
+      final validK = optimized.values.every((r) => r.checkpointIds.length == K);
+      if (!validK) continue;
+
       // ניקוד
       final allCpIds = optimized.values.expand((r) => r.checkpointIds).toList();
       final uniqueCpIds = allCpIds.toSet();
@@ -910,7 +914,58 @@ class RoutesDistributionService {
         final routeLengths = optimized.values.map((r) => r.routeLengthKm).toList();
         final meanLen = routeLengths.reduce((a, b) => a + b) / routeLengths.length;
         final varianceLen = routeLengths.map((l) => (l - meanLen) * (l - meanLen)).reduce((a, b) => a + b) / routeLengths.length;
-        if (varianceLen < 0.01) break;
+        if (varianceLen < 0.001) break;
+      }
+
+      // --- Multi-start restart (רופיש 6): כל 100 סיבובים, SA נוסף מהפתרון הטוב ביותר ---
+      if (iter > 0 && iter % 100 == 0 && best != null) {
+        final restartSA = _simulatedAnnealing(
+          initial: best.routes,
+          navigators: navigators,
+          K: K,
+          startCp: startCp,
+          endCp: endCp,
+          waypoints: waypoints,
+          allCheckpoints: allCheckpoints,
+          minRoute: minRoute,
+          maxRoute: maxRoute,
+          criterion: criterion,
+          executionOrder: executionOrder,
+          random: random,
+          steps: saStepsPerRound,
+          allowSharing: allowSharing,
+          pool: pool,
+          distMatrix: distMatrix,
+        );
+
+        // ולידציית K על restart SA
+        final restartValidK = restartSA.values.every((r) => r.checkpointIds.length == K);
+        if (!restartValidK) continue;
+
+        final restartAllCpIds = restartSA.values.expand((r) => r.checkpointIds).toList();
+        final restartUniqueCpIds = restartAllCpIds.toSet();
+        final restartHasSharing = restartAllCpIds.length != restartUniqueCpIds.length;
+        final restartAllInRange = restartSA.values.every((r) => r.inRange);
+
+        final restartScore = _scoreDistribution(
+          distribution: restartSA,
+          criterion: criterion,
+          minRoute: minRoute,
+          maxRoute: maxRoute,
+          allInRange: restartAllInRange,
+          hasSharing: restartHasSharing,
+          totalUniqueCheckpoints: restartUniqueCpIds.length,
+        );
+
+        if (restartScore > best.score) {
+          best = _InternalDistribution(
+            routes: restartSA,
+            score: restartScore,
+            allInRange: restartAllInRange,
+            hasSharedCheckpoints: restartHasSharing,
+            sharedCount: restartHasSharing ? restartAllCpIds.length - restartUniqueCpIds.length : 0,
+          );
+        }
       }
     }
 
@@ -1044,7 +1099,7 @@ class RoutesDistributionService {
     return distribution;
   }
 
-  /// חלוקה גיאוגרפית — מיון לפי קו רוחב + חלוקת round-robin
+  /// חלוקה גיאוגרפית — מיון לפי זווית מהמרכז (centroid) → sectors שווים
   static List<List<_SimpleCheckpoint>> _geographicPartition(
     List<_SimpleCheckpoint> pool,
     int N,
@@ -1052,17 +1107,53 @@ class RoutesDistributionService {
   ) {
     if (N <= 0 || pool.isEmpty) return [];
 
-    // מיון לפי קו רוחב
-    final sorted = List<_SimpleCheckpoint>.from(pool)
-      ..sort((a, b) => a.lat.compareTo(b.lat));
+    // חישוב centroid
+    double sumLat = 0, sumLng = 0;
+    for (final cp in pool) {
+      sumLat += cp.lat;
+      sumLng += cp.lng;
+    }
+    final centLat = sumLat / pool.length;
+    final centLng = sumLng / pool.length;
 
-    // חלוקת round-robin ל-N דליים
+    // חישוב זווית מהמרכז לכל נקודה + offset אקראי למניעת הטיה
+    final angleOffset = random.nextDouble() * 2 * pi;
+    final withAngle = pool.map((cp) {
+      final angle = atan2(cp.lat - centLat, cp.lng - centLng) + angleOffset;
+      final normalized = angle % (2 * pi);
+      return MapEntry(cp, normalized);
+    }).toList();
+
+    // מיון לפי זווית
+    withAngle.sort((a, b) => a.value.compareTo(b.value));
+
+    // חלוקה ל-N sectors שווים
     final buckets = List.generate(N, (_) => <_SimpleCheckpoint>[]);
-    for (int i = 0; i < sorted.length; i++) {
-      buckets[i % N].add(sorted[i]);
+    final sectorSize = 2 * pi / N;
+    for (final entry in withAngle) {
+      final sectorIdx = (entry.value / sectorSize).floor().clamp(0, N - 1);
+      buckets[sectorIdx].add(entry.key);
     }
 
-    // ערבוב הקצאת דליים
+    // איזון: אם יש דלי ריק, העבר מדלי גדול
+    bool balanced = false;
+    while (!balanced) {
+      balanced = true;
+      final emptyBuckets = <int>[];
+      int largestIdx = 0;
+      for (int i = 0; i < N; i++) {
+        if (buckets[i].isEmpty) emptyBuckets.add(i);
+        if (buckets[i].length > buckets[largestIdx].length) largestIdx = i;
+      }
+      for (final emptyIdx in emptyBuckets) {
+        if (buckets[largestIdx].length > 1) {
+          buckets[emptyIdx].add(buckets[largestIdx].removeLast());
+          balanced = false;
+        }
+      }
+    }
+
+    // ערבוב סדר הדליים
     buckets.shuffle(random);
 
     return buckets;
@@ -1143,7 +1234,22 @@ class RoutesDistributionService {
     return route;
   }
 
-  /// Simulated Annealing — 3 סוגי מהלכים + reheat על סטגנציה
+  /// ולידציה: כל ציר מכיל בדיוק K נקודות
+  static bool _isValidKSolution(Map<String, List<_SimpleCheckpoint>> routeChunks, int K) {
+    return routeChunks.values.every((r) => r.length == K);
+  }
+
+  /// ולידציה: סך הנקודות המוקצות + freePool = סך הנקודות הכולל (ללא שיתוף)
+  static bool _isConserved(
+    Map<String, List<_SimpleCheckpoint>> routeChunks,
+    Set<String> freePool,
+    int totalPoolSize,
+  ) {
+    final totalAssigned = routeChunks.values.expand((r) => r).map((c) => c.id).toSet().length;
+    return totalAssigned + freePool.length == totalPoolSize;
+  }
+
+  /// Simulated Annealing — 5 סוגי מהלכים + auto-calibrate + reheat
   static Map<String, _RouteResult> _simulatedAnnealing({
     required Map<String, _RouteResult> initial,
     required List<String> navigators,
@@ -1194,9 +1300,38 @@ class RoutesDistributionService {
       }
     }
 
-    // טמפרטורה יורדת מ-1.0 ל-0.01 לאורך כל הצעדים
-    double temperature = 1.0;
-    final coolingRate = steps > 1 ? pow(0.01, 1.0 / steps).toDouble() : 0.01;
+    // --- כיול אוטומטי של טמפרטורה (רופיש 5) ---
+    // דגימת 20 מהלכי SWAP אקראיים למדידת דלתות טיפוסיות
+    final calibrationDeltas = <double>[];
+    for (int c = 0; c < 20 && navigators.length >= 2; c++) {
+      final i1 = random.nextInt(navigators.length);
+      var i2 = random.nextInt(navigators.length - 1);
+      if (i2 >= i1) i2++;
+      final nav1 = navigators[i1], nav2 = navigators[i2];
+      final r1 = routeChunks[nav1], r2 = routeChunks[nav2];
+      if (r1 == null || r2 == null || r1.isEmpty || r2.isEmpty) continue;
+      final ci1 = random.nextInt(r1.length), ci2 = random.nextInt(r2.length);
+      if (r1[ci1].id == r2[ci2].id) continue;
+      final old1 = r1[ci1], old2 = r2[ci2];
+      r1[ci1] = old2; r2[ci2] = old1;
+      final testR = Map<String, _RouteResult>.from(currentRoutes);
+      testR[nav1] = _rebuildRoute(r1, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+      testR[nav2] = _rebuildRoute(r2, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+      final delta = (_calculateFullScore(testR, criterion, minRoute, maxRoute) - currentScore).abs();
+      if (delta > 0) calibrationDeltas.add(delta);
+      r1[ci1] = old1; r2[ci2] = old2; // undo
+    }
+    // טמפרטורה התחלתית = median של הדלתות (כך SA מקבל ~50% מהלכים גרועים בהתחלה)
+    double startTemperature = 1.0;
+    if (calibrationDeltas.isNotEmpty) {
+      calibrationDeltas.sort();
+      startTemperature = calibrationDeltas[calibrationDeltas.length ~/ 2];
+      if (startTemperature < 0.01) startTemperature = 0.01;
+    }
+
+    double temperature = startTemperature;
+    final endTemperature = startTemperature * 0.01;
+    final coolingRate = steps > 1 ? pow(endTemperature / startTemperature, 1.0 / steps).toDouble() : 0.01;
 
     // Reheat tracking
     double bestSAScore = currentScore;
@@ -1205,10 +1340,16 @@ class RoutesDistributionService {
     for (int step = 0; step < steps; step++) {
       temperature *= coolingRate;
 
-      // בחירת סוג מהלך: 50% swap, 25% move, 25% 2-opt intra
+      // Snapshot לפני המהלך — לשחזור אם K invariant נשבר
+      final savedChunks = routeChunks.map((k, v) => MapEntry(k, List<_SimpleCheckpoint>.from(v)));
+      final savedFreePool = Set<String>.from(freePool);
+      final savedRoutes = Map<String, _RouteResult>.from(currentRoutes);
+      final savedScore = currentScore;
+
+      // בחירת סוג מהלך: 35% swap, 20% relocate, 15% move, 15% cross-exchange, 15% 2-opt intra
       final moveRoll = random.nextDouble();
 
-      if (moveRoll < 0.50) {
+      if (moveRoll < 0.35) {
         // === SWAP: החלפת נקודה בין 2 מנווטים ===
         final i1 = random.nextInt(navigators.length);
         var i2 = random.nextInt(navigators.length - 1);
@@ -1243,7 +1384,7 @@ class RoutesDistributionService {
         final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
 
         final delta = newScore - currentScore;
-        if (delta > 0 || random.nextDouble() < exp(delta / (temperature * 1000))) {
+        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
         } else {
@@ -1251,7 +1392,83 @@ class RoutesDistributionService {
           route2[idx2] = cp2;
         }
 
-      } else if (moveRoll < 0.75 && (freePool.isNotEmpty || allowSharing)) {
+      } else if (moveRoll < 0.55) {
+        // === RELOCATE (רופיש 3): העברת נקודה מציר אחד לאחר עם פיצוי מהפול ===
+        if (freePool.isEmpty) continue;
+
+        final i1 = random.nextInt(navigators.length);
+        var i2 = random.nextInt(navigators.length - 1);
+        if (i2 >= i1) i2++;
+
+        final navFrom = navigators[i1];
+        final navTo = navigators[i2];
+        final routeFrom = routeChunks[navFrom];
+        final routeTo = routeChunks[navTo];
+
+        if (routeFrom == null || routeTo == null || routeFrom.length <= 1 || routeTo.isEmpty) continue;
+
+        // הוצאת נקודה מ-routeFrom
+        final removeIdx = random.nextInt(routeFrom.length);
+        final movedCp = routeFrom[removeIdx];
+
+        // בדיקת כפילויות
+        if (!allowSharing && routeTo.any((c) => c.id == movedCp.id)) continue;
+
+        // הוספה ל-routeTo
+        routeFrom.removeAt(removeIdx);
+        routeTo.add(movedCp);
+
+        // פיצוי: routeFrom מקבל נקודה מהפול
+        _SimpleCheckpoint? compensationCp;
+        String? compensationId;
+        if (!allowSharing && freePool.isNotEmpty) {
+          final freeList = freePool.toList();
+          compensationId = freeList[random.nextInt(freeList.length)];
+          compensationCp = cpMap[compensationId];
+          if (compensationCp != null && !routeFrom.any((c) => c.id == compensationCp!.id)) {
+            routeFrom.add(compensationCp);
+            freePool.remove(compensationId);
+          } else {
+            compensationCp = null;
+          }
+        }
+
+        // routeTo צריך להיפטר מנקודה אחת (שומר על K)
+        _SimpleCheckpoint? removedFromTo;
+        int removedFromToIdx = -1;
+        if (routeTo.length > K) {
+          removedFromToIdx = random.nextInt(routeTo.length);
+          removedFromTo = routeTo.removeAt(removedFromToIdx);
+          if (!allowSharing) freePool.add(removedFromTo.id);
+        }
+
+        final newResult1 = _rebuildRoute(routeFrom, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult2 = _rebuildRoute(routeTo, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+
+        final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
+        testRoutes[navFrom] = newResult1;
+        testRoutes[navTo] = newResult2;
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
+
+        final delta = newScore - currentScore;
+        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
+          currentRoutes = testRoutes;
+          currentScore = newScore;
+        } else {
+          // undo
+          if (removedFromTo != null) {
+            routeTo.insert(removedFromToIdx.clamp(0, routeTo.length), removedFromTo);
+            if (!allowSharing) freePool.remove(removedFromTo.id);
+          }
+          routeTo.remove(movedCp);
+          routeFrom.insert(removeIdx.clamp(0, routeFrom.length), movedCp);
+          if (compensationCp != null) {
+            routeFrom.remove(compensationCp);
+            if (compensationId != null) freePool.add(compensationId);
+          }
+        }
+
+      } else if (moveRoll < 0.70 && (freePool.isNotEmpty || allowSharing)) {
         // === MOVE: החלפת נקודה בציר עם נקודה מהפול החופשי ===
         final navIdx = random.nextInt(navigators.length);
         final nav = navigators[navIdx];
@@ -1288,7 +1505,7 @@ class RoutesDistributionService {
         final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
 
         final delta = newScore - currentScore;
-        if (delta > 0 || random.nextDouble() < exp(delta / (temperature * 1000))) {
+        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
         } else {
@@ -1296,6 +1513,62 @@ class RoutesDistributionService {
           if (!allowSharing) {
             freePool.add(newCp.id);
             freePool.remove(oldCp.id);
+          }
+        }
+
+      } else if (moveRoll < 0.85) {
+        // === CROSS-EXCHANGE (רופיש 4): החלפת שרשרת 1-2 נקודות בין 2 צירים ===
+        final i1 = random.nextInt(navigators.length);
+        var i2 = random.nextInt(navigators.length - 1);
+        if (i2 >= i1) i2++;
+
+        final nav1 = navigators[i1];
+        final nav2 = navigators[i2];
+        final route1 = routeChunks[nav1];
+        final route2 = routeChunks[nav2];
+
+        if (route1 == null || route2 == null || route1.length < 2 || route2.length < 2) continue;
+
+        // בחירת אורך שרשרת (1-2)
+        final chainLen = 1 + random.nextInt(min(2, min(route1.length, route2.length)));
+        final start1 = random.nextInt(route1.length - chainLen + 1);
+        final start2 = random.nextInt(route2.length - chainLen + 1);
+
+        // שמירת שרשראות לצורך undo
+        final chain1 = route1.sublist(start1, start1 + chainLen).toList();
+        final chain2 = route2.sublist(start2, start2 + chainLen).toList();
+
+        // בדיקת כפילויות
+        if (!allowSharing) {
+          final route1Without = [...route1.sublist(0, start1), ...route1.sublist(start1 + chainLen)];
+          final route2Without = [...route2.sublist(0, start2), ...route2.sublist(start2 + chainLen)];
+          if (chain2.any((c) => route1Without.any((r) => r.id == c.id)) ||
+              chain1.any((c) => route2Without.any((r) => r.id == c.id))) continue;
+        }
+
+        // החלפה
+        for (int c = 0; c < chainLen; c++) {
+          route1[start1 + c] = chain2[c];
+          route2[start2 + c] = chain1[c];
+        }
+
+        final newResult1 = _rebuildRoute(route1, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult2 = _rebuildRoute(route2, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+
+        final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
+        testRoutes[nav1] = newResult1;
+        testRoutes[nav2] = newResult2;
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
+
+        final delta = newScore - currentScore;
+        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
+          currentRoutes = testRoutes;
+          currentScore = newScore;
+        } else {
+          // undo
+          for (int c = 0; c < chainLen; c++) {
+            route1[start1 + c] = chain1[c];
+            route2[start2 + c] = chain2[c];
           }
         }
 
@@ -1327,7 +1600,7 @@ class RoutesDistributionService {
         final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
 
         final delta = newScore - currentScore;
-        if (delta > 0 || random.nextDouble() < exp(delta / (temperature * 1000))) {
+        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
         } else {
@@ -1344,6 +1617,20 @@ class RoutesDistributionService {
         }
       }
 
+      // Safety net: ולידציית K invariant אחרי כל מהלך שהתקבל
+      if (!_isValidKSolution(routeChunks, K) ||
+          (!allowSharing && !_isConserved(routeChunks, freePool, pool.length))) {
+        // שחזור מלא מ-snapshot
+        for (final nav in navigators) {
+          routeChunks[nav] = savedChunks[nav]!;
+        }
+        freePool.clear();
+        freePool.addAll(savedFreePool);
+        currentRoutes = savedRoutes;
+        currentScore = savedScore;
+        continue;
+      }
+
       // Reheat: חימום מחדש בסטגנציה
       if (currentScore > bestSAScore) {
         bestSAScore = currentScore;
@@ -1355,6 +1642,12 @@ class RoutesDistributionService {
           noImprovementCount = 0;
         }
       }
+    }
+
+    // ולידציה סופית: אם K invariant שבור, חזרה לפתרון ההתחלתי
+    final finalChunksValid = routeChunks.values.every((r) => r.length == K);
+    if (!finalChunksValid) {
+      return Map.from(initial);
     }
 
     return currentRoutes;

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -9,6 +11,8 @@ import 'package:record/record.dart';
 class VoiceService {
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _beepPlayer = AudioPlayer();
+  String? _beepFilePath;
 
   bool _isRecording = false;
   String? _currentRecordingPath;
@@ -38,14 +42,21 @@ class VoiceService {
   Stream<Duration> get playbackPosition => _playbackPositionController.stream;
 
   VoiceService() {
-    // הגדרת audio context עם USAGE_ALARM כדי לעקוף DND
-    _player.setAudioContext(AudioContext(
+    final audioContext = AudioContext(
       android: AudioContextAndroid(
         usageType: AndroidUsageType.alarm,
         contentType: AndroidContentType.speech,
-        audioFocus: AndroidAudioFocus.gainTransient,
+        audioFocus: AndroidAudioFocus.gain,
       ),
-    ));
+    );
+
+    // הגדרת audio context עם USAGE_ALARM כדי לעקוף DND
+    _player.setAudioContext(audioContext);
+    _beepPlayer.setAudioContext(audioContext);
+
+    // עוצמה מקסימלית
+    _player.setVolume(1.0);
+    _beepPlayer.setVolume(1.0);
 
     _player.onPositionChanged.listen((position) {
       _playbackPositionController.add(position);
@@ -149,12 +160,103 @@ class VoiceService {
     }
   }
 
+  /// יצירת קובץ WAV עם צליל roger beep (1000Hz+1400Hz, 200ms)
+  Future<String> _ensureBeepFile() async {
+    if (_beepFilePath != null) return _beepFilePath!;
+
+    const sampleRate = 22050;
+    const bitsPerSample = 16;
+    const numChannels = 1;
+    const tone1Freq = 1000.0;
+    const tone2Freq = 1400.0;
+    const toneDurationMs = 100;
+    const samplesPerTone = sampleRate * toneDurationMs ~/ 1000; // 2205
+    const totalSamples = samplesPerTone * 2;
+    const dataSize = totalSamples * (bitsPerSample ~/ 8);
+    const amplitude = 28000; // ~85% of max 32767
+
+    final bytes = ByteData(44 + dataSize);
+
+    // WAV header
+    // "RIFF"
+    bytes.setUint8(0, 0x52);
+    bytes.setUint8(1, 0x49);
+    bytes.setUint8(2, 0x46);
+    bytes.setUint8(3, 0x46);
+    bytes.setUint32(4, 36 + dataSize, Endian.little); // file size - 8
+    // "WAVE"
+    bytes.setUint8(8, 0x57);
+    bytes.setUint8(9, 0x41);
+    bytes.setUint8(10, 0x56);
+    bytes.setUint8(11, 0x45);
+    // "fmt "
+    bytes.setUint8(12, 0x66);
+    bytes.setUint8(13, 0x6D);
+    bytes.setUint8(14, 0x74);
+    bytes.setUint8(15, 0x20);
+    bytes.setUint32(16, 16, Endian.little); // chunk size
+    bytes.setUint16(20, 1, Endian.little); // PCM
+    bytes.setUint16(22, numChannels, Endian.little);
+    bytes.setUint32(24, sampleRate, Endian.little);
+    bytes.setUint32(
+        28, sampleRate * numChannels * (bitsPerSample ~/ 8), Endian.little);
+    bytes.setUint16(32, numChannels * (bitsPerSample ~/ 8), Endian.little);
+    bytes.setUint16(34, bitsPerSample, Endian.little);
+    // "data"
+    bytes.setUint8(36, 0x64);
+    bytes.setUint8(37, 0x61);
+    bytes.setUint8(38, 0x74);
+    bytes.setUint8(39, 0x61);
+    bytes.setUint32(40, dataSize, Endian.little);
+
+    // טון 1: 1000Hz
+    for (var i = 0; i < samplesPerTone; i++) {
+      final sample =
+          (amplitude * sin(2 * pi * tone1Freq * i / sampleRate)).toInt();
+      bytes.setInt16(44 + i * 2, sample, Endian.little);
+    }
+
+    // טון 2: 1400Hz
+    for (var i = 0; i < samplesPerTone; i++) {
+      final sample =
+          (amplitude * sin(2 * pi * tone2Freq * i / sampleRate)).toInt();
+      bytes.setInt16(44 + (samplesPerTone + i) * 2, sample, Endian.little);
+    }
+
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/roger_beep.wav');
+    await file.writeAsBytes(bytes.buffer.asUint8List());
+    _beepFilePath = file.path;
+    return _beepFilePath!;
+  }
+
+  /// השמעת ביפ מכשיר קשר
+  Future<void> _playBeep() async {
+    try {
+      final path = await _ensureBeepFile();
+      final completer = Completer<void>();
+      late StreamSubscription sub;
+      sub = _beepPlayer.onPlayerComplete.listen((_) {
+        sub.cancel();
+        completer.complete();
+      });
+      await _beepPlayer.play(DeviceFileSource(path));
+      await completer.future;
+    } catch (_) {
+      // אם הביפ נכשל — ממשיך להשמעת ההודעה
+    }
+  }
+
   /// השמעה פנימית (ללא ניקוי תור)
-  Future<void> _playImmediate(String audioUrl, String messageId) async {
+  Future<void> _playImmediate(String audioUrl, String messageId,
+      {bool playBeep = true}) async {
     if (_currentPlayingMessageId != null) {
       await _player.stop();
     }
     _currentPlayingMessageId = messageId;
+    if (playBeep) {
+      await _playBeep();
+    }
     await _player.play(UrlSource(audioUrl));
   }
 
@@ -203,6 +305,7 @@ class VoiceService {
     _maxDurationTimer?.cancel();
     _recorder.dispose();
     _player.dispose();
+    _beepPlayer.dispose();
     _recordingDurationController.close();
     _playbackPositionController.close();
   }

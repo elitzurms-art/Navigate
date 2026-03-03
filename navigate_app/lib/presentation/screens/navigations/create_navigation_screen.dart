@@ -114,8 +114,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _gpsSpoofingDetectionEnabled = true;
   int _gpsSpoofingMaxDistanceKm = 50;
 
-  // מבחן בדד
+  // מבחן
   bool _requireSoloQuiz = false;
+  String _quizType = 'solo';
 
   // תקשורת (ווקי טוקי)
   bool _walkieTalkieEnabled = true;
@@ -455,8 +456,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _gpsSpoofingDetectionEnabled = nav.gpsSpoofingDetectionEnabled;
     _gpsSpoofingMaxDistanceKm = nav.gpsSpoofingMaxDistanceKm;
 
-    // מבחן בדד
+    // מבחן
     _requireSoloQuiz = nav.learningSettings.requireSoloQuiz;
+    _quizType = nav.learningSettings.quizType;
 
     // תקשורת
     _walkieTalkieEnabled = nav.communicationSettings.walkieTalkieEnabled;
@@ -1426,14 +1428,30 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           children: [
             if (!widget.alertsOnlyMode) ...[
               SwitchListTile(
-                title: const Text('חייב ביצוע מבחן בדד'),
-                subtitle: const Text('מנווטים יידרשו לעבור מבחן ידע לפני ניווט בדד'),
+                title: const Text('הפעל מבחן למנווטים'),
+                subtitle: const Text('מנווטים יידרשו לעבור מבחן ידע לפני הניווט'),
                 value: _requireSoloQuiz,
                 onChanged: (value) {
                   setState(() => _requireSoloQuiz = value);
                   _onSettingChanged();
                 },
               ),
+              if (_requireSoloQuiz) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'solo', label: Text('ניווט בדד')),
+                      ButtonSegment(value: 'regular', label: Text('ניווט רגיל')),
+                    ],
+                    selected: {_quizType},
+                    onSelectionChanged: (selected) {
+                      setState(() => _quizType = selected.first);
+                      _onSettingChanged();
+                    },
+                  ),
+                ),
+              ],
               const Divider(),
               SwitchListTile(
                 title: const Text('הפעל אימות נקודות אוטומטי'),
@@ -2129,7 +2147,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     try {
       // יצירת ההגדרות
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
-          .copyWith(requireSoloQuiz: _requireSoloQuiz, quizOpenManually: false);
+          .copyWith(requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,
