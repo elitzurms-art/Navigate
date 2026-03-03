@@ -7,6 +7,7 @@ import '../../../services/auth_service.dart';
 import '../../../core/utils/test_data_generator.dart';
 import 'create_checkpoint_screen.dart';
 import 'edit_checkpoint_screen.dart';
+import 'checkpoint_import_screen.dart';
 
 /// מסך רשימת נקודות ציון
 class CheckpointsListScreen extends StatefulWidget {
@@ -161,6 +162,17 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
                                   color: Colors.grey[600],
                                 ),
                           ),
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.file_upload),
+                            label: const Text('ייבוא נקודות מקובץ'),
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => CheckpointImportScreen(area: widget.area),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     )
@@ -278,17 +290,28 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
       backgroundColor: Theme.of(context).primaryColor,
       foregroundColor: Colors.white,
       actions: [
-        if (checkpoints.isNotEmpty)
+        IconButton(
+          icon: const Icon(Icons.file_upload),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CheckpointImportScreen(area: widget.area),
+            ),
+          ),
+          tooltip: 'ייבוא נקודות מקובץ',
+        ),
+        if (_isDeveloper && checkpoints.isNotEmpty)
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             onPressed: () => _deleteAllCheckpoints(checkpoints.length),
             tooltip: 'מחק את כל הנקודות',
           ),
-        IconButton(
-          icon: const Icon(Icons.science),
-          onPressed: _create20TestCheckpoints,
-          tooltip: 'צור נקודות אקראיות בתוך שטח',
-        ),
+        if (_isDeveloper)
+          IconButton(
+            icon: const Icon(Icons.science),
+            onPressed: _create20TestCheckpoints,
+            tooltip: 'צור נקודות אקראיות בתוך שטח',
+          ),
       ],
     );
   }

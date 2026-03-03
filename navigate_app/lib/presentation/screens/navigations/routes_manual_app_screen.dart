@@ -4,7 +4,9 @@ import 'package:latlong2/latlong.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
+import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/user.dart';
+import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
@@ -16,6 +18,7 @@ import '../../widgets/map_with_selector.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
+import 'checkpoint_map_picker_screen.dart';
 import 'routes_verification_screen.dart';
 
 /// מסך חלוקה ידנית באפליקציה
@@ -39,6 +42,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
 
   // Data
   List<Checkpoint> _checkpoints = [];
+  Boundary? _boundary;
   List<String> _navigatorIds = [];
   Map<String, User> _usersCache = {};
 
@@ -182,8 +186,15 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         }
       }
 
+      // טעינת גבול גזרה (לשימוש במפת בחירת נקודות)
+      Boundary? boundary;
+      if (widget.navigation.boundaryLayerId != null) {
+        boundary = await BoundaryRepository().getById(widget.navigation.boundaryLayerId!);
+      }
+
       setState(() {
         _checkpoints = checkpoints;
+        _boundary = boundary;
         _navigatorIds = navigators;
         _usersCache = usersCache;
         _navigatorCheckpoints = navigatorCheckpoints;
@@ -374,7 +385,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                               });
                             },
                             title: Text(
-                              '${cp.sequenceNumber}. ${cp.name}',
+                              cp.displayLabel,
                               style: TextStyle(
                                 fontWeight: isSelected
                                     ? FontWeight.bold
@@ -791,7 +802,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                 children: _intermediatePointIds.map((cpId) {
                   final cp = _getCheckpoint(cpId);
                   return Chip(
-                    label: Text(cp?.name ?? cpId),
+                    label: Text(cp?.displayLabel ?? cpId),
                     backgroundColor: Colors.purple.shade50,
                     deleteIcon: const Icon(Icons.close, size: 16),
                     onDeleted: () {
@@ -823,13 +834,24 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     required Set<String> excludeIds,
     required ValueChanged<String?> onChanged,
   }) {
-    final items = _checkpoints
-        .where((c) => !excludeIds.contains(c.id))
-        .map((c) => DropdownMenuItem<String>(
-              value: c.id,
-              child: Text('${c.sequenceNumber}. ${c.name}'),
-            ))
-        .toList();
+    final items = <DropdownMenuItem<String>>[
+      DropdownMenuItem(
+        value: '__pick_on_map__',
+        child: Row(
+          children: [
+            Icon(Icons.map, size: 18, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('בחר במפה'),
+          ],
+        ),
+      ),
+      ..._checkpoints
+          .where((c) => !excludeIds.contains(c.id))
+          .map((c) => DropdownMenuItem<String>(
+                value: c.id,
+                child: Text(c.displayLabel),
+              )),
+    ];
 
     return Row(
       children: [
@@ -849,7 +871,19 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
               ),
             ),
             items: items,
-            onChanged: onChanged,
+            onChanged: (val) async {
+              if (val == '__pick_on_map__') {
+                final selectedId = await Navigator.push<String>(context,
+                  MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                    checkpoints: _checkpoints,
+                    boundary: _boundary,
+                    excludeIds: excludeIds,
+                  )));
+                if (selectedId != null) onChanged(selectedId);
+                return;
+              }
+              onChanged(val);
+            },
           ),
         ),
       ],
@@ -865,18 +899,45 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     final available = _checkpoints.where((c) => !excludeIds.contains(c.id)).toList();
 
     return PopupMenuButton<String>(
-      onSelected: (cpId) {
+      onSelected: (cpId) async {
+        if (cpId == '__pick_on_map__') {
+          final selectedId = await Navigator.push<String>(context,
+            MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+              checkpoints: _checkpoints,
+              boundary: _boundary,
+              excludeIds: excludeIds,
+            )));
+          if (selectedId != null) {
+            setState(() {
+              _intermediatePointIds.add(selectedId);
+              _syncIntermediateToAll();
+            });
+          }
+          return;
+        }
         setState(() {
           _intermediatePointIds.add(cpId);
           _syncIntermediateToAll();
         });
       },
-      itemBuilder: (_) => available.map((cp) {
-        return PopupMenuItem(
-          value: cp.id,
-          child: Text('${cp.sequenceNumber}. ${cp.name}'),
-        );
-      }).toList(),
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: '__pick_on_map__',
+          child: Row(
+            children: [
+              Icon(Icons.map, size: 18, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('בחר במפה'),
+            ],
+          ),
+        ),
+        ...available.map((cp) {
+          return PopupMenuItem(
+            value: cp.id,
+            child: Text(cp.displayLabel),
+          );
+        }),
+      ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(

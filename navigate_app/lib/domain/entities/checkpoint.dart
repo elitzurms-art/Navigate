@@ -92,6 +92,12 @@ class Checkpoint extends Equatable {
   /// האם זו נקודת פוליגון
   bool get isPolygon => geometryType == 'polygon';
 
+  /// תווית תצוגה: "מספר - תיאור/שם"
+  String get displayLabel {
+    final text = description.isNotEmpty ? description : name;
+    return text.isNotEmpty ? '$sequenceNumber - $text' : '$sequenceNumber';
+  }
+
   /// העתקה עם שינויים
   Checkpoint copyWith({
     String? id,

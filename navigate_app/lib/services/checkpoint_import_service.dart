@@ -79,14 +79,14 @@ class CheckpointImportService {
   // ──────── נקודת כניסה ────────
 
   /// ניתוח קובץ — מזהה פורמט, מנתח שורות, מחזיר תוצאה
-  static CheckpointImportResult parseFile(String filePath, Uint8List fileBytes) {
+  static CheckpointImportResult parseFile(String filePath, Uint8List fileBytes, {String? sheetName}) {
     final ext = filePath.split('.').last.toLowerCase();
     List<List<dynamic>> rows;
 
     if (ext == 'csv') {
       rows = _parseCsv(fileBytes);
     } else if (ext == 'xlsx' || ext == 'xls') {
-      rows = _parseXlsx(fileBytes);
+      rows = _parseXlsx(fileBytes, sheetName: sheetName);
     } else {
       return CheckpointImportResult(
         parsedRows: [],
@@ -118,14 +118,33 @@ class CheckpointImportService {
     if (content.startsWith('\uFEFF')) {
       content = content.substring(1);
     }
-    return const CsvToListConverter().convert(content);
+
+    // זיהוי אוטומטי של מפריד: tab, נקודה-פסיק, או פסיק
+    final firstDataLine = content.split('\n').firstWhere(
+        (l) => l.trim().isNotEmpty, orElse: () => '');
+    String delimiter = ',';
+    if (firstDataLine.contains('\t')) {
+      delimiter = '\t';
+    } else if (firstDataLine.contains(';')) {
+      delimiter = ';';
+    }
+
+    return CsvToListConverter(fieldDelimiter: delimiter).convert(content);
   }
 
   // ──────── XLSX ────────
 
-  static List<List<dynamic>> _parseXlsx(Uint8List bytes) {
+  /// מחזיר רשימת שמות גיליונות בקובץ XLSX
+  static List<String> getSheetNames(Uint8List fileBytes) {
+    final excel = Excel.decodeBytes(fileBytes);
+    return excel.tables.keys.toList();
+  }
+
+  static List<List<dynamic>> _parseXlsx(Uint8List bytes, {String? sheetName}) {
     final excel = Excel.decodeBytes(bytes);
-    final sheet = excel.tables[excel.tables.keys.first];
+    final sheet = sheetName != null
+        ? excel.tables[sheetName]
+        : excel.tables[excel.tables.keys.first];
     if (sheet == null) return [];
 
     final rows = <List<dynamic>>[];
@@ -304,7 +323,8 @@ class CheckpointImportService {
         final digits1 = val1.replaceAll(RegExp(r'[^0-9]'), '');
         final digits2 = val2.replaceAll(RegExp(r'[^0-9]'), '');
 
-        if (digits1.length == 6 && digits2.length == 6 &&
+        if ((digits1.length == 6 || digits1.length == 7) &&
+            (digits2.length == 6 || digits2.length == 7) &&
             int.tryParse(digits1) != null && int.tryParse(digits2) != null) {
           utm6Count++;
         } else {
@@ -355,11 +375,16 @@ class CheckpointImportService {
         return Coordinate(lat: latLng.latitude, lng: latLng.longitude, utm: raw);
 
       case CoordinateFormat.utm6plus6:
-        final east = row[1].toString().trim().replaceAll(RegExp(r'[^0-9]'), '');
-        final north = row[2].toString().trim().replaceAll(RegExp(r'[^0-9]'), '');
+        var east = row[1].toString().trim().replaceAll(RegExp(r'[^0-9]'), '');
+        var north = row[2].toString().trim().replaceAll(RegExp(r'[^0-9]'), '');
         if (east.isEmpty && north.isEmpty) return null;
+
+        // תמיכה ב-UTM מלא (7 ספרות) — חיתוך ספרה ראשונה לקבלת מוסכמת 6 ספרות צה"לית
+        if (east.length == 7) east = east.substring(1);
+        if (north.length == 7) north = north.substring(1);
+
         if (east.length != 6 || north.length != 6) {
-          throw FormatException('UTM 6+6 — כל ערך חייב להכיל 6 ספרות (מזרח: ${east.length}, צפון: ${north.length})');
+          throw FormatException('UTM 6+6 — כל ערך חייב להכיל 6-7 ספרות (מזרח: ${row[1]}, צפון: ${row[2]})');
         }
         final utmStr = east + north;
         if (!UtmConverter.isValidUtm(utmStr)) throw const FormatException('ערך UTM לא תקין');

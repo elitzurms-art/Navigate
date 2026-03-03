@@ -10,6 +10,7 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/checkpoint_import_service.dart';
+import '../../widgets/fullscreen_map_screen.dart';
 
 /// מסך ייבוא נקודות ציון מקובץ CSV/XLSX
 class CheckpointImportScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
   // קובץ
   String? _selectedFilePath;
   Uint8List? _fileBytes;
+  String? _selectedSheetName;
 
   // גבולות
   List<Boundary> _boundaries = [];
@@ -80,9 +82,30 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
     final picked = await CheckpointImportService.pickFile();
     if (picked == null) return;
 
+    // בחירת גיליון אם יש יותר מאחד בקובץ XLSX
+    String? sheetName;
+    final lowerPath = picked.path.toLowerCase();
+    if (lowerPath.endsWith('.xlsx') || lowerPath.endsWith('.xls')) {
+      final sheets = CheckpointImportService.getSheetNames(picked.bytes);
+      if (sheets.length > 1 && mounted) {
+        sheetName = await showDialog<String>(
+          context: context,
+          builder: (ctx) => SimpleDialog(
+            title: const Text('בחר גיליון'),
+            children: sheets.map((name) => SimpleDialogOption(
+              child: Text(name),
+              onPressed: () => Navigator.pop(ctx, name),
+            )).toList(),
+          ),
+        );
+        if (sheetName == null) return; // המשתמש ביטל
+      }
+    }
+
     setState(() {
       _selectedFilePath = picked.path;
       _fileBytes = picked.bytes;
+      _selectedSheetName = sheetName;
       _parseResult = null;
       _boundaryResults = [];
       _conflictResolutions.clear();
@@ -96,7 +119,8 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
     setState(() => _isParsing = true);
 
     try {
-      final result = CheckpointImportService.parseFile(_selectedFilePath!, _fileBytes!);
+      final result = CheckpointImportService.parseFile(
+          _selectedFilePath!, _fileBytes!, sheetName: _selectedSheetName);
 
       // טעינת נקודות קיימות לבדיקת התנגשויות
       final existing = await _checkpointRepo.getByArea(widget.area.id);
@@ -711,6 +735,7 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
                     label: Text('שנה חדשה', style: TextStyle(fontSize: 12)),
                   ),
                 ],
+                emptySelectionAllowed: true,
                 selected: resolution != null ? {resolution} : {},
                 onSelectionChanged: (selected) {
                   setState(() {
@@ -743,12 +768,39 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
               children: [
                 Icon(Icons.location_off, color: Colors.orange[800]),
                 const SizedBox(width: 8),
-                Text(
-                  'נקודות מחוץ לגבול (${outside.length})',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.orange[800],
+                Expanded(
+                  child: Text(
+                    'נקודות מחוץ לגבול (${outside.length})',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange[800],
+                    ),
                   ),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      for (final r in outside) {
+                        _removedOutsideBoundary.add(r.sequenceNumber);
+                      }
+                    });
+                  },
+                  icon: const Icon(Icons.remove_circle_outline, size: 18),
+                  label: const Text('הסר הכול', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(foregroundColor: Colors.red[700]),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      for (final r in outside) {
+                        _removedOutsideBoundary.remove(r.sequenceNumber);
+                      }
+                    });
+                  },
+                  icon: const Icon(Icons.check_circle_outline, size: 18),
+                  label: const Text('השאר הכול', style: TextStyle(fontSize: 12)),
+                  style: TextButton.styleFrom(foregroundColor: Colors.green[700]),
                 ),
               ],
             ),
@@ -831,9 +883,86 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text('תצוגה מקדימה', style: TextStyle(fontWeight: FontWeight.bold)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text('תצוגה מקדימה', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.fullscreen),
+                  tooltip: 'מסך מלא',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FullscreenMapScreen(
+                          title: 'תצוגה מקדימה',
+                          initialCenter: bounds.center,
+                          initialCameraFit: CameraFit.bounds(
+                            bounds: bounds,
+                            padding: const EdgeInsets.all(40),
+                          ),
+                          layers: [
+                            if (_selectedBoundary != null)
+                              PolygonLayer(
+                                polygons: [
+                                  Polygon(
+                                    points: _selectedBoundary!.coordinates
+                                        .map((c) => c.toLatLng())
+                                        .toList(),
+                                    color: Colors.black.withValues(alpha: 0.05),
+                                    borderColor: Colors.black,
+                                    borderStrokeWidth: 2,
+                                  ),
+                                ],
+                              ),
+                            MarkerLayer(
+                              markers: rows.map((row) {
+                                final isOutside = _boundaryResults.any(
+                                    (b) => b.sequenceNumber == row.sequenceNumber && !b.isInside);
+                                final color = isOutside
+                                    ? Colors.orange
+                                    : Checkpoint.flutterColorForType(row.detectedType);
+                                return Marker(
+                                  point: row.coordinate.toLatLng(),
+                                  width: 30,
+                                  height: 30,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.3),
+                                          blurRadius: 4,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '${row.sequenceNumber}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
           SizedBox(
             height: 300,

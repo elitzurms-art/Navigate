@@ -8,8 +8,11 @@ import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
+import '../../../domain/entities/boundary.dart';
+import '../../../data/repositories/boundary_repository.dart';
 import '../../../services/routes_distribution_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
+import 'checkpoint_map_picker_screen.dart';
 import 'routes_verification_screen.dart';
 
 /// שלב 2 - הגדרות חלוקה אוטומטית
@@ -34,6 +37,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   List<Checkpoint> _checkpoints = [];
   NavigationTree? _tree;
+  Boundary? _boundary;
   bool _isLoading = false;
 
   // הגדרות
@@ -153,9 +157,16 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       // טעינת רשימת מנווטים
       final navigatorsList = await _loadNavigatorsList(tree);
 
+      // טעינת גבול גזרה (לשימוש במפת בחירת נקודות)
+      Boundary? boundary;
+      if (widget.navigation.boundaryLayerId != null) {
+        boundary = await BoundaryRepository().getById(widget.navigation.boundaryLayerId!);
+      }
+
       setState(() {
         _checkpoints = checkpoints;
         _tree = tree;
+        _boundary = boundary;
         _navigatorsList = navigatorsList;
         _isLoading = false;
       });
@@ -909,16 +920,35 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 labelText: 'נקודת התחלה (משותפת) *',
               ),
               items: [
+                DropdownMenuItem(
+                  value: '__pick_on_map__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.map, size: 18, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('בחר במפה'),
+                    ],
+                  ),
+                ),
                 ..._checkpoints.map((cp) => DropdownMenuItem(
                   value: cp.id,
-                  child: Text('${cp.name} (${cp.sequenceNumber})'),
+                  child: Text(cp.displayLabel),
                 )),
               ],
               validator: (value) {
                 if (value == null) return 'חובה לבחור נקודת התחלה';
                 return null;
               },
-              onChanged: (value) {
+              onChanged: (value) async {
+                if (value == '__pick_on_map__') {
+                  final selectedId = await Navigator.push<String>(context,
+                    MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                      checkpoints: _checkpoints,
+                      boundary: _boundary,
+                    )));
+                  if (selectedId != null) setState(() => _startPointId = selectedId);
+                  return;
+                }
                 setState(() => _startPointId = value);
               },
             ),
@@ -932,16 +962,35 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 labelText: 'נקודת סיום (משותפת) *',
               ),
               items: [
+                DropdownMenuItem(
+                  value: '__pick_on_map__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.map, size: 18, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('בחר במפה'),
+                    ],
+                  ),
+                ),
                 ..._checkpoints.map((cp) => DropdownMenuItem(
                   value: cp.id,
-                  child: Text('${cp.name} (${cp.sequenceNumber})'),
+                  child: Text(cp.displayLabel),
                 )),
               ],
               validator: (value) {
                 if (value == null) return 'חובה לבחור נקודת סיום';
                 return null;
               },
-              onChanged: (value) {
+              onChanged: (value) async {
+                if (value == '__pick_on_map__') {
+                  final selectedId = await Navigator.push<String>(context,
+                    MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                      checkpoints: _checkpoints,
+                      boundary: _boundary,
+                    )));
+                  if (selectedId != null) setState(() => _endPointId = selectedId);
+                  return;
+                }
                 setState(() => _endPointId = value);
               },
             ),
@@ -1042,11 +1091,32 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 filled: true,
                 fillColor: Colors.white,
               ),
-              items: _checkpoints.map((cp) => DropdownMenuItem(
-                value: cp.id,
-                child: Text('${cp.name} (${cp.sequenceNumber})'),
-              )).toList(),
-              onChanged: (value) {
+              items: [
+                DropdownMenuItem(
+                  value: '__pick_on_map__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.map, size: 18, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('בחר במפה'),
+                    ],
+                  ),
+                ),
+                ..._checkpoints.map((cp) => DropdownMenuItem(
+                  value: cp.id,
+                  child: Text(cp.displayLabel),
+                )),
+              ],
+              onChanged: (value) async {
+                if (value == '__pick_on_map__') {
+                  final selectedId = await Navigator.push<String>(context,
+                    MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                      checkpoints: _checkpoints,
+                      boundary: _boundary,
+                    )));
+                  if (selectedId != null) _updateWaypointCheckpoint(index, selectedId);
+                  return;
+                }
                 if (value != null) {
                   _updateWaypointCheckpoint(index, value);
                 }
@@ -1255,12 +1325,31 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 ),
                 items: [
                   const DropdownMenuItem(value: null, child: Text('אוטומטי (אמצע הציר)')),
+                  DropdownMenuItem(
+                    value: '__pick_on_map__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.map, size: 18, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('בחר במפה'),
+                      ],
+                    ),
+                  ),
                   ..._checkpoints.map((cp) => DropdownMenuItem(
                     value: cp.id,
-                    child: Text('${cp.name} (${cp.sequenceNumber})'),
+                    child: Text(cp.displayLabel),
                   )),
                 ],
-                onChanged: (value) {
+                onChanged: (value) async {
+                  if (value == '__pick_on_map__') {
+                    final selectedId = await Navigator.push<String>(context,
+                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                        checkpoints: _checkpoints,
+                        boundary: _boundary,
+                      )));
+                    if (selectedId != null) setState(() => _swapPointId = selectedId);
+                    return;
+                  }
                   setState(() => _swapPointId = value);
                 },
               ),
