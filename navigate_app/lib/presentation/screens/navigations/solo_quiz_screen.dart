@@ -566,7 +566,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
 
         // כפתור הגשה
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
           child: SizedBox(
             width: double.infinity,
             height: 56,
