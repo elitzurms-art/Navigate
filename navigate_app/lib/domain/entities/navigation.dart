@@ -1,7 +1,10 @@
 import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
+import 'narration_entry.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
+import 'unit_checklist.dart';
+import 'variables_sheet.dart';
 
 /// מסלול מוקצה למנווט
 class AssignedRoute extends Equatable {
@@ -10,11 +13,17 @@ class AssignedRoute extends Equatable {
   final List<String> sequence;
   final String? startPointId; // נקודת התחלה של הציר
   final String? endPointId; // נקודת הסיום של הציר
+  final List<String> waypointIds; // מזהי נקודות ביניים (משותפות לכל המנווטים)
   final String status; // 'optimal', 'too_short', 'too_long', 'needs_adjustment'
   final bool isVerified; // האם הציר עבר וידוא
   final String approvalStatus; // 'not_submitted', 'pending_approval', 'approved', 'rejected'
-  final String rejectionNotes; // הערות פסילה מהמפקד
+  final String? rejectionNotes; // הערות פסילה מהמפקד
   final List<Coordinate> plannedPath; // נקודות ציר שצייר המנווט
+  final List<NarrationEntry> narrationEntries; // שורות סיפור דרך
+  final String? groupId; // מזהה קבוצה (לקישור בין מנווטים באותו ציר)
+  final String? segmentType; // 'full', 'first_half', 'second_half' (רלוונטי למאבטח)
+  final String? swapPointId; // נקודת ההחלפה (רלוונטי למאבטח)
+  final int? manualTimeMinutes; // זמן ידני (דקות) — דורס את החישוב האוטומטי
 
   /// תאימות אחורה — isApproved נגזר מ-approvalStatus
   bool get isApproved => approvalStatus == 'approved';
@@ -25,11 +34,17 @@ class AssignedRoute extends Equatable {
     required this.sequence,
     this.startPointId,
     this.endPointId,
+    this.waypointIds = const [],
     this.status = 'optimal',
     this.isVerified = false,
     this.approvalStatus = 'not_submitted',
-    this.rejectionNotes = '',
+    this.rejectionNotes,
     this.plannedPath = const [],
+    this.narrationEntries = const [],
+    this.groupId,
+    this.segmentType,
+    this.swapPointId,
+    this.manualTimeMinutes,
   });
 
   AssignedRoute copyWith({
@@ -38,11 +53,19 @@ class AssignedRoute extends Equatable {
     List<String>? sequence,
     String? startPointId,
     String? endPointId,
+    List<String>? waypointIds,
     String? status,
     bool? isVerified,
     String? approvalStatus,
     String? rejectionNotes,
+    bool clearRejectionNotes = false,
     List<Coordinate>? plannedPath,
+    List<NarrationEntry>? narrationEntries,
+    String? groupId,
+    String? segmentType,
+    String? swapPointId,
+    int? manualTimeMinutes,
+    bool clearManualTimeMinutes = false,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -50,11 +73,17 @@ class AssignedRoute extends Equatable {
       sequence: sequence ?? this.sequence,
       startPointId: startPointId ?? this.startPointId,
       endPointId: endPointId ?? this.endPointId,
+      waypointIds: waypointIds ?? this.waypointIds,
       status: status ?? this.status,
       isVerified: isVerified ?? this.isVerified,
       approvalStatus: approvalStatus ?? this.approvalStatus,
-      rejectionNotes: rejectionNotes ?? this.rejectionNotes,
+      rejectionNotes: clearRejectionNotes ? null : (rejectionNotes ?? this.rejectionNotes),
       plannedPath: plannedPath ?? this.plannedPath,
+      narrationEntries: narrationEntries ?? this.narrationEntries,
+      groupId: groupId ?? this.groupId,
+      segmentType: segmentType ?? this.segmentType,
+      swapPointId: swapPointId ?? this.swapPointId,
+      manualTimeMinutes: clearManualTimeMinutes ? null : (manualTimeMinutes ?? this.manualTimeMinutes),
     );
   }
 
@@ -65,13 +94,20 @@ class AssignedRoute extends Equatable {
       'sequence': sequence,
       if (startPointId != null) 'startPointId': startPointId,
       if (endPointId != null) 'endPointId': endPointId,
+      if (waypointIds.isNotEmpty) 'waypointIds': waypointIds,
       'status': status,
       'isVerified': isVerified,
       'approvalStatus': approvalStatus,
       'isApproved': isApproved, // תאימות אחורה
-      if (rejectionNotes.isNotEmpty) 'rejectionNotes': rejectionNotes,
+      if (rejectionNotes != null) 'rejectionNotes': rejectionNotes,
       if (plannedPath.isNotEmpty)
         'plannedPath': plannedPath.map((c) => c.toMap()).toList(),
+      if (narrationEntries.isNotEmpty)
+        'narrationEntries': narrationEntries.map((e) => e.toMap()).toList(),
+      if (groupId != null) 'groupId': groupId,
+      if (segmentType != null) 'segmentType': segmentType,
+      if (swapPointId != null) 'swapPointId': swapPointId,
+      if (manualTimeMinutes != null) 'manualTimeMinutes': manualTimeMinutes,
     };
   }
 
@@ -87,20 +123,79 @@ class AssignedRoute extends Equatable {
       sequence: List<String>.from(map['sequence'] as List),
       startPointId: map['startPointId'] as String?,
       endPointId: map['endPointId'] as String?,
+      waypointIds: map['waypointIds'] != null
+          ? List<String>.from(map['waypointIds'] as List)
+          : const [],
       status: map['status'] as String? ?? 'optimal',
       isVerified: map['isVerified'] as bool? ?? false,
       approvalStatus: approvalStatus,
-      rejectionNotes: map['rejectionNotes'] as String? ?? '',
+      rejectionNotes: map['rejectionNotes'] as String?,
       plannedPath: map['plannedPath'] != null
           ? (map['plannedPath'] as List)
               .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
               .toList()
           : const [],
+      narrationEntries: map['narrationEntries'] != null
+          ? (map['narrationEntries'] as List)
+              .map((e) => NarrationEntry.fromMap(e as Map<String, dynamic>))
+              .toList()
+          : const [],
+      groupId: map['groupId'] as String?,
+      segmentType: map['segmentType'] as String?,
+      swapPointId: map['swapPointId'] as String?,
+      manualTimeMinutes: map['manualTimeMinutes'] as int?,
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, status, isVerified, approvalStatus, plannedPath, rejectionNotes];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId, manualTimeMinutes];
+}
+
+/// אפשרות אישור כשחלוקה חורגת מהטווח
+class ApprovalOption extends Equatable {
+  final String type; // 'expand_range', 'reduce_checkpoints', 'accept_best'
+  final String label; // תיאור לתצוגה
+  final double? expandedMin; // טווח מורחב (עבור expand_range)
+  final double? expandedMax;
+  final int? reducedCheckpoints; // כמות מופחתת (עבור reduce_checkpoints)
+  final int? outOfRangeCount; // כמות צירים חורגים (עבור accept_best)
+
+  const ApprovalOption({
+    required this.type,
+    required this.label,
+    this.expandedMin,
+    this.expandedMax,
+    this.reducedCheckpoints,
+    this.outOfRangeCount,
+  });
+
+  @override
+  List<Object?> get props => [type, label, expandedMin, expandedMax, reducedCheckpoints, outOfRangeCount];
+}
+
+/// תוצאת חלוקה אוטומטית
+class DistributionResult extends Equatable {
+  final String status; // 'success', 'needs_approval'
+  final Map<String, AssignedRoute> routes;
+  final List<ApprovalOption> approvalOptions;
+  final bool hasSharedCheckpoints;
+  final int sharedCheckpointCount;
+  final ForceComposition? forceComposition; // nullable לתאימות אחורה
+
+  const DistributionResult({
+    required this.status,
+    required this.routes,
+    this.approvalOptions = const [],
+    this.hasSharedCheckpoints = false,
+    this.sharedCheckpointCount = 0,
+    this.forceComposition,
+  });
+
+  bool get isSuccess => status == 'success';
+  bool get needsApproval => status == 'needs_approval';
+
+  @override
+  List<Object?> get props => [status, routes, approvalOptions, hasSharedCheckpoints, sharedCheckpointCount, forceComposition];
 }
 
 /// טווח אורך מסלול
@@ -170,6 +265,26 @@ class NavigationPermissions extends Equatable {
   List<Object?> get props => [managers, viewers];
 }
 
+DateTime _parseDateTime(dynamic value) {
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.parse(value);
+  // Firestore Timestamp: has toDate() method
+  if (value != null && value.runtimeType.toString() == 'Timestamp') {
+    return (value as dynamic).toDate();
+  }
+  return DateTime.now();
+}
+
+DateTime? _parseDateTimeOrNull(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value);
+  if (value.runtimeType.toString() == 'Timestamp') {
+    return (value as dynamic).toDate();
+  }
+  return null;
+}
+
 /// ישות ניווט
 class Navigation extends Equatable {
   final String id;
@@ -199,6 +314,7 @@ class Navigation extends Equatable {
   final String? startPoint; // נקודת התחלה משותפת לכל המנווטים
   final String? endPoint; // נקודת הסיום משותפת לכל המנווטים
   final WaypointSettings waypointSettings; // הגדרות נקודות ביניים משותפות
+  final String? scoringCriterion; // קריטריון חלוקה (fairness, midpoint, uniqueness)
   final String? boundaryLayerId; // גבול גזרה
   final SafetyTimeSettings? safetyTime; // זמן בטיחות
   final bool distributeNow; // האם לחלק נקודות עכשיו
@@ -233,6 +349,31 @@ class Navigation extends Equatable {
   // Active settings
   final int gpsUpdateIntervalSeconds;
 
+  // Location sources
+  final List<String> enabledPositionSources;
+
+  // Manual position
+  final bool allowManualPosition;
+
+  // GPS Spoofing detection
+  final bool gpsSpoofingDetectionEnabled;
+  final int gpsSpoofingMaxDistanceKm;
+
+  // Force composition (הרכב הכוח)
+  final ForceComposition forceComposition;
+
+  // Communication (PTT)
+  final CommunicationSettings communicationSettings;
+
+  // Variables sheet (דף משתנים)
+  final VariablesSheet? variablesSheet;
+
+  // Checklists completion (צ'קליסטים)
+  final ChecklistCompletion? checklistCompletion;
+
+  // Time calculation
+  final TimeCalculationSettings timeCalculationSettings;
+
   // Permissions
   final NavigationPermissions permissions;
 
@@ -261,6 +402,7 @@ class Navigation extends Equatable {
     this.startPoint,
     this.endPoint,
     this.waypointSettings = const WaypointSettings(),
+    this.scoringCriterion,
     this.boundaryLayerId,
     this.safetyTime,
     this.distributeNow = false,
@@ -280,6 +422,15 @@ class Navigation extends Equatable {
     this.systemCheckStartTime,
     this.activeStartTime,
     required this.gpsUpdateIntervalSeconds,
+    this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+    this.allowManualPosition = false,
+    this.gpsSpoofingDetectionEnabled = true,
+    this.gpsSpoofingMaxDistanceKm = 50,
+    this.forceComposition = const ForceComposition(),
+    this.communicationSettings = const CommunicationSettings(),
+    this.variablesSheet,
+    this.checklistCompletion,
+    this.timeCalculationSettings = const TimeCalculationSettings(),
     required this.permissions,
     required this.createdAt,
     required this.updatedAt,
@@ -292,8 +443,8 @@ class Navigation extends Equatable {
   bool get isWaiting => status == 'waiting';
   bool get isSystemCheck => status == 'system_check';
   bool get isActive => status == 'active';
-  bool get isApproval => status == 'approval';
-  bool get isReview => status == 'review';
+  bool get isApproval => status == 'approval'; // backward compat — mapped to review
+  bool get isReview => status == 'review' || status == 'approval';
 
   Navigation copyWith({
     String? id,
@@ -317,6 +468,7 @@ class Navigation extends Equatable {
     String? startPoint,
     String? endPoint,
     WaypointSettings? waypointSettings,
+    String? scoringCriterion,
     String? boundaryLayerId,
     SafetyTimeSettings? safetyTime,
     bool? distributeNow,
@@ -336,6 +488,17 @@ class Navigation extends Equatable {
     DateTime? systemCheckStartTime,
     DateTime? activeStartTime,
     int? gpsUpdateIntervalSeconds,
+    List<String>? enabledPositionSources,
+    bool? allowManualPosition,
+    bool? gpsSpoofingDetectionEnabled,
+    int? gpsSpoofingMaxDistanceKm,
+    ForceComposition? forceComposition,
+    CommunicationSettings? communicationSettings,
+    VariablesSheet? variablesSheet,
+    bool clearVariablesSheet = false,
+    ChecklistCompletion? checklistCompletion,
+    bool clearChecklistCompletion = false,
+    TimeCalculationSettings? timeCalculationSettings,
     NavigationPermissions? permissions,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -362,6 +525,7 @@ class Navigation extends Equatable {
       startPoint: startPoint ?? this.startPoint,
       endPoint: endPoint ?? this.endPoint,
       waypointSettings: waypointSettings ?? this.waypointSettings,
+      scoringCriterion: scoringCriterion ?? this.scoringCriterion,
       boundaryLayerId: boundaryLayerId ?? this.boundaryLayerId,
       safetyTime: safetyTime ?? this.safetyTime,
       distributeNow: distributeNow ?? this.distributeNow,
@@ -381,6 +545,15 @@ class Navigation extends Equatable {
       systemCheckStartTime: systemCheckStartTime ?? this.systemCheckStartTime,
       activeStartTime: activeStartTime ?? this.activeStartTime,
       gpsUpdateIntervalSeconds: gpsUpdateIntervalSeconds ?? this.gpsUpdateIntervalSeconds,
+      enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
+      allowManualPosition: allowManualPosition ?? this.allowManualPosition,
+      gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
+      gpsSpoofingMaxDistanceKm: gpsSpoofingMaxDistanceKm ?? this.gpsSpoofingMaxDistanceKm,
+      forceComposition: forceComposition ?? this.forceComposition,
+      communicationSettings: communicationSettings ?? this.communicationSettings,
+      variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
+      checklistCompletion: clearChecklistCompletion ? null : (checklistCompletion ?? this.checklistCompletion),
+      timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -411,6 +584,7 @@ class Navigation extends Equatable {
       if (startPoint != null) 'startPoint': startPoint,
       if (endPoint != null) 'endPoint': endPoint,
       'waypointSettings': waypointSettings.toMap(),
+      if (scoringCriterion != null) 'scoringCriterion': scoringCriterion,
       if (boundaryLayerId != null) 'boundaryLayerId': boundaryLayerId,
       if (safetyTime != null) 'safetyTime': safetyTime!.toMap(),
       'distributeNow': distributeNow,
@@ -433,7 +607,22 @@ class Navigation extends Equatable {
       if (activeStartTime != null)
         'activeStartTime': activeStartTime!.toIso8601String(),
       'gpsUpdateIntervalSeconds': gpsUpdateIntervalSeconds,
+      'enabledPositionSources': enabledPositionSources,
+      'allowManualPosition': allowManualPosition,
+      'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
+      'gpsSpoofingMaxDistanceKm': gpsSpoofingMaxDistanceKm,
+      'forceComposition': forceComposition.toMap(),
+      'communicationSettings': communicationSettings.toMap(),
+      'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
+      if (variablesSheet != null) 'variablesSheet': variablesSheet!.toMap(),
+      if (checklistCompletion != null) 'checklistCompletion': checklistCompletion!.toMap(),
+      // Computed field for Firestore security rules — not stored in Drift
+      'participants': {
+        ...selectedParticipantIds,
+        ...permissions.managers,
+        createdBy,
+      }.toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -442,11 +631,11 @@ class Navigation extends Equatable {
   factory Navigation.fromMap(Map<String, dynamic> map) {
     return Navigation(
       id: map['id'] as String,
-      name: map['name'] as String,
-      status: map['status'] as String,
-      createdBy: map['createdBy'] as String,
-      treeId: map['treeId'] as String,
-      areaId: map['areaId'] as String,
+      name: map['name'] as String? ?? '',
+      status: map['status'] as String? ?? 'preparation',
+      createdBy: map['createdBy'] as String? ?? '',
+      treeId: map['treeId'] as String? ?? '',
+      areaId: map['areaId'] as String? ?? '',
       selectedUnitId: (map['selectedUnitId'] ?? map['frameworkId']) as String?,
       selectedSubFrameworkIds: map['selectedSubFrameworkIds'] != null
           ? List<String>.from(map['selectedSubFrameworkIds'] as List)
@@ -454,68 +643,84 @@ class Navigation extends Equatable {
       selectedParticipantIds: map['selectedParticipantIds'] != null
           ? List<String>.from(map['selectedParticipantIds'] as List)
           : const [],
-      layerNzId: map['layerNzId'] as String,
-      layerNbId: map['layerNbId'] as String,
-      layerGgId: map['layerGgId'] as String,
+      layerNzId: map['layerNzId'] as String? ?? '',
+      layerNbId: map['layerNbId'] as String? ?? '',
+      layerGgId: map['layerGgId'] as String? ?? '',
       layerBaId: map['layerBaId'] as String?,
-      distributionMethod: map['distributionMethod'] as String,
+      distributionMethod: map['distributionMethod'] as String? ?? 'automatic',
       navigationType: map['navigationType'] as String?,
       executionOrder: map['executionOrder'] as String?,
-      routeLengthKm: map['routeLengthKm'] != null
+      routeLengthKm: map['routeLengthKm'] is Map
           ? RouteLengthRange.fromMap(map['routeLengthKm'] as Map<String, dynamic>)
           : null,
       checkpointsPerNavigator: map['checkpointsPerNavigator'] as int?,
       startPoint: map['startPoint'] as String?,
       endPoint: map['endPoint'] as String?,
-      waypointSettings: map['waypointSettings'] != null
+      waypointSettings: map['waypointSettings'] is Map
           ? WaypointSettings.fromMap(map['waypointSettings'] as Map<String, dynamic>)
           : const WaypointSettings(),
+      scoringCriterion: map['scoringCriterion'] as String?,
       boundaryLayerId: map['boundaryLayerId'] as String?,
-      safetyTime: map['safetyTime'] != null
+      safetyTime: map['safetyTime'] is Map
           ? SafetyTimeSettings.fromMap(map['safetyTime'] as Map<String, dynamic>)
           : null,
       distributeNow: map['distributeNow'] as bool? ?? false,
-      learningSettings: LearningSettings.fromMap(
-        map['learningSettings'] as Map<String, dynamic>,
-      ),
-      verificationSettings: VerificationSettings.fromMap(
-        map['verificationSettings'] as Map<String, dynamic>,
-      ),
+      learningSettings: map['learningSettings'] is Map
+          ? LearningSettings.fromMap(map['learningSettings'] as Map<String, dynamic>)
+          : const LearningSettings(),
+      verificationSettings: map['verificationSettings'] is Map
+          ? VerificationSettings.fromMap(map['verificationSettings'] as Map<String, dynamic>)
+          : const VerificationSettings(autoVerification: false),
       allowOpenMap: map['allowOpenMap'] as bool? ?? false,
       showSelfLocation: map['showSelfLocation'] as bool? ?? false,
       showRouteOnMap: map['showRouteOnMap'] as bool? ?? false,
-      alerts: NavigationAlerts.fromMap(
-        map['alerts'] as Map<String, dynamic>,
-      ),
-      securitySettings: map['securitySettings'] != null
+      alerts: map['alerts'] is Map
+          ? NavigationAlerts.fromMap(map['alerts'] as Map<String, dynamic>)
+          : const NavigationAlerts(enabled: false),
+      securitySettings: map['securitySettings'] is Map
           ? SecuritySettings.fromMap(map['securitySettings'] as Map<String, dynamic>)
           : const SecuritySettings(),
-      reviewSettings: map['reviewSettings'] != null
+      reviewSettings: map['reviewSettings'] is Map
           ? ReviewSettings.fromMap(map['reviewSettings'] as Map<String, dynamic>)
           : const ReviewSettings(),
-      displaySettings: DisplaySettings.fromMap(
-        map['displaySettings'] as Map<String, dynamic>,
-      ),
-      routes: (map['routes'] as Map<String, dynamic>).map(
-        (k, v) => MapEntry(k, AssignedRoute.fromMap(v as Map<String, dynamic>)),
-      ),
+      displaySettings: map['displaySettings'] is Map
+          ? DisplaySettings.fromMap(map['displaySettings'] as Map<String, dynamic>)
+          : const DisplaySettings(),
+      routes: map['routes'] is Map
+          ? (map['routes'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, AssignedRoute.fromMap(v as Map<String, dynamic>)),
+            )
+          : const {},
       routesStage: map['routesStage'] as String?,
       routesDistributed: map['routesDistributed'] as bool? ?? false,
-      trainingStartTime: map['trainingStartTime'] != null
-          ? DateTime.parse(map['trainingStartTime'] as String)
+      trainingStartTime: _parseDateTimeOrNull(map['trainingStartTime']),
+      systemCheckStartTime: _parseDateTimeOrNull(map['systemCheckStartTime']),
+      activeStartTime: _parseDateTimeOrNull(map['activeStartTime']),
+      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 5,
+      enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
+      allowManualPosition: map['allowManualPosition'] as bool? ?? false,
+      gpsSpoofingDetectionEnabled: map['gpsSpoofingDetectionEnabled'] as bool? ?? true,
+      gpsSpoofingMaxDistanceKm: (map['gpsSpoofingMaxDistanceKm'] as num?)?.toInt() ?? 50,
+      forceComposition: map['forceComposition'] is Map
+          ? ForceComposition.fromMap(map['forceComposition'] as Map<String, dynamic>)
+          : const ForceComposition(),
+      communicationSettings: map['communicationSettings'] is Map
+          ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
+          : const CommunicationSettings(),
+      variablesSheet: map['variablesSheet'] is Map
+          ? VariablesSheet.fromMap(map['variablesSheet'] as Map<String, dynamic>)
           : null,
-      systemCheckStartTime: map['systemCheckStartTime'] != null
-          ? DateTime.parse(map['systemCheckStartTime'] as String)
+      checklistCompletion: map['checklistCompletion'] is Map
+          ? ChecklistCompletion.fromMap(map['checklistCompletion'] as Map<String, dynamic>)
           : null,
-      activeStartTime: map['activeStartTime'] != null
-          ? DateTime.parse(map['activeStartTime'] as String)
-          : null,
-      gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int,
-      permissions: NavigationPermissions.fromMap(
-        map['permissions'] as Map<String, dynamic>,
-      ),
-      createdAt: DateTime.parse(map['createdAt'] as String),
-      updatedAt: DateTime.parse(map['updatedAt'] as String),
+      timeCalculationSettings: map['timeCalculationSettings'] is Map
+          ? TimeCalculationSettings.fromMap(map['timeCalculationSettings'] as Map<String, dynamic>)
+          : const TimeCalculationSettings(),
+      permissions: map['permissions'] is Map
+          ? NavigationPermissions.fromMap(map['permissions'] as Map<String, dynamic>)
+          : const NavigationPermissions(managers: [], viewers: []),
+      createdAt: _parseDateTime(map['createdAt']),
+      updatedAt: _parseDateTime(map['updatedAt']),
     );
   }
 
@@ -542,6 +747,7 @@ class Navigation extends Equatable {
     startPoint,
     endPoint,
     waypointSettings,
+    scoringCriterion,
     boundaryLayerId,
     safetyTime,
     distributeNow,
@@ -561,10 +767,50 @@ class Navigation extends Equatable {
     systemCheckStartTime,
     activeStartTime,
     gpsUpdateIntervalSeconds,
+    enabledPositionSources,
+    allowManualPosition,
+    gpsSpoofingDetectionEnabled,
+    gpsSpoofingMaxDistanceKm,
+    forceComposition,
+    communicationSettings,
+    variablesSheet,
+    checklistCompletion,
+    timeCalculationSettings,
     permissions,
     createdAt,
     updatedAt,
   ];
+
+  /// Sorts navigator IDs by force composition groups and execution order.
+  /// For pair/squad: groups together. For guard: first_half before second_half.
+  List<String> sortByGroup(Iterable<String> navigatorIds) {
+    final ids = navigatorIds.toList();
+    if (forceComposition.isSolo) return ids;
+
+    final sortedGroupIds = routes.values
+        .where((r) => r.groupId != null)
+        .map((r) => r.groupId!)
+        .toSet()
+        .toList()
+      ..sort();
+
+    ids.sort((a, b) {
+      final groupA = routes[a]?.groupId;
+      final groupB = routes[b]?.groupId;
+      if (groupA == null && groupB == null) return 0;
+      if (groupA == null) return 1;
+      if (groupB == null) return -1;
+      final cmp = sortedGroupIds.indexOf(groupA).compareTo(sortedGroupIds.indexOf(groupB));
+      if (cmp != 0) return cmp;
+      if (forceComposition.isGuard) {
+        const segOrder = {'first_half': 0, 'full': 1, 'second_half': 2};
+        return (segOrder[routes[a]?.segmentType] ?? 1)
+            .compareTo(segOrder[routes[b]?.segmentType] ?? 1);
+      }
+      return 0;
+    });
+    return ids;
+  }
 
   @override
   String toString() => 'Navigation(id: $id, name: $name, status: $status)';
