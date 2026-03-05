@@ -2016,7 +2016,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('תקן'),
+            child: const Text('דקור עכשיו'),
           ),
         ],
       ),

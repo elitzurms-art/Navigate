@@ -197,65 +197,123 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
       return const Center(child: Text('בחר לפחות סוג מבחן אחד'));
     }
 
+    final commanders = _users.where((u) => _isCommanderRole(u.role)).toList();
+    final navigators = _users.where((u) => !_isCommanderRole(u.role)).toList();
+
     return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SingleChildScrollView(
-        child: _buildDataTable(),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (commanders.isNotEmpty) ...[
+              Text('מפקדים ומנהלים (${commanders.length})',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              _buildDataTable(commanders, isCommanderTable: true),
+              const SizedBox(height: 24),
+            ],
+            if (navigators.isNotEmpty) ...[
+              Text('מנווטים (${navigators.length})',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              _buildDataTable(navigators, isCommanderTable: false),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildDataTable() {
-    final columns = <DataColumn>[
-      const DataColumn(label: Text('שם', style: TextStyle(fontWeight: FontWeight.bold))),
-      const DataColumn(label: Text('תפקיד', style: TextStyle(fontWeight: FontWeight.bold))),
+  bool _isCommanderRole(String role) {
+    return role == 'commander' || role == 'unit_admin' || role == 'developer' || role == 'admin';
+  }
+
+  Map<int, TableColumnWidth> get _columnWidths {
+    final widths = <int, TableColumnWidth>{
+      0: const FlexColumnWidth(3),
+      1: const FlexColumnWidth(2),
+    };
+    int col = 2;
+    if (_showSoloQuiz) widths[col++] = const FlexColumnWidth(2);
+    if (_showRegularQuiz) widths[col++] = const FlexColumnWidth(2);
+    if (_showCommanderQuiz) widths[col++] = const FlexColumnWidth(2);
+    return widths;
+  }
+
+  Widget _buildDataTable(List<User> users, {required bool isCommanderTable}) {
+    final headerCells = <Widget>[
+      _buildHeaderCell('שם'),
+      _buildHeaderCell('תפקיד'),
+    ];
+    if (_showSoloQuiz) headerCells.add(_buildHeaderCell('מבחן בדד'));
+    if (_showRegularQuiz) headerCells.add(_buildHeaderCell('מבחן רגיל'));
+    if (_showCommanderQuiz) headerCells.add(_buildHeaderCell('מבחן מפקדים'));
+
+    final rows = <TableRow>[
+      TableRow(
+        decoration: BoxDecoration(color: Colors.grey[100]),
+        children: headerCells,
+      ),
     ];
 
-    if (_showSoloQuiz) {
-      columns.add(const DataColumn(label: Text('מבחן בדד', style: TextStyle(fontWeight: FontWeight.bold))));
-    }
-    if (_showRegularQuiz) {
-      columns.add(const DataColumn(label: Text('מבחן רגיל', style: TextStyle(fontWeight: FontWeight.bold))));
-    }
-    if (_showCommanderQuiz) {
-      columns.add(const DataColumn(label: Text('מבחן מפקדים', style: TextStyle(fontWeight: FontWeight.bold))));
-    }
-
-    final rows = _users.map((user) {
-      final cells = <DataCell>[
-        DataCell(Text(user.fullName.isNotEmpty ? user.fullName : user.uid)),
-        DataCell(Text(_getRoleName(user.role))),
+    for (final user in users) {
+      final cells = <Widget>[
+        _buildTableCell(Text(user.fullName.isNotEmpty ? user.fullName : user.uid)),
+        _buildTableCell(Text(_getRoleName(user.role))),
       ];
-
       if (_showSoloQuiz) {
-        cells.add(_buildStatusCell(user.soloQuizPassedAt, user.soloQuizScore));
+        cells.add(isCommanderTable
+            ? _buildDashCell()
+            : _buildStatusCell(user.soloQuizPassedAt, user.soloQuizScore));
       }
       if (_showRegularQuiz) {
-        // מבחן רגיל — כרגע אין שדה ייעודי ב-User, מוצג כ"לא ביצע"
-        cells.add(_buildStatusCell(null, null));
+        cells.add(isCommanderTable
+            ? _buildDashCell()
+            : _buildStatusCell(null, null));
       }
       if (_showCommanderQuiz) {
         cells.add(_buildStatusCell(user.commanderQuizPassedAt, user.commanderQuizScore));
       }
+      rows.add(TableRow(children: cells));
+    }
 
-      return DataRow(cells: cells);
-    }).toList();
-
-    return DataTable(
-      columns: columns,
-      rows: rows,
-      headingRowColor: WidgetStateProperty.all(Colors.grey[100]),
-      columnSpacing: 24,
+    return Table(
+      columnWidths: _columnWidths,
+      border: TableBorder.all(color: Colors.grey[300]!),
+      children: rows,
     );
   }
 
-  DataCell _buildStatusCell(DateTime? passedAt, int? score) {
+  Widget _buildHeaderCell(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildTableCell(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: child,
+    );
+  }
+
+  Widget _buildDashCell() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Text('-', style: TextStyle(color: Colors.grey, fontSize: 13)),
+    );
+  }
+
+  Widget _buildStatusCell(DateTime? passedAt, int? score) {
     final status = _getQuizStatus(passedAt, score);
     final color = _getQuizStatusColor(passedAt);
     final icon = _getQuizStatusIcon(passedAt);
 
-    return DataCell(
-      Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 16, color: color),
@@ -295,67 +353,92 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
     final cellStyle = pw.TextStyle(font: font, fontSize: 9);
     final titleStyle = pw.TextStyle(font: fontBold, fontSize: 16);
 
+    final commanders = _users.where((u) => _isCommanderRole(u.role)).toList();
+    final navigators = _users.where((u) => !_isCommanderRole(u.role)).toList();
+
+    final headers = <String>[];
+    if (_showCommanderQuiz) headers.add('מבחן מפקדים');
+    if (_showRegularQuiz) headers.add('מבחן רגיל');
+    if (_showSoloQuiz) headers.add('מבחן בדד');
+    headers.addAll(['תפקיד', 'שם']);
+
+    List<List<String>> buildRows(List<User> users, {required bool isCommanderTable}) {
+      return users.map((user) {
+        final row = <String>[];
+        if (_showCommanderQuiz) {
+          row.add(_getQuizStatus(user.commanderQuizPassedAt, user.commanderQuizScore));
+        }
+        if (_showRegularQuiz) {
+          row.add(isCommanderTable ? '-' : _getQuizStatus(null, null));
+        }
+        if (_showSoloQuiz) {
+          row.add(isCommanderTable ? '-' : _getQuizStatus(user.soloQuizPassedAt, user.soloQuizScore));
+        }
+        row.add(_getRoleName(user.role));
+        row.add(user.fullName.isNotEmpty ? user.fullName : user.uid);
+        return row;
+      }).toList();
+    }
+
+    // PDF columns are RTL: quiz cols first, then role, then name
+    final pdfColumnWidths = <int, pw.TableColumnWidth>{};
+    int pdfCol = 0;
+    if (_showCommanderQuiz) pdfColumnWidths[pdfCol++] = const pw.FlexColumnWidth(2);
+    if (_showRegularQuiz) pdfColumnWidths[pdfCol++] = const pw.FlexColumnWidth(2);
+    if (_showSoloQuiz) pdfColumnWidths[pdfCol++] = const pw.FlexColumnWidth(2);
+    pdfColumnWidths[pdfCol++] = const pw.FlexColumnWidth(2); // Role
+    pdfColumnWidths[pdfCol] = const pw.FlexColumnWidth(3); // Name
+
+    pw.Widget buildPdfTable(String title, List<List<String>> data) {
+      return pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(title, style: pw.TextStyle(font: fontBold, fontSize: 12)),
+          pw.SizedBox(height: 6),
+          pw.TableHelper.fromTextArray(
+            headers: headers,
+            data: data,
+            columnWidths: pdfColumnWidths,
+            headerStyle: headerStyle,
+            cellStyle: cellStyle,
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+            cellAlignment: pw.Alignment.centerRight,
+            headerAlignment: pw.Alignment.centerRight,
+            border: pw.TableBorder.all(color: PdfColors.grey400),
+            cellPadding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          ),
+        ],
+      );
+    }
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4.landscape,
         textDirection: pw.TextDirection.rtl,
         build: (context) {
-          final headers = <String>[];
-          if (_showCommanderQuiz) headers.add('מבחן מפקדים');
-          if (_showRegularQuiz) headers.add('מבחן רגיל');
-          if (_showSoloQuiz) headers.add('מבחן בדד');
-          headers.addAll(['תפקיד', 'שם']);
-
-          final data = _users.map((user) {
-            final row = <String>[];
-            if (_showCommanderQuiz) {
-              row.add(_getQuizStatus(user.commanderQuizPassedAt, user.commanderQuizScore));
-            }
-            if (_showRegularQuiz) {
-              row.add(_getQuizStatus(null, null));
-            }
-            if (_showSoloQuiz) {
-              row.add(_getQuizStatus(user.soloQuizPassedAt, user.soloQuizScore));
-            }
-            row.add(_getRoleName(user.role));
-            row.add(user.fullName.isNotEmpty ? user.fullName : user.uid);
-            return row;
-          }).toList();
-
           return [
             pw.Directionality(
               textDirection: pw.TextDirection.rtl,
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text(
-                    'דוח מבחנים — $_unitName',
-                    style: titleStyle,
-                  ),
+                  pw.Text('דוח מבחנים — $_unitName', style: titleStyle),
                   pw.SizedBox(height: 4),
                   pw.Text(
                     'סוגי מבחנים: ${quizTypes.join(", ")} | תאריך: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
                     style: cellStyle,
                   ),
                   pw.SizedBox(height: 12),
-                  pw.TableHelper.fromTextArray(
-                    headers: headers,
-                    data: data,
-                    headerStyle: headerStyle,
-                    cellStyle: cellStyle,
-                    headerDecoration: const pw.BoxDecoration(
-                      color: PdfColors.grey300,
-                    ),
-                    cellAlignment: pw.Alignment.centerRight,
-                    headerAlignment: pw.Alignment.centerRight,
-                    border: pw.TableBorder.all(color: PdfColors.grey400),
-                    cellPadding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  ),
+                  if (commanders.isNotEmpty) ...[
+                    buildPdfTable('מפקדים ומנהלים (${commanders.length})',
+                        buildRows(commanders, isCommanderTable: true)),
+                    pw.SizedBox(height: 16),
+                  ],
+                  if (navigators.isNotEmpty)
+                    buildPdfTable('מנווטים (${navigators.length})',
+                        buildRows(navigators, isCommanderTable: false)),
                   pw.SizedBox(height: 12),
-                  pw.Text(
-                    'סה"כ: ${_users.length} משתמשים',
-                    style: cellStyle,
-                  ),
+                  pw.Text('סה"כ: ${_users.length} משתמשים', style: cellStyle),
                 ],
               ),
             ),

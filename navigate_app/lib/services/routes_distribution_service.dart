@@ -716,12 +716,13 @@ class RoutesDistributionService {
     }
     final distMatrix = _buildDistanceMatrix(allPoints);
 
-    final bool needsSharing = pool.length < N * K ||
-        params.scoringCriterion == 'doubleCheck'; // doubleCheck דורש חפיפה מכוונת
+    final bool needsSharing = pool.length < N * K;
+    final bool isDoubleCheck = params.scoringCriterion == 'doubleCheck';
 
     // --- שלב 2: חיפוש Monte Carlo (ייחודי) ---
     _InternalDistribution? bestDistribution;
 
+    // doubleCheck: מריץ גם ייחודי וגם שיתוף — שני השלבים תמיד
     if (!needsSharing) {
       bestDistribution = _targetLengthWithSA(
         pool: pool,
@@ -744,8 +745,8 @@ class RoutesDistributionService {
       );
     }
 
-    // --- שלב 2.5: Fallback — שיתוף נקודות ---
-    if (bestDistribution == null || !bestDistribution.allInRange) {
+    // --- שלב 2.5: שיתוף נקודות — fallback או חובה ב-doubleCheck ---
+    if (bestDistribution == null || !bestDistribution.allInRange || isDoubleCheck) {
       final sharedResult = _targetLengthWithSA(
         pool: pool,
         navigators: navigators,
@@ -910,11 +911,14 @@ class RoutesDistributionService {
       }
 
       // early exit: תוצאה מושלמת — שונות נמוכה + הכל בטווח
+      // סף דינמי: 1% מריבוע טווח אורך המסלול (מתאים לטווחים שונים)
       if (allInRange && !hasSharing) {
         final routeLengths = optimized.values.map((r) => r.routeLengthKm).toList();
         final meanLen = routeLengths.reduce((a, b) => a + b) / routeLengths.length;
         final varianceLen = routeLengths.map((l) => (l - meanLen) * (l - meanLen)).reduce((a, b) => a + b) / routeLengths.length;
-        if (varianceLen < 0.001) break;
+        final rangeSpan = maxRoute - minRoute;
+        final earlyExitThreshold = max(0.001, 0.01 * rangeSpan * rangeSpan);
+        if (varianceLen < earlyExitThreshold) break;
       }
 
       // --- Multi-start restart (רופיש 6): כל 100 סיבובים, SA נוסף מהפתרון הטוב ביותר ---
@@ -1099,40 +1103,43 @@ class RoutesDistributionService {
     return distribution;
   }
 
-  /// חלוקה גיאוגרפית — מיון לפי זווית מהמרכז (centroid) → sectors שווים
+  /// חלוקה גיאוגרפית — K-Means clustering (10 איטרציות) + איזון דליים ריקים
   static List<List<_SimpleCheckpoint>> _geographicPartition(
     List<_SimpleCheckpoint> pool,
     int N,
     Random random,
   ) {
     if (N <= 0 || pool.isEmpty) return [];
+    if (N == 1) return [List.from(pool)];
 
-    // חישוב centroid
-    double sumLat = 0, sumLng = 0;
-    for (final cp in pool) {
-      sumLat += cp.lat;
-      sumLng += cp.lng;
-    }
-    final centLat = sumLat / pool.length;
-    final centLng = sumLng / pool.length;
+    // K-Means initialization: בחירת N מרכזים אקראיים מהפול
+    final shuffled = List<_SimpleCheckpoint>.from(pool)..shuffle(random);
+    var centroids = shuffled.take(N).map((c) => [c.lat, c.lng]).toList();
 
-    // חישוב זווית מהמרכז לכל נקודה + offset אקראי למניעת הטיה
-    final angleOffset = random.nextDouble() * 2 * pi;
-    final withAngle = pool.map((cp) {
-      final angle = atan2(cp.lat - centLat, cp.lng - centLng) + angleOffset;
-      final normalized = angle % (2 * pi);
-      return MapEntry(cp, normalized);
-    }).toList();
+    var buckets = List.generate(N, (_) => <_SimpleCheckpoint>[]);
 
-    // מיון לפי זווית
-    withAngle.sort((a, b) => a.value.compareTo(b.value));
+    for (int iter = 0; iter < 10; iter++) {
+      buckets = List.generate(N, (_) => <_SimpleCheckpoint>[]);
 
-    // חלוקה ל-N sectors שווים
-    final buckets = List.generate(N, (_) => <_SimpleCheckpoint>[]);
-    final sectorSize = 2 * pi / N;
-    for (final entry in withAngle) {
-      final sectorIdx = (entry.value / sectorSize).floor().clamp(0, N - 1);
-      buckets[sectorIdx].add(entry.key);
+      // שיוך כל נקודה למרכז הקרוב ביותר
+      for (final cp in pool) {
+        int bestCluster = 0;
+        double bestDist = double.infinity;
+        for (int c = 0; c < N; c++) {
+          final d = _haversine(cp.lat, cp.lng, centroids[c][0], centroids[c][1]);
+          if (d < bestDist) { bestDist = d; bestCluster = c; }
+        }
+        buckets[bestCluster].add(cp);
+      }
+
+      // עדכון מרכזים
+      for (int c = 0; c < N; c++) {
+        if (buckets[c].isEmpty) continue;
+        centroids[c] = [
+          buckets[c].map((p) => p.lat).reduce((a, b) => a + b) / buckets[c].length,
+          buckets[c].map((p) => p.lng).reduce((a, b) => a + b) / buckets[c].length,
+        ];
+      }
     }
 
     // איזון: אם יש דלי ריק, העבר מדלי גדול
@@ -1195,11 +1202,12 @@ class RoutesDistributionService {
       // מיון לפי קרבה למרחק אידיאלי
       scored.sort((a, b) => a.value.compareTo(b.value));
 
-      // Phase 6: Boltzmann selection מתוך 10 מועמדים (במקום top-3 אקראי)
+      // Phase 6: Boltzmann selection מתוך 10 מועמדים — τ אדפטיבי לפי מרחק היעד
       final topN = min(10, scored.length);
       final candidates = scored.sublist(0, topN);
       final bestDiff = candidates.first.value;
-      final weights = candidates.map((e) => exp(-(e.value - bestDiff) / 0.5)).toList();
+      final boltzmannTau = max(0.05, idealSegment * 0.15);
+      final weights = candidates.map((e) => exp(-(e.value - bestDiff) / boltzmannTau)).toList();
       final totalWeight = weights.reduce((a, b) => a + b);
       var roll = random.nextDouble() * totalWeight;
       _SimpleCheckpoint pick = candidates.first.key;
@@ -1322,11 +1330,13 @@ class RoutesDistributionService {
       r1[ci1] = old1; r2[ci2] = old2; // undo
     }
     // טמפרטורה התחלתית = median של הדלתות (כך SA מקבל ~50% מהלכים גרועים בהתחלה)
-    double startTemperature = 1.0;
+    // רצפה דינמית — מבוססת על טווח אורכי המסלולים
+    final dynamicFloor = max(0.01, (maxRoute - minRoute) * 0.05);
+    double startTemperature = dynamicFloor;
     if (calibrationDeltas.isNotEmpty) {
       calibrationDeltas.sort();
       startTemperature = calibrationDeltas[calibrationDeltas.length ~/ 2];
-      if (startTemperature < 0.01) startTemperature = 0.01;
+      if (startTemperature < dynamicFloor) startTemperature = dynamicFloor;
     }
 
     double temperature = startTemperature;
@@ -1336,6 +1346,10 @@ class RoutesDistributionService {
     // Reheat tracking
     double bestSAScore = currentScore;
     int noImprovementCount = 0;
+
+    // --- סטטיסטיקות מהלכים ---
+    int acceptedSwaps = 0, acceptedRelocates = 0, acceptedMoves = 0;
+    int acceptedCrossExchanges = 0, accepted2Opts = 0, snapshotRestores = 0;
 
     for (int step = 0; step < steps; step++) {
       temperature *= coolingRate;
@@ -1375,8 +1389,8 @@ class RoutesDistributionService {
         route1[idx1] = cp2;
         route2[idx2] = cp1;
 
-        final newResult1 = _rebuildRoute(route1, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
-        final newResult2 = _rebuildRoute(route2, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult1 = _rebuildRouteLight(route1, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
+        final newResult2 = _rebuildRouteLight(route2, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
 
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav1] = newResult1;
@@ -1387,6 +1401,7 @@ class RoutesDistributionService {
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
+          acceptedSwaps++;
         } else {
           route1[idx1] = cp1;
           route2[idx2] = cp2;
@@ -1442,8 +1457,8 @@ class RoutesDistributionService {
           if (!allowSharing) freePool.add(removedFromTo.id);
         }
 
-        final newResult1 = _rebuildRoute(routeFrom, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
-        final newResult2 = _rebuildRoute(routeTo, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult1 = _rebuildRouteLight(routeFrom, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
+        final newResult2 = _rebuildRouteLight(routeTo, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
 
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[navFrom] = newResult1;
@@ -1454,6 +1469,7 @@ class RoutesDistributionService {
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
+          acceptedRelocates++;
         } else {
           // undo
           if (removedFromTo != null) {
@@ -1469,7 +1485,7 @@ class RoutesDistributionService {
         }
 
       } else if (moveRoll < 0.70 && (freePool.isNotEmpty || allowSharing)) {
-        // === MOVE: החלפת נקודה בציר עם נקודה מהפול החופשי ===
+        // === MOVE: החלפת נקודה בציר עם נקודה מהפול — בחירה לפי שכנות ===
         final navIdx = random.nextInt(navigators.length);
         final nav = navigators[navIdx];
         final route = routeChunks[nav];
@@ -1480,14 +1496,27 @@ class RoutesDistributionService {
 
         _SimpleCheckpoint? newCp;
         if (allowSharing) {
-          final candidate = pool[random.nextInt(pool.length)];
-          if (candidate.id == oldCp.id) continue;
-          newCp = candidate;
+          // בחירה מבוססת שכנות: מיון לפי מרחק מהנקודה הנוכחית, בחירה מ-K קרובים
+          final neighbors = List<_SimpleCheckpoint>.from(pool)
+            ..removeWhere((c) => c.id == oldCp.id);
+          if (neighbors.isEmpty) continue;
+          neighbors.sort((a, b) =>
+            _dist(oldCp.id, a.id, distMatrix).compareTo(_dist(oldCp.id, b.id, distMatrix)));
+          final topK = min(8, neighbors.length);
+          newCp = neighbors[random.nextInt(topK)];
         } else {
           if (freePool.isEmpty) continue;
+          // בחירה מבוססת שכנות מהפול החופשי
           final freeList = freePool.toList();
-          final newId = freeList[random.nextInt(freeList.length)];
-          newCp = cpMap[newId];
+          if (freeList.length <= 8) {
+            newCp = cpMap[freeList[random.nextInt(freeList.length)]];
+          } else {
+            // מיון לפי מרחק מהנקודה הנוכחית, בחירה מ-8 קרובים
+            freeList.sort((a, b) =>
+              _dist(oldCp.id, a, distMatrix).compareTo(_dist(oldCp.id, b, distMatrix)));
+            final pickId = freeList[random.nextInt(8)];
+            newCp = cpMap[pickId];
+          }
           if (newCp == null) continue;
         }
 
@@ -1499,7 +1528,7 @@ class RoutesDistributionService {
           freePool.add(oldCp.id);
         }
 
-        final newResult = _rebuildRoute(route, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult = _rebuildRouteLight(route, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav] = newResult;
         final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
@@ -1508,6 +1537,7 @@ class RoutesDistributionService {
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
+          acceptedMoves++;
         } else {
           route[removeIdx] = oldCp;
           if (!allowSharing) {
@@ -1552,8 +1582,8 @@ class RoutesDistributionService {
           route2[start2 + c] = chain1[c];
         }
 
-        final newResult1 = _rebuildRoute(route1, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
-        final newResult2 = _rebuildRoute(route2, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult1 = _rebuildRouteLight(route1, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
+        final newResult2 = _rebuildRouteLight(route2, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
 
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav1] = newResult1;
@@ -1564,6 +1594,7 @@ class RoutesDistributionService {
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
+          acceptedCrossExchanges++;
         } else {
           // undo
           for (int c = 0; c < chainLen; c++) {
@@ -1594,7 +1625,7 @@ class RoutesDistributionService {
           right--;
         }
 
-        final newResult = _rebuildRoute(route, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+        final newResult = _rebuildRouteLight(route, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav] = newResult;
         final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
@@ -1603,6 +1634,7 @@ class RoutesDistributionService {
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
           currentRoutes = testRoutes;
           currentScore = newScore;
+          accepted2Opts++;
         } else {
           // undo: היפוך חזרה
           left = i;
@@ -1628,6 +1660,7 @@ class RoutesDistributionService {
         freePool.addAll(savedFreePool);
         currentRoutes = savedRoutes;
         currentScore = savedScore;
+        snapshotRestores++;
         continue;
       }
 
@@ -1644,13 +1677,30 @@ class RoutesDistributionService {
       }
     }
 
+    // --- לוג סטטיסטיקות ---
+    final totalAccepted = acceptedSwaps + acceptedRelocates + acceptedMoves + acceptedCrossExchanges + accepted2Opts;
+    print('[SA] steps=$steps accepted=$totalAccepted '
+        '(swap=$acceptedSwaps reloc=$acceptedRelocates move=$acceptedMoves '
+        'cross=$acceptedCrossExchanges 2opt=$accepted2Opts) '
+        'restores=$snapshotRestores score=${currentScore.toStringAsFixed(2)}');
+
     // ולידציה סופית: אם K invariant שבור, חזרה לפתרון ההתחלתי
     final finalChunksValid = routeChunks.values.every((r) => r.length == K);
     if (!finalChunksValid) {
       return Map.from(initial);
     }
 
-    return currentRoutes;
+    // --- אופטימיזציה סופית: NN-TSP + 2-opt על כל ציר ---
+    // במהלך SA השתמשנו ב-_rebuildRouteLight (ללא 2-opt) למהירות.
+    // כעת מריצים _rebuildRoute מלא לשיפור סדר הנקודות הסופי.
+    final finalRoutes = <String, _RouteResult>{};
+    for (final nav in navigators) {
+      final chunk = routeChunks[nav];
+      if (chunk == null) continue;
+      finalRoutes[nav] = _rebuildRoute(chunk, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+    }
+
+    return finalRoutes;
   }
 
   /// בניית ציר מחדש אחרי שינוי נקודות
@@ -1681,6 +1731,42 @@ class RoutesDistributionService {
       checkpointIds: chunk.map((c) => c.id).toList(),
       sequence: sequence.map((c) => c.id).toList(),
       waypointIds: waypointIds,
+      routeLengthKm: length,
+      inRange: length >= minRoute && length <= maxRoute,
+    );
+  }
+
+  /// בניית ציר מחדש — גרסה קלה (ללא NN-TSP / 2-opt)
+  /// שומרת על סדר הנקודות הנוכחי, מכניסה waypoints ומחשבת אורך.
+  /// משמשת ב-SA לצורך הערכה מהירה של מהלכי SWAP/MOVE/RELOCATE/CROSS.
+  static _RouteResult _rebuildRouteLight(
+    List<_SimpleCheckpoint> chunk,
+    _SimpleCheckpoint? startCp,
+    _SimpleCheckpoint? endCp,
+    List<_SimpleWaypoint> waypoints,
+    List<_SimpleCheckpoint> allCheckpoints,
+    double minRoute,
+    double maxRoute,
+    Map<String, Map<String, double>> distMatrix,
+  ) {
+    final sequence = List<_SimpleCheckpoint>.from(chunk);
+    if (waypoints.isNotEmpty) {
+      _insertWaypointsIntoSequence(sequence, startCp, endCp, waypoints, allCheckpoints, distMatrix);
+    }
+    final result = _buildRouteWithWaypoints(
+      chunk: chunk,
+      sequence: sequence,
+      startCp: startCp,
+      endCp: endCp,
+      waypoints: waypoints,
+      allCheckpoints: allCheckpoints,
+      distMatrix: distMatrix,
+    );
+    final length = result['length'] as double;
+    return _RouteResult(
+      checkpointIds: chunk.map((c) => c.id).toList(),
+      sequence: sequence.map((c) => c.id).toList(),
+      waypointIds: result['waypointIds'] as List<String>,
       routeLengthKm: length,
       inRange: length >= minRoute && length <= maxRoute,
     );
@@ -1733,21 +1819,27 @@ class RoutesDistributionService {
     final result = <_SimpleCheckpoint>[];
 
     _SimpleCheckpoint current;
-    if (startCp != null) {
-      remaining.sort((a, b) =>
-          _dist(startCp.id, a.id, distMatrix)
-          .compareTo(_dist(startCp.id, b.id, distMatrix)));
-      current = remaining.removeAt(0);
+    if (startCp != null && remaining.isNotEmpty) {
+      int bestIdx = 0;
+      double bestDist = _dist(startCp.id, remaining[0].id, distMatrix);
+      for (int i = 1; i < remaining.length; i++) {
+        final d = _dist(startCp.id, remaining[i].id, distMatrix);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      current = remaining.removeAt(bestIdx);
     } else {
       current = remaining.removeAt(0);
     }
     result.add(current);
 
     while (remaining.isNotEmpty) {
-      remaining.sort((a, b) =>
-          _dist(current.id, a.id, distMatrix)
-          .compareTo(_dist(current.id, b.id, distMatrix)));
-      current = remaining.removeAt(0);
+      int bestIdx = 0;
+      double bestDist = _dist(current.id, remaining[0].id, distMatrix);
+      for (int i = 1; i < remaining.length; i++) {
+        final d = _dist(current.id, remaining[i].id, distMatrix);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      current = remaining.removeAt(bestIdx);
       result.add(current);
     }
 
