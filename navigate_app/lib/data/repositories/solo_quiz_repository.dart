@@ -547,6 +547,195 @@ class SoloQuizRepository {
     },
   ];
 
+  /// טעינת שאלות מבחן מפקדים
+  Future<List<SoloQuizQuestion>> getCommanderQuestions() async {
+    try {
+      final snapshot = await _firestore
+          .collection('commander_quiz_questions')
+          .orderBy('order')
+          .get();
+      if (snapshot.docs.isNotEmpty) {
+        return snapshot.docs
+            .map((doc) => SoloQuizQuestion.fromMap(doc.data(), doc.id))
+            .toList();
+      }
+    } catch (_) {
+      // Firestore לא זמין / אין הרשאות — fallback לשאלות מקומיות
+    }
+    return _defaultCommanderQuestions
+        .asMap()
+        .entries
+        .map((e) => SoloQuizQuestion.fromMap(e.value, 'commander_${e.key}'))
+        .toList();
+  }
+
+  /// טעינת הגדרות מבחן מפקדים (אחוז מעבר)
+  Future<int> getCommanderPassingScore() async {
+    try {
+      final doc = await _firestore
+          .collection('commander_quiz_config')
+          .doc('settings')
+          .get();
+      if (doc.exists) {
+        return doc.data()?['passingScore'] as int? ?? 85;
+      }
+    } catch (_) {
+      // Firestore לא זמין / אין הרשאות — fallback לברירת מחדל
+    }
+    return 85;
+  }
+
+  /// זריעת שאלות מבחן מפקדים (10 שאלות) + הגדרות
+  Future<void> seedDefaultCommanderQuestions() async {
+    final batch = _firestore.batch();
+
+    final questions = _defaultCommanderQuestions;
+    for (final q in questions) {
+      final docRef = _firestore.collection('commander_quiz_questions').doc();
+      batch.set(docRef, q);
+    }
+
+    batch.set(
+      _firestore.collection('commander_quiz_config').doc('settings'),
+      {'passingScore': 85},
+    );
+
+    await batch.commit();
+  }
+
+  static List<Map<String, dynamic>> get _defaultCommanderQuestions => [
+    {
+      'order': 1,
+      'type': 'single',
+      'question': 'מי המפקד המוסמך לאשר את תיק הניווט היחידתי?',
+      'options': [
+        'מנהל הניווט',
+        'מפקד הפלוגה',
+        'מפקד יחידה בדרגת סא"ל לפחות',
+        'קצין בטיחות חטיבתי',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 2,
+      'type': 'single',
+      'question': 'מהו התנאי לביצוע ניווט לילה על פי המנחה?',
+      'options': [
+        'אישור של מפקד בדרגת אל"ם',
+        'הימצאות פנס לכל חייל',
+        'ביצוע ניווט יום מוצלח באורך 3 קילומטרים לפחות',
+        'ראות של 100 אחוז אור ירח',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 3,
+      'type': 'single',
+      'question': 'מהי האחריות הרפואית של מנהל הניווט לגבי רכב הפינוי?',
+      'options': [
+        'לוודא שיש נהג תורן בבסיס',
+        'הגדרת רכב 4X4 עם חובש, 100 ליטר מים לקירור ואמצעי קשר',
+        'לוודא שיש ערכת עזרה ראשונה בתיק של המנווט',
+        'תיאום אמבולנס אזרחי שימתין בנקודת הסוף',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 4,
+      'type': 'single',
+      'question': 'באיזה מרחק מינימלי ממפגע ניתן לקבוע נקודת ציון?',
+      'options': [
+        '50 מטרים',
+        '100 מטרים',
+        '200 מטרים',
+        '500 מטרים',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 5,
+      'type': 'single',
+      'question': 'מהו קצב ההליכה המחושב לניווט לילה לצורך קביעת שעת גג?',
+      'options': [
+        '1.5 קמ"ש',
+        '2 קמ"ש',
+        '2.5 קמ"ש',
+        '4 קמ"ש',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 6,
+      'type': 'single',
+      'question': 'מתי על מפקד מאשר הניווט לתת את האישור הסופי?',
+      'options': [
+        'שבוע לפני האימון',
+        'בערב שלפני הניווט',
+        'בטווח של שעתיים לפני תחילת הביצוע',
+        'מיד לאחר סיום מסדר היציאה',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 7,
+      'type': 'single',
+      'question': 'מהי התדירות הנדרשת לביצוע סיור בטיחות בשטח הניווט?',
+      'options': [
+        'לפני כל ניווט מחדש',
+        'אחת לרבעון',
+        'פעם בחמש שנים',
+        'רק אם יש תלונות מהמנווטים על השטח',
+      ],
+      'correctAnswers': [0],
+      'isReadiness': false,
+    },
+    {
+      'order': 8,
+      'type': 'single',
+      'question': 'מהי חובת מנהל הניווט בנקודת בקרה לגבי המנווטים?',
+      'options': [
+        'רק לוודא שהם עברו בנקודה',
+        'בדיקה פרטנית של מצבם הבריאותי, המקצועי והמצאות ותקינות הציוד',
+        'חלוקת ממתקים לעידוד המורל',
+        'החלפת המפה למפה חדשה',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+    {
+      'order': 9,
+      'type': 'single',
+      'question': 'מהן המגבלות לביצוע ניווט בשטח אש?',
+      'options': [
+        'אין הגבלות, כל יחידה יכולה לנווט בכל שטח אש',
+        'רק באישור טלפוני מהמתא"ם',
+        'אישור מפקד היחידה בעלת השטח, אל"מ חתום על תיק ניווט וסריקת נפלים מתועדת',
+        'ניווט בשטחי אש מותר רק בסופי שבוע',
+      ],
+      'correctAnswers': [2],
+      'isReadiness': false,
+    },
+    {
+      'order': 10,
+      'type': 'single',
+      'question': 'מה הפעולה המיידית של מנהל הניווט עם קבלת הודעה על מנווט במצוקה?',
+      'options': [
+        'להנחות את המנווט להמשיך לנקודת הסיום',
+        'הפסקת הניווט וביצוע פעולות עזרה מיידיות',
+        'לתת לו להסתדר לבד - הוא לוחם ולא ילד',
+        'המתנה של שעה לראות אם המצב משתפר',
+      ],
+      'correctAnswers': [1],
+      'isReadiness': false,
+    },
+  ];
+
   /// חישוב ציון מבחן
   int calculateScore(
     List<SoloQuizQuestion> questions,

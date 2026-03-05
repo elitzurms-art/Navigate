@@ -115,6 +115,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   int _gpsSpoofingMaxDistanceKm = 50;
 
   // מבחן
+  bool _requireCommanderQuiz = false;
   bool _requireSoloQuiz = false;
   String _quizType = 'solo';
 
@@ -457,6 +458,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _gpsSpoofingMaxDistanceKm = nav.gpsSpoofingMaxDistanceKm;
 
     // מבחן
+    _requireCommanderQuiz = nav.learningSettings.requireCommanderQuiz;
     _requireSoloQuiz = nav.learningSettings.requireSoloQuiz;
     _quizType = nav.learningSettings.quizType;
 
@@ -1428,6 +1430,15 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           children: [
             if (!widget.alertsOnlyMode) ...[
               SwitchListTile(
+                title: const Text('הפעל מבחן מפקדים'),
+                subtitle: const Text('מפקדים יידרשו לעבור מבחן ידע'),
+                value: _requireCommanderQuiz,
+                onChanged: (value) {
+                  setState(() => _requireCommanderQuiz = value);
+                  _onSettingChanged();
+                },
+              ),
+              SwitchListTile(
                 title: const Text('הפעל מבחן למנווטים'),
                 subtitle: const Text('מנווטים יידרשו לעבור מבחן ידע לפני הניווט'),
                 value: _requireSoloQuiz,
@@ -2147,7 +2158,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     try {
       // יצירת ההגדרות
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
-          .copyWith(requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
+          .copyWith(requireCommanderQuiz: _requireCommanderQuiz, commanderQuizOpenManually: false, requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,

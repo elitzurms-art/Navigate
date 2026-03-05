@@ -332,6 +332,8 @@ class LearningSettings extends Equatable {
   final DateTime? learningDate; // תאריך לימוד
   final String? learningStartTime; // שעת התחלה (HH:mm)
   final String? learningEndTime; // שעת סיום (HH:mm)
+  final bool requireCommanderQuiz; // הפעל מבחן מפקדים
+  final bool commanderQuizOpenManually; // מפקד פתח מבחן מפקדים ידנית
   final bool requireSoloQuiz; // חובת מבחן ניווט בדד
   final String quizType; // סוג מבחן: 'solo' (בדד) או 'regular' (רגיל)
   final bool quizOpenManually; // מפקד פתח מבחן ידנית
@@ -352,6 +354,8 @@ class LearningSettings extends Equatable {
     this.learningDate,
     this.learningStartTime,
     this.learningEndTime,
+    this.requireCommanderQuiz = false,
+    this.commanderQuizOpenManually = false,
     this.requireSoloQuiz = false,
     this.quizType = 'solo',
     this.quizOpenManually = false,
@@ -373,6 +377,8 @@ class LearningSettings extends Equatable {
     DateTime? learningDate,
     String? learningStartTime,
     String? learningEndTime,
+    bool? requireCommanderQuiz,
+    bool? commanderQuizOpenManually,
     bool? requireSoloQuiz,
     String? quizType,
     bool? quizOpenManually,
@@ -393,6 +399,8 @@ class LearningSettings extends Equatable {
       learningDate: learningDate ?? this.learningDate,
       learningStartTime: learningStartTime ?? this.learningStartTime,
       learningEndTime: learningEndTime ?? this.learningEndTime,
+      requireCommanderQuiz: requireCommanderQuiz ?? this.requireCommanderQuiz,
+      commanderQuizOpenManually: commanderQuizOpenManually ?? this.commanderQuizOpenManually,
       requireSoloQuiz: requireSoloQuiz ?? this.requireSoloQuiz,
       quizType: quizType ?? this.quizType,
       quizOpenManually: quizOpenManually ?? this.quizOpenManually,
@@ -417,6 +425,8 @@ class LearningSettings extends Equatable {
         'learningDate': learningDate!.toIso8601String(),
       if (learningStartTime != null) 'learningStartTime': learningStartTime,
       if (learningEndTime != null) 'learningEndTime': learningEndTime,
+      'requireCommanderQuiz': requireCommanderQuiz,
+      'commanderQuizOpenManually': commanderQuizOpenManually,
       'requireSoloQuiz': requireSoloQuiz,
       'quizType': quizType,
       'quizOpenManually': quizOpenManually,
@@ -443,6 +453,8 @@ class LearningSettings extends Equatable {
           : null,
       learningStartTime: map['learningStartTime'] as String?,
       learningEndTime: map['learningEndTime'] as String?,
+      requireCommanderQuiz: map['requireCommanderQuiz'] as bool? ?? false,
+      commanderQuizOpenManually: map['commanderQuizOpenManually'] as bool? ?? false,
       requireSoloQuiz: map['requireSoloQuiz'] as bool? ?? false,
       quizType: map['quizType'] as String? ?? 'solo',
       quizOpenManually: map['quizOpenManually'] as bool? ?? false,
@@ -474,8 +486,17 @@ class LearningSettings extends Equatable {
     return false;
   }
 
+  /// האם מבחן מפקדים פתוח כרגע (מיידי — ברגע שהופעל)
+  bool get isCommanderQuizCurrentlyOpen {
+    if (!requireCommanderQuiz) return false;
+    if (commanderQuizOpenManually) return true;
+    return false;
+  }
+
   @override
   List<Object?> get props => [
+        requireCommanderQuiz,
+        commanderQuizOpenManually,
         enabledWithPhones,
         showAllCheckpoints,
         showNavigationDetails,

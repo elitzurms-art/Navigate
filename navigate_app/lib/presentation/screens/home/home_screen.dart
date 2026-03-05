@@ -18,8 +18,12 @@ import '../units/unit_members_screen.dart';
 import '../units/checklist_management_screen.dart';
 import '../onboarding/pending_approvals_screen.dart';
 import '../admin/lost_users_screen.dart';
+import '../navigations/solo_quiz_screen.dart';
+import '../quiz/quiz_report_screen.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
+import '../../../data/repositories/navigation_repository.dart';
+import '../../../domain/entities/user.dart';
 
 /// מסך ראשי עם מפה
 class HomeScreen extends StatefulWidget {
@@ -38,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _unitName = '';
   String _userRole = '';
   HatInfo? _currentHat;
+  User? _currentUser;
+  bool? _commanderQuizPassed;
   StreamSubscription<RemoteMessage>? _joinRequestSubscription;
 
   @override
@@ -101,10 +107,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = await _authService.getCurrentUser();
     if (user != null && mounted) {
       setState(() {
+        _currentUser = user;
         _userName = user.fullName;
         _unitName = hat?.unitName ?? '';
         _userRole = user.role;
       });
+      _loadCommanderQuizStatus();
     }
   }
 
@@ -277,6 +285,67 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
+            // מבחן מפקדים — מפקדים/מנהלים
+            if (_currentHat?.type == HatType.admin ||
+                _currentHat?.type == HatType.commander ||
+                _currentHat == null)
+              ListTile(
+                leading: Icon(
+                  Icons.quiz,
+                  color: _commanderQuizPassed == true ? Colors.green : Colors.purple,
+                ),
+                title: Text(_commanderQuizPassed == true
+                    ? 'מבחן מפקדים — בוצע בהצלחה'
+                    : 'מבחן מפקדים'),
+                enabled: _commanderQuizPassed != true,
+                onTap: () async {
+                  Navigator.pop(context);
+                  final navData = await _findNavigationWithCommanderQuiz();
+                  if (navData == null) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('אין ניווט עם מבחן מפקדים מופעל')),
+                      );
+                    }
+                    return;
+                  }
+                  final nav = navData['navigation'];
+                  if (_currentUser != null && mounted) {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SoloQuizScreen(
+                          navigation: nav,
+                          currentUser: _currentUser!,
+                          quizType: 'commander',
+                        ),
+                      ),
+                    );
+                    _loadUserInfo();
+                  }
+                },
+              ),
+            // דוח מבחנים — מפקדים/מנהלים
+            if (_currentHat?.type == HatType.admin ||
+                _currentHat?.type == HatType.commander ||
+                _userRole == 'developer' ||
+                _userRole == 'unit_admin')
+              ListTile(
+                leading: const Icon(Icons.assessment, color: Colors.blue),
+                title: const Text('דוח מבחנים'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final user = _currentUser;
+                  if (user?.unitId != null && user!.unitId!.isNotEmpty && mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => QuizReportScreen(unitId: user.unitId!),
+                      ),
+                    );
+                  }
+                },
+              ),
             // יחידות — מפתח בלבד
             if (_userRole == 'developer')
               ListTile(
@@ -372,6 +441,37 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  /// בדיקת סטטוס מבחן מפקדים — בודק אם יש ניווט פעיל עם מבחן מפקדים מופעל
+  Future<void> _loadCommanderQuizStatus() async {
+    final user = _currentUser;
+    if (user == null) return;
+
+    try {
+      // בדיקה האם למשתמש יש מבחן מפקדים בתוקף
+      _commanderQuizPassed = user.hasCommanderQuizValid;
+      if (mounted) setState(() {});
+    } catch (_) {
+      // שקט
+    }
+  }
+
+  /// חיפוש ניווט פעיל עם מבחן מפקדים מופעל ופתוח
+  Future<Map<String, dynamic>?> _findNavigationWithCommanderQuiz() async {
+    try {
+      final navRepo = NavigationRepository();
+      final navigations = await navRepo.getAll();
+      for (final nav in navigations) {
+        if (nav.learningSettings.isCommanderQuizCurrentlyOpen &&
+            nav.status != 'review') {
+          return {'navigation': nav};
+        }
+      }
+    } catch (_) {
+      // שקט
+    }
+    return null;
   }
 
   Future<int> _getPendingCount() async {

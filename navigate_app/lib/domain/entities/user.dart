@@ -17,6 +17,8 @@ class User extends Equatable {
   final String? approvalStatus; // null, "pending", "approved", "rejected"
   final DateTime? soloQuizPassedAt; // מתי עבר מבחן בדד
   final int? soloQuizScore; // ציון מבחן בדד
+  final DateTime? commanderQuizPassedAt; // מתי עבר מבחן מפקדים
+  final int? commanderQuizScore; // ציון מבחן מפקדים
   final String? activeSessionId; // session ID לאכיפת מכשיר יחיד (Firestore-only)
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -36,6 +38,8 @@ class User extends Equatable {
     this.approvalStatus,
     this.soloQuizPassedAt,
     this.soloQuizScore,
+    this.commanderQuizPassedAt,
+    this.commanderQuizScore,
     this.activeSessionId,
     required this.createdAt,
     required this.updatedAt,
@@ -106,6 +110,13 @@ class User extends Equatable {
     return soloQuizPassedAt!.isAfter(fourMonthsAgo);
   }
 
+  /// האם מבחן מפקדים בתוקף (עבר ב-4 חודשים האחרונים)
+  bool get hasCommanderQuizValid {
+    if (commanderQuizPassedAt == null) return false;
+    final fourMonthsAgo = DateTime.now().subtract(const Duration(days: 120));
+    return commanderQuizPassedAt!.isAfter(fourMonthsAgo);
+  }
+
   /// העתקה עם שינויים
   User copyWith({
     String? uid,
@@ -127,6 +138,10 @@ class User extends Equatable {
     bool clearSoloQuizPassedAt = false,
     int? soloQuizScore,
     bool clearSoloQuizScore = false,
+    DateTime? commanderQuizPassedAt,
+    bool clearCommanderQuizPassedAt = false,
+    int? commanderQuizScore,
+    bool clearCommanderQuizScore = false,
     String? activeSessionId,
     bool clearActiveSessionId = false,
     DateTime? createdAt,
@@ -147,6 +162,8 @@ class User extends Equatable {
       approvalStatus: clearApprovalStatus ? null : (approvalStatus ?? this.approvalStatus),
       soloQuizPassedAt: clearSoloQuizPassedAt ? null : (soloQuizPassedAt ?? this.soloQuizPassedAt),
       soloQuizScore: clearSoloQuizScore ? null : (soloQuizScore ?? this.soloQuizScore),
+      commanderQuizPassedAt: clearCommanderQuizPassedAt ? null : (commanderQuizPassedAt ?? this.commanderQuizPassedAt),
+      commanderQuizScore: clearCommanderQuizScore ? null : (commanderQuizScore ?? this.commanderQuizScore),
       activeSessionId: clearActiveSessionId ? null : (activeSessionId ?? this.activeSessionId),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -174,6 +191,8 @@ class User extends Equatable {
                   : approvalStatus, // "pending" or null
       if (soloQuizPassedAt != null) 'soloQuizPassedAt': soloQuizPassedAt!.toIso8601String(),
       if (soloQuizScore != null) 'soloQuizScore': soloQuizScore,
+      if (commanderQuizPassedAt != null) 'commanderQuizPassedAt': commanderQuizPassedAt!.toIso8601String(),
+      if (commanderQuizScore != null) 'commanderQuizScore': commanderQuizScore,
       if (activeSessionId != null) 'activeSessionId': activeSessionId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -227,6 +246,10 @@ class User extends Equatable {
           ? DateTime.parse(map['soloQuizPassedAt'] as String)
           : null,
       soloQuizScore: map['soloQuizScore'] as int?,
+      commanderQuizPassedAt: map['commanderQuizPassedAt'] != null
+          ? DateTime.parse(map['commanderQuizPassedAt'] as String)
+          : null,
+      commanderQuizScore: map['commanderQuizScore'] as int?,
       activeSessionId: map['activeSessionId'] as String?,
       createdAt: map['createdAt'] != null
           ? DateTime.parse(map['createdAt'] as String)
@@ -253,6 +276,8 @@ class User extends Equatable {
     approvalStatus,
     soloQuizPassedAt,
     soloQuizScore,
+    commanderQuizPassedAt,
+    commanderQuizScore,
     activeSessionId,
     createdAt,
     updatedAt,

@@ -53,12 +53,17 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
       });
 
       final bool isRegular = widget.quizType == 'regular';
-      final questions = isRegular
-          ? await _quizRepo.getRegularQuestions()
-          : await _quizRepo.getQuestions();
-      final passingScore = isRegular
-          ? await _quizRepo.getRegularPassingScore()
-          : await _quizRepo.getPassingScore();
+      final bool isCommander = widget.quizType == 'commander';
+      final questions = isCommander
+          ? await _quizRepo.getCommanderQuestions()
+          : isRegular
+              ? await _quizRepo.getRegularQuestions()
+              : await _quizRepo.getQuestions();
+      final passingScore = isCommander
+          ? await _quizRepo.getCommanderPassingScore()
+          : isRegular
+              ? await _quizRepo.getRegularPassingScore()
+              : await _quizRepo.getPassingScore();
 
       if (questions.isEmpty) {
         setState(() {
@@ -68,7 +73,7 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         return;
       }
 
-      final readiness = isRegular
+      final readiness = (isRegular || isCommander)
           ? <SoloQuizQuestion>[]
           : questions.where((q) => q.isReadiness).toList();
       final knowledge = questions.where((q) => !q.isReadiness).toList();
@@ -209,13 +214,22 @@ class _SoloQuizScreenState extends State<SoloQuizScreen> {
         passed: passed,
       );
 
-      if (passed && widget.quizType == 'solo') {
-        final updatedUser = widget.currentUser.copyWith(
-          soloQuizPassedAt: DateTime.now(),
-          soloQuizScore: score,
-          updatedAt: DateTime.now(),
-        );
-        await _userRepo.saveUserLocally(updatedUser);
+      if (passed) {
+        if (widget.quizType == 'solo') {
+          final updatedUser = widget.currentUser.copyWith(
+            soloQuizPassedAt: DateTime.now(),
+            soloQuizScore: score,
+            updatedAt: DateTime.now(),
+          );
+          await _userRepo.saveUserLocally(updatedUser);
+        } else if (widget.quizType == 'commander') {
+          final updatedUser = widget.currentUser.copyWith(
+            commanderQuizPassedAt: DateTime.now(),
+            commanderQuizScore: score,
+            updatedAt: DateTime.now(),
+          );
+          await _userRepo.saveUserLocally(updatedUser);
+        }
       }
 
       setState(() => _isSubmitting = false);

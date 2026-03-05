@@ -1544,6 +1544,8 @@ class SyncManager {
         approvalStatus: Value(approvalStatus),
         soloQuizPassedAt: Value(_parseDateTime(data['soloQuizPassedAt'])),
         soloQuizScore: Value(data['soloQuizScore'] as int?),
+        commanderQuizPassedAt: Value(_parseDateTime(data['commanderQuizPassedAt'])),
+        commanderQuizScore: Value(data['commanderQuizScore'] as int?),
         createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),

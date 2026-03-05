@@ -161,6 +161,8 @@ class UserRepository {
           approvalStatus: Value(user.approvalStatus),
           soloQuizPassedAt: Value(user.soloQuizPassedAt),
           soloQuizScore: Value(user.soloQuizScore),
+          commanderQuizPassedAt: Value(user.commanderQuizPassedAt),
+          commanderQuizScore: Value(user.commanderQuizScore),
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         ),
@@ -204,6 +206,8 @@ class UserRepository {
       approvalStatus: row.approvalStatus ?? (row.isApproved ? 'approved' : null),
       soloQuizPassedAt: row.soloQuizPassedAt,
       soloQuizScore: row.soloQuizScore,
+      commanderQuizPassedAt: row.commanderQuizPassedAt,
+      commanderQuizScore: row.commanderQuizScore,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     );

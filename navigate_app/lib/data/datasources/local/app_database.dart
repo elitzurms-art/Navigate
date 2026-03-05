@@ -28,6 +28,8 @@ class Users extends Table {
   TextColumn get approvalStatus => text().nullable()();
   DateTimeColumn get soloQuizPassedAt => dateTime().nullable()();
   IntColumn get soloQuizScore => integer().nullable()();
+  DateTimeColumn get commanderQuizPassedAt => dateTime().nullable()();
+  IntColumn get commanderQuizScore => integer().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -410,7 +412,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 37;
+  int get schemaVersion => 38;
 
   @override
   MigrationStrategy get migration {
@@ -654,6 +656,10 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 36 && to >= 37) {
           await safeAddColumn(units, units.checklistsJson);
           await safeAddColumn(navigations, navigations.checklistCompletionJson);
+        }
+        if (from <= 37 && to >= 38) {
+          await safeAddColumn(users, users.commanderQuizPassedAt);
+          await safeAddColumn(users, users.commanderQuizScore);
         }
       },
     );
