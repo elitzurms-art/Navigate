@@ -175,7 +175,7 @@ class ApprovalOption extends Equatable {
 
 /// תוצאת חלוקה אוטומטית
 class DistributionResult extends Equatable {
-  final String status; // 'success', 'needs_approval'
+  final String status; // 'success', 'needs_approval', 'needs_swap_point'
   final Map<String, AssignedRoute> routes;
   final List<ApprovalOption> approvalOptions;
   final bool hasSharedCheckpoints;
@@ -193,6 +193,7 @@ class DistributionResult extends Equatable {
 
   bool get isSuccess => status == 'success';
   bool get needsApproval => status == 'needs_approval';
+  bool get needsSwapPoint => status == 'needs_swap_point';
 
   @override
   List<Object?> get props => [status, routes, approvalOptions, hasSharedCheckpoints, sharedCheckpointCount, forceComposition];

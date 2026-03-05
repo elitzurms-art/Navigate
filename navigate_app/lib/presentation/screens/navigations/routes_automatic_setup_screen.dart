@@ -601,11 +601,37 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         const SizedBox(height: 32),
 
                         // כפתור חלוקה
+                        if (_forceComposition == 'guard' && _swapPointId == null) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.orange[50],
+                              border: Border.all(color: Colors.orange),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, color: Colors.orange[800]),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'לא ניתן לבצע חלוקה במצב מאבטח ללא בחירת נקודת החלפה',
+                                    style: TextStyle(color: Colors.orange[900], fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         SizedBox(
                           width: double.infinity,
                           height: 50,
                           child: ElevatedButton.icon(
-                            onPressed: _distribute,
+                            onPressed: (_forceComposition == 'guard' && _swapPointId == null)
+                                ? null
+                                : _distribute,
                             icon: const Icon(Icons.auto_awesome),
                             label: const Text('חלק אוטומטית'),
                             style: ElevatedButton.styleFrom(
@@ -1323,7 +1349,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                   labelText: 'נקודת החלפה גלובלית',
                 ),
                 items: [
-                  const DropdownMenuItem(value: null, child: Text('אוטומטי (אמצע הציר)')),
                   DropdownMenuItem(
                     value: '__pick_on_map__',
                     child: Row(
@@ -1354,8 +1379,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                'כל הזוגות יחליפו באותה נקודה',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                _swapPointId == null
+                    ? 'יש לבחור נקודה כדי לאפשר חלוקה'
+                    : 'כל הזוגות יחליפו באותה נקודה',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _swapPointId == null ? Colors.orange[700] : Colors.grey[600],
+                ),
               ),
             ],
           ],

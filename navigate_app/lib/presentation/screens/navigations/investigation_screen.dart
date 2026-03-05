@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../core/utils/geometry_utils.dart';
@@ -775,36 +776,31 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                             child: CircleAvatar(
                               radius: 24,
                               backgroundColor: ScoringService.getScoreColor(displayTotal),
-                              child: totalOverride
-                                  ? SizedBox(
-                                      width: 36,
-                                      child: TextField(
-                                        controller: totalController,
-                                        keyboardType: TextInputType.number,
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14),
-                                        decoration: const InputDecoration(
-                                          border: InputBorder.none,
-                                          isDense: true,
-                                          contentPadding: EdgeInsets.zero,
-                                        ),
-                                        onChanged: (_) => setSheetState(() {}),
-                                      ),
-                                    )
-                                  : Text(
-                                      '$displayTotal',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16),
-                                    ),
+                              child: Text(
+                                '$displayTotal',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16),
+                              ),
                             ),
                           ),
                         ],
                       ),
+                      if (totalOverride)
+                        Slider(
+                          value: displayTotal.toDouble().clamp(0, 100),
+                          min: 0,
+                          max: 100,
+                          divisions: 100,
+                          label: '$displayTotal',
+                          activeColor: Colors.orange,
+                          onChanged: (val) {
+                            setSheetState(() {
+                              totalController.text = val.round().toString();
+                            });
+                          },
+                        ),
                       if (_autoScores.containsKey(navigatorId))
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -873,45 +869,40 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                 color: Colors.purple[50],
                                 child: Padding(
                                   padding: const EdgeInsets.all(10),
-                                  child: Row(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      const Icon(Icons.star, color: Colors.purple, size: 20),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(criterion.name,
-                                            style: const TextStyle(fontWeight: FontWeight.w500)),
-                                      ),
-                                      Text('${criterion.weight} נק\'',
-                                          style: TextStyle(fontSize: 11, color: Colors.purple[300])),
-                                      const SizedBox(width: 8),
-                                      SizedBox(
-                                        width: 56,
-                                        height: 36,
-                                        child: TextField(
-                                          controller: TextEditingController(text: earned.toString()),
-                                          keyboardType: TextInputType.number,
-                                          textAlign: TextAlign.center,
-                                          decoration: InputDecoration(
-                                            border: const OutlineInputBorder(),
-                                            isDense: true,
-                                            contentPadding: const EdgeInsets.symmetric(
-                                                horizontal: 4, vertical: 8),
-                                            fillColor: Colors.purple.withOpacity(0.1),
-                                            filled: true,
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.star, color: Colors.purple, size: 20),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(criterion.name,
+                                                style: const TextStyle(fontWeight: FontWeight.w500)),
                                           ),
-                                          onChanged: (val) {
-                                            final newVal = (int.tryParse(val) ?? 0)
-                                                .clamp(0, criterion.weight);
-                                            setSheetState(() {
-                                              editedCustomScores[criterion.id] = newVal;
-                                              if (!totalOverride) {
-                                                totalController.text = calcTotal(
-                                                    editedCheckpointScores, editedCustomScores)
-                                                    .toString();
-                                              }
-                                            });
-                                          },
-                                        ),
+                                          Text('$earned/${criterion.weight}',
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.bold, fontSize: 14)),
+                                        ],
+                                      ),
+                                      Slider(
+                                        value: earned.toDouble().clamp(0, criterion.weight.toDouble()),
+                                        min: 0,
+                                        max: criterion.weight > 0 ? criterion.weight.toDouble() : 1,
+                                        divisions: criterion.weight > 0 ? criterion.weight : 1,
+                                        label: '$earned',
+                                        activeColor: Colors.purple,
+                                        onChanged: criterion.weight > 0 ? (val) {
+                                          final newVal = val.round().clamp(0, criterion.weight);
+                                          setSheetState(() {
+                                            editedCustomScores[criterion.id] = newVal;
+                                            if (!totalOverride) {
+                                              totalController.text = calcTotal(
+                                                  editedCheckpointScores, editedCustomScores)
+                                                  .toString();
+                                            }
+                                          });
+                                        } : null,
                                       ),
                                     ],
                                   ),
@@ -1011,59 +1002,45 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                                               color: Colors.grey),
                                         ),
                                         const SizedBox(width: 8),
-                                        // Score input
-                                        SizedBox(
-                                          width: 56,
-                                          height: 36,
-                                          child: TextField(
-                                            controller: TextEditingController(
-                                                text:
-                                                    cpScore.score.toString()),
-                                            keyboardType:
-                                                TextInputType.number,
-                                            textAlign: TextAlign.center,
-                                            decoration: InputDecoration(
-                                              border:
-                                                  const OutlineInputBorder(),
-                                              isDense: true,
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 4,
-                                                      vertical: 8),
-                                              fillColor: ScoringService
-                                                      .getScoreColor(
-                                                          cpScore.score)
-                                                  .withOpacity(0.15),
-                                              filled: true,
-                                            ),
-                                            onChanged: (val) {
-                                              final newVal =
-                                                  (int.tryParse(val) ?? 0)
-                                                      .clamp(0, 100);
-                                              setSheetState(() {
-                                                editedCheckpointScores[cpId] =
-                                                    CheckpointScore(
-                                                  checkpointId:
-                                                      cpScore.checkpointId,
-                                                  approved: newVal > 0,
-                                                  score: newVal,
-                                                  distanceMeters:
-                                                      cpScore.distanceMeters,
-                                                  rejectionReason:
-                                                      cpScore.rejectionReason,
-                                                  weight: cpScore.weight,
-                                                );
-                                                if (!totalOverride) {
-                                                  totalController.text =
-                                                      calcTotal(editedCheckpointScores,
-                                                          editedCustomScores)
-                                                          .toString();
-                                                }
-                                              });
-                                            },
-                                          ),
-                                        ),
+                                        // Score display
+                                        Text('${cpScore.score}',
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
+                                                color: ScoringService.getScoreColor(cpScore.score))),
                                       ],
+                                    ),
+                                    // Score slider
+                                    Slider(
+                                      value: cpScore.score.toDouble().clamp(0, 100),
+                                      min: 0,
+                                      max: 100,
+                                      divisions: 100,
+                                      label: '${cpScore.score}',
+                                      activeColor: ScoringService.getScoreColor(cpScore.score),
+                                      onChanged: (val) {
+                                        final newVal = val.round();
+                                        setSheetState(() {
+                                          editedCheckpointScores[cpId] =
+                                              CheckpointScore(
+                                            checkpointId:
+                                                cpScore.checkpointId,
+                                            approved: newVal > 0,
+                                            score: newVal,
+                                            distanceMeters:
+                                                cpScore.distanceMeters,
+                                            rejectionReason:
+                                                cpScore.rejectionReason,
+                                            weight: cpScore.weight,
+                                          );
+                                          if (!totalOverride) {
+                                            totalController.text =
+                                                calcTotal(editedCheckpointScores,
+                                                    editedCustomScores)
+                                                    .toString();
+                                          }
+                                        });
+                                      },
                                     ),
                                     // Rejection reason (only when rejected)
                                     if (!cpScore.approved)
@@ -2843,27 +2820,23 @@ class _InvestigationScreenState extends State<InvestigationScreen>
               Row(
                 children: [
                   const Text('משקל לכל נקודה: '),
-                  SizedBox(
-                    width: 60,
-                    height: 36,
-                    child: TextField(
-                      controller: TextEditingController(text: _equalWeight.toString()),
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                      ),
-                      onChanged: (val) {
-                        setState(() => _equalWeight = int.tryParse(val) ?? 0);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('$_equalWeight × $cpCount נק\' למנווט = $totalCpWeight',
+                  Text('$_equalWeight',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Spacer(),
+                  Text('× $cpCount = $totalCpWeight',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 ],
+              ),
+              Slider(
+                value: _equalWeight.toDouble().clamp(1, cpCount > 0 ? (100 ~/ cpCount).toDouble() : 100),
+                min: 1,
+                max: cpCount > 0 ? (100 ~/ cpCount).toDouble() : 100,
+                divisions: (cpCount > 0 ? (100 ~/ cpCount) - 1 : 99).clamp(1, 99),
+                label: '$_equalWeight',
+                activeColor: Colors.indigo,
+                onChanged: (val) {
+                  setState(() => _equalWeight = val.round());
+                },
               ),
             ],
 
@@ -2879,29 +2852,31 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Row(
                     children: [
-                      Expanded(
+                      SizedBox(
+                        width: 52,
                         child: Text('נ.צ. ${i + 1}', style: const TextStyle(fontSize: 13)),
                       ),
-                      SizedBox(
-                        width: 56,
-                        height: 32,
-                        child: TextField(
-                          controller: TextEditingController(text: weight.toString()),
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                          ),
+                      Expanded(
+                        child: Slider(
+                          value: weight.toDouble().clamp(0, 100),
+                          min: 0,
+                          max: 100,
+                          divisions: 100,
+                          label: '$weight',
+                          activeColor: Colors.indigo,
                           onChanged: (val) {
                             setState(() {
-                              _customWeights[key] = int.tryParse(val) ?? 0;
+                              _customWeights[key] = val.round();
                             });
                           },
                         ),
                       ),
-                      const Text(' נק\'', style: TextStyle(fontSize: 12)),
+                      SizedBox(
+                        width: 32,
+                        child: Text('$weight',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ),
                     ],
                   ),
                 );
@@ -2938,56 +2913,55 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             ..._customCriteria.asMap().entries.map((entry) {
               final idx = entry.key;
               final criterion = entry.value;
+              final remainingForCriterion = (100 - totalWeight + criterion.weight).clamp(0, 100);
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
+                child: Column(
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextField(
-                        controller: TextEditingController(text: criterion.name),
-                        decoration: const InputDecoration(
-                          hintText: 'שם קריטריון',
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: TextEditingController(text: criterion.name),
+                            decoration: const InputDecoration(
+                              hintText: 'שם קריטריון',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            ),
+                            style: const TextStyle(fontSize: 13),
+                            onChanged: (val) {
+                              _customCriteria[idx] = criterion.copyWith(name: val);
+                            },
+                          ),
                         ),
-                        style: const TextStyle(fontSize: 13),
-                        onChanged: (val) {
-                          _customCriteria[idx] = criterion.copyWith(name: val);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 56,
-                      height: 36,
-                      child: TextField(
-                        controller: TextEditingController(text: criterion.weight.toString()),
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                        const SizedBox(width: 4),
+                        Text('${criterion.weight} נק\'',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        IconButton(
+                          icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            setState(() => _customCriteria.removeAt(idx));
+                          },
                         ),
-                        onChanged: (val) {
-                          setState(() {
-                            _customCriteria[idx] = criterion.copyWith(
-                              weight: int.tryParse(val) ?? 0,
-                            );
-                          });
-                        },
-                      ),
+                      ],
                     ),
-                    const Text(' נק\'', style: TextStyle(fontSize: 12)),
-                    IconButton(
-                      icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onPressed: () {
-                        setState(() => _customCriteria.removeAt(idx));
-                      },
+                    Slider(
+                      value: criterion.weight.toDouble().clamp(0, remainingForCriterion.toDouble()),
+                      min: 0,
+                      max: remainingForCriterion > 0 ? remainingForCriterion.toDouble() : 1,
+                      divisions: remainingForCriterion > 0 ? remainingForCriterion : 1,
+                      label: '${criterion.weight}',
+                      activeColor: Colors.indigo,
+                      onChanged: remainingForCriterion > 0 ? (val) {
+                        setState(() {
+                          _customCriteria[idx] = criterion.copyWith(
+                            weight: val.round(),
+                          );
+                        });
+                      } : null,
                     ),
                   ],
                 ),

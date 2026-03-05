@@ -45,6 +45,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   Map<String, bool> _selectedNavigators = {};
   bool _isLoading = false;
 
+  LatLngBounds? _boundaryBounds;
+
   bool _showGG = true;
   double _ggOpacity = 1.0;
   bool _showNZ = true;
@@ -72,6 +74,16 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     super.initState();
     _filteredRoutes = Map.of(widget.navigation.routes); // ברירת מחדל — הכל
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.index == 1 && _boundaryBounds != null) {
+        try {
+          _mapController.fitCamera(CameraFit.bounds(
+            bounds: _boundaryBounds!,
+            padding: const EdgeInsets.all(30),
+          ));
+        } catch (_) {}
+      }
+    });
     _loadCheckpoints();
     _loadNavigatorNames();
     // חישוב נקודות משותפות
@@ -308,6 +320,12 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       }
 
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
+
+      if (boundary != null && boundary.coordinates.isNotEmpty) {
+        _boundaryBounds = LatLngBounds.fromPoints(
+          boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+        );
+      }
 
       setState(() {
         _checkpoints = checkpoints;
@@ -823,7 +841,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                           widget.navigation.displaySettings.openingLat!,
                           widget.navigation.displaySettings.openingLng!,
                         )
-                      : const LatLng(32.0853, 34.7818),
+                      : _boundaryBounds != null
+                          ? _boundaryBounds!.center
+                          : const LatLng(32.0853, 34.7818),
                   initialZoom: 13.0,
                   onTap: (tapPosition, point) {
                     if (_measureMode) {

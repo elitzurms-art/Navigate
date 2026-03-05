@@ -972,6 +972,13 @@ class NavigationRepository {
     }
   }
 
+  /// ניקוי סימון מחיקה — עבור ייבוא ניווט שנמחק בעבר
+  Future<void> clearDeletedAt(String navigationId) async {
+    await (_db.update(_db.navigations)
+          ..where((n) => n.id.equals(navigationId)))
+        .write(const NavigationsCompanion(deletedAt: Value(null)));
+  }
+
   /// בדיקה אם משתמש נמצא בניווטים פעילים (learning / system_check / active)
   /// מחזיר רשימת ניווטים שחוסמים הסרה מהיחידה
   Future<List<domain.Navigation>> getActiveNavigationsForUser(String uid) async {

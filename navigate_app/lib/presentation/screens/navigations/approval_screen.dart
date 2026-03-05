@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../core/utils/geometry_utils.dart';
@@ -558,16 +559,37 @@ class _ApprovalScreenState extends State<ApprovalScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: scoreController,
-                  decoration: InputDecoration(
-                    labelText: 'ציון (0-100)',
-                    border: const OutlineInputBorder(),
-                    helperText: _autoScores.containsKey(navigatorId)
-                        ? 'ציון אוטומטי: ${_autoScores[navigatorId]}${isWeighted ? ' (משוקלל)' : ''}'
-                        : null,
-                  ),
-                  keyboardType: TextInputType.number,
+                Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('ציון (0-100):'),
+                        Text('${int.tryParse(scoreController.text) ?? 0}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+                      ],
+                    ),
+                    Slider(
+                      value: (int.tryParse(scoreController.text) ?? 0).toDouble().clamp(0, 100),
+                      min: 0,
+                      max: 100,
+                      divisions: 100,
+                      label: scoreController.text,
+                      onChanged: (val) {
+                        setDialogState(() {
+                          scoreController.text = val.round().toString();
+                        });
+                      },
+                    ),
+                    if (_autoScores.containsKey(navigatorId))
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          'ציון אוטומטי: ${_autoScores[navigatorId]}${isWeighted ? ' (משוקלל)' : ''}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 // Custom criteria inputs (only when weighted)
@@ -582,31 +604,32 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                     final earned = editedCustomScores[criterion.id] ?? 0;
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: Text(criterion.name,
-                              style: const TextStyle(fontSize: 13))),
-                          SizedBox(
-                            width: 56,
-                            child: TextField(
-                              controller: TextEditingController(text: earned.toString()),
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                              decoration: InputDecoration(
-                                border: const OutlineInputBorder(),
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 4, vertical: 8),
-                                suffixText: '/${criterion.weight}',
-                                suffixStyle: const TextStyle(fontSize: 10),
-                              ),
-                              onChanged: (val) {
-                                setDialogState(() {
-                                  editedCustomScores[criterion.id] =
-                                      (int.tryParse(val) ?? 0).clamp(0, criterion.weight);
-                                });
-                              },
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(criterion.name,
+                                  style: const TextStyle(fontSize: 13)),
+                              Text('$earned/${criterion.weight}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold, fontSize: 13)),
+                            ],
+                          ),
+                          Slider(
+                            value: earned.toDouble().clamp(0, criterion.weight.toDouble()),
+                            min: 0,
+                            max: criterion.weight > 0 ? criterion.weight.toDouble() : 1,
+                            divisions: criterion.weight > 0 ? criterion.weight : 1,
+                            label: '$earned',
+                            activeColor: Colors.indigo,
+                            onChanged: criterion.weight > 0 ? (val) {
+                              setDialogState(() {
+                                editedCustomScores[criterion.id] =
+                                    val.round().clamp(0, criterion.weight);
+                              });
+                            } : null,
                           ),
                         ],
                       ),

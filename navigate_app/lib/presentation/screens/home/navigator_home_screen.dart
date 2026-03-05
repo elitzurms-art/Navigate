@@ -620,8 +620,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       final isNewNav = _currentNavigation?.id != bestNav!.id;
       setState(() {
         _currentNavigation = bestNav;
-        if (isNewNav) _initPerNavigatorFlags(bestNav);
-        _state = statusToScreenState(bestNav.status);
+        if (isNewNav) _initPerNavigatorFlags(bestNav!);
+        _state = statusToScreenState(bestNav!.status);
       });
 
       // Start/stop all-navigations watcher: active only on passive screens

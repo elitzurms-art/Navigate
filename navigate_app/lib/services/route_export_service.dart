@@ -834,15 +834,12 @@ class RouteExportService {
     // Check if navigation already exists — update or create
     final existing = await navRepo.getById(navigation.id);
     if (existing != null) {
-      await navRepo.upsertLocalFromFirestore(navigation);
+      await navRepo.update(navigation);
     } else {
-      try {
-        await navRepo.create(navigation);
-      } catch (_) {
-        // If create fails (e.g. unique constraint), try update
-        await navRepo.upsertLocalFromFirestore(navigation);
-      }
+      await navRepo.create(navigation);
     }
+    // Clear soft-delete flag (in case navigation was previously deleted)
+    await navRepo.clearDeletedAt(navigation.id);
 
     // Import checkpoints
     if (data['checkpoints'] != null) {

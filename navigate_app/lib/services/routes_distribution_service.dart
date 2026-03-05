@@ -318,6 +318,10 @@ class RoutesDistributionService {
         ? checkpointsPerNavigator * 2
         : checkpointsPerNavigator;
 
+    // מאבטח: הציר המשותף צריך להיות כפול כדי שכל חצי יהיה בטווח
+    final effectiveMinRoute = composition.isGuard ? minRouteLength * 2 : minRouteLength;
+    final effectiveMaxRoute = composition.isGuard ? maxRouteLength * 2 : maxRouteLength;
+
     final result = await _runInIsolate(
       navigators: virtualNavigators,
       checkpointMaps: checkpointMaps,
@@ -326,8 +330,8 @@ class RoutesDistributionService {
       waypointMaps: waypointMaps,
       executionOrder: executionOrder,
       checkpointsPerNavigator: effectiveCpPerNav,
-      minRouteLength: minRouteLength,
-      maxRouteLength: maxRouteLength,
+      minRouteLength: effectiveMinRoute,
+      maxRouteLength: effectiveMaxRoute,
       scoringCriterion: scoringCriterion,
       onProgress: onProgress,
     );
@@ -344,6 +348,8 @@ class RoutesDistributionService {
       checkpoints: checkpoints,
       startPointId: startPointId,
       endPointId: endPointId,
+      minRouteLength: minRouteLength,
+      maxRouteLength: maxRouteLength,
     );
   }
 
@@ -355,6 +361,13 @@ class RoutesDistributionService {
     _ => 'בדד',
   };
 
+  /// סטטוס ציר לפי אורך וטווח
+  static String _routeStatus(double length, double min, double max) {
+    if (length < min) return 'too_short';
+    if (length > max) return 'too_long';
+    return 'optimal';
+  }
+
   /// הרחבת תוצאות חלוקה לפי הרכב הכוח
   domain.DistributionResult _expandForComposition({
     required domain.DistributionResult result,
@@ -363,6 +376,8 @@ class RoutesDistributionService {
     required List<Checkpoint> checkpoints,
     String? startPointId,
     String? endPointId,
+    double minRouteLength = 0,
+    double maxRouteLength = double.infinity,
   }) {
     final expandedRoutes = <String, domain.AssignedRoute>{};
 
@@ -376,9 +391,14 @@ class RoutesDistributionService {
         final members = groups[groupId];
         if (members == null || members.isEmpty) continue;
 
-        // בחירת נקודת החלפה אוטומטית אם לא נבחרה
+        // אין נקודת חלוקה — החזר ציר משולב ודרוש בחירה ידנית
         if (swapId == null) {
-          swapId = _findAutoSwapPoint(route, checkpoints);
+          for (final memberId in members) {
+            expandedRoutes[memberId] = route.copyWith(
+              groupId: groupId, segmentType: 'full', swapPointId: null,
+            );
+          }
+          continue;
         }
 
         final seq = route.sequence;
@@ -439,6 +459,9 @@ class RoutesDistributionService {
         final firstHalfLength = _estimateSegmentLength(firstHalfSeq, checkpoints, startPointId);
         final secondHalfLength = _estimateSegmentLength(secondHalfSeq, checkpoints, null, endPointId: endPointId);
 
+        final firstHalfStatus = _routeStatus(firstHalfLength, minRouteLength, maxRouteLength);
+        final secondHalfStatus = _routeStatus(secondHalfLength, minRouteLength, maxRouteLength);
+
         if (members.length == 1) {
           // בדד מאבטח — מקבל חצי ציר ראשון בלבד (start → swap)
           expandedRoutes[members[0]] = domain.AssignedRoute(
@@ -448,7 +471,7 @@ class RoutesDistributionService {
             startPointId: route.startPointId,
             endPointId: swapId,
             waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
-            status: route.status,
+            status: firstHalfStatus,
             groupId: groupId,
             segmentType: 'first_half',
             swapPointId: swapId,
@@ -462,7 +485,7 @@ class RoutesDistributionService {
             startPointId: route.startPointId,
             endPointId: swapId,
             waypointIds: route.waypointIds.where((id) => firstHalfSeq.contains(id)).toList(),
-            status: route.status,
+            status: firstHalfStatus,
             groupId: groupId,
             segmentType: 'first_half',
             swapPointId: swapId,
@@ -477,7 +500,7 @@ class RoutesDistributionService {
               startPointId: swapId,
               endPointId: route.endPointId,
               waypointIds: route.waypointIds.where((id) => secondHalfSeq.contains(id)).toList(),
-              status: route.status,
+              status: secondHalfStatus,
               groupId: groupId,
               segmentType: 'second_half',
               swapPointId: swapId,
@@ -503,45 +526,56 @@ class RoutesDistributionService {
     // עדכון forceComposition עם הקבוצות הסופיות
     final updatedComposition = composition.copyWith(manualGroups: groups);
 
+    // מאבטח ללא נקודת חלוקה — דרוש בחירה ידנית
+    if (composition.isGuard && expandedRoutes.values.any((r) => r.swapPointId == null)) {
+      return domain.DistributionResult(
+        status: 'needs_swap_point',
+        routes: expandedRoutes,
+        approvalOptions: const [
+          domain.ApprovalOption(
+            type: 'needs_swap_point',
+            label: 'יש לבחור נקודת חלוקה',
+          ),
+        ],
+        hasSharedCheckpoints: result.hasSharedCheckpoints,
+        sharedCheckpointCount: result.sharedCheckpointCount,
+        forceComposition: updatedComposition,
+      );
+    }
+
+    // חישוב סטטוס כולל מחדש לפי הצירים המורחבים
+    final allOptimal = expandedRoutes.values.every((r) => r.status == 'optimal');
+    final expandedStatus = allOptimal ? result.status : 'needs_approval';
+
+    // יצירת אפשרויות אישור חדשות כשיש צירים חורגים (Bug A fix)
+    List<domain.ApprovalOption> expandedApprovalOptions;
+    if (!allOptimal) {
+      final outOfRangeCount = expandedRoutes.values.where((r) => r.status != 'optimal').length;
+      expandedApprovalOptions = [
+        domain.ApprovalOption(
+          type: 'expand_range',
+          label: 'הרחב טווח ל-${(minRouteLength * 0.8).toStringAsFixed(1)} — ${(maxRouteLength * 1.2).toStringAsFixed(1)} ק"מ',
+          expandedMin: minRouteLength * 0.8,
+          expandedMax: maxRouteLength * 1.2,
+        ),
+        domain.ApprovalOption(
+          type: 'accept_best',
+          label: 'אשר חלוקה ($outOfRangeCount צירים חורגים)',
+          outOfRangeCount: outOfRangeCount,
+        ),
+      ];
+    } else {
+      expandedApprovalOptions = result.approvalOptions;
+    }
+
     return domain.DistributionResult(
-      status: result.status,
+      status: expandedStatus,
       routes: expandedRoutes,
-      approvalOptions: result.approvalOptions,
+      approvalOptions: expandedApprovalOptions,
       hasSharedCheckpoints: result.hasSharedCheckpoints,
       sharedCheckpointCount: result.sharedCheckpointCount,
       forceComposition: updatedComposition,
     );
-  }
-
-  /// מציאת נקודת החלפה אוטומטית — הנקודה הקרובה ביותר לאמצע הציר (לפי מרחק מצטבר)
-  String? _findAutoSwapPoint(domain.AssignedRoute route, List<Checkpoint> checkpoints) {
-    final seq = route.sequence;
-    if (seq.length < 3) return null;
-
-    final cpMap = <String, Checkpoint>{};
-    for (final cp in checkpoints) cpMap[cp.id] = cp;
-
-    final halfLength = route.routeLengthKm / 2;
-    double cumDist = 0;
-    String? bestId;
-    double bestDiff = double.infinity;
-
-    for (int i = 0; i < seq.length - 1; i++) {
-      final cp1 = cpMap[seq[i]];
-      final cp2 = cpMap[seq[i + 1]];
-      if (cp1 == null || cp2 == null || cp1.coordinates == null || cp2.coordinates == null) continue;
-
-      final segDist = _haversineKm(cp1.coordinates!.lat, cp1.coordinates!.lng, cp2.coordinates!.lat, cp2.coordinates!.lng);
-      cumDist += segDist;
-
-      final diff = (cumDist - halfLength).abs();
-      if (diff < bestDiff && i > 0 && i < seq.length - 2) {
-        bestDiff = diff;
-        bestId = seq[i + 1];
-      }
-    }
-
-    return bestId;
   }
 
   /// חישוב אורך מקטע לפי רצף נקודות
@@ -1403,8 +1437,6 @@ class RoutesDistributionService {
     }
 
     double temperature = startTemperature;
-    final endTemperature = startTemperature * 0.01;
-    final coolingRate = steps > 1 ? pow(endTemperature / startTemperature, 1.0 / steps).toDouble() : 0.01;
 
     // Reheat tracking
     double bestSAScore = currentScore;
@@ -1412,10 +1444,13 @@ class RoutesDistributionService {
 
     // --- סטטיסטיקות מהלכים ---
     int acceptedSwaps = 0, acceptedRelocates = 0, acceptedMoves = 0;
-    int acceptedCrossExchanges = 0, accepted2Opts = 0, snapshotRestores = 0;
+    int acceptedCrossExchanges = 0, snapshotRestores = 0;
 
     for (int step = 0; step < steps; step++) {
-      temperature *= coolingRate;
+      // Linear cooling: טמפרטורה יורדת ליניארית עם רצפה 0.01
+      final progress = step / steps;
+      temperature = startTemperature * (1 - progress);
+      if (temperature < 0.01) temperature = 0.01;
 
       // Snapshot לפני המהלך — לשחזור אם K invariant נשבר
       final savedChunks = routeChunks.map((k, v) => MapEntry(k, List<_SimpleCheckpoint>.from(v)));
@@ -1423,7 +1458,8 @@ class RoutesDistributionService {
       final savedRoutes = Map<String, _RouteResult>.from(currentRoutes);
       final savedScore = currentScore;
 
-      // בחירת סוג מהלך: 35% swap, 20% relocate, 15% move, 15% cross-exchange, 15% 2-opt intra
+      // בחירת סוג מהלך: 35% swap, 20% relocate, 25% move, 20% cross-exchange
+      // (2-opt intra הוסר — NN ordering ב-_rebuildRouteLight מטפל בסדר)
       final moveRoll = random.nextDouble();
 
       if (moveRoll < 0.35) {
@@ -1547,7 +1583,7 @@ class RoutesDistributionService {
           }
         }
 
-      } else if (moveRoll < 0.70 && (freePool.isNotEmpty || allowSharing)) {
+      } else if (moveRoll < 0.80 && (freePool.isNotEmpty || allowSharing)) {
         // === MOVE: החלפת נקודה בציר עם נקודה מהפול — בחירה לפי שכנות ===
         final navIdx = random.nextInt(navigators.length);
         final nav = navigators[navIdx];
@@ -1610,7 +1646,7 @@ class RoutesDistributionService {
           }
         }
 
-      } else if (moveRoll < 0.85) {
+      } else {
         // === CROSS-EXCHANGE (רופיש 4): החלפת שרשרת 1-2 נקודות בין 2 צירים ===
         final i1 = random.nextInt(navigators.length);
         var i2 = random.nextInt(navigators.length - 1);
@@ -1668,50 +1704,6 @@ class RoutesDistributionService {
           }
         }
 
-      } else {
-        // === 2-OPT INTRA: היפוך תת-רצף בתוך ציר בודד ===
-        final navIdx = random.nextInt(navigators.length);
-        final nav = navigators[navIdx];
-        final route = routeChunks[nav];
-        if (route == null || route.length < 3) continue;
-
-        var i = random.nextInt(route.length);
-        var j = random.nextInt(route.length);
-        if (i == j) continue;
-        if (i > j) { final tmp = i; i = j; j = tmp; }
-
-        // היפוך הסגמנט i..j
-        int left = i, right = j;
-        while (left < right) {
-          final temp = route[left];
-          route[left] = route[right];
-          route[right] = temp;
-          left++;
-          right--;
-        }
-
-        final newResult = _rebuildRouteLight(route, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
-        final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
-        testRoutes[nav] = newResult;
-        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute);
-
-        final delta = newScore - currentScore;
-        if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
-          currentRoutes = testRoutes;
-          currentScore = newScore;
-          accepted2Opts++;
-        } else {
-          // undo: היפוך חזרה
-          left = i;
-          right = j;
-          while (left < right) {
-            final temp = route[left];
-            route[left] = route[right];
-            route[right] = temp;
-            left++;
-            right--;
-          }
-        }
       }
 
       // Safety net: ולידציית K invariant אחרי כל מהלך שהתקבל
@@ -1743,10 +1735,10 @@ class RoutesDistributionService {
     }
 
     // --- לוג סטטיסטיקות ---
-    final totalAccepted = acceptedSwaps + acceptedRelocates + acceptedMoves + acceptedCrossExchanges + accepted2Opts;
+    final totalAccepted = acceptedSwaps + acceptedRelocates + acceptedMoves + acceptedCrossExchanges;
     print('[SA] steps=$steps accepted=$totalAccepted '
         '(swap=$acceptedSwaps reloc=$acceptedRelocates move=$acceptedMoves '
-        'cross=$acceptedCrossExchanges 2opt=$accepted2Opts) '
+        'cross=$acceptedCrossExchanges) '
         'restores=$snapshotRestores score=${currentScore.toStringAsFixed(2)}');
 
     // ולידציה סופית: אם K invariant שבור, חזרה לפתרון ההתחלתי
@@ -1801,8 +1793,44 @@ class RoutesDistributionService {
     );
   }
 
-  /// בניית ציר מחדש — גרסה קלה (ללא NN-TSP / 2-opt)
-  /// שומרת על סדר הנקודות הנוכחי, מכניסה waypoints ומחשבת אורך.
+  /// סידור Nearest-Neighbor — מסדר את הנקודות לפי שכן קרוב מנקודת ההתחלה
+  static void _nnOrder(List<_SimpleCheckpoint> chunk, _SimpleCheckpoint? startCp, Map<String, Map<String, double>> distMatrix) {
+    if (chunk.length <= 1) return;
+    final remaining = List<_SimpleCheckpoint>.from(chunk);
+    final ordered = <_SimpleCheckpoint>[];
+
+    _SimpleCheckpoint current;
+    if (startCp != null && remaining.isNotEmpty) {
+      int bestIdx = 0;
+      double bestDist = _dist(startCp.id, remaining[0].id, distMatrix);
+      for (int i = 1; i < remaining.length; i++) {
+        final d = _dist(startCp.id, remaining[i].id, distMatrix);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      current = remaining.removeAt(bestIdx);
+    } else {
+      current = remaining.removeAt(0);
+    }
+    ordered.add(current);
+
+    while (remaining.isNotEmpty) {
+      int bestIdx = 0;
+      double bestDist = _dist(current.id, remaining[0].id, distMatrix);
+      for (int i = 1; i < remaining.length; i++) {
+        final d = _dist(current.id, remaining[i].id, distMatrix);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      current = remaining.removeAt(bestIdx);
+      ordered.add(current);
+    }
+
+    for (int i = 0; i < chunk.length; i++) {
+      chunk[i] = ordered[i];
+    }
+  }
+
+  /// בניית ציר מחדש — גרסה קלה (NN ordering ללא 2-opt)
+  /// מסדרת לפי nearest-neighbor, מכניסה waypoints ומחשבת אורך.
   /// משמשת ב-SA לצורך הערכה מהירה של מהלכי SWAP/MOVE/RELOCATE/CROSS.
   static _RouteResult _rebuildRouteLight(
     List<_SimpleCheckpoint> chunk,
@@ -1815,6 +1843,7 @@ class RoutesDistributionService {
     Map<String, Map<String, double>> distMatrix,
   ) {
     final sequence = List<_SimpleCheckpoint>.from(chunk);
+    _nnOrder(sequence, startCp, distMatrix);
     if (waypoints.isNotEmpty) {
       _insertWaypointsIntoSequence(sequence, startCp, endCp, waypoints, allCheckpoints, distMatrix);
     }

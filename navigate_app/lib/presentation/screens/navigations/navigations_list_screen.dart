@@ -233,7 +233,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
           MaterialPageRoute(
             builder: (_) => InvestigationScreen(navigation: imported),
           ),
-        );
+        ).then((_) => _loadNavigations());
       }
     } catch (e) {
       if (mounted) {
