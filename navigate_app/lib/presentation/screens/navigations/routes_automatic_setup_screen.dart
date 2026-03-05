@@ -391,6 +391,17 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         final outOfRange = result.routes.values.where((r) => r.status != 'optimal').length;
         final total = result.routes.length;
 
+        // מאבטח: פירוט סטטוס לכל חצי ציר
+        final isGuardMode = _forceComposition == 'guard';
+        int tooShortCount = 0;
+        int tooLongCount = 0;
+        if (isGuardMode) {
+          for (final r in result.routes.values) {
+            if (r.status == 'too_short') tooShortCount++;
+            if (r.status == 'too_long') tooLongCount++;
+          }
+        }
+
         return AlertDialog(
           title: const Text('חלוקה חורגת מהטווח'),
           content: Column(
@@ -402,6 +413,19 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 '${_minRouteLength.toStringAsFixed(1)} — ${_maxRouteLength.toStringAsFixed(1)} ק"מ',
                 style: const TextStyle(fontSize: 14),
               ),
+              if (isGuardMode && (tooShortCount > 0 || tooLongCount > 0)) ...[
+                const SizedBox(height: 6),
+                if (tooShortCount > 0)
+                  Text(
+                    '$tooShortCount חצאי ציר קצרים מדי',
+                    style: TextStyle(fontSize: 13, color: Colors.yellow[700]),
+                  ),
+                if (tooLongCount > 0)
+                  Text(
+                    '$tooLongCount חצאי ציר ארוכים מדי',
+                    style: TextStyle(fontSize: 13, color: Colors.red[700]),
+                  ),
+              ],
               if (result.hasSharedCheckpoints) ...[
                 const SizedBox(height: 8),
                 Text(

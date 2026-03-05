@@ -1,5 +1,5 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show Uint8List;
+import 'package:flutter/foundation.dart' show Uint8List, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -210,18 +210,38 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
               Text('מפקדים ומנהלים (${commanders.length})',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              _buildDataTable(commanders, isCommanderTable: true),
+              _wrapTableForMobile(_buildDataTable(commanders, isCommanderTable: true)),
               const SizedBox(height: 24),
             ],
             if (navigators.isNotEmpty) ...[
               Text('מנווטים (${navigators.length})',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              _buildDataTable(navigators, isCommanderTable: false),
+              _wrapTableForMobile(_buildDataTable(navigators, isCommanderTable: false)),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  bool get _isMobile =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  Widget _wrapTableForMobile(Widget table) {
+    if (!_isMobile) return table;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final minWidth = [constraints.maxWidth, 200.0 + _activeQuizCount * 150.0].reduce((a, b) => a > b ? a : b);
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: minWidth),
+            child: table,
+          ),
+        );
+      },
     );
   }
 
@@ -273,7 +293,9 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
             : _buildStatusCell(null, null));
       }
       if (_showCommanderQuiz) {
-        cells.add(_buildStatusCell(user.commanderQuizPassedAt, user.commanderQuizScore));
+        cells.add(isCommanderTable
+            ? _buildStatusCell(user.commanderQuizPassedAt, user.commanderQuizScore)
+            : _buildDashCell());
       }
       rows.add(TableRow(children: cells));
     }
