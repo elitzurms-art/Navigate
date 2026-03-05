@@ -661,14 +661,19 @@ class RoutesDistributionService {
     final isolate = await Isolate.spawn(_isolateWorker, params);
 
     Map<String, dynamic>? resultData;
+    double maxProgressRatio = 0;
     await for (final message in receivePort) {
       if (message is Map<String, dynamic>) {
         final type = message['type'] as String;
         if (type == 'progress') {
-          onProgress?.call(
-            message['current'] as int,
-            message['total'] as int,
-          );
+          final current = message['current'] as int;
+          final total = message['total'] as int;
+          final ratio = total > 0 ? current / total : 0.0;
+          // Clamp: never let progress go backwards (phase 2 may change total)
+          if (ratio >= maxProgressRatio) {
+            maxProgressRatio = ratio;
+            onProgress?.call(current, total);
+          }
         } else if (type == 'result') {
           resultData = message;
           break;
@@ -725,11 +730,6 @@ class RoutesDistributionService {
     final bool needsSharing = pool.length < N * K;
     final bool isDoubleCheck = params.scoringCriterion == 'doubleCheck';
 
-    // חישוב total מראש — תמיד כולל שלב 2 (fallback כש-!allInRange)
-    final int phase1Iterations = needsSharing ? 0 : params.maxIterations;
-    final int phase2Iterations = needsSharing ? params.maxIterations : (params.maxIterations ~/ 2);
-    final int totalProgress = phase1Iterations + phase2Iterations;
-
     // --- שלב 2: חיפוש Monte Carlo (ייחודי) ---
     _InternalDistribution? bestDistribution;
 
@@ -753,7 +753,6 @@ class RoutesDistributionService {
         allowSharing: false,
         iterationOffset: 0,
         distMatrix: distMatrix,
-        totalProgress: totalProgress,
       );
     }
 
@@ -777,7 +776,6 @@ class RoutesDistributionService {
         allowSharing: true,
         iterationOffset: needsSharing ? 0 : params.maxIterations,
         distMatrix: distMatrix,
-        totalProgress: totalProgress,
       );
 
       // העדפת תוצאה טובה יותר
@@ -790,13 +788,6 @@ class RoutesDistributionService {
     // ולידציית K-invariant סופית לפני שליחה
     assert(_validKInvariant(bestDistribution.routes, K),
         'K-invariant broken before sending isolate result');
-
-    // progress סופי — 100% (למקרה ששלב 2 לא רץ)
-    port.send({
-      'type': 'progress',
-      'current': totalProgress,
-      'total': totalProgress,
-    });
 
     // שליחת תוצאה
     final routesData = <String, Map<String, dynamic>>{};
@@ -839,7 +830,6 @@ class RoutesDistributionService {
     required bool allowSharing,
     required int iterationOffset,
     required Map<String, Map<String, double>> distMatrix,
-    required int totalProgress,
   }) {
     _InternalDistribution? best;
     final targetLength = (minRoute + maxRoute) / 2;
@@ -854,7 +844,7 @@ class RoutesDistributionService {
         port.send({
           'type': 'progress',
           'current': iterationOffset + (iter * maxIterations ~/ constructionRounds),
-          'total': totalProgress,
+          'total': iterationOffset + maxIterations,
         });
       }
 
@@ -1002,7 +992,7 @@ class RoutesDistributionService {
     port.send({
       'type': 'progress',
       'current': iterationOffset + maxIterations,
-      'total': totalProgress,
+      'total': iterationOffset + maxIterations,
     });
 
     if (best == null) {

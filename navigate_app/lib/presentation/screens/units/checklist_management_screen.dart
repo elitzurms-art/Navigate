@@ -728,15 +728,13 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(isNew ? 'צ\'קליסט חדש' : 'עריכת צ\'קליסט'),
-          actions: [
-            TextButton.icon(
-              onPressed: _saveAndReturn,
-              icon: const Icon(Icons.check, color: Colors.white),
-              label: const Text('שמירה',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
         ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _saveAndReturn,
+          icon: const Icon(Icons.check),
+          label: Text(isNew ? 'צור צ\'קליסט' : 'שמירה'),
+        ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
