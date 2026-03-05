@@ -58,6 +58,18 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   bool _perNavigatorShowSelfLocation = false;
   bool _perNavigatorShowRouteOnMap = false;
 
+  /// אתחול דגלי מפה פר-מנווט מערכי הניווט הגלובליים
+  void _initPerNavigatorFlags(domain.Navigation nav) {
+    _perNavigatorAllowOpenMap = nav.allowOpenMap;
+    _perNavigatorShowSelfLocation = nav.showSelfLocation;
+    _perNavigatorShowRouteOnMap = nav.showRouteOnMap;
+  }
+
+  // מעקב אחרי מצב מסך מפה פתוח
+  bool _isMapScreenOpen = false;
+  bool _mapScreenShowSelfLocation = false;
+  bool _mapScreenOpenedFromEmergency = false;
+
   bool _reverseRevealShown = false;
 
   // מבחן ניווט — בדיקת passed מ-Firestore
@@ -607,7 +619,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       if (!mounted) return;
       setState(() {
         _currentNavigation = bestNav;
-        _state = statusToScreenState(bestNav!.status);
+        _initPerNavigatorFlags(bestNav!);
+        _state = statusToScreenState(bestNav.status);
       });
 
       // Start/stop all-navigations watcher: active only on passive screens
@@ -876,6 +889,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     bool showRoute = false,
     bool openedFromEmergency = false,
   }) {
+    _isMapScreenOpen = true;
+    _mapScreenShowSelfLocation = showSelfLocation;
+    _mapScreenOpenedFromEmergency = openedFromEmergency;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => NavigatorMapScreen(
@@ -886,7 +902,15 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           openedFromEmergency: openedFromEmergency,
         ),
       ),
-    );
+    ).then((_) {
+      if (mounted) {
+        setState(() {
+          _isMapScreenOpen = false;
+          _mapScreenShowSelfLocation = false;
+          _mapScreenOpenedFromEmergency = false;
+        });
+      }
+    });
   }
 
   /// עדכון navigation מקומי אחרי שמירה (דפוס _currentNavigation)
@@ -982,7 +1006,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
               ),
 
             // מפה פתוחה — רק במצב active + (allowOpenMap ברמת ניווט או דריסה פר-מנווט)
-            if (isActive && nav != null && (nav.allowOpenMap || _perNavigatorAllowOpenMap)) ...[
+            if (isActive && nav != null && _perNavigatorAllowOpenMap) ...[
               const Divider(),
               // אפשרות 1: מפה פתוחה (שכבות + ציר, ללא מיקום עצמי)
               ListTile(
@@ -995,7 +1019,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
               ),
 
               // אפשרות 2: מפה + מיקום עצמי (רק אם showSelfLocation ברמת ניווט או דריסה)
-              if (nav.showSelfLocation || _perNavigatorShowSelfLocation)
+              if (_perNavigatorShowSelfLocation)
                 ListTile(
                   leading: const Icon(Icons.my_location, color: Colors.green),
                   title: const Text('מפה + מיקום עצמי'),
@@ -1319,6 +1343,24 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                 _perNavigatorShowSelfLocation = showSelfLocation;
                 _perNavigatorShowRouteOnMap = showRouteOnMap;
               });
+            }
+            // סגירת מסך מפה פתוח אם הרשאות בוטלו
+            if (_isMapScreenOpen && !_mapScreenOpenedFromEmergency) {
+              if (!allowOpenMap) {
+                if (mounted && Navigator.of(context).canPop()) {
+                  Navigator.of(context).maybePop();
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('הרשאת מפה בוטלה')),
+                );
+              } else if (_mapScreenShowSelfLocation && !showSelfLocation) {
+                if (mounted && Navigator.of(context).canPop()) {
+                  Navigator.of(context).maybePop();
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('הרשאת מיקום בוטלה')),
+                );
+              }
             }
           },
         );

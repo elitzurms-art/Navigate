@@ -98,6 +98,22 @@ class NavigatorAlertRepository {
     });
   }
 
+  /// סגירת כל התראות healthCheckExpired פעילות למנווט (כשמדווח תקינות)
+  Future<void> resolveHealthCheckAlerts(String navigationId, String navigatorId, String resolvedBy) async {
+    try {
+      final snapshot = await _alertsCollection(navigationId)
+          .where('navigatorId', isEqualTo: navigatorId)
+          .where('type', isEqualTo: AlertType.healthCheckExpired.code)
+          .where('isActive', isEqualTo: true)
+          .get();
+      for (final doc in snapshot.docs) {
+        await resolve(navigationId, doc.id, resolvedBy);
+      }
+    } catch (e) {
+      print('DEBUG NavigatorAlertRepository: error resolving health check alerts: $e');
+    }
+  }
+
   /// מחיקת כל ההתראות לניווט (איפוס לפני התחלה מחדש)
   Future<void> deleteByNavigation(String navigationId) async {
     try {

@@ -92,7 +92,8 @@ class SecurityManager {
     if (_deviceSecurity.isAndroid) {
       final hasDnd = await _deviceSecurity.hasDNDPermission();
       if (hasDnd) {
-        await _deviceSecurity.enableDND();
+        final dndOk = await _deviceSecurity.enableDND();
+        if (dndOk) success = true; // DND counts as security active
         print('🔕 DND הופעל בתחילת ניווט');
       }
     }

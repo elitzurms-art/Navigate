@@ -95,10 +95,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _guardPartnerFinished = false;
   StreamSubscription<QuerySnapshot>? _guardPartnerListener;
 
-  // דריסות מפה פר-מנווט (מהמפקד)
-  bool _overrideAllowOpenMap = false;
-  bool _overrideShowSelfLocation = false;
-  bool _overrideShowRouteOnMap = false;
+  // דריסות מפה פר-מנווט (מהמפקד) — מאותחלים מערכי הניווט הגלובליים
+  late bool _overrideAllowOpenMap;
+  late bool _overrideShowSelfLocation;
+  late bool _overrideShowRouteOnMap;
 
   // דקירת מיקום ידני — GPS-cycle: כל מחזור GPS→אובדן מאפשר דקירה חדשה
   bool _allowManualPosition = false;
@@ -190,6 +190,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       ),
     ));
     _allowManualPosition = widget.navigation.allowManualPosition;
+    _overrideAllowOpenMap = widget.navigation.allowOpenMap;
+    _overrideShowSelfLocation = widget.navigation.showSelfLocation;
+    _overrideShowRouteOnMap = widget.navigation.showRouteOnMap;
     _loadTrackState();
   }
 
@@ -201,9 +204,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         oldWidget.navigation.showSelfLocation != widget.navigation.showSelfLocation ||
         oldWidget.navigation.showRouteOnMap != widget.navigation.showRouteOnMap) {
       widget.onMapPermissionsChanged?.call(
-        widget.navigation.allowOpenMap || _overrideAllowOpenMap,
-        widget.navigation.showSelfLocation || _overrideShowSelfLocation,
-        widget.navigation.showRouteOnMap || _overrideShowRouteOnMap,
+        _overrideAllowOpenMap,
+        _overrideShowSelfLocation,
+        _overrideShowRouteOnMap,
       );
     }
     // עדכון הגדרות התראות בזמן אמת
@@ -221,6 +224,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopSecurity();
+    unawaited(DeviceSecurityService().disableDND()); // safety net — ensure DND off even if _securityActive was false
     _stopTrackDocListener();
     _gpsCheckTimer?.cancel();
     _elapsedTimer?.cancel();
@@ -247,6 +251,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ===========================================================================
 
   Future<void> _loadTrackState() async {
+    // Cleanup: if navigation is over, ensure DND is off (covers app kill/restart)
+    if (_nav.status == 'review' || _nav.status == 'approval') {
+      DeviceSecurityService().disableDND();
+    }
     await _computeBoundaryCenter();
     await _loadRouteCheckpoints();
     try {
@@ -1158,29 +1166,34 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         return;
       }
 
-      // קריאת דריסות מפה פר-מנווט
-      final newAllowOpenMap = data['overrideAllowOpenMap'] as bool? ?? false;
-      final newShowSelfLocation = data['overrideShowSelfLocation'] as bool? ?? false;
-      final newShowRouteOnMap = data['overrideShowRouteOnMap'] as bool? ?? false;
-      if (newAllowOpenMap != _overrideAllowOpenMap ||
-          newShowSelfLocation != _overrideShowSelfLocation ||
-          newShowRouteOnMap != _overrideShowRouteOnMap) {
-        _overrideAllowOpenMap = newAllowOpenMap;
-        _overrideShowSelfLocation = newShowSelfLocation;
-        _overrideShowRouteOnMap = newShowRouteOnMap;
+      // קריאת דריסות מפה פר-מנווט — רק אם השדה קיים ב-Firestore
+      bool changed = false;
+      if (data.containsKey('overrideAllowOpenMap')) {
+        final v = data['overrideAllowOpenMap'] as bool? ?? false;
+        if (v != _overrideAllowOpenMap) { _overrideAllowOpenMap = v; changed = true; }
+      }
+      if (data.containsKey('overrideShowSelfLocation')) {
+        final v = data['overrideShowSelfLocation'] as bool? ?? false;
+        if (v != _overrideShowSelfLocation) { _overrideShowSelfLocation = v; changed = true; }
+      }
+      if (data.containsKey('overrideShowRouteOnMap')) {
+        final v = data['overrideShowRouteOnMap'] as bool? ?? false;
+        if (v != _overrideShowRouteOnMap) { _overrideShowRouteOnMap = v; changed = true; }
+      }
+      if (changed) {
         // עדכון Drift מקומי — מונע מ-_saveTrackPoints לדרוס את ההגדרות
         if (_track != null) {
           try {
             await _trackRepo.updateMapOverridesLocal(
               _track!.id,
-              allowOpenMap: newAllowOpenMap,
-              showSelfLocation: newShowSelfLocation,
-              showRouteOnMap: newShowRouteOnMap,
+              allowOpenMap: _overrideAllowOpenMap,
+              showSelfLocation: _overrideShowSelfLocation,
+              showRouteOnMap: _overrideShowRouteOnMap,
             );
           } catch (_) {}
         }
         widget.onMapPermissionsChanged?.call(
-          newAllowOpenMap, newShowSelfLocation, newShowRouteOnMap,
+          _overrideAllowOpenMap, _overrideShowSelfLocation, _overrideShowRouteOnMap,
         );
       }
 
@@ -1307,6 +1320,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _statusReportTimer?.cancel();
     _elapsedTimer?.cancel();
     await _stopSecurity();
+    await DeviceSecurityService().disableDND(); // safety net
 
     // עדכון DB מקומי
     if (_track != null) {
@@ -1402,6 +1416,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _elapsedTimer?.cancel();
     _alertBannerTimer?.cancel();
     await _stopSecurity();
+    await DeviceSecurityService().disableDND(); // safety net
 
     // מחיקת נתונים מקומיים — track + דקירות
     try {
@@ -1447,6 +1462,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ===========================================================================
 
   void _startHealthCheck() {
+    _healthCheckService?.dispose();
     final alerts = _nav.alerts;
     if (alerts.healthCheckEnabled) {
       _healthCheckService = HealthCheckService(
@@ -2112,6 +2128,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         timestamp: DateTime.now(),
       );
       await _alertRepo.create(alert);
+      // סגירת התראות healthCheckExpired פעילות — מנקה את הבאנר אצל המפקד
+      await _alertRepo.resolveHealthCheckAlerts(
+        _nav.id, widget.currentUser.uid, widget.currentUser.uid,
+      );
     } catch (e) {
       print('DEBUG ActiveView: health report failed: $e');
     }

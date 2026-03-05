@@ -407,6 +407,11 @@ class RoutesDistributionService {
         final firstHalfCps = orderedCps.sublist(0, half);
         final secondHalfCps = orderedCps.sublist(half);
 
+        // ולידציית K: כל חצי חייב להכיל בדיוק checkpointsPerNavigator נקודות
+        // (orderedCps = 2*K minus swap → half ≈ K)
+        assert(firstHalfCps.isNotEmpty, 'Guard mode: firstHalfCps is empty');
+        assert(secondHalfCps.isNotEmpty, 'Guard mode: secondHalfCps is empty');
+
         // מציאת נקודת הפיצול ברצף
         final lastFirstInSeq = seq.indexOf(firstHalfCps.last);
         final firstSecondInSeq = seq.indexOf(secondHalfCps.first);
@@ -482,6 +487,7 @@ class RoutesDistributionService {
       }
     } else {
       // --- צמד / חוליה: כל חבר בקבוצה מקבל אותו ציר ---
+      // copyWith() יוצר אובייקט חדש (AssignedRoute הוא immutable Equatable) — בטוח לשיתוף
       for (final entry in result.routes.entries) {
         final groupId = entry.key;
         final route = entry.value;
@@ -719,6 +725,11 @@ class RoutesDistributionService {
     final bool needsSharing = pool.length < N * K;
     final bool isDoubleCheck = params.scoringCriterion == 'doubleCheck';
 
+    // חישוב total מראש — תמיד כולל שלב 2 (fallback כש-!allInRange)
+    final int phase1Iterations = needsSharing ? 0 : params.maxIterations;
+    final int phase2Iterations = needsSharing ? params.maxIterations : (params.maxIterations ~/ 2);
+    final int totalProgress = phase1Iterations + phase2Iterations;
+
     // --- שלב 2: חיפוש Monte Carlo (ייחודי) ---
     _InternalDistribution? bestDistribution;
 
@@ -742,6 +753,7 @@ class RoutesDistributionService {
         allowSharing: false,
         iterationOffset: 0,
         distMatrix: distMatrix,
+        totalProgress: totalProgress,
       );
     }
 
@@ -765,6 +777,7 @@ class RoutesDistributionService {
         allowSharing: true,
         iterationOffset: needsSharing ? 0 : params.maxIterations,
         distMatrix: distMatrix,
+        totalProgress: totalProgress,
       );
 
       // העדפת תוצאה טובה יותר
@@ -773,6 +786,17 @@ class RoutesDistributionService {
         bestDistribution = sharedResult;
       }
     }
+
+    // ולידציית K-invariant סופית לפני שליחה
+    assert(_validKInvariant(bestDistribution.routes, K),
+        'K-invariant broken before sending isolate result');
+
+    // progress סופי — 100% (למקרה ששלב 2 לא רץ)
+    port.send({
+      'type': 'progress',
+      'current': totalProgress,
+      'total': totalProgress,
+    });
 
     // שליחת תוצאה
     final routesData = <String, Map<String, dynamic>>{};
@@ -815,6 +839,7 @@ class RoutesDistributionService {
     required bool allowSharing,
     required int iterationOffset,
     required Map<String, Map<String, double>> distMatrix,
+    required int totalProgress,
   }) {
     _InternalDistribution? best;
     final targetLength = (minRoute + maxRoute) / 2;
@@ -829,7 +854,7 @@ class RoutesDistributionService {
         port.send({
           'type': 'progress',
           'current': iterationOffset + (iter * maxIterations ~/ constructionRounds),
-          'total': iterationOffset + maxIterations,
+          'total': totalProgress,
         });
       }
 
@@ -977,7 +1002,7 @@ class RoutesDistributionService {
     port.send({
       'type': 'progress',
       'current': iterationOffset + maxIterations,
-      'total': iterationOffset + maxIterations,
+      'total': totalProgress,
     });
 
     if (best == null) {
@@ -1239,12 +1264,30 @@ class RoutesDistributionService {
       }
     }
 
+    // Fallback: אם הלולאה הסתיימה מוקדם, השלמה מ-candidatePool שלא נבחרו
+    if (route.length < K) {
+      final usedIds = route.map((c) => c.id).toSet();
+      final leftover = candidatePool.where((c) => !usedIds.contains(c.id)).toList();
+      for (final cp in leftover) {
+        if (route.length >= K) break;
+        route.add(cp);
+      }
+    }
+
     return route;
   }
 
   /// ולידציה: כל ציר מכיל בדיוק K נקודות
   static bool _isValidKSolution(Map<String, List<_SimpleCheckpoint>> routeChunks, int K) {
     return routeChunks.values.every((r) => r.length == K);
+  }
+
+  /// ולידציית K-invariant על תוצאות סופיות (_RouteResult)
+  static bool _validKInvariant(Map<String, _RouteResult> routes, int K) {
+    for (final route in routes.values) {
+      if (route.checkpointIds.length != K) return false;
+    }
+    return true;
   }
 
   /// ולידציה: סך הנקודות המוקצות + freePool = סך הנקודות הכולל (ללא שיתוף)
@@ -1409,7 +1452,7 @@ class RoutesDistributionService {
 
       } else if (moveRoll < 0.55) {
         // === RELOCATE (רופיש 3): העברת נקודה מציר אחד לאחר עם פיצוי מהפול ===
-        if (freePool.isEmpty) continue;
+        if (!allowSharing && freePool.isEmpty) continue;
 
         final i1 = random.nextInt(navigators.length);
         var i2 = random.nextInt(navigators.length - 1);
@@ -1421,6 +1464,7 @@ class RoutesDistributionService {
         final routeTo = routeChunks[navTo];
 
         if (routeFrom == null || routeTo == null || routeFrom.length <= 1 || routeTo.isEmpty) continue;
+        if (!allowSharing && routeTo.length >= K) continue;
 
         // הוצאת נקודה מ-routeFrom
         final removeIdx = random.nextInt(routeFrom.length);
@@ -1560,7 +1604,10 @@ class RoutesDistributionService {
         if (route1 == null || route2 == null || route1.length < 2 || route2.length < 2) continue;
 
         // בחירת אורך שרשרת (1-2)
-        final chainLen = 1 + random.nextInt(min(2, min(route1.length, route2.length)));
+        final maxChain = min(2, min(route1.length, route2.length));
+        if (maxChain < 1) continue;
+        final chainLen = 1 + random.nextInt(maxChain);
+        if (chainLen > route1.length || chainLen > route2.length) continue;
         final start1 = random.nextInt(route1.length - chainLen + 1);
         final start2 = random.nextInt(route2.length - chainLen + 1);
 
@@ -1763,6 +1810,8 @@ class RoutesDistributionService {
       distMatrix: distMatrix,
     );
     final length = result['length'] as double;
+    assert(chunk.map((c) => c.id).toSet().length == chunk.length,
+        '_rebuildRouteLight: duplicate checkpoint IDs in chunk');
     return _RouteResult(
       checkpointIds: chunk.map((c) => c.id).toList(),
       sequence: sequence.map((c) => c.id).toList(),
@@ -2100,17 +2149,25 @@ class RoutesDistributionService {
   }) {
     final distribution = <String, _RouteResult>{};
     bool allInRange = true;
-    int usedIdx = 0;
+
+    // שיטת Round-robin עם שיתוף: כל מנווט מקבל בדיוק K נקודות ללא כפילויות פנימיות
+    final shuffled = List<_SimpleCheckpoint>.from(pool)..shuffle(Random());
+    int poolIndex = 0;
 
     for (int i = 0; i < navigators.length; i++) {
       final chunk = <_SimpleCheckpoint>[];
-      for (int j = 0; j < K && usedIdx < pool.length; j++, usedIdx++) {
-        chunk.add(pool[usedIdx % pool.length]);
-      }
+      final usedInChunk = <String>{};
 
-      // אם אין מספיק, מחזור
       while (chunk.length < K) {
-        chunk.add(pool[chunk.length % pool.length]);
+        if (poolIndex >= shuffled.length) {
+          shuffled.shuffle(Random());
+          poolIndex = 0;
+        }
+        final cp = shuffled[poolIndex++];
+        if (!usedInChunk.contains(cp.id)) {
+          usedInChunk.add(cp.id);
+          chunk.add(cp);
+        }
       }
 
       final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
@@ -2229,6 +2286,15 @@ class RoutesDistributionService {
         status: status,
         isVerified: false,
       );
+    }
+
+    // ולידציית K-invariant: כל מנווט חייב לקבל בדיוק checkpointsPerNavigator נקודות
+    for (final entry in routes.entries) {
+      if (entry.value.checkpointIds.length != checkpointsPerNavigator) {
+        throw StateError(
+          'Navigator ${entry.key} has ${entry.value.checkpointIds.length} checkpoints, expected $checkpointsPerNavigator'
+        );
+      }
     }
 
     if (allInRange) {

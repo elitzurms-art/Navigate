@@ -256,8 +256,15 @@ class MainActivity: FlutterActivity() {
             if (!notificationManager.isNotificationPolicyAccessGranted) {
                 return false
             }
-            // שמירת מצב קודם לשחזור
-            previousInterruptionFilter = notificationManager.currentInterruptionFilter
+            val currentFilter = notificationManager.currentInterruptionFilter
+            // Already in DND — no-op, prevents previousInterruptionFilter corruption
+            if (currentFilter == NotificationManager.INTERRUPTION_FILTER_ALARMS) {
+                return true
+            }
+            // Save previous filter only when transitioning from normal → DND
+            if (currentFilter == NotificationManager.INTERRUPTION_FILTER_ALL) {
+                previousInterruptionFilter = currentFilter
+            }
             notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS)
             true
         } catch (e: Exception) {
@@ -272,8 +279,8 @@ class MainActivity: FlutterActivity() {
             if (!notificationManager.isNotificationPolicyAccessGranted) {
                 return false
             }
-            // שחזור מצב קודם (לא בהכרח FILTER_ALL)
-            notificationManager.setInterruptionFilter(previousInterruptionFilter)
+            // Always fully disable DND — eliminates previousInterruptionFilter corruption vector
+            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
             true
         } catch (e: Exception) {
             e.printStackTrace()

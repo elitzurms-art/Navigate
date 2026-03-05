@@ -70,6 +70,15 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
 
   Color get _typeColor => Checkpoint.flutterColorForType(_selectedType);
 
+  int get _nextAvailableSequence {
+    final usedNumbers = _existingCheckpoints.map((cp) => cp.sequenceNumber).toSet();
+    int candidate = 1;
+    while (usedNumbers.contains(candidate)) {
+      candidate++;
+    }
+    return candidate;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -195,10 +204,12 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
             // מספר סידורי
             TextFormField(
               controller: _sequenceController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'מספר סידורי',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.numbers),
+                hintText: '$_nextAvailableSequence',
+                hintStyle: const TextStyle(color: Colors.grey),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.numbers),
               ),
               keyboardType: TextInputType.number,
               validator: (value) {
@@ -566,9 +577,9 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                 children: [
                   Expanded(
                     child: TextFormField(
-                      controller: _eastingController,
+                      controller: _northingController,
                       decoration: const InputDecoration(
-                        labelText: 'מזרחה (Easting)',
+                        labelText: 'צפונה (Northing)',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.grid_on),
                       ),
@@ -590,9 +601,9 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextFormField(
-                      controller: _northingController,
+                      controller: _eastingController,
                       decoration: const InputDecoration(
-                        labelText: 'צפונה (Northing)',
+                        labelText: 'מזרחה (Easting)',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.grid_on),
                       ),

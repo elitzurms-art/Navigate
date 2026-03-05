@@ -1658,6 +1658,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       icon: const Icon(Icons.more_vert, size: 22),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(),
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 8),
       tooltip: 'פעולות',
       onSelected: (value) {
         onBeforeAction?.call();
@@ -2820,33 +2822,37 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
                                 _userNames[navigatorId] ?? navigatorId,
                                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                               if (_getGroupLabel(navigatorId) != null)
                                 Text(
                                   _getGroupLabel(navigatorId)!,
                                   style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                             ],
                           ),
                         ),
                         if (data.isDisqualified)
-                          Flexible(
-                            child: Container(
-                              margin: const EdgeInsets.only(left: 4),
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                data.disqualificationReason ?? 'נפסל',
-                                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                          Container(
+                            margin: const EdgeInsets.only(left: 4),
+                            constraints: const BoxConstraints(maxWidth: 120),
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              data.disqualificationReason ?? 'נפסל',
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         if (data.hasActiveAlert)
