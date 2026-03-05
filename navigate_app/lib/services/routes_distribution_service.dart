@@ -657,33 +657,54 @@ class RoutesDistributionService {
       progressPort: receivePort.sendPort,
     );
 
-    // הרצה ב-Isolate
-    final isolate = await Isolate.spawn(_isolateWorker, params);
+    // הרצה ב-Isolate עם error handling
+    final errorPort = ReceivePort();
+    final exitPort = ReceivePort();
+    final isolate = await Isolate.spawn(
+      _isolateWorker,
+      params,
+      onError: errorPort.sendPort,
+      onExit: exitPort.sendPort,
+    );
 
     Map<String, dynamic>? resultData;
-    double maxProgressRatio = 0;
+    String? isolateError;
+
+    // מאזין למסרי error/exit מה-isolate
+    errorPort.listen((message) {
+      isolateError = message.toString();
+      receivePort.close(); // שובר את ה-await for
+    });
+    exitPort.listen((_) {
+      receivePort.close(); // שובר את ה-await for אם ה-isolate מת
+    });
+
     await for (final message in receivePort) {
       if (message is Map<String, dynamic>) {
         final type = message['type'] as String;
         if (type == 'progress') {
-          final current = message['current'] as int;
-          final total = message['total'] as int;
-          final ratio = total > 0 ? current / total : 0.0;
-          // Clamp: never let progress go backwards (phase 2 may change total)
-          if (ratio >= maxProgressRatio) {
-            maxProgressRatio = ratio;
-            onProgress?.call(current, total);
-          }
+          onProgress?.call(
+            message['current'] as int,
+            message['total'] as int,
+          );
         } else if (type == 'result') {
           resultData = message;
+          break;
+        } else if (type == 'error') {
+          isolateError = message['message'] as String?;
           break;
         }
       }
     }
 
     receivePort.close();
+    errorPort.close();
+    exitPort.close();
     isolate.kill(priority: Isolate.immediate);
 
+    if (isolateError != null) {
+      throw Exception('שגיאה בחלוקה: $isolateError');
+    }
     if (resultData == null) {
       throw Exception('שגיאה בחלוקה אוטומטית');
     }
@@ -695,6 +716,15 @@ class RoutesDistributionService {
 
   /// Worker function שרץ ב-Isolate
   static void _isolateWorker(_DistributionParams params) {
+    final port = params.progressPort;
+    try {
+    _isolateWorkerInner(params);
+    } catch (e, st) {
+      port.send({'type': 'error', 'message': e.toString(), 'stack': st.toString()});
+    }
+  }
+
+  static void _isolateWorkerInner(_DistributionParams params) {
     final port = params.progressPort;
     final random = Random();
 
@@ -1415,9 +1445,8 @@ class RoutesDistributionService {
         final cp2 = route2[idx2];
 
         if (cp1.id == cp2.id) continue;
-        if (!allowSharing) {
-          if (route1.any((c) => c.id == cp2.id) || route2.any((c) => c.id == cp1.id)) continue;
-        }
+        // מניעת כפילויות בתוך ציר בודד (גם כש-allowSharing בין מנווטים)
+        if (route1.any((c) => c.id == cp2.id) || route2.any((c) => c.id == cp1.id)) continue;
 
         route1[idx1] = cp2;
         route2[idx2] = cp1;
@@ -1460,8 +1489,8 @@ class RoutesDistributionService {
         final removeIdx = random.nextInt(routeFrom.length);
         final movedCp = routeFrom[removeIdx];
 
-        // בדיקת כפילויות
-        if (!allowSharing && routeTo.any((c) => c.id == movedCp.id)) continue;
+        // בדיקת כפילויות בתוך ציר בודד
+        if (routeTo.any((c) => c.id == movedCp.id)) continue;
 
         // הוספה ל-routeTo
         routeFrom.removeAt(removeIdx);
@@ -1554,7 +1583,8 @@ class RoutesDistributionService {
           if (newCp == null) continue;
         }
 
-        if (!allowSharing && route.any((c) => c.id == newCp!.id)) continue;
+        // מניעת כפילויות בתוך ציר בודד
+        if (route.any((c) => c.id == newCp!.id)) continue;
 
         route[removeIdx] = newCp;
         if (!allowSharing) {
@@ -1605,13 +1635,11 @@ class RoutesDistributionService {
         final chain1 = route1.sublist(start1, start1 + chainLen).toList();
         final chain2 = route2.sublist(start2, start2 + chainLen).toList();
 
-        // בדיקת כפילויות
-        if (!allowSharing) {
-          final route1Without = [...route1.sublist(0, start1), ...route1.sublist(start1 + chainLen)];
-          final route2Without = [...route2.sublist(0, start2), ...route2.sublist(start2 + chainLen)];
-          if (chain2.any((c) => route1Without.any((r) => r.id == c.id)) ||
-              chain1.any((c) => route2Without.any((r) => r.id == c.id))) continue;
-        }
+        // בדיקת כפילויות בתוך ציר בודד (גם כש-allowSharing בין מנווטים)
+        final route1Without = [...route1.sublist(0, start1), ...route1.sublist(start1 + chainLen)];
+        final route2Without = [...route2.sublist(0, start2), ...route2.sublist(start2 + chainLen)];
+        if (chain2.any((c) => route1Without.any((r) => r.id == c.id)) ||
+            chain1.any((c) => route2Without.any((r) => r.id == c.id))) continue;
 
         // החלפה
         for (int c = 0; c < chainLen; c++) {

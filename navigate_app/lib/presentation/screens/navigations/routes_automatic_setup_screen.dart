@@ -64,8 +64,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   // Progress
   bool _isDistributing = false;
-  int _progressCurrent = 0;
-  int _progressTotal = 1000;
+  double _maxProgressRatio = 0;
 
   @override
   void initState() {
@@ -307,8 +306,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
     setState(() {
       _isDistributing = true;
-      _progressCurrent = 0;
-      _progressTotal = 1000;
+      _maxProgressRatio = 0;
     });
 
     final composition = ForceComposition(
@@ -334,10 +332,10 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         forceComposition: composition,
         onProgress: (current, total) {
           if (mounted) {
-            setState(() {
-              _progressCurrent = current;
-              _progressTotal = total;
-            });
+            final ratio = total > 0 ? current / total : 0.0;
+            if (ratio > _maxProgressRatio) {
+              setState(() => _maxProgressRatio = ratio);
+            }
           }
         },
       );
@@ -626,7 +624,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   }
 
   Widget _buildProgressView() {
-    final progress = _progressTotal > 0 ? _progressCurrent / _progressTotal : 0.0;
+    // Bar never goes backwards (phase 2 may reset total)
+    final progress = _maxProgressRatio;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -651,7 +650,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             ),
             const SizedBox(height: 12),
             Text(
-              'בודק אופציה $_progressCurrent / $_progressTotal',
+              'בודק אופציות חלוקה...',
               style: TextStyle(fontSize: 14, color: Colors.grey[600]),
             ),
             const SizedBox(height: 8),

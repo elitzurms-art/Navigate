@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import '../../../core/constants/default_checklists.dart';
@@ -127,21 +128,32 @@ class _ChecklistManagementScreenState
 
   void _openEditor(int? index) async {
     final existing = index != null ? _checklists[index] : null;
-    final result = await Navigator.push<UnitChecklist>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _ChecklistEditorScreen(checklist: existing),
-      ),
-    );
-    if (result != null) {
-      setState(() {
-        if (index != null) {
-          _checklists[index] = result;
-        } else {
-          _checklists.add(result);
-        }
-      });
-      await _save();
+    if (index != null) {
+      // Edit mode — auto-save via callback
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _ChecklistEditorScreen(
+            checklist: existing,
+            onAutoSave: (updated) {
+              setState(() => _checklists[index] = updated);
+              _save();
+            },
+          ),
+        ),
+      );
+    } else {
+      // Create mode — pop with result
+      final result = await Navigator.push<UnitChecklist>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const _ChecklistEditorScreen(),
+        ),
+      );
+      if (result != null) {
+        setState(() => _checklists.add(result));
+        await _save();
+      }
     }
   }
 
@@ -583,8 +595,9 @@ class _ImportChecklistsDialogState extends State<_ImportChecklistsDialog> {
 
 class _ChecklistEditorScreen extends StatefulWidget {
   final UnitChecklist? checklist;
+  final void Function(UnitChecklist)? onAutoSave;
 
-  const _ChecklistEditorScreen({this.checklist});
+  const _ChecklistEditorScreen({this.checklist, this.onAutoSave});
 
   @override
   State<_ChecklistEditorScreen> createState() =>
@@ -595,6 +608,9 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
   late TextEditingController _titleController;
   late bool _isMandatory;
   late List<_EditableSection> _sections;
+  Timer? _debounceTimer;
+
+  bool get _isEditMode => widget.onAutoSave != null;
 
   @override
   void initState() {
@@ -616,10 +632,20 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
                 ))
             .toList() ??
         [];
+    if (_isEditMode) {
+      _titleController.addListener(_triggerAutoSave);
+      for (final s in _sections) {
+        s.titleController.addListener(_triggerAutoSave);
+        for (final i in s.items) {
+          i.controller.addListener(_triggerAutoSave);
+        }
+      }
+    }
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _titleController.dispose();
     for (final s in _sections) {
       s.titleController.dispose();
@@ -630,53 +656,20 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
     super.dispose();
   }
 
-  String _generateId(String prefix) =>
-      '${prefix}_${DateTime.now().millisecondsSinceEpoch}';
-
-  void _addSection() {
-    setState(() {
-      _sections.add(_EditableSection(
-        id: _generateId('s'),
-        titleController: TextEditingController(),
-        items: [],
-      ));
-    });
-  }
-
-  void _removeSection(int index) {
-    setState(() {
-      _sections[index].titleController.dispose();
-      for (final i in _sections[index].items) {
-        i.controller.dispose();
+  void _triggerAutoSave() {
+    if (!_isEditMode) return;
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      final checklist = _buildChecklist();
+      if (checklist != null) {
+        widget.onAutoSave!(checklist);
       }
-      _sections.removeAt(index);
     });
   }
 
-  void _addItem(int sectionIndex) {
-    setState(() {
-      _sections[sectionIndex].items.add(_EditableItem(
-        id: _generateId('i'),
-        controller: TextEditingController(),
-      ));
-    });
-  }
-
-  void _removeItem(int sectionIndex, int itemIndex) {
-    setState(() {
-      _sections[sectionIndex].items[itemIndex].controller.dispose();
-      _sections[sectionIndex].items.removeAt(itemIndex);
-    });
-  }
-
-  void _saveAndReturn() {
+  UnitChecklist? _buildChecklist() {
     final title = _titleController.text.trim();
-    if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('יש להזין כותרת לצ\'קליסט')),
-      );
-      return;
-    }
+    if (title.isEmpty) return null;
 
     final sections = _sections
         .where((s) => s.titleController.text.trim().isNotEmpty)
@@ -694,18 +687,9 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
         .where((s) => s.items.isNotEmpty)
         .toList();
 
-    if (sections.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('יש להוסיף לפחות קטגוריה אחת עם פריט אחד')),
-      );
-      return;
-    }
-
     final now = DateTime.now();
     final existing = widget.checklist;
-    final result = UnitChecklist(
+    return UnitChecklist(
       id: existing?.id ?? _generateId('cl'),
       title: title,
       sections: sections,
@@ -716,61 +700,174 @@ class _ChecklistEditorScreenState extends State<_ChecklistEditorScreen> {
       copiedFromChecklistId: existing?.copiedFromChecklistId,
       copiedAt: existing?.copiedAt,
     );
+  }
+
+  bool _hasContent() {
+    if (_titleController.text.trim().isNotEmpty) return true;
+    for (final s in _sections) {
+      if (s.titleController.text.trim().isNotEmpty) return true;
+      for (final i in s.items) {
+        if (i.controller.text.trim().isNotEmpty) return true;
+      }
+    }
+    return false;
+  }
+
+  String _generateId(String prefix) =>
+      '${prefix}_${DateTime.now().millisecondsSinceEpoch}';
+
+  void _addSection() {
+    final controller = TextEditingController();
+    if (_isEditMode) controller.addListener(_triggerAutoSave);
+    setState(() {
+      _sections.add(_EditableSection(
+        id: _generateId('s'),
+        titleController: controller,
+        items: [],
+      ));
+    });
+  }
+
+  void _removeSection(int index) {
+    setState(() {
+      _sections[index].titleController.dispose();
+      for (final i in _sections[index].items) {
+        i.controller.dispose();
+      }
+      _sections.removeAt(index);
+    });
+    if (_isEditMode) _triggerAutoSave();
+  }
+
+  void _addItem(int sectionIndex) {
+    final controller = TextEditingController();
+    if (_isEditMode) controller.addListener(_triggerAutoSave);
+    setState(() {
+      _sections[sectionIndex].items.add(_EditableItem(
+        id: _generateId('i'),
+        controller: controller,
+      ));
+    });
+  }
+
+  void _removeItem(int sectionIndex, int itemIndex) {
+    setState(() {
+      _sections[sectionIndex].items[itemIndex].controller.dispose();
+      _sections[sectionIndex].items.removeAt(itemIndex);
+    });
+    if (_isEditMode) _triggerAutoSave();
+  }
+
+  void _saveAndReturn() {
+    if (_titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('יש להזין כותרת לצ\'קליסט')),
+      );
+      return;
+    }
+
+    final result = _buildChecklist();
+    if (result == null || result.sections.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('יש להוסיף לפחות קטגוריה אחת עם פריט אחד')),
+      );
+      return;
+    }
 
     Navigator.pop(context, result);
+  }
+
+  Future<bool> _onWillPop() async {
+    if (_isEditMode || !_hasContent()) return true;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('יצירת צ\'קליסט'),
+          content: const Text('יש תוכן שלא נשמר. מה לעשות?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'discard'),
+              child: const Text('ביטול', style: TextStyle(color: Colors.red)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'create'),
+              child: const Text('צור צ\'קליסט'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'create') {
+      _saveAndReturn();
+      return false; // _saveAndReturn pops if valid
+    }
+    return action == 'discard';
   }
 
   @override
   Widget build(BuildContext context) {
     final isNew = widget.checklist == null;
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(isNew ? 'צ\'קליסט חדש' : 'עריכת צ\'קליסט'),
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _saveAndReturn,
-          icon: const Icon(Icons.check),
-          label: Text(isNew ? 'צור צ\'קליסט' : 'שמירה'),
-        ),
-        floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Title
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(
-                labelText: 'כותרת הצ\'קליסט',
-                border: OutlineInputBorder(),
+    // ignore: deprecated_member_use
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(isNew ? 'צ\'קליסט חדש' : 'עריכת צ\'קליסט'),
+          ),
+          floatingActionButton: isNew
+              ? FloatingActionButton.extended(
+                  onPressed: _saveAndReturn,
+                  icon: const Icon(Icons.check),
+                  label: const Text('צור צ\'קליסט'),
+                )
+              : null,
+          floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // Title
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'כותרת הצ\'קליסט',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-
-            // Mandatory toggle
-            SwitchListTile(
-              title: const Text('חובה'),
-              subtitle:
-                  const Text('צ\'קליסט חובה חוסם מעבר לאימון'),
-              value: _isMandatory,
-              onChanged: (v) => setState(() => _isMandatory = v),
-            ),
-            const Divider(height: 24),
-
-            // Sections
-            for (int si = 0; si < _sections.length; si++) ...[
-              _buildSectionEditor(si),
               const SizedBox(height: 12),
-            ],
 
-            // Add section button
-            OutlinedButton.icon(
-              onPressed: _addSection,
-              icon: const Icon(Icons.add),
-              label: const Text('הוספת קטגוריה'),
-            ),
-          ],
+              // Mandatory toggle
+              SwitchListTile(
+                title: const Text('חובה'),
+                subtitle:
+                    const Text('צ\'קליסט חובה חוסם מעבר לאימון'),
+                value: _isMandatory,
+                onChanged: (v) {
+                  setState(() => _isMandatory = v);
+                  if (_isEditMode) _triggerAutoSave();
+                },
+              ),
+              const Divider(height: 24),
+
+              // Sections
+              for (int si = 0; si < _sections.length; si++) ...[
+                _buildSectionEditor(si),
+                const SizedBox(height: 12),
+              ],
+
+              // Add section button
+              OutlinedButton.icon(
+                onPressed: _addSection,
+                icon: const Icon(Icons.add),
+                label: const Text('הוספת קטגוריה'),
+              ),
+            ],
+          ),
         ),
       ),
     );

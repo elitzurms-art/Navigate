@@ -4759,6 +4759,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       switch (settingType) {
         case 'allowOpenMap':
           _navigatorOverrideAllowOpenMap[navigatorId] = nav.allowOpenMap;
+          if (!nav.allowOpenMap) {
+            _navigatorOverrideShowSelfLocation[navigatorId] = false;
+            _navigatorOverrideShowRouteOnMap[navigatorId] = false;
+          }
           await _trackRepo.updateMapOverrides(
             trackId,
             allowOpenMap: nav.allowOpenMap,

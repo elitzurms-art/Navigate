@@ -617,9 +617,10 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
       }
 
       if (!mounted) return;
+      final isNewNav = _currentNavigation?.id != bestNav!.id;
       setState(() {
         _currentNavigation = bestNav;
-        _initPerNavigatorFlags(bestNav!);
+        if (isNewNav) _initPerNavigatorFlags(bestNav);
         _state = statusToScreenState(bestNav.status);
       });
 
