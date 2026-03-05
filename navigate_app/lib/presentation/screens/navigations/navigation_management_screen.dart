@@ -2283,11 +2283,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.tune),
-            tooltip: 'הגדרות ניווט',
-            onPressed: _showGlobalSettingsSheet,
-          ),
           if (_emergencyActive)
             IconButton(
               icon: const Icon(Icons.crisis_alert, color: Colors.orange),
@@ -2295,14 +2290,19 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               onPressed: _showDeactivateConfirmation,
             ),
           IconButton(
+            icon: const Icon(Icons.campaign, color: Colors.red),
+            tooltip: 'שידור חירום',
+            onPressed: _showEmergencyBroadcastDialog,
+          ),
+          IconButton(
             icon: const Icon(Icons.local_hospital, color: Colors.red),
             tooltip: 'נווט לבית חולים',
             onPressed: _showNearestHospitalsDialog,
           ),
           IconButton(
-            icon: const Icon(Icons.campaign, color: Colors.red),
-            tooltip: 'שידור חירום',
-            onPressed: _showEmergencyBroadcastDialog,
+            icon: const Icon(Icons.tune),
+            tooltip: 'הגדרות ניווט',
+            onPressed: _showGlobalSettingsSheet,
           ),
           IconButton(
             icon: const Icon(Icons.my_location),

@@ -105,6 +105,26 @@ class GeometryUtils {
     return intersections % 2 == 1;
   }
 
+  /// מרחק מינימלי (במטרים) מנקודה לצלעות פוליגון.
+  /// אם הנקודה בתוך הפוליגון — מחזיר 0.
+  static double distanceFromPointToPolygonMeters(
+    Coordinate point,
+    List<Coordinate> polygon,
+  ) {
+    if (polygon.length < 3) return double.infinity;
+
+    // אם הנקודה בתוך הפוליגון
+    if (isPointInPolygon(point, polygon)) return 0;
+
+    double minDist = double.infinity;
+    for (int i = 0; i < polygon.length; i++) {
+      final j = (i + 1) % polygon.length;
+      final d = distanceFromPointToSegmentMeters(point, polygon[i], polygon[j]);
+      if (d < minDist) minDist = d;
+    }
+    return minDist;
+  }
+
   /// סינון רשימת נקודות - רק אלה שבתוך הפוליגון
   static List<T> filterPointsInPolygon<T>({
     required List<T> points,

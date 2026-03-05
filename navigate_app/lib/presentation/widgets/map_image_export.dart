@@ -22,28 +22,15 @@ class MapImageExport {
     double pixelRatio = 3.0,
   }) async {
     try {
-      // הפעלת מצב צילום — עוטף ב-RepaintBoundary
-      final wrapperState = repaintBoundaryKey.currentContext
-          ?.findAncestorStateOfType<MapCaptureWrapperState>();
-      if (wrapperState != null) {
-        wrapperState.enableCaptureMode();
-        await WidgetsBinding.instance.endOfFrame;
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-
       final boundary = repaintBoundaryKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
       if (boundary == null) {
-        wrapperState?.disableCaptureMode();
         if (context.mounted) _showError(context, 'לא ניתן לצלם את המפה');
         return null;
       }
 
       final image = await boundary.toImage(pixelRatio: pixelRatio);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-
-      // כיבוי מצב צילום
-      wrapperState?.disableCaptureMode();
 
       if (byteData == null) {
         if (context.mounted) _showError(context, 'שגיאה בהמרת התמונה');
@@ -110,11 +97,6 @@ class MapImageExport {
 
       return result;
     } catch (e) {
-      // כיבוי מצב צילום במקרה של שגיאה
-      final wrapperState = repaintBoundaryKey.currentContext
-          ?.findAncestorStateOfType<MapCaptureWrapperState>();
-      wrapperState?.disableCaptureMode();
-
       if (context.mounted) _showError(context, 'שגיאה: $e');
       return null;
     }
@@ -127,9 +109,8 @@ class MapImageExport {
   }
 }
 
-/// ווידג'ט עוטף למפה — ללא RepaintBoundary כברירת מחדל.
-/// RepaintBoundary נוסף רק בזמן צילום מסך כדי לא לחסום רנדור תקין של המפה.
-class MapCaptureWrapper extends StatefulWidget {
+/// ווידג'ט עוטף למפה — עוטף ב-RepaintBoundary לתמיכה בצילום מסך וייצוא PDF.
+class MapCaptureWrapper extends StatelessWidget {
   final GlobalKey captureKey;
   final Widget child;
 
@@ -140,29 +121,11 @@ class MapCaptureWrapper extends StatefulWidget {
   });
 
   @override
-  State<MapCaptureWrapper> createState() => MapCaptureWrapperState();
-}
-
-class MapCaptureWrapperState extends State<MapCaptureWrapper> {
-  bool _captureMode = false;
-
-  void enableCaptureMode() {
-    if (mounted) setState(() => _captureMode = true);
-  }
-
-  void disableCaptureMode() {
-    if (mounted) setState(() => _captureMode = false);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    if (_captureMode) {
-      return RepaintBoundary(
-        key: widget.captureKey,
-        child: widget.child,
-      );
-    }
-    return KeyedSubtree(key: widget.captureKey, child: widget.child);
+    return RepaintBoundary(
+      key: captureKey,
+      child: child,
+    );
   }
 }
 

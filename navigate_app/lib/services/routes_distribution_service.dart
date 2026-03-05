@@ -6,6 +6,7 @@ import '../domain/entities/navigation_tree.dart';
 import '../domain/entities/navigation_settings.dart';
 import '../domain/entities/boundary.dart';
 import '../core/utils/geometry_utils.dart';
+import '../domain/entities/safety_point.dart';
 import '../data/repositories/user_repository.dart';
 
 /// פרמטרים לריצה ב-Isolate (חייבים להיות serializable)
@@ -214,6 +215,7 @@ class RoutesDistributionService {
     required double maxRouteLength,
     String scoringCriterion = 'fairness',
     ForceComposition? forceComposition,
+    List<SafetyPoint> safetyPoints = const [],
     void Function(int current, int total)? onProgress,
   }) async {
     final composition = forceComposition ?? const ForceComposition();
@@ -263,6 +265,26 @@ class RoutesDistributionService {
         getCoordinate: (checkpoint) => checkpoint.coordinates!,
         polygon: boundary.coordinates,
       );
+    }
+
+    // סינון נקודות הנמצאות על נת"בים או בקרבתם (50 מטר)
+    if (safetyPoints.isNotEmpty) {
+      availableCheckpoints = availableCheckpoints.where((cp) {
+        if (cp.isPolygon || cp.coordinates == null) return true;
+        final coord = cp.coordinates!;
+        for (final sp in safetyPoints) {
+          if (sp.type == 'point' && sp.coordinates != null) {
+            if (GeometryUtils.distanceBetweenMeters(coord, sp.coordinates!) <= 50) {
+              return false;
+            }
+          } else if (sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.length >= 3) {
+            if (GeometryUtils.distanceFromPointToPolygonMeters(coord, sp.polygonCoordinates!) <= 50) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }).toList();
     }
 
     // חישוב נקודות זמינות (בניכוי התחלה/סיום)

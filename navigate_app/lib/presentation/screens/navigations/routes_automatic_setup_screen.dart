@@ -7,8 +7,10 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
 import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/safety_point.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../services/routes_distribution_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
@@ -36,6 +38,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   final UserRepository _userRepo = UserRepository();
 
   List<Checkpoint> _checkpoints = [];
+  List<SafetyPoint> _safetyPoints = [];
   NavigationTree? _tree;
   Boundary? _boundary;
   bool _isLoading = false;
@@ -162,8 +165,34 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         boundary = await BoundaryRepository().getById(widget.navigation.boundaryLayerId!);
       }
 
+      // טעינת נת"בים לסינון בחלוקה אוטומטית
+      List<SafetyPoint> safetyPoints = [];
+      try {
+        final navSafetyPoints = await _navLayerRepo.getSafetyPointsByNavigation(
+          widget.navigation.id,
+        );
+        if (navSafetyPoints.isNotEmpty) {
+          safetyPoints = navSafetyPoints.map((nsp) => SafetyPoint(
+            id: nsp.sourceId,
+            areaId: nsp.areaId,
+            name: nsp.name,
+            description: nsp.description,
+            type: nsp.type,
+            coordinates: nsp.coordinates,
+            polygonCoordinates: nsp.polygonCoordinates,
+            sequenceNumber: nsp.sequenceNumber,
+            severity: nsp.severity,
+            createdAt: nsp.createdAt,
+            updatedAt: nsp.updatedAt,
+          )).toList();
+        } else {
+          safetyPoints = await SafetyPointRepository().getByArea(widget.navigation.areaId);
+        }
+      } catch (_) {}
+
       setState(() {
         _checkpoints = checkpoints;
+        _safetyPoints = safetyPoints;
         _tree = tree;
         _boundary = boundary;
         _navigatorsList = navigatorsList;
@@ -330,6 +359,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         maxRouteLength: _maxRouteLength,
         scoringCriterion: _scoringCriterion,
         forceComposition: composition,
+        safetyPoints: _safetyPoints,
         onProgress: (current, total) {
           if (mounted) {
             final ratio = total > 0 ? current / total : 0.0;
