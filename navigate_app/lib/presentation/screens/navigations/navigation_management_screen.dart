@@ -22,6 +22,7 @@ import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/hospitals_data.dart';
 import '../../../core/utils/geometry_utils.dart';
+import '../../../core/utils/utm_converter.dart';
 import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
 import '../../../data/repositories/user_repository.dart';
@@ -77,6 +78,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   // מצב חירום
   bool _emergencyActive = false;
+  bool _isJumpDialogOpen = false;
   int _emergencyMode = 0;
   String? _activeBroadcastId;
   StreamSubscription<DocumentSnapshot>? _ackListener;
@@ -2074,7 +2076,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (checkpoint == null) return null;
 
       final punch = data.punches
-          .where((p) => p.checkpointId == cpId && !p.isDeleted)
+          .where((p) => p.checkpointId == cpId && p.isActive)
           .firstOrNull;
 
       return _CheckpointArrival(
@@ -2299,6 +2301,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             icon: const Icon(Icons.campaign, color: Colors.red),
             tooltip: 'שידור חירום',
             onPressed: _showEmergencyBroadcastDialog,
+          ),
+          IconButton(
+            icon: const Icon(Icons.my_location),
+            tooltip: 'דלג לנ.צ.',
+            onPressed: _isJumpDialogOpen ? null : _showJumpToCoordinateDialog,
           ),
           IconButton(
             icon: const Icon(Icons.stop_circle),
@@ -3102,18 +3109,25 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       if (!(_selectedNavigators[navigatorId] ?? false)) continue;
       if (!(_showNavigatorTrack[navigatorId] ?? false)) continue;
 
-      final activePunches = data.punches.where((p) => !p.isDeleted).toList();
+      final visiblePunches = data.punches.where((p) => !p.isDeleted).toList();
       final navName = _userNames[navigatorId] ?? navigatorId;
       final punchMarkers = <Marker>[];
-      for (int i = 0; i < activePunches.length; i++) {
-        final punch = activePunches[i];
+      for (int i = 0; i < visiblePunches.length; i++) {
+        final punch = visiblePunches[i];
         Color color;
-        if (punch.isApproved) {
+        IconData icon;
+        if (punch.isSuperseded) {
+          color = Colors.grey;
+          icon = Icons.flag_outlined;
+        } else if (punch.isApproved) {
           color = Colors.green;
+          icon = Icons.flag;
         } else if (punch.isRejected) {
           color = Colors.red;
+          icon = Icons.flag;
         } else {
           color = Colors.orange;
+          icon = Icons.flag;
         }
 
         punchMarkers.add(Marker(
@@ -3125,7 +3139,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.flag, color: color, size: 22),
+                Icon(icon, color: color, size: 22),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                   decoration: BoxDecoration(
@@ -3547,6 +3561,147 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ],
       ),
     );
+  }
+
+  void _showJumpToCoordinateDialog() {
+    if (_isJumpDialogOpen) return;
+    _isJumpDialogOpen = true;
+
+    final eastingController = TextEditingController();
+    final northingController = TextEditingController();
+    final latController = TextEditingController();
+    final lngController = TextEditingController();
+    bool isUtmMode = true;
+    String? errorText;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('דלג לנקודת ציון'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text('UTM')),
+                  ButtonSegment(value: false, label: Text('גאוגרפי')),
+                ],
+                selected: {isUtmMode},
+                onSelectionChanged: (v) {
+                  setDialogState(() {
+                    isUtmMode = v.first;
+                    errorText = null;
+                    eastingController.clear();
+                    northingController.clear();
+                    latController.clear();
+                    lngController.clear();
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+              if (isUtmMode) ...[
+                TextField(
+                  controller: eastingController,
+                  textDirection: TextDirection.ltr,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Easting (6 ספרות)',
+                    hintText: '123456',
+                  ),
+                  maxLength: 6,
+                ),
+                TextField(
+                  controller: northingController,
+                  textDirection: TextDirection.ltr,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Northing (6 ספרות)',
+                    hintText: '789012',
+                  ),
+                  maxLength: 6,
+                ),
+              ] else ...[
+                TextField(
+                  controller: latController,
+                  textDirection: TextDirection.ltr,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'קו רוחב (Latitude)',
+                    hintText: '31.7767',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: lngController,
+                  textDirection: TextDirection.ltr,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'קו אורך (Longitude)',
+                    hintText: '35.2345',
+                  ),
+                ),
+              ],
+              if (errorText != null) ...[
+                const SizedBox(height: 8),
+                Text(errorText!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            FilledButton(
+              onPressed: () {
+                LatLng? target;
+                if (isUtmMode) {
+                  final e = eastingController.text.trim();
+                  final n = northingController.text.trim();
+                  if (e.length != 6 || n.length != 6 ||
+                      !RegExp(r'^\d{6}$').hasMatch(e) ||
+                      !RegExp(r'^\d{6}$').hasMatch(n)) {
+                    setDialogState(() => errorText = 'יש להזין 6 ספרות בכל שדה');
+                    return;
+                  }
+                  try {
+                    target = UtmConverter.utmToLatLng('$e$n');
+                  } catch (_) {
+                    setDialogState(() => errorText = 'שגיאה בהמרת UTM');
+                    return;
+                  }
+                } else {
+                  final lat = double.tryParse(latController.text.trim());
+                  final lng = double.tryParse(lngController.text.trim());
+                  if (lat == null || lng == null) {
+                    setDialogState(() => errorText = 'יש להזין מספרים תקינים');
+                    return;
+                  }
+                  target = LatLng(lat, lng);
+                }
+                if (target.latitude < 29 || target.latitude > 34 ||
+                    target.longitude < 33 || target.longitude > 37) {
+                  setDialogState(() => errorText = 'הקואורדינטה מחוץ לתחום ישראל');
+                  return;
+                }
+                Navigator.pop(ctx);
+                _tabController.animateTo(0);
+                final zoom = _mapController.camera.zoom >= 15
+                    ? _mapController.camera.zoom
+                    : 15.0;
+                Future.delayed(const Duration(milliseconds: 300), () {
+                  if (mounted) {
+                    _mapController.move(target!, zoom);
+                  }
+                });
+              },
+              child: const Text('דלג'),
+            ),
+          ],
+        ),
+      ),
+    ).then((_) => _isJumpDialogOpen = false);
   }
 
   void _showHospitalNavigationOptions(Hospital hospital) {

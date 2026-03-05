@@ -64,6 +64,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
   final Map<String, User> _usersCache = {};
   late Map<String, domain.AssignedRoute> _filteredRoutes;
 
+  // מטמון שיוך נקודות → מנווטים (checkpointId → navigatorIds)
+  Map<String, List<String>> _checkpointAssigneesCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -93,8 +96,32 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
         _selectedNavigators = {
           for (final uid in _filteredRoutes.keys) uid: true,
         };
+        _buildCheckpointAssigneesCache();
       });
     }
+  }
+
+  void _buildCheckpointAssigneesCache() {
+    final cache = <String, List<String>>{};
+    for (final entry in widget.navigation.routes.entries) {
+      final navigatorId = entry.key;
+      final route = entry.value;
+      for (final cpId in route.checkpointIds) {
+        cache.putIfAbsent(cpId, () => []).add(navigatorId);
+      }
+      if (route.startPointId != null) {
+        cache.putIfAbsent(route.startPointId!, () => []).add(navigatorId);
+      }
+      if (route.endPointId != null) {
+        cache.putIfAbsent(route.endPointId!, () => []).add(navigatorId);
+      }
+      for (final wpId in route.waypointIds) {
+        if (!cache.containsKey(wpId) || !cache[wpId]!.contains(navigatorId)) {
+          cache.putIfAbsent(wpId, () => []).add(navigatorId);
+        }
+      }
+    }
+    _checkpointAssigneesCache = cache;
   }
 
   String _getNavigatorName(String uid) {
@@ -119,6 +146,70 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       ..sort();
     final groupNum = groupIds.indexOf(route.groupId!) + 1;
     return '$typeLabel $groupNum';
+  }
+
+  void _showCheckpointAssignees(Checkpoint cp, Color cpColor, String letter) {
+    final assigneeIds = _checkpointAssigneesCache[cp.id] ?? [];
+    final assigneeNames = assigneeIds.map((id) => _getNavigatorName(id)).toList();
+
+    final typeName = letter == 'H'
+        ? 'נקודת התחלה'
+        : letter == 'S'
+            ? 'נקודת החלפה'
+            : letter == 'F'
+                ? 'נקודת סיום'
+                : letter == 'B'
+                    ? 'נקודת ביניים'
+                    : 'נקודה';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.place, color: cpColor, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${cp.name.isNotEmpty ? cp.name : 'נ.צ ${cp.sequenceNumber}'} ($typeName)',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (assigneeNames.isEmpty)
+              const Text('לא שויכו מנווטים לנקודה זו')
+            else ...[
+              Text(
+                'מנווטים שקיבלו את הנקודה (${assigneeNames.length}):',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              ...assigneeNames.map((name) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person, size: 18, color: Colors.blueGrey),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(name)),
+                  ],
+                ),
+              )),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('סגור'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _calculateSharedCheckpoints() {
@@ -807,28 +898,32 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                           point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                           width: 36,
                           height: 36,
-                          child: Opacity(
-                            opacity: _nzOpacity,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: markerColor,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isShared ? Colors.orange[900]! : borderColor,
-                                  width: isShared ? 3 : 2,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _showCheckpointAssignees(cp, markerColor, label.replaceAll(RegExp(r'\d'), '')),
+                            child: Opacity(
+                              opacity: _nzOpacity,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: markerColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isShared ? Colors.orange[900]! : borderColor,
+                                    width: isShared ? 3 : 2,
+                                  ),
                                 ),
-                              ),
-                              child: Center(
-                                child: isShared
-                                    ? const Icon(Icons.people, size: 14, color: Colors.white)
-                                    : Text(
-                                        label,
-                                        style: TextStyle(
-                                          color: isSwapPoint ? Colors.grey[800]! : Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
+                                child: Center(
+                                  child: isShared
+                                      ? const Icon(Icons.people, size: 14, color: Colors.white)
+                                      : Text(
+                                          label,
+                                          style: TextStyle(
+                                            color: isSwapPoint ? Colors.grey[800]! : Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
-                                      ),
+                                ),
                               ),
                             ),
                           ),
@@ -972,24 +1067,28 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                                 point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                                 width: 36,
                                 height: 36,
-                                child: Opacity(
-                                  opacity: (opacity['nz'] ?? 1.0),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: markerColor,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: isShared ? Colors.orange[900]! : borderColor,
-                                        width: isShared ? 3 : 2,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: () => _showCheckpointAssignees(cp, markerColor, label.replaceAll(RegExp(r'\d'), '')),
+                                  child: Opacity(
+                                    opacity: (opacity['nz'] ?? 1.0),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: markerColor,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: isShared ? Colors.orange[900]! : borderColor,
+                                          width: isShared ? 3 : 2,
+                                        ),
                                       ),
-                                    ),
-                                    child: Center(
-                                      child: isShared
-                                          ? const Icon(Icons.people, size: 14, color: Colors.white)
-                                          : Text(
-                                              label,
-                                              style: TextStyle(color: isSwapPoint ? Colors.grey[800]! : Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                            ),
+                                      child: Center(
+                                        child: isShared
+                                            ? const Icon(Icons.people, size: 14, color: Colors.white)
+                                            : Text(
+                                                label,
+                                                style: TextStyle(color: isSwapPoint ? Colors.grey[800]! : Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                              ),
+                                      ),
                                     ),
                                   ),
                                 ),

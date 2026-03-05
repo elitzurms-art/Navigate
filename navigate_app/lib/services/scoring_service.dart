@@ -34,9 +34,17 @@ class ScoringService {
     Map<String, CheckpointScore> checkpointScores = {};
     int approvedCount = 0;
 
-    for (final punch in punches) {
-      if (punch.isDeleted || punch.isRejected) continue;
+    // סינון דקירות שהוחלפו — שימוש רק בדקירה האחרונה לכל נקודה
+    final scoreablePunches = punches.where((p) => p.isScoreable).toList();
+    final punchByCheckpoint = <String, CheckpointPunch>{};
+    for (final punch in scoreablePunches) {
+      final existing = punchByCheckpoint[punch.checkpointId];
+      if (existing == null || punch.punchTime.isAfter(existing.punchTime)) {
+        punchByCheckpoint[punch.checkpointId] = punch;
+      }
+    }
 
+    for (final punch in punchByCheckpoint.values) {
       final distance = punch.distanceFromCheckpoint;
       bool approved = false;
       int score = 0;

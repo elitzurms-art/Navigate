@@ -78,12 +78,14 @@ class VerificationSettings extends Equatable {
   final String? verificationType; // 'approved_failed' או 'score_by_distance'
   final int? approvalDistance; // מרחק לאישור במטרים (אם בחרו approved_failed)
   final List<DistanceScoreRange>? scoreRanges; // טווחי מרחק וציון (אם בחרו score_by_distance)
+  final String punchMode; // 'sequential' או 'free'
 
   const VerificationSettings({
     required this.autoVerification,
     this.verificationType,
     this.approvalDistance,
     this.scoreRanges,
+    this.punchMode = 'sequential',
   });
 
   VerificationSettings copyWith({
@@ -91,12 +93,14 @@ class VerificationSettings extends Equatable {
     String? verificationType,
     int? approvalDistance,
     List<DistanceScoreRange>? scoreRanges,
+    String? punchMode,
   }) {
     return VerificationSettings(
       autoVerification: autoVerification ?? this.autoVerification,
       verificationType: verificationType ?? this.verificationType,
       approvalDistance: approvalDistance ?? this.approvalDistance,
       scoreRanges: scoreRanges ?? this.scoreRanges,
+      punchMode: punchMode ?? this.punchMode,
     );
   }
 
@@ -107,6 +111,7 @@ class VerificationSettings extends Equatable {
       if (approvalDistance != null) 'approvalDistance': approvalDistance,
       if (scoreRanges != null)
         'scoreRanges': scoreRanges!.map((r) => r.toMap()).toList(),
+      'punchMode': punchMode,
     };
   }
 
@@ -120,6 +125,7 @@ class VerificationSettings extends Equatable {
               .map((r) => DistanceScoreRange.fromMap(r as Map<String, dynamic>))
               .toList()
           : null,
+      punchMode: map['punchMode'] as String? ?? 'sequential',
     );
   }
 
@@ -129,6 +135,7 @@ class VerificationSettings extends Equatable {
         verificationType,
         approvalDistance,
         scoreRanges,
+        punchMode,
       ];
 }
 
@@ -333,7 +340,6 @@ class LearningSettings extends Equatable {
   final String? learningStartTime; // שעת התחלה (HH:mm)
   final String? learningEndTime; // שעת סיום (HH:mm)
   final bool requireCommanderQuiz; // הפעל מבחן מפקדים
-  final bool commanderQuizOpenManually; // מפקד פתח מבחן מפקדים ידנית
   final bool requireSoloQuiz; // חובת מבחן ניווט בדד
   final String quizType; // סוג מבחן: 'solo' (בדד) או 'regular' (רגיל)
   final bool quizOpenManually; // מפקד פתח מבחן ידנית
@@ -355,7 +361,6 @@ class LearningSettings extends Equatable {
     this.learningStartTime,
     this.learningEndTime,
     this.requireCommanderQuiz = false,
-    this.commanderQuizOpenManually = false,
     this.requireSoloQuiz = false,
     this.quizType = 'solo',
     this.quizOpenManually = false,
@@ -378,7 +383,6 @@ class LearningSettings extends Equatable {
     String? learningStartTime,
     String? learningEndTime,
     bool? requireCommanderQuiz,
-    bool? commanderQuizOpenManually,
     bool? requireSoloQuiz,
     String? quizType,
     bool? quizOpenManually,
@@ -400,7 +404,6 @@ class LearningSettings extends Equatable {
       learningStartTime: learningStartTime ?? this.learningStartTime,
       learningEndTime: learningEndTime ?? this.learningEndTime,
       requireCommanderQuiz: requireCommanderQuiz ?? this.requireCommanderQuiz,
-      commanderQuizOpenManually: commanderQuizOpenManually ?? this.commanderQuizOpenManually,
       requireSoloQuiz: requireSoloQuiz ?? this.requireSoloQuiz,
       quizType: quizType ?? this.quizType,
       quizOpenManually: quizOpenManually ?? this.quizOpenManually,
@@ -426,7 +429,6 @@ class LearningSettings extends Equatable {
       if (learningStartTime != null) 'learningStartTime': learningStartTime,
       if (learningEndTime != null) 'learningEndTime': learningEndTime,
       'requireCommanderQuiz': requireCommanderQuiz,
-      'commanderQuizOpenManually': commanderQuizOpenManually,
       'requireSoloQuiz': requireSoloQuiz,
       'quizType': quizType,
       'quizOpenManually': quizOpenManually,
@@ -454,7 +456,7 @@ class LearningSettings extends Equatable {
       learningStartTime: map['learningStartTime'] as String?,
       learningEndTime: map['learningEndTime'] as String?,
       requireCommanderQuiz: map['requireCommanderQuiz'] as bool? ?? false,
-      commanderQuizOpenManually: map['commanderQuizOpenManually'] as bool? ?? false,
+      // commanderQuizOpenManually — removed, ignored from old Firestore docs
       requireSoloQuiz: map['requireSoloQuiz'] as bool? ?? false,
       quizType: map['quizType'] as String? ?? 'solo',
       quizOpenManually: map['quizOpenManually'] as bool? ?? false,
@@ -487,16 +489,11 @@ class LearningSettings extends Equatable {
   }
 
   /// האם מבחן מפקדים פתוח כרגע (מיידי — ברגע שהופעל)
-  bool get isCommanderQuizCurrentlyOpen {
-    if (!requireCommanderQuiz) return false;
-    if (commanderQuizOpenManually) return true;
-    return false;
-  }
+  bool get isCommanderQuizCurrentlyOpen => requireCommanderQuiz;
 
   @override
   List<Object?> get props => [
         requireCommanderQuiz,
-        commanderQuizOpenManually,
         enabledWithPhones,
         showAllCheckpoints,
         showNavigationDetails,

@@ -1,7 +1,10 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../../../core/utils/file_export_helper.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../domain/entities/user.dart';
@@ -27,7 +30,7 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
 
   // סינון סוגי מבחנים
   bool _showSoloQuiz = true;
-  bool _showRegularQuiz = false;
+  bool _showRegularQuiz = true;
   bool _showCommanderQuiz = true;
 
   @override
@@ -297,25 +300,25 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
         pageFormat: PdfPageFormat.a4.landscape,
         textDirection: pw.TextDirection.rtl,
         build: (context) {
-          final headers = ['שם', 'תפקיד'];
-          if (_showSoloQuiz) headers.add('מבחן בדד');
-          if (_showRegularQuiz) headers.add('מבחן רגיל');
+          final headers = <String>[];
           if (_showCommanderQuiz) headers.add('מבחן מפקדים');
+          if (_showRegularQuiz) headers.add('מבחן רגיל');
+          if (_showSoloQuiz) headers.add('מבחן בדד');
+          headers.addAll(['תפקיד', 'שם']);
 
           final data = _users.map((user) {
-            final row = [
-              user.fullName.isNotEmpty ? user.fullName : user.uid,
-              _getRoleName(user.role),
-            ];
-            if (_showSoloQuiz) {
-              row.add(_getQuizStatus(user.soloQuizPassedAt, user.soloQuizScore));
+            final row = <String>[];
+            if (_showCommanderQuiz) {
+              row.add(_getQuizStatus(user.commanderQuizPassedAt, user.commanderQuizScore));
             }
             if (_showRegularQuiz) {
               row.add(_getQuizStatus(null, null));
             }
-            if (_showCommanderQuiz) {
-              row.add(_getQuizStatus(user.commanderQuizPassedAt, user.commanderQuizScore));
+            if (_showSoloQuiz) {
+              row.add(_getQuizStatus(user.soloQuizPassedAt, user.soloQuizScore));
             }
+            row.add(_getRoleName(user.role));
+            row.add(user.fullName.isNotEmpty ? user.fullName : user.uid);
             return row;
           }).toList();
 
@@ -361,9 +364,25 @@ class _QuizReportScreenState extends State<QuizReportScreen> {
       ),
     );
 
-    await Printing.layoutPdf(
-      onLayout: (format) async => pdf.save(),
-      name: 'דוח_מבחנים_$_unitName',
+    final pdfBytes = Uint8List.fromList(await pdf.save());
+    final fileName = 'דוח_מבחנים_${_unitName}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+
+    final result = await saveFileWithBytes(
+      dialogTitle: 'שמור דוח מבחנים',
+      fileName: fileName,
+      bytes: pdfBytes,
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
     );
+
+    if (result != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('הדוח נשמר ב-\n$result'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 }

@@ -34,6 +34,8 @@ class CheckpointPunch extends Equatable {
   final String? rejectionReason; // סיבת דחייה (אם נדחה)
   final DateTime? approvalTime; // זמן אישור
   final String? approvedBy; // מי אישר
+  final int? punchIndex; // אינדקס בסדר הדקירות (0-based)
+  final String? supersededByPunchId; // מזהה דקירת תיקון שמחליפה את זו
 
   const CheckpointPunch({
     required this.id,
@@ -47,12 +49,17 @@ class CheckpointPunch extends Equatable {
     this.rejectionReason,
     this.approvalTime,
     this.approvedBy,
+    this.punchIndex,
+    this.supersededByPunchId,
   });
 
   bool get isApproved => status == PunchStatus.approved;
   bool get isRejected => status == PunchStatus.rejected;
   bool get isDeleted => status == PunchStatus.deleted;
   bool get isPending => status == PunchStatus.active;
+  bool get isSuperseded => supersededByPunchId != null;
+  bool get isActive => !isDeleted && !isSuperseded;
+  bool get isScoreable => !isDeleted && !isRejected && !isSuperseded;
 
   CheckpointPunch copyWith({
     String? id,
@@ -66,6 +73,8 @@ class CheckpointPunch extends Equatable {
     String? rejectionReason,
     DateTime? approvalTime,
     String? approvedBy,
+    int? punchIndex,
+    String? supersededByPunchId,
   }) {
     return CheckpointPunch(
       id: id ?? this.id,
@@ -79,6 +88,8 @@ class CheckpointPunch extends Equatable {
       rejectionReason: rejectionReason ?? this.rejectionReason,
       approvalTime: approvalTime ?? this.approvalTime,
       approvedBy: approvedBy ?? this.approvedBy,
+      punchIndex: punchIndex ?? this.punchIndex,
+      supersededByPunchId: supersededByPunchId ?? this.supersededByPunchId,
     );
   }
 
@@ -97,6 +108,8 @@ class CheckpointPunch extends Equatable {
       if (rejectionReason != null) 'rejectionReason': rejectionReason,
       if (approvalTime != null) 'approvalTime': approvalTime!.toIso8601String(),
       if (approvedBy != null) 'approvedBy': approvedBy,
+      if (punchIndex != null) 'punchIndex': punchIndex,
+      if (supersededByPunchId != null) 'supersededByPunchId': supersededByPunchId,
     };
   }
 
@@ -119,6 +132,8 @@ class CheckpointPunch extends Equatable {
           ? DateTime.parse(map['approvalTime'] as String)
           : null,
       approvedBy: map['approvedBy'] as String?,
+      punchIndex: map['punchIndex'] as int?,
+      supersededByPunchId: map['supersededByPunchId'] as String?,
     );
   }
 
@@ -130,6 +145,8 @@ class CheckpointPunch extends Equatable {
         checkpointId,
         punchTime,
         status,
+        punchIndex,
+        supersededByPunchId,
       ];
 }
 

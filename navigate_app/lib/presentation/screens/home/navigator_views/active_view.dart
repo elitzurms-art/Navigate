@@ -75,6 +75,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _isStarting = false;
 
   int _punchCount = 0;
+  int _currentPunchIndex = 0;        // אינדקס דקירה הבא (0-based)
+  int _totalRouteCheckpoints = 0;    // מספר נקודות בציר
+  bool _allCheckpointsPunched = false;
+  String? _lastPunchId;              // מזהה דקירה פעילה אחרונה (לתיקון)
+  int? _lastPunchIndex;              // אינדקס דקירה אחרונה
+  bool _punchInProgress = false;     // הגנה מלחיצה כפולה
   bool _securityActive = false;
   bool _isDisqualified = false;
   String? _disqualificationReason;
@@ -251,6 +257,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       final punches = await _punchRepo.getByNavigator(widget.currentUser.uid);
       final navPunches = punches.where((p) => p.navigationId == _nav.id).toList();
+      final activePunches = navPunches.where((p) => p.isActive).toList();
 
       NavigatorPersonalStatus status;
       NavigationTrack? effectiveTrack = track;
@@ -325,10 +332,27 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _startSecurity();
         }
 
+        // שחזור מצב דקירות — מבוסס על דקירות פעילות (לא מחוקות/מוחלפות)
+        final routeCpCount = _route?.sequence.length ?? _route?.checkpointIds.length ?? 0;
+        final activeCheckpointIds = activePunches.map((p) => p.checkpointId).toSet();
+        CheckpointPunch? lastActive;
+        for (final p in activePunches) {
+          if (lastActive == null ||
+              (p.punchIndex != null && lastActive.punchIndex != null && p.punchIndex! > lastActive.punchIndex!) ||
+              (p.punchIndex == null && p.punchTime.isAfter(lastActive.punchTime))) {
+            lastActive = p;
+          }
+        }
+
         setState(() {
           _track = effectiveTrack;
           _personalStatus = status;
           _punchCount = navPunches.length;
+          _currentPunchIndex = activePunches.length;
+          _totalRouteCheckpoints = routeCpCount;
+          _allCheckpointsPunched = activeCheckpointIds.length >= routeCpCount && routeCpCount > 0;
+          _lastPunchId = lastActive?.id;
+          _lastPunchIndex = lastActive?.punchIndex;
           _isDisqualified = effectiveTrack?.isDisqualified ?? false;
           _isLoading = false;
         });
@@ -1393,6 +1417,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         _track = null;
         _isDisqualified = false;
         _punchCount = 0;
+        _currentPunchIndex = 0;
+        _allCheckpointsPunched = false;
+        _lastPunchId = null;
+        _lastPunchIndex = null;
         _elapsed = Duration.zero;
         _startTime = null;
         _gpsSource = PositionSource.none;
@@ -1761,83 +1789,106 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Actions — punch, report, emergency, barbur
   // ===========================================================================
 
+  /// קבלת קואורדינטת GPS נוכחית (Kalman מסונן / GPS ישיר)
+  Future<Coordinate?> _getCurrentCoordinate() async {
+    if (_gpsTracker.isTracking && _gpsTracker.trackPoints.isNotEmpty) {
+      return _gpsTracker.trackPoints.last.coordinate;
+    }
+    final posResult = await _gpsService.getCurrentPositionWithAccuracy(
+      boundaryCenter: _boundaryCenter,
+    );
+    if (posResult == null) return null;
+    return Coordinate(
+      lat: posResult.position.latitude,
+      lng: posResult.position.longitude,
+      utm: '',
+    );
+  }
+
+  /// דקירת נ.צ — ניתוב לפי מצב (סדרתי / חופשי)
   Future<void> _punchCheckpoint() async {
+    if (_punchInProgress || _allCheckpointsPunched) return;
     if (_routeCheckpoints.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('אין נקודות ציון בציר'),
-          backgroundColor: Colors.orange,
-        ),
+        const SnackBar(content: Text('אין נקודות ציון בציר'), backgroundColor: Colors.orange),
       );
       return;
     }
-
-    // עדיפות למיקום Kalman מסונן מהמעקב הפעיל — מדויק יותר מ-GPS גולמי
-    Coordinate currentCoord;
-    if (_gpsTracker.isTracking && _gpsTracker.trackPoints.isNotEmpty) {
-      final lastFiltered = _gpsTracker.trackPoints.last;
-      currentCoord = lastFiltered.coordinate;
-    } else {
-      // fallback — מעקב לא פעיל, שימוש ב-GPS ישיר
-      final posResult = await _gpsService.getCurrentPositionWithAccuracy(
-        boundaryCenter: _boundaryCenter,
-      );
-      if (posResult == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('לא ניתן לקבל מיקום GPS'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
+    _punchInProgress = true;
+    try {
+      final punchMode = _nav.verificationSettings.punchMode;
+      if (punchMode == 'free') {
+        await _punchCheckpointFree();
+      } else {
+        await _punchCheckpointSequential();
       }
-      currentCoord = Coordinate(
-        lat: posResult.position.latitude,
-        lng: posResult.position.longitude,
-        utm: '',
-      );
+    } finally {
+      _punchInProgress = false;
+    }
+  }
+
+  /// דקירה סדרתית — הנקודה הבאה בסדר הציר
+  Future<void> _punchCheckpointSequential() async {
+    final route = _route;
+    if (route == null) return;
+
+    // טעינת דקירות פעילות לקביעת הנקודה הבאה
+    final activePunches = await _punchRepo.getActivePunchesByNavigator(_nav.id, widget.currentUser.uid);
+    final nextIndex = activePunches.length;
+    if (nextIndex >= route.sequence.length) {
+      if (mounted) setState(() => _allCheckpointsPunched = true);
+      return;
     }
 
-    // מציאת הנקודה הקרובה ביותר מציר המנווט
-    domain_cp.Checkpoint? nearestCp;
-    double nearestDistance = double.infinity;
-
-    for (final cp in _routeCheckpoints) {
-      final dist = GeometryUtils.distanceBetweenMeters(
-        currentCoord,
-        cp.coordinates!,
-      );
-      if (dist < nearestDistance) {
-        nearestDistance = dist;
-        nearestCp = cp;
+    final targetCpId = route.sequence[nextIndex];
+    final targetCp = _routeCheckpoints.where((cp) => cp.id == targetCpId).firstOrNull;
+    if (targetCp == null || targetCp.coordinates == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('נקודת הציון הבאה לא נמצאה'), backgroundColor: Colors.orange),
+        );
       }
+      return;
     }
 
-    if (nearestCp == null) return;
+    final currentCoord = await _getCurrentCoordinate();
+    if (currentCoord == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('לא ניתן לקבל מיקום GPS'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
 
-    // יצירת דקירה
+    final distance = GeometryUtils.distanceBetweenMeters(currentCoord, targetCp.coordinates!);
     final now = DateTime.now();
     final punch = CheckpointPunch(
-      id: '${widget.currentUser.uid}-${_punchCount + 1}',
+      id: '${widget.currentUser.uid}_${now.microsecondsSinceEpoch}',
       navigationId: _nav.id,
       navigatorId: widget.currentUser.uid,
-      checkpointId: nearestCp.id,
+      checkpointId: targetCpId,
       punchLocation: currentCoord,
       punchTime: now,
-      distanceFromCheckpoint: nearestDistance,
+      distanceFromCheckpoint: distance,
+      punchIndex: _currentPunchIndex,
     );
 
     try {
       await _punchRepo.create(punch);
-      print('DEBUG ActiveView: punch created for checkpoint ${nearestCp.name}, distance=${nearestDistance.toStringAsFixed(0)}m');
-
+      print('DEBUG ActiveView: sequential punch #${_currentPunchIndex} for ${targetCp.name}, distance=${distance.toStringAsFixed(0)}m');
       if (mounted) {
-        setState(() => _punchCount++);
+        final newActiveCount = nextIndex + 1;
+        setState(() {
+          _punchCount++;
+          _currentPunchIndex++;
+          _lastPunchId = punch.id;
+          _lastPunchIndex = punch.punchIndex;
+          _allCheckpointsPunched = newActiveCount >= _totalRouteCheckpoints;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('בוצעה דקירת נקודה במפה'),
+          SnackBar(
+            content: Text('נדקרה נ.צ. ${nextIndex + 1} — ${targetCp.name ?? targetCpId}'),
             backgroundColor: Colors.blue,
           ),
         );
@@ -1846,12 +1897,191 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       print('DEBUG ActiveView: punch error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בדקירה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// דקירה חופשית — המנווט בוחר מרשימה
+  Future<void> _punchCheckpointFree() async {
+    final route = _route;
+    if (route == null) return;
+
+    final activePunches = await _punchRepo.getActivePunchesByNavigator(_nav.id, widget.currentUser.uid);
+    final punchedCpIds = activePunches.map((p) => p.checkpointId).toSet();
+
+    // סינון נקודות שעוד לא נדקרו
+    final unpunched = <domain_cp.Checkpoint>[];
+    for (final cpId in route.sequence) {
+      if (!punchedCpIds.contains(cpId)) {
+        final cp = _routeCheckpoints.where((c) => c.id == cpId).firstOrNull;
+        if (cp != null) unpunched.add(cp);
+      }
+    }
+
+    if (unpunched.isEmpty) {
+      if (mounted) setState(() => _allCheckpointsPunched = true);
+      return;
+    }
+
+    // הצגת bottom sheet עם רשימת נקודות
+    if (!mounted) return;
+    final selectedCp = await showModalBottomSheet<domain_cp.Checkpoint>(
+      context: context,
+      builder: (ctx) => ListView.builder(
+        shrinkWrap: true,
+        itemCount: unpunched.length,
+        itemBuilder: (ctx, i) {
+          final cp = unpunched[i];
+          final seqNum = route.sequence.indexOf(cp.id) + 1;
+          return ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.blue,
+              child: Text('$seqNum', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+            title: Text(cp.name ?? 'נ.צ. $seqNum'),
+            subtitle: cp.description != null ? Text(cp.description!, maxLines: 1, overflow: TextOverflow.ellipsis) : null,
+            onTap: () => Navigator.pop(ctx, cp),
+          );
+        },
+      ),
+    );
+
+    if (selectedCp == null || selectedCp.coordinates == null) return;
+
+    final currentCoord = await _getCurrentCoordinate();
+    if (currentCoord == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('לא ניתן לקבל מיקום GPS'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    final distance = GeometryUtils.distanceBetweenMeters(currentCoord, selectedCp.coordinates!);
+    final now = DateTime.now();
+    final punch = CheckpointPunch(
+      id: '${widget.currentUser.uid}_${now.microsecondsSinceEpoch}',
+      navigationId: _nav.id,
+      navigatorId: widget.currentUser.uid,
+      checkpointId: selectedCp.id,
+      punchLocation: currentCoord,
+      punchTime: now,
+      distanceFromCheckpoint: distance,
+      punchIndex: _currentPunchIndex,
+    );
+
+    try {
+      await _punchRepo.create(punch);
+      print('DEBUG ActiveView: free punch #${_currentPunchIndex} for ${selectedCp.name}, distance=${distance.toStringAsFixed(0)}m');
+      if (mounted) {
+        final newPunchedCount = punchedCpIds.length + 1;
+        setState(() {
+          _punchCount++;
+          _currentPunchIndex++;
+          _lastPunchId = punch.id;
+          _lastPunchIndex = punch.punchIndex;
+          _allCheckpointsPunched = newPunchedCount >= _totalRouteCheckpoints;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שגיאה בדקירה: $e'),
-            backgroundColor: Colors.red,
+            content: Text('נדקרה ${selectedCp.name ?? 'נ.צ.'}'),
+            backgroundColor: Colors.blue,
           ),
         );
       }
+    } catch (e) {
+      print('DEBUG ActiveView: punch error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בדקירה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// תיקון דקירה אחרונה
+  Future<void> _correctLastPunch() async {
+    if (_punchInProgress || _lastPunchId == null) return;
+
+    final punchNum = (_lastPunchIndex ?? 0) + 1;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('תיקון דקירה'),
+        content: Text('לתקן את דקירת נ.צ. $punchNum?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('תקן'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    _punchInProgress = true;
+    try {
+      // מציאת הדקירה הישנה
+      final allPunches = await _punchRepo.getByNavigation(_nav.id);
+      final oldPunch = allPunches.where((p) => p.id == _lastPunchId).firstOrNull;
+      if (oldPunch == null) return;
+
+      final currentCoord = await _getCurrentCoordinate();
+      if (currentCoord == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('לא ניתן לקבל מיקום GPS'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+
+      // חישוב מרחק מאותה נקודת ציון
+      final targetCp = _routeCheckpoints.where((cp) => cp.id == oldPunch.checkpointId).firstOrNull;
+      final distance = targetCp?.coordinates != null
+          ? GeometryUtils.distanceBetweenMeters(currentCoord, targetCp!.coordinates!)
+          : null;
+
+      final now = DateTime.now();
+      final newPunch = CheckpointPunch(
+        id: '${widget.currentUser.uid}_${now.microsecondsSinceEpoch}',
+        navigationId: _nav.id,
+        navigatorId: widget.currentUser.uid,
+        checkpointId: oldPunch.checkpointId,
+        punchLocation: currentCoord,
+        punchTime: now,
+        distanceFromCheckpoint: distance,
+        punchIndex: oldPunch.punchIndex,
+      );
+
+      await _punchRepo.correctPunch(oldPunch.id, newPunch);
+      print('DEBUG ActiveView: corrected punch ${oldPunch.id} → ${newPunch.id}');
+
+      if (mounted) {
+        setState(() {
+          _lastPunchId = newPunch.id;
+          // _currentPunchIndex לא משתנה — תיקון, לא דקירה חדשה
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('דקירת נ.צ. $punchNum תוקנה'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      print('DEBUG ActiveView: correct punch error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בתיקון: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      _punchInProgress = false;
     }
   }
 
@@ -2449,12 +2679,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                       child: Row(
                         children: [
                           Expanded(
-                            child: _buildActionCard(
-                              title: 'דקירת נ.צ',
-                              icon: Icons.location_on,
-                              color: Colors.blue,
-                              onTap: _punchCheckpoint,
-                            ),
+                            child: _buildPunchCard(),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -2685,7 +2910,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '$_punchCount',
+          _totalRouteCheckpoints > 0
+              ? '$_currentPunchIndex/$_totalRouteCheckpoints'
+              : '$_currentPunchIndex',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.bold,
@@ -2884,7 +3111,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               _summaryRow(
                 icon: Icons.location_on,
                 label: 'דקירות',
-                value: '$_punchCount',
+                value: _totalRouteCheckpoints > 0
+                    ? '$_currentPunchIndex/$_totalRouteCheckpoints'
+                    : '$_currentPunchIndex',
               ),
               if (route != null) ...[
                 const Divider(),
@@ -3133,6 +3362,101 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
             );
           }),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPunchCard() {
+    final punchMode = _nav.verificationSettings.punchMode;
+    final bool isDone = _allCheckpointsPunched;
+
+    String mainTitle;
+    String? subtitle;
+    Color cardColor;
+    VoidCallback? onMainTap;
+
+    if (isDone) {
+      mainTitle = 'כל הנקודות נדקרו';
+      cardColor = Colors.grey;
+      onMainTap = null;
+    } else if (punchMode == 'free') {
+      final activePunchedCount = _currentPunchIndex;
+      mainTitle = 'דקור נ.צ. ($activePunchedCount/$_totalRouteCheckpoints)';
+      cardColor = Colors.blue;
+      onMainTap = _punchCheckpoint;
+    } else {
+      // sequential
+      final nextNum = _currentPunchIndex + 1;
+      mainTitle = 'דקור נ.צ. $nextNum';
+      // נסה להציג שם הנקודה הבאה
+      final route = _route;
+      if (route != null && _currentPunchIndex < route.sequence.length) {
+        final nextCpId = route.sequence[_currentPunchIndex];
+        final nextCp = _routeCheckpoints.where((cp) => cp.id == nextCpId).firstOrNull;
+        subtitle = nextCp?.name;
+      }
+      cardColor = Colors.blue;
+      onMainTap = _punchCheckpoint;
+    }
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.black, width: 1.5),
+        ),
+        child: LayoutBuilder(builder: (context, constraints) {
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // כפתור דקירה ראשי
+              Expanded(
+                child: InkWell(
+                  onTap: onMainTap,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_on,
+                          size: (constraints.maxHeight * 0.3).clamp(20.0, 32.0),
+                          color: cardColor),
+                        const SizedBox(height: 4),
+                        Text(
+                          mainTitle,
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: cardColor),
+                          textAlign: TextAlign.center,
+                        ),
+                        if (subtitle != null)
+                          Text(
+                            subtitle,
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // כפתור תיקון — מוצג רק אם יש דקירה לתקן
+              if (_lastPunchId != null)
+                InkWell(
+                  onTap: _correctLastPunch,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'תקן דקירה',
+                      style: TextStyle(fontSize: 11, color: Colors.orange[700], fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        }),
       ),
     );
   }

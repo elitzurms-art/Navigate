@@ -102,6 +102,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   bool _autoVerification = true;
   String _verificationType = 'approved_failed'; // approved_failed, score_by_distance
+  String _punchMode = 'sequential'; // 'sequential' או 'free'
   int _approvalDistance = 40;
   List<DistanceScoreRange> _scoreRanges = [
     const DistanceScoreRange(maxDistance: 50, scorePercentage: 100),
@@ -444,6 +445,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _autoVerification = nav.verificationSettings.autoVerification;
     _verificationType = nav.verificationSettings.verificationType ?? 'approved_failed';
     _approvalDistance = nav.verificationSettings.approvalDistance ?? 50;
+    _punchMode = nav.verificationSettings.punchMode;
     final loadedRanges = nav.verificationSettings.scoreRanges ?? [];
     _scoreRanges = loadedRanges.isNotEmpty
         ? loadedRanges
@@ -1464,6 +1466,29 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 ),
               ],
               const Divider(),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text('מצב דקירה', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              ),
+              RadioListTile<String>(
+                title: const Text('סדרתי — המנווט דוקר לפי סדר הציר'),
+                value: 'sequential',
+                groupValue: _punchMode,
+                onChanged: (value) {
+                  setState(() => _punchMode = value!);
+                  _onSettingChanged();
+                },
+              ),
+              RadioListTile<String>(
+                title: const Text('חופשי — המנווט בוחר איזו נקודה לדקור'),
+                value: 'free',
+                groupValue: _punchMode,
+                onChanged: (value) {
+                  setState(() => _punchMode = value!);
+                  _onSettingChanged();
+                },
+              ),
+              const Divider(),
               SwitchListTile(
                 title: const Text('הפעל אימות נקודות אוטומטי'),
                 value: _autoVerification,
@@ -2158,7 +2183,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     try {
       // יצירת ההגדרות
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
-          .copyWith(requireCommanderQuiz: _requireCommanderQuiz, commanderQuizOpenManually: false, requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
+          .copyWith(requireCommanderQuiz: _requireCommanderQuiz, requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
 
       final reviewSettings = ReviewSettings(
         showScoresAfterApproval: _showScoresAfterApproval,
@@ -2169,6 +2194,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         verificationType: _autoVerification ? _verificationType : null,
         approvalDistance: _verificationType == 'approved_failed' ? _approvalDistance : null,
         scoreRanges: _verificationType == 'score_by_distance' ? _scoreRanges : null,
+        punchMode: _punchMode,
       );
 
       final alerts = NavigationAlerts(

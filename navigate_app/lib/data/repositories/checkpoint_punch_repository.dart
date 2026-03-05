@@ -180,6 +180,56 @@ class CheckpointPunchRepository {
     }
   }
 
+  /// תיקון דקירה — פעולה אטומית: סימון ישנה כ-superseded + יצירת חדשה
+  Future<void> correctPunch(String oldPunchId, CheckpointPunch newPunch) async {
+    try {
+      // עדכון מקומי (SharedPreferences)
+      final punches = await getAll();
+      final oldIndex = punches.indexWhere((p) => p.id == oldPunchId);
+      if (oldIndex != -1) {
+        punches[oldIndex] = punches[oldIndex].copyWith(
+          supersededByPunchId: newPunch.id,
+        );
+      }
+      punches.add(newPunch);
+
+      final prefs = await SharedPreferences.getInstance();
+      final punchesJson = punches.map((p) => jsonEncode(p.toMap())).toList();
+      await prefs.setStringList(_key, punchesJson);
+
+      // סנכרון ל-Firestore באמצעות WriteBatch (אטומי)
+      try {
+        final batch = _firestore.batch();
+        final collection = _punchesCollection(newPunch.navigationId);
+        batch.update(collection.doc(oldPunchId), {
+          'supersededByPunchId': newPunch.id,
+        });
+        batch.set(collection.doc(newPunch.id), newPunch.toMap());
+        await batch.commit();
+        print('DEBUG CheckpointPunchRepo: correctPunch synced to Firestore');
+      } catch (e) {
+        print('DEBUG CheckpointPunchRepo: Firestore correctPunch sync failed: $e');
+      }
+    } catch (e) {
+      print('DEBUG CheckpointPunchRepo: error in correctPunch: $e');
+      rethrow;
+    }
+  }
+
+  /// קבלת דקירות פעילות (לא מחוקות ולא מוחלפות) למנווט בניווט
+  Future<List<CheckpointPunch>> getActivePunchesByNavigator(
+    String navigationId,
+    String navigatorId,
+  ) async {
+    final all = await getAll();
+    return all
+        .where((p) =>
+            p.navigationId == navigationId &&
+            p.navigatorId == navigatorId &&
+            p.isActive)
+        .toList();
+  }
+
   /// אישור דקירה
   Future<void> approve(String punchId, String approvedBy) async {
     final punches = await getAll();

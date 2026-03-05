@@ -341,7 +341,7 @@ class _ApprovalViewState extends State<ApprovalView> {
                     _statChip(Icons.timeline,
                         '${actualDistKm.toStringAsFixed(1)} ק"מ', 'בפועל'),
                     _statChip(Icons.flag,
-                        '${_punches.where((p) => !p.isDeleted).length}/${_checkpoints.length}',
+                        '${_punches.where((p) => p.isActive).length}/${_checkpoints.length}',
                         'נ.צ.'),
                   ],
                 ),
@@ -534,7 +534,10 @@ class _ApprovalViewState extends State<ApprovalView> {
                   markers: _punches.where((p) => !p.isDeleted).map((p) {
                     Color color;
                     IconData icon;
-                    if (p.isApproved) {
+                    if (p.isSuperseded) {
+                      color = Colors.grey;
+                      icon = Icons.flag_outlined;
+                    } else if (p.isApproved) {
                       color = Colors.green;
                       icon = Icons.check_circle;
                     } else if (p.isRejected) {

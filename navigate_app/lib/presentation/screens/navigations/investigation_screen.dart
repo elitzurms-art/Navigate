@@ -453,7 +453,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ? actualDistKm / (totalDuration.inSeconds / 3600.0)
           : 0.0;
 
-      final activePunches = punches.where((p) => !p.isDeleted).toList();
+      final activePunches = punches.where((p) => p.isActive).toList();
 
       final verifiedCount = score != null
           ? score.checkpointScores.values.where((cs) => cs.approved).length
@@ -2137,7 +2137,10 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   Marker _buildPunchMarker(CheckpointPunch punch, int punchIndex) {
     Color color;
     IconData icon;
-    if (punch.isApproved) {
+    if (punch.isSuperseded) {
+      color = Colors.grey;
+      icon = Icons.flag_outlined;
+    } else if (punch.isApproved) {
       color = Colors.green;
       icon = Icons.check_circle;
     } else if (punch.isRejected) {

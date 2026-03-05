@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   HatInfo? _currentHat;
   User? _currentUser;
   bool? _commanderQuizPassed;
+  dynamic _commanderQuizNavigation; // ניווט עם מבחן מפקדים מופעל
   StreamSubscription<RemoteMessage>? _joinRequestSubscription;
 
   @override
@@ -285,10 +286,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
-            // מבחן מפקדים — מפקדים/מנהלים
-            if (_currentHat?.type == HatType.admin ||
-                _currentHat?.type == HatType.commander ||
-                _currentHat == null)
+            // מבחן מפקדים — רק כשיש ניווט עם מבחן מפקדים מופעל, או שהמשתמש כבר עבר
+            if ((_commanderQuizNavigation != null || _commanderQuizPassed == true) &&
+                (_currentHat?.type == HatType.admin ||
+                 _currentHat?.type == HatType.commander ||
+                 _currentHat == null))
               ListTile(
                 leading: Icon(
                   Icons.quiz,
@@ -300,29 +302,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 enabled: _commanderQuizPassed != true,
                 onTap: () async {
                   Navigator.pop(context);
-                  final navData = await _findNavigationWithCommanderQuiz();
-                  if (navData == null) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('אין ניווט עם מבחן מפקדים מופעל')),
-                      );
-                    }
-                    return;
-                  }
-                  final nav = navData['navigation'];
-                  if (_currentUser != null && mounted) {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => SoloQuizScreen(
-                          navigation: nav,
-                          currentUser: _currentUser!,
-                          quizType: 'commander',
-                        ),
+                  final nav = _commanderQuizNavigation;
+                  if (nav == null || _currentUser == null) return;
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SoloQuizScreen(
+                        navigation: nav,
+                        currentUser: _currentUser!,
+                        quizType: 'commander',
                       ),
-                    );
-                    _loadUserInfo();
-                  }
+                    ),
+                  );
+                  _loadUserInfo();
                 },
               ),
             // דוח מבחנים — מפקדים/מנהלים
@@ -443,35 +435,34 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// בדיקת סטטוס מבחן מפקדים — בודק אם יש ניווט פעיל עם מבחן מפקדים מופעל
+  /// בדיקת סטטוס מבחן מפקדים — טעינת ניווט עם מבחן מפקדים + בדיקת תוקף
   Future<void> _loadCommanderQuizStatus() async {
     final user = _currentUser;
     if (user == null) return;
 
     try {
-      // בדיקה האם למשתמש יש מבחן מפקדים בתוקף
       _commanderQuizPassed = user.hasCommanderQuizValid;
-      if (mounted) setState(() {});
-    } catch (_) {
-      // שקט
-    }
-  }
 
-  /// חיפוש ניווט פעיל עם מבחן מפקדים מופעל ופתוח
-  Future<Map<String, dynamic>?> _findNavigationWithCommanderQuiz() async {
-    try {
+      // חיפוש ניווט עם מבחן מפקדים מופעל
       final navRepo = NavigationRepository();
       final navigations = await navRepo.getAll();
+      dynamic foundNav;
       for (final nav in navigations) {
         if (nav.learningSettings.isCommanderQuizCurrentlyOpen &&
             nav.status != 'review') {
-          return {'navigation': nav};
+          foundNav = nav;
+          break;
         }
+      }
+
+      if (mounted) {
+        setState(() {
+          _commanderQuizNavigation = foundNav;
+        });
       }
     } catch (_) {
       // שקט
     }
-    return null;
   }
 
   Future<int> _getPendingCount() async {

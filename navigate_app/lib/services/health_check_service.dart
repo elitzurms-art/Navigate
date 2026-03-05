@@ -22,6 +22,7 @@ class HealthCheckService {
   bool _isAlarming = false;
   String _alarmMessage = '';
   bool _alertSent = false;
+  bool _oneMinuteBeepSent = false;
 
   bool get isAlarming => _isAlarming;
   String get alarmMessage => _alarmMessage;
@@ -39,6 +40,7 @@ class HealthCheckService {
   void start() {
     _lastReportTime = DateTime.now();
     _alertSent = false;
+    _oneMinuteBeepSent = false;
     // בדיקה כל דקה
     _checkTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       _check();
@@ -49,6 +51,7 @@ class HealthCheckService {
   void reportHealthy() {
     _lastReportTime = DateTime.now();
     _alertSent = false;
+    _oneMinuteBeepSent = false;
     if (_isAlarming) {
       _isAlarming = false;
       _alarmMessage = '';
@@ -94,6 +97,13 @@ class HealthCheckService {
       // צפצוף רק במעבר למצב alarm — לא בכל בדיקה
       if (!_isAlarming) {
         _isAlarming = true;
+        onAlarmStateChanged?.call(true, _alarmMessage);
+      }
+
+      // צפצוף נוסף דקה לפני תפוגה
+      final oneMinuteThreshold = Duration(minutes: intervalMinutes) - const Duration(minutes: 1);
+      if (!_oneMinuteBeepSent && elapsed >= oneMinuteThreshold) {
+        _oneMinuteBeepSent = true;
         onAlarmStateChanged?.call(true, _alarmMessage);
       }
 

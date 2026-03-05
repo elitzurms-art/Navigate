@@ -95,9 +95,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   TimeOfDay _learningStartTime = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _learningEndTime = const TimeOfDay(hour: 17, minute: 0);
 
-  // הגדרות מבחן מפקדים
-  bool _commanderQuizOpenManually = false;
-
   // הגדרות מבחן בדד
   bool _quizOpenManually = false;
   bool _autoQuizTimes = false;
@@ -180,8 +177,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         );
       }
     }
-    // מבחן מפקדים
-    _commanderQuizOpenManually = ls.commanderQuizOpenManually;
     // מבחן בדד
     _quizOpenManually = ls.quizOpenManually;
     _autoQuizTimes = ls.autoQuizTimes;
@@ -1049,35 +1044,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 }),
               ],
 
-              // הגדרות מבחן מפקדים (רק אם requireCommanderQuiz מופעל)
-              if (_currentNavigation.learningSettings.requireCommanderQuiz) ...[
-                const Divider(),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(Icons.quiz, color: Colors.deepPurple[700]),
-                    const SizedBox(width: 8),
-                    Text(
-                      'מבחן מפקדים',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-
-                SwitchListTile(
-                  title: const Text('פתח מבחן מפקדים'),
-                  subtitle: const Text('המבחן יופיע בתפריט המפקדים'),
-                  value: _commanderQuizOpenManually,
-                  onChanged: (value) {
-                    setState(() => _commanderQuizOpenManually = value);
-                    _autoSaveLearningSettings();
-                  },
-                ),
-              ],
-
               // הגדרות מבחן בדד (רק אם requireSoloQuiz מופעל)
               if (_currentNavigation.learningSettings.requireSoloQuiz) ...[
                 const Divider(),
@@ -1196,7 +1162,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           ? '${_learningEndTime.hour}:${_learningEndTime.minute}'
           : null,
       requireCommanderQuiz: _currentNavigation.learningSettings.requireCommanderQuiz,
-      commanderQuizOpenManually: _commanderQuizOpenManually,
       requireSoloQuiz: _currentNavigation.learningSettings.requireSoloQuiz,
       quizType: _currentNavigation.learningSettings.quizType,
       quizOpenManually: _quizOpenManually,
