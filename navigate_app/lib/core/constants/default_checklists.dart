@@ -18,7 +18,6 @@ List<UnitChecklist> kDefaultUnitChecklists() {
         ChecklistItem(id: 'di_haf_v1', title: 'ג\'יפ רנגלר / סופה'),
         ChecklistItem(id: 'di_haf_v2', title: 'נהג ערני עם רישיון והיתר בתוקף'),
         ChecklistItem(id: 'di_haf_v3', title: 'מיכל דלק מלא'),
-        ChecklistItem(id: 'di_haf_v4', title: 'כלי נהג'),
         ChecklistItem(id: 'di_haf_v5', title: 'רצועת גרירה (מומלץ)'),
         ChecklistItem(id: 'di_haf_v6', title: 'שאקלים (מומלץ)'),
         ChecklistItem(id: 'di_haf_v7', title: 'שקע מצת עובד'),

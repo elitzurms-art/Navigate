@@ -40,6 +40,7 @@ import '../../../../data/repositories/voice_message_repository.dart';
 import '../../../../domain/entities/voice_message.dart';
 import '../../../../data/repositories/extension_request_repository.dart';
 import '../../../../domain/entities/extension_request.dart';
+import '../../../../domain/entities/navigation_settings.dart' show StarPhase, computeStarPhase;
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -161,6 +162,37 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
   bool _trackJustCreated = false; // grace flag — track נוצר מקומית, טרם סונכרן ל-Firestore
 
+  // ניווט כוכב — מצב מחושב מ-timestamps
+  bool get _isStarNavigation => _nav.navigationType == 'star';
+  int _starCurrentPointIndex = -1;
+  DateTime? _starLearningEndTime;
+  DateTime? _starNavigatingEndTime;
+  bool _starReturnedToCenter = false;
+  Duration _serverTimeOffset = Duration.zero;
+  Timer? _starTicker;
+
+  DateTime get _adjustedNow => DateTime.now().add(_serverTimeOffset);
+
+  bool get _starCurrentPointPunched {
+    if (_starCurrentPointIndex < 0) return false;
+    final route = _route;
+    if (route == null || _starCurrentPointIndex >= route.sequence.length) return false;
+    final targetCpId = route.sequence[_starCurrentPointIndex];
+    return _activePunches.any((p) => p.checkpointId == targetCpId);
+  }
+
+  List<CheckpointPunch> _activePunches = [];
+
+  StarPhase get _currentStarPhase => computeStarPhase(
+    index: _starCurrentPointIndex,
+    learningEnd: _starLearningEndTime,
+    navigatingEnd: _starNavigatingEndTime,
+    currentPointPunched: _starCurrentPointPunched,
+    returned: _starReturnedToCenter,
+    totalPoints: _route?.sequence.length ?? 0,
+    now: _adjustedNow,
+  );
+
   // טיימר זמן שחלף
   Timer? _elapsedTimer;
   Duration _elapsed = Duration.zero;
@@ -243,6 +275,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _extensionListener?.cancel();
     _barburAlertListener?.cancel();
     _guardPartnerListener?.cancel();
+    _stopStarTicker();
     super.dispose();
   }
 
@@ -364,6 +397,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _isDisqualified = effectiveTrack?.isDisqualified ?? false;
           _isLoading = false;
         });
+
+        // ניווט כוכב — טעינת מצב + clock sync
+        if (_isStarNavigation && track != null && status == NavigatorPersonalStatus.active) {
+          await _computeServerTimeOffset();
+          await _loadStarState();
+        }
 
         // אם המנווט כבר פעיל (חזר למסך) — להמשיך טיימר + שירותים
         if (status == NavigatorPersonalStatus.active && track != null) {
@@ -1264,6 +1303,27 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       print('DEBUG ActiveView: position sources override changed to $effectiveSources');
       _gpsTracker.updateEnabledSources(effectiveSources);
     }
+
+    // ניווט כוכב — קריאת שדות star מ-track doc
+    if (_isStarNavigation) {
+      final newIndex = (data['starCurrentPointIndex'] as num?)?.toInt();
+      final newLearningEnd = _parseTrackDateTime(data['starLearningEndTime']);
+      final newNavEnd = _parseTrackDateTime(data['starNavigatingEndTime']);
+      final newReturned = data['starReturnedToCenter'] as bool? ?? false;
+
+      if (newIndex != _starCurrentPointIndex ||
+          newLearningEnd != _starLearningEndTime ||
+          newNavEnd != _starNavigatingEndTime ||
+          newReturned != _starReturnedToCenter) {
+        setState(() {
+          _starCurrentPointIndex = newIndex ?? -1;
+          _starLearningEndTime = newLearningEnd;
+          _starNavigatingEndTime = newNavEnd;
+          _starReturnedToCenter = newReturned;
+        });
+        _startStarTicker();
+      }
+    }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');
     });
@@ -1272,6 +1332,202 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   void _stopTrackDocListener() {
     _trackDocListener?.cancel();
     _trackDocListener = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // ניווט כוכב — שעון, טיקר, דקירת כוכב, חזרה למרכז
+  // ---------------------------------------------------------------------------
+
+  DateTime? _parseTrackDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  Future<void> _computeServerTimeOffset() async {
+    try {
+      final doc = FirebaseFirestore.instance.collection('sync_metadata').doc('_clock_check');
+      await doc.set({'t': FieldValue.serverTimestamp()});
+      final snap = await doc.get();
+      final serverTime = (snap.data()?['t'] as Timestamp?)?.toDate();
+      if (serverTime != null) {
+        _serverTimeOffset = serverTime.difference(DateTime.now());
+        print('DEBUG ActiveView: server time offset = ${_serverTimeOffset.inMilliseconds}ms');
+      }
+    } catch (e) {
+      print('DEBUG ActiveView: clock sync error: $e');
+    }
+  }
+
+  void _startStarTicker() {
+    _starTicker?.cancel();
+    final phase = _currentStarPhase;
+    if (phase == StarPhase.learning || phase == StarPhase.navigating || phase == StarPhase.returning) {
+      _starTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  void _stopStarTicker() {
+    _starTicker?.cancel();
+    _starTicker = null;
+  }
+
+  /// טעינת מצב כוכב ראשוני מ-Firestore (recovery אחרי crash)
+  Future<void> _loadStarState() async {
+    if (!_isStarNavigation || _track == null) return;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(_track!.id)
+          .get();
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        setState(() {
+          _starCurrentPointIndex = (data['starCurrentPointIndex'] as num?)?.toInt() ?? -1;
+          _starLearningEndTime = _parseTrackDateTime(data['starLearningEndTime']);
+          _starNavigatingEndTime = _parseTrackDateTime(data['starNavigatingEndTime']);
+          _starReturnedToCenter = data['starReturnedToCenter'] as bool? ?? false;
+        });
+        _startStarTicker();
+      }
+    } catch (e) {
+      print('DEBUG ActiveView: star state load error: $e');
+    }
+    // טעינת דקירות פעילות
+    _activePunches = await _punchRepo.getActivePunchesByNavigator(_nav.id, widget.currentUser.uid);
+  }
+
+  /// דקירת כוכב — רק כשהשלב הוא navigating
+  Future<void> _punchStarCheckpoint() async {
+    final route = _route;
+    if (route == null || _starCurrentPointIndex < 0 || _starCurrentPointIndex >= route.sequence.length) return;
+    if (_currentStarPhase != StarPhase.navigating) return;
+    if (_punchInProgress) return;
+    setState(() => _punchInProgress = true);
+
+    try {
+      final targetCpId = route.sequence[_starCurrentPointIndex];
+      final targetCp = _routeCheckpoints.where((cp) => cp.id == targetCpId).firstOrNull;
+      if (targetCp == null || targetCp.coordinates == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('נקודת הציון לא נמצאה'), backgroundColor: Colors.orange),
+          );
+        }
+        return;
+      }
+
+      final currentCoord = await _getCurrentCoordinate();
+      if (currentCoord == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('לא ניתן לקבל מיקום GPS'), backgroundColor: Colors.red),
+          );
+        }
+        return;
+      }
+
+      final distance = GeometryUtils.distanceBetweenMeters(currentCoord, targetCp.coordinates!);
+      final now = DateTime.now();
+      final punch = CheckpointPunch(
+        id: '${widget.currentUser.uid}_${now.microsecondsSinceEpoch}',
+        navigationId: _nav.id,
+        navigatorId: widget.currentUser.uid,
+        checkpointId: targetCpId,
+        punchLocation: currentCoord,
+        punchTime: now,
+        distanceFromCheckpoint: distance,
+        punchIndex: _starCurrentPointIndex,
+      );
+
+      await _punchRepo.create(punch);
+      _activePunches.add(punch);
+      if (mounted) {
+        setState(() {
+          _punchCount++;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('נדקרה נ.צ. ${_starCurrentPointIndex + 1} — ${targetCp.name ?? targetCpId}'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+        _startStarTicker(); // refresh phase
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('שגיאה בדקירה: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _punchInProgress = false);
+    }
+  }
+
+  /// "סיימתי ללמוד" — מקצר למידה
+  Future<void> _finishStarLearning() async {
+    if (_track == null) return;
+    final now = _adjustedNow;
+    await _trackRepo.updateStarState(_track!.id, learningEndTime: now);
+    setState(() => _starLearningEndTime = now);
+    _startStarTicker();
+  }
+
+  /// בדיקת קרבה לנקודה מרכזית
+  bool _isNearCentralPoint() {
+    final centralCpId = _route?.startPointId;
+    final centralCp = _routeCheckpoints.where((cp) => cp.id == centralCpId).firstOrNull;
+    if (centralCp?.coordinates == null) return false;
+    if (!_gpsTracker.isTracking || _gpsTracker.trackPoints.isEmpty) return false;
+    final currentCoord = _gpsTracker.trackPoints.last.coordinate;
+    return GeometryUtils.distanceBetweenMeters(centralCp!.coordinates!, currentCoord) <= 50;
+  }
+
+  /// "חזרתי למרכז"
+  Future<void> _returnToCenter() async {
+    if (_track == null) return;
+    if (_currentStarPhase != StarPhase.returning) return;
+    if (!_isNearCentralPoint()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('אתה רחוק מהנקודה המרכזית (מעל 50 מטר)'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    await _trackRepo.updateStarState(_track!.id, returnedToCenter: true);
+    setState(() => _starReturnedToCenter = true);
+    _startStarTicker();
+  }
+
+  /// מרחק מהנקודה המרכזית
+  double? _distanceToCentralPoint() {
+    final centralCpId = _route?.startPointId;
+    final centralCp = _routeCheckpoints.where((cp) => cp.id == centralCpId).firstOrNull;
+    if (centralCp?.coordinates == null) return null;
+    if (!_gpsTracker.isTracking || _gpsTracker.trackPoints.isEmpty) return null;
+    final currentCoord = _gpsTracker.trackPoints.last.coordinate;
+    return GeometryUtils.distanceBetweenMeters(centralCp!.coordinates!, currentCoord);
+  }
+
+  /// מרחק מנקודת היעד הנוכחית
+  double? _distanceToCurrentStarTarget() {
+    final route = _route;
+    if (route == null || _starCurrentPointIndex < 0 || _starCurrentPointIndex >= route.sequence.length) return null;
+    final targetCpId = route.sequence[_starCurrentPointIndex];
+    final targetCp = _routeCheckpoints.where((cp) => cp.id == targetCpId).firstOrNull;
+    if (targetCp?.coordinates == null) return null;
+    if (!_gpsTracker.isTracking || _gpsTracker.trackPoints.isEmpty) return null;
+    final currentCoord = _gpsTracker.trackPoints.last.coordinate;
+    return GeometryUtils.distanceBetweenMeters(targetCp!.coordinates!, currentCoord);
   }
 
   /// בדיקת עצירה מרחוק + קריאת forcePositionSource. מחזיר true אם הניווט נעצר.
@@ -2583,7 +2839,218 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // מצב "פעיל" — סטטוס + גריד + כפתור סיום
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // ניווט כוכב — תצוגה ייעודית
+  // ---------------------------------------------------------------------------
+
+  Widget _buildStarActiveView() {
+    final phase = _currentStarPhase;
+    final route = _route;
+    final totalPoints = route?.sequence.length ?? 0;
+    final completedPoints = _activePunches.length;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Progress bar
+          LinearProgressIndicator(
+            value: totalPoints > 0 ? completedPoints / totalPoints : 0,
+            backgroundColor: Colors.grey[200],
+            color: Colors.green,
+            minHeight: 6,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'נקודה $completedPoints/$totalPoints',
+            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 16),
+          // Phase-specific content
+          Expanded(child: _buildStarPhaseContent(phase, route, totalPoints)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStarPhaseContent(StarPhase phase, domain.AssignedRoute? route, int totalPoints, {VoidCallback? onActionDone}) {
+    switch (phase) {
+      case StarPhase.atCenter:
+        final isFirst = _starCurrentPointIndex < 0;
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.location_on, size: 64, color: Colors.blue[300]),
+              const SizedBox(height: 16),
+              Text(
+                isFirst ? 'ממתין לנקודה הראשונה' : 'ממתין לנקודה הבאה',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'המפקד יפתח את הנקודה הבאה',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        );
+
+      case StarPhase.learning:
+        final remaining = _starLearningEndTime?.difference(_adjustedNow) ?? Duration.zero;
+        final minutes = remaining.inMinutes;
+        final seconds = remaining.inSeconds % 60;
+        final targetCpId = route != null && _starCurrentPointIndex < route.sequence.length
+            ? route.sequence[_starCurrentPointIndex]
+            : null;
+        final targetCp = targetCpId != null
+            ? _routeCheckpoints.where((cp) => cp.id == targetCpId).firstOrNull
+            : null;
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.menu_book, size: 56, color: Colors.orange[400]),
+              const SizedBox(height: 16),
+              Text(
+                'למידה — ${targetCp?.name ?? 'נקודה ${_starCurrentPointIndex + 1}'}',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}',
+                style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _finishStarLearning,
+                icon: const Icon(Icons.check),
+                label: const Text('סיימתי ללמוד', style: TextStyle(fontSize: 16)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+        );
+
+      case StarPhase.navigating:
+        final hasTimeLimit = _starNavigatingEndTime != null;
+        String timerText = '';
+        if (hasTimeLimit) {
+          final remaining = _starNavigatingEndTime!.difference(_adjustedNow);
+          final minutes = remaining.inMinutes;
+          final seconds = remaining.inSeconds % 60;
+          timerText = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+        }
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (hasTimeLimit) ...[
+                Text(timerText,
+                  style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                ),
+                const SizedBox(height: 8),
+              ] else ...[
+                Text('ללא הגבלת זמן',
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 8),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: 200,
+                height: 60,
+                child: ElevatedButton.icon(
+                  onPressed: _punchInProgress ? null : () async {
+                    await _punchStarCheckpoint();
+                    onActionDone?.call();
+                  },
+                  icon: const Icon(Icons.location_on, size: 28),
+                  label: const Text('דקירה', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+
+      case StarPhase.returning:
+        final isNear = _isNearCentralPoint();
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.flag, size: 56, color: Colors.green[400]),
+              const SizedBox(height: 16),
+              const Text('חזור לנקודה המרכזית', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: 220,
+                height: 56,
+                child: ElevatedButton.icon(
+                  onPressed: isNear ? () async {
+                    await _returnToCenter();
+                    onActionDone?.call();
+                  } : null,
+                  icon: const Icon(Icons.check_circle),
+                  label: const Text('חזרתי למרכז', style: TextStyle(fontSize: 18)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                ),
+              ),
+              if (!isNear)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('יש להגיע ל-50 מ\' מהמרכז', style: TextStyle(color: Colors.orange[700], fontSize: 13)),
+                ),
+            ],
+          ),
+        );
+
+      case StarPhase.timeout:
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.timer_off, size: 64, color: Colors.red[300]),
+              const SizedBox(height: 16),
+              const Text('הזמן נגמר', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.red)),
+              const SizedBox(height: 8),
+              Text('ממתין למפקד', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
+            ],
+          ),
+        );
+
+      case StarPhase.completed:
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.emoji_events, size: 72, color: Colors.amber[400]),
+              const SizedBox(height: 16),
+              const Text('סיימת את כל הנקודות!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        );
+    }
+  }
+
   Widget _buildActiveView() {
+    // ניווט כוכב — תצוגה ייעודית רק בשלב למידה
+    if (_isStarNavigation && _currentStarPhase == StarPhase.learning) {
+      return _buildStarActiveView();
+    }
     final hasPtt = _overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled;
     return Column(
           children: [
@@ -2699,7 +3166,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                       child: Row(
                         children: [
                           Expanded(
-                            child: _buildPunchCard(),
+                            child: _isStarNavigation ? _buildStarManageCard() : _buildPunchCard(),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -3481,11 +3948,68 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildStarManageCard() {
+    final route = _route;
+    final totalPoints = route?.sequence.length ?? 0;
+    final completedPoints = _activePunches.length;
+    return _buildActionCard(
+      title: 'נהל ניווט',
+      subtitle: '$completedPoints/$totalPoints',
+      icon: Icons.star,
+      color: Colors.blue,
+      onTap: _showStarManageSheet,
+    );
+  }
+
+  void _showStarManageSheet() {
+    final route = _route;
+    final totalPoints = route?.sequence.length ?? 0;
+    final completedPoints = _activePunches.length;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            LinearProgressIndicator(
+              value: totalPoints > 0 ? completedPoints / totalPoints : 0,
+              backgroundColor: Colors.grey[200],
+              color: Colors.green,
+              minHeight: 6,
+            ),
+            const SizedBox(height: 4),
+            Text('נקודה $completedPoints/$totalPoints',
+              style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+            const SizedBox(height: 16),
+            _buildStarPhaseContent(_currentStarPhase, route, totalPoints,
+              onActionDone: () => Navigator.pop(ctx)),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionCard({
     required String title,
     required IconData icon,
     required Color color,
     required VoidCallback onTap,
+    String? subtitle,
   }) {
     return Material(
       color: Colors.white,
@@ -3513,6 +4037,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                     color: color,
                   ),
                 ),
+                if (subtitle != null)
+                  Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
               ],
             );
           }),

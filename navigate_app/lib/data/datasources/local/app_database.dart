@@ -212,6 +212,9 @@ class Navigations extends Table {
   TextColumn get communicationSettingsJson => text().withDefault(const Constant('{"walkieTalkieEnabled":false}'))();
   TextColumn get variablesSheetJson => text().nullable()();
   TextColumn get forceCompositionJson => text().nullable()();
+  IntColumn get starLearningMinutes => integer().nullable()();
+  IntColumn get starNavigatingMinutes => integer().nullable()();
+  BoolColumn get starAutoMode => boolean().withDefault(const Constant(false))();
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -245,6 +248,10 @@ class NavigationTracks extends Table {
   BoolColumn get manualPositionUsed => boolean().withDefault(const Constant(false))();
   DateTimeColumn get manualPositionUsedAt => dateTime().nullable()();
   BoolColumn get isGroupSecondary => boolean().withDefault(const Constant(false))();
+  IntColumn get starCurrentPointIndex => integer().nullable()();
+  DateTimeColumn get starLearningEndTime => dateTime().nullable()();
+  DateTimeColumn get starNavigatingEndTime => dateTime().nullable()();
+  BoolColumn get starReturnedToCenter => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -412,7 +419,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 38;
+  int get schemaVersion => 39;
 
   @override
   MigrationStrategy get migration {
@@ -660,6 +667,16 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 37 && to >= 38) {
           await safeAddColumn(users, users.commanderQuizPassedAt);
           await safeAddColumn(users, users.commanderQuizScore);
+        }
+        if (from <= 38 && to >= 39) {
+          // Star navigation fields
+          await safeAddColumn(navigations, navigations.starLearningMinutes);
+          await safeAddColumn(navigations, navigations.starNavigatingMinutes);
+          await safeAddColumn(navigations, navigations.starAutoMode);
+          await safeAddColumn(navigationTracks, navigationTracks.starCurrentPointIndex);
+          await safeAddColumn(navigationTracks, navigationTracks.starLearningEndTime);
+          await safeAddColumn(navigationTracks, navigationTracks.starNavigatingEndTime);
+          await safeAddColumn(navigationTracks, navigationTracks.starReturnedToCenter);
         }
       },
     );

@@ -65,6 +65,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   Map<String, List<String>> _manualGroups = {};
   List<String> _navigatorsList = [];
 
+  // כוכב — זמנים ומצב אוטומטי
+  int _starLearningMinutes = 5;
+  int _starNavigatingMinutes = 15;
+  bool _starAutoMode = false;
+
   // Progress
   bool _isDistributing = false;
   double _maxProgressRatio = 0;
@@ -78,7 +83,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   void _initializeFromNavigation(domain.Navigation nav) {
     setState(() {
-      _navigationType = nav.navigationType ?? 'regular';
+      final knownTypes = {'regular', 'star', 'reverse', 'parachute', 'clusters'};
+      _navigationType = knownTypes.contains(nav.navigationType) ? nav.navigationType! : 'regular';
       _executionOrder = nav.executionOrder ?? 'sequential';
       if (nav.routeLengthKm != null) {
         _minRouteLength = nav.routeLengthKm!.min;
@@ -94,6 +100,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
       // קריטריון חלוקה
       _scoringCriterion = nav.scoringCriterion ?? 'fairness';
+
+      // כוכב
+      _starLearningMinutes = nav.starLearningMinutes ?? 5;
+      _starNavigatingMinutes = nav.starNavigatingMinutes ?? 15;
+      _starAutoMode = nav.starAutoMode;
 
       // הרכב הכוח
       _forceComposition = nav.forceComposition.type;
@@ -190,6 +201,19 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         }
       } catch (_) {}
 
+      // ניקוי נקודות שלא קיימות ברשימת הנקודות הטעונות
+      final cpIds = checkpoints.map((c) => c.id).toSet();
+      if (_startPointId != null && !cpIds.contains(_startPointId)) {
+        _startPointId = null;
+      }
+      if (_endPointId != null && !cpIds.contains(_endPointId)) {
+        _endPointId = null;
+      }
+      if (_swapPointId != null && !cpIds.contains(_swapPointId)) {
+        _swapPointId = null;
+      }
+      _waypoints.removeWhere((w) => !cpIds.contains(w.checkpointId));
+
       setState(() {
         _checkpoints = checkpoints;
         _safetyPoints = safetyPoints;
@@ -242,6 +266,9 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         swapPointId: _swapPointId,
         manualGroups: _manualGroups,
       ),
+      starLearningMinutes: _navigationType == 'star' ? _starLearningMinutes : null,
+      starNavigatingMinutes: _navigationType == 'star' ? _starNavigatingMinutes : null,
+      starAutoMode: _navigationType == 'star' ? _starAutoMode : false,
       updatedAt: DateTime.now(),
     );
     await _navRepo.update(settingsNav);
@@ -256,43 +283,28 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       return;
     }
 
-    // חובה לבחור נקודת התחלה וסיום
-    if (_startPointId == null || _endPointId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('חובה לבחור נקודת התחלה ונקודת סיום'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // וידוא נקודות התחלה וסיום
+    // כוכב: חובה לבחור נקודה מרכזית; רגיל: חובה התחלה + סיום
     if (_navigationType == 'star') {
-      if (_startPointId == null || _endPointId == null || _startPointId != _endPointId) {
-        final result = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('ניווט כוכב'),
-            content: const Text(
-              'בניווט כוכב, נקודת ההתחלה והסיום צריכות להיות זהות.\n'
-              'האם לקבוע את נקודת ההתחלה גם כנקודת סיום?'
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('ביטול'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('אישור'),
-              ),
-            ],
+      if (_startPointId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('חובה לבחור נקודה מרכזית'),
+            backgroundColor: Colors.red,
           ),
         );
-
-        if (result != true) return;
-        setState(() => _endPointId = _startPointId);
+        return;
+      }
+      // וידוא שההתחלה = הסיום
+      _endPointId = _startPointId;
+    } else {
+      if (_startPointId == null || _endPointId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('חובה לבחור נקודת התחלה ונקודת סיום'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
       }
     }
 
@@ -624,11 +636,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                           const SizedBox(height: 16),
                         ],
 
-                        // אופן ביצוע
-                        _buildExecutionOrderSection(),
-                        const SizedBox(height: 16),
+                        // אופן ביצוע (לא בכוכב)
+                        if (_navigationType != 'star') ...[
+                          _buildExecutionOrderSection(),
+                          const SizedBox(height: 16),
+                        ],
 
-                        // טווח אורך ציר
+                        // טווח אורך ציר / טווח מרחקי נקודות
                         _buildRouteLengthSection(),
                         const SizedBox(height: 16),
 
@@ -636,13 +650,21 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         _buildCheckpointsPerNavigatorSection(),
                         const SizedBox(height: 16),
 
-                        // נקודות התחלה וסיום
+                        // זמני למידה/ניווט ומצב אוטומטי (כוכב בלבד)
+                        if (_navigationType == 'star') ...[
+                          _buildStarTimeSection(),
+                          const SizedBox(height: 16),
+                        ],
+
+                        // נקודה מרכזית (כוכב) / נקודות התחלה וסיום (רגיל)
                         _buildStartEndPointsSection(),
                         const SizedBox(height: 16),
 
-                        // נקודות ביניים
-                        _buildWaypointsSection(),
-                        const SizedBox(height: 16),
+                        // נקודות ביניים (לא בכוכב)
+                        if (_navigationType != 'star') ...[
+                          _buildWaypointsSection(),
+                          const SizedBox(height: 16),
+                        ],
 
                         // קריטריון ניקוד
                         _buildScoringCriterionSection(),
@@ -745,6 +767,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   }
 
   Widget _buildScoringCriterionSection() {
+    final isStar = _navigationType == 'star';
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -765,23 +789,27 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               ],
             ),
             const SizedBox(height: 12),
-            RadioListTile<String>(
-              title: const Text('הוגנות'),
-              subtitle: const Text('אורך צירים אחיד ככל האפשר'),
-              value: 'fairness',
-              groupValue: _scoringCriterion,
-              onChanged: (value) => setState(() => _scoringCriterion = value!),
-            ),
-            RadioListTile<String>(
-              title: const Text('קרבה לאמצע הטווח'),
-              subtitle: const Text('כל הצירים קרובים לאמצע הטווח'),
-              value: 'midpoint',
-              groupValue: _scoringCriterion,
-              onChanged: (value) => setState(() => _scoringCriterion = value!),
-            ),
+            if (!isStar)
+              RadioListTile<String>(
+                title: const Text('הוגנות'),
+                subtitle: const Text('אורך צירים אחיד ככל האפשר'),
+                value: 'fairness',
+                groupValue: _scoringCriterion,
+                onChanged: (value) => setState(() => _scoringCriterion = value!),
+              ),
+            if (!isStar)
+              RadioListTile<String>(
+                title: const Text('קרבה לאמצע הטווח'),
+                subtitle: const Text('כל הצירים קרובים לאמצע הטווח'),
+                value: 'midpoint',
+                groupValue: _scoringCriterion,
+                onChanged: (value) => setState(() => _scoringCriterion = value!),
+              ),
             RadioListTile<String>(
               title: const Text('מקסימום ייחודיות'),
-              subtitle: const Text('כמה שפחות נקודות משותפות בין מנווטים'),
+              subtitle: Text(isStar
+                  ? 'כמה שפחות נקודות משותפות בין מנווטים'
+                  : 'כמה שפחות נקודות משותפות בין מנווטים'),
               value: 'uniqueness',
               groupValue: _scoringCriterion,
               onChanged: (value) => setState(() => _scoringCriterion = value!),
@@ -821,12 +849,34 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 DropdownMenuItem(value: 'regular', child: Text('רגיל')),
                 DropdownMenuItem(value: 'star', child: Text('כוכב')),
                 DropdownMenuItem(value: 'reverse', child: Text('הפוך')),
-                DropdownMenuItem(value: 'parachute', child: Text('צנחנים')),
+                DropdownMenuItem(
+                  enabled: false,
+                  value: 'parachute',
+                  child: Text('צנחנים (בפיתוח)', style: TextStyle(color: Colors.grey)),
+                ),
                 DropdownMenuItem(value: 'clusters', child: Text('אשכולות')),
-                DropdownMenuItem(value: 'developing', child: Text('מפתח')),
               ],
               onChanged: (value) {
-                setState(() => _navigationType = value!);
+                setState(() {
+                  _navigationType = value!;
+                  if (value == 'star') {
+                    // כוכב: אין מאבטח
+                    if (_forceComposition == 'guard') {
+                      _forceComposition = 'solo';
+                      _swapPointId = null;
+                      _manualGroups = {};
+                    }
+                    // כוכב: רק uniqueness או doubleCheck
+                    if (_scoringCriterion != 'uniqueness' && _scoringCriterion != 'doubleCheck') {
+                      _scoringCriterion = 'uniqueness';
+                    }
+                    // כוכב: אין נקודות ביניים
+                    _waypointsEnabled = false;
+                    _waypoints = [];
+                    // כוכב: נקודת סיום = נקודת התחלה (נקודה מרכזית)
+                    _endPointId = _startPointId;
+                  }
+                });
               },
             ),
           ],
@@ -878,9 +928,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'טווח אורך ציר (ק"מ)',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Text(
+              _navigationType == 'star'
+                  ? 'טווח מרחקי נקודות (ק"מ)'
+                  : 'טווח אורך ציר (ק"מ)',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Row(
@@ -969,7 +1021,97 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     );
   }
 
+  Widget _buildStarTimeSection() {
+    return Card(
+      elevation: 1,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.timer, size: 20),
+                const SizedBox(width: 8),
+                const Text('זמני כוכב', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'זמן למידה וניווט ברירת מחדל לכל נקודה. ניתן לשנות בזמן הניווט',
+                  child: Icon(Icons.info_outline, size: 16, color: Colors.grey[500]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: '$_starLearningMinutes',
+                    decoration: const InputDecoration(
+                      labelText: 'זמן למידה (דקות)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: (v) {
+                      final val = int.tryParse(v ?? '');
+                      if (val == null || val < 1 || val > 30) return '1-30';
+                      return null;
+                    },
+                    onChanged: (v) {
+                      final val = int.tryParse(v);
+                      if (val != null && val >= 1 && val <= 30) {
+                        _starLearningMinutes = val;
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: '$_starNavigatingMinutes',
+                    decoration: const InputDecoration(
+                      labelText: 'זמן ניווט (דקות)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: (v) {
+                      final val = int.tryParse(v ?? '');
+                      if (val == null || val < 1 || val > 120) return '1-120';
+                      return null;
+                    },
+                    onChanged: (v) {
+                      final val = int.tryParse(v);
+                      if (val != null && val >= 1 && val <= 120) {
+                        _starNavigatingMinutes = val;
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              value: _starAutoMode,
+              onChanged: (v) => setState(() => _starAutoMode = v),
+              title: const Text('מצב אוטומטי'),
+              subtitle: const Text(
+                'הנקודה הבאה נפתחת אוטומטית כשהמנווט חוזר למרכז',
+                style: TextStyle(fontSize: 12),
+              ),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStartEndPointsSection() {
+    final isStar = _navigationType == 'star';
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -978,101 +1120,159 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
           children: [
             Row(
               children: [
-                const Text(
-                  'נקודות התחלה וסיום',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Text(
+                  isStar ? 'נקודה מרכזית' : 'נקודות התחלה וסיום',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
                 Tooltip(
-                  message: 'נקודות משותפות לכל המנווטים',
+                  message: isStar
+                      ? 'הנקודה שממנה המנווט יוצא וחוזר אליה'
+                      : 'נקודות משותפות לכל המנווטים',
                   child: Icon(Icons.info_outline, size: 18, color: Colors.grey[600]),
                 ),
               ],
             ),
             const SizedBox(height: 12),
 
-            // נקודת התחלה
-            DropdownButtonFormField<String>(
-              value: _startPointId,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'נקודת התחלה (משותפת) *',
-              ),
-              items: [
-                DropdownMenuItem(
-                  value: '__pick_on_map__',
-                  child: Row(
-                    children: [
-                      Icon(Icons.map, size: 18, color: Colors.blue),
-                      SizedBox(width: 8),
-                      Text('בחר במפה'),
-                    ],
-                  ),
+            if (isStar) ...[
+              // כוכב — נקודה מרכזית אחת
+              DropdownButtonFormField<String>(
+                value: _startPointId,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'נקודה מרכזית *',
                 ),
-                ..._checkpoints.map((cp) => DropdownMenuItem(
-                  value: cp.id,
-                  child: Text(cp.displayLabel),
-                )),
-              ],
-              validator: (value) {
-                if (value == null) return 'חובה לבחור נקודת התחלה';
-                return null;
-              },
-              onChanged: (value) async {
-                if (value == '__pick_on_map__') {
-                  final selectedId = await Navigator.push<String>(context,
-                    MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
-                      checkpoints: _checkpoints,
-                      boundary: _boundary,
-                    )));
-                  if (selectedId != null) setState(() => _startPointId = selectedId);
-                  return;
-                }
-                setState(() => _startPointId = value);
-              },
-            ),
-            const SizedBox(height: 12),
+                items: [
+                  DropdownMenuItem(
+                    value: '__pick_on_map__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.map, size: 18, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('בחר במפה'),
+                      ],
+                    ),
+                  ),
+                  ..._checkpoints.map((cp) => DropdownMenuItem(
+                    value: cp.id,
+                    child: Text(cp.displayLabel),
+                  )),
+                ],
+                validator: (value) {
+                  if (value == null) return 'חובה לבחור נקודה מרכזית';
+                  return null;
+                },
+                onChanged: (value) async {
+                  if (value == '__pick_on_map__') {
+                    final selectedId = await Navigator.push<String>(context,
+                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                        checkpoints: _checkpoints,
+                        boundary: _boundary,
+                      )));
+                    if (selectedId != null) {
+                      setState(() {
+                        _startPointId = selectedId;
+                        _endPointId = selectedId; // כוכב: התחלה = סיום
+                      });
+                    }
+                    return;
+                  }
+                  setState(() {
+                    _startPointId = value;
+                    _endPointId = value; // כוכב: התחלה = סיום
+                  });
+                },
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'המנווט יוצא מהנקודה המרכזית, הולך לנקודה, וחוזר אליה',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ] else ...[
+              // רגיל — נקודת התחלה + סיום
+              DropdownButtonFormField<String>(
+                value: _startPointId,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'נקודת התחלה (משותפת) *',
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: '__pick_on_map__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.map, size: 18, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('בחר במפה'),
+                      ],
+                    ),
+                  ),
+                  ..._checkpoints.map((cp) => DropdownMenuItem(
+                    value: cp.id,
+                    child: Text(cp.displayLabel),
+                  )),
+                ],
+                validator: (value) {
+                  if (value == null) return 'חובה לבחור נקודת התחלה';
+                  return null;
+                },
+                onChanged: (value) async {
+                  if (value == '__pick_on_map__') {
+                    final selectedId = await Navigator.push<String>(context,
+                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                        checkpoints: _checkpoints,
+                        boundary: _boundary,
+                      )));
+                    if (selectedId != null) setState(() => _startPointId = selectedId);
+                    return;
+                  }
+                  setState(() => _startPointId = value);
+                },
+              ),
+              const SizedBox(height: 12),
 
-            // נקודת סיום
-            DropdownButtonFormField<String>(
-              value: _endPointId,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'נקודת סיום (משותפת) *',
-              ),
-              items: [
-                DropdownMenuItem(
-                  value: '__pick_on_map__',
-                  child: Row(
-                    children: [
-                      Icon(Icons.map, size: 18, color: Colors.blue),
-                      SizedBox(width: 8),
-                      Text('בחר במפה'),
-                    ],
-                  ),
+              // נקודת סיום
+              DropdownButtonFormField<String>(
+                value: _endPointId,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'נקודת סיום (משותפת) *',
                 ),
-                ..._checkpoints.map((cp) => DropdownMenuItem(
-                  value: cp.id,
-                  child: Text(cp.displayLabel),
-                )),
-              ],
-              validator: (value) {
-                if (value == null) return 'חובה לבחור נקודת סיום';
-                return null;
-              },
-              onChanged: (value) async {
-                if (value == '__pick_on_map__') {
-                  final selectedId = await Navigator.push<String>(context,
-                    MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
-                      checkpoints: _checkpoints,
-                      boundary: _boundary,
-                    )));
-                  if (selectedId != null) setState(() => _endPointId = selectedId);
-                  return;
-                }
-                setState(() => _endPointId = value);
-              },
-            ),
+                items: [
+                  DropdownMenuItem(
+                    value: '__pick_on_map__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.map, size: 18, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('בחר במפה'),
+                      ],
+                    ),
+                  ),
+                  ..._checkpoints.map((cp) => DropdownMenuItem(
+                    value: cp.id,
+                    child: Text(cp.displayLabel),
+                  )),
+                ],
+                validator: (value) {
+                  if (value == null) return 'חובה לבחור נקודת סיום';
+                  return null;
+                },
+                onChanged: (value) async {
+                  if (value == '__pick_on_map__') {
+                    final selectedId = await Navigator.push<String>(context,
+                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                        checkpoints: _checkpoints,
+                        boundary: _boundary,
+                      )));
+                    if (selectedId != null) setState(() => _endPointId = selectedId);
+                    return;
+                  }
+                  setState(() => _endPointId = value);
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -1367,11 +1567,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 border: OutlineInputBorder(),
                 labelText: 'בחר הרכב',
               ),
-              items: const [
-                DropdownMenuItem(value: 'solo', child: Text('בדד')),
-                DropdownMenuItem(value: 'guard', child: Text('מאבטח')),
-                DropdownMenuItem(value: 'pair', child: Text('צמד')),
-                DropdownMenuItem(value: 'squad', child: Text('חוליה')),
+              items: [
+                const DropdownMenuItem(value: 'solo', child: Text('בדד')),
+                if (_navigationType != 'star')
+                  const DropdownMenuItem(value: 'guard', child: Text('מאבטח')),
+                const DropdownMenuItem(value: 'pair', child: Text('צמד')),
+                const DropdownMenuItem(value: 'squad', child: Text('חוליה')),
               ],
               onChanged: (value) {
                 setState(() {

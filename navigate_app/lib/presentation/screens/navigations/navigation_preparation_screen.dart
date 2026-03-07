@@ -41,6 +41,8 @@ class _NavigationPreparationScreenState
   bool _isLoading = false;
   User? _currentUser;
   List<UnitChecklist> _unitChecklists = [];
+  bool _isChecklistSectionExpanded = false;
+  bool _isChecklistSectionLocked = false;
 
   @override
   void initState() {
@@ -86,6 +88,8 @@ class _NavigationPreparationScreenState
           _navigation = updated;
           _isLoading = false;
         });
+        // כוכב: אוטו-השלמת למידה כשהצירים מאומתים
+        await _autoCompleteLearningForStar();
       } else {
         setState(() => _isLoading = false);
       }
@@ -96,6 +100,22 @@ class _NavigationPreparationScreenState
           SnackBar(content: Text('שגיאה בטעינה: $e')),
         );
       }
+    }
+  }
+
+  /// בניווט כוכב — סימון למידה כהושלמה אוטומטית כשהצירים מאומתים
+  Future<void> _autoCompleteLearningForStar() async {
+    if (_navigation.navigationType != 'star') return;
+    if (_navigation.trainingStartTime != null) return; // כבר הושלם
+    if (!_isVerificationDone) return;
+    final now = DateTime.now();
+    final updated = _navigation.copyWith(
+      trainingStartTime: now,
+      updatedAt: now,
+    );
+    await _repository.update(updated);
+    if (mounted) {
+      setState(() => _navigation = updated);
     }
   }
 
@@ -204,6 +224,20 @@ class _NavigationPreparationScreenState
 
   bool get _isSystemCheckDone => _navigation.systemCheckStartTime != null;
 
+  bool get _isChecklistsDone {
+    final hasVariables = _navigation.displaySettings.enableVariablesSheet;
+    final hasChecklists = _unitChecklists.isNotEmpty;
+    if (!hasVariables && !hasChecklists) return false;
+    if (hasVariables && _navigation.variablesSheet == null) return false;
+    final completion = _navigation.checklistCompletion;
+    for (final cl in _unitChecklists) {
+      final isDone = completion?.isChecklistComplete(cl.id, cl) ?? false;
+      final isSigned = completion?.getSignature(cl.id) != null;
+      if (!isDone || !isSigned) return false;
+    }
+    return true;
+  }
+
   // ======== פתיחת מסכי שלבים ========
 
   Future<void> _openSettings() async {
@@ -231,15 +265,6 @@ class _NavigationPreparationScreenState
     if (result == true) {
       await _reloadNavigation();
     }
-  }
-
-  void _openDataExport() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DataExportScreen(navigation: _navigation),
-      ),
-    );
   }
 
   void _openUpdatedDataExport() {
@@ -686,19 +711,6 @@ class _NavigationPreparationScreenState
                         isDone: _isDistributionDone,
                         isMandatory: false,
                         onTap: _openDistribution,
-                        extraButton: _isVerificationDone
-                            ? TextButton.icon(
-                                onPressed: _openDataExport,
-                                icon: const Icon(Icons.file_download, size: 18),
-                                label: const Text('ייצוא נתונים'),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.teal,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 4),
-                                  textStyle: const TextStyle(fontSize: 13),
-                                ),
-                              )
-                            : null,
                       ),
                       const SizedBox(height: 10),
                       _buildStepCard(
@@ -711,16 +723,21 @@ class _NavigationPreparationScreenState
                       const SizedBox(height: 10),
                       _buildStepCard(
                         stepNumber: 4,
-                        title: 'למידה',
+                        title: _navigation.navigationType == 'star'
+                            ? 'למידה (לנקודה בודדת בזמן ניווט)'
+                            : 'למידה',
                         isDone: _isLearningDone,
                         isMandatory: false,
-                        isActive: _navigation.status == 'learning',
-                        onTap: _openLearning,
+                        isActive: _navigation.navigationType != 'star' &&
+                            _navigation.status == 'learning',
+                        onTap: _navigation.navigationType == 'star'
+                            ? () {} // disabled for star
+                            : _openLearning,
                         extraButton: _isLearningDone
                             ? TextButton.icon(
                                 onPressed: _openUpdatedDataExport,
                                 icon: const Icon(Icons.file_download, size: 18),
-                                label: const Text('ייצוא צירים'),
+                                label: const Text('ייצוא מפות נקודות וצירים'),
                                 style: TextButton.styleFrom(
                                   foregroundColor: Colors.teal,
                                   padding: const EdgeInsets.symmetric(
@@ -739,20 +756,10 @@ class _NavigationPreparationScreenState
                         isActive: _navigation.status == 'system_check',
                         onTap: _openSystemCheck,
                       ),
-                      if (_navigation.displaySettings.enableVariablesSheet) ...[
+                      if (_navigation.displaySettings.enableVariablesSheet ||
+                          _unitChecklists.isNotEmpty) ...[
                         const SizedBox(height: 10),
-                        _buildStepCard(
-                          stepNumber: 6,
-                          title: 'דף משתנים',
-                          isDone: _navigation.variablesSheet != null,
-                          isMandatory: false,
-                          onTap: _openVariablesSheet,
-                        ),
-                      ],
-                      // צ'קליסטים מרמת היחידה
-                      for (final cl in _unitChecklists) ...[
-                        const SizedBox(height: 10),
-                        _buildChecklistCard(cl),
+                        _buildChecklistSection(),
                       ],
                     ],
                   ),
@@ -938,119 +945,276 @@ class _NavigationPreparationScreenState
     );
   }
 
-  Widget _buildChecklistCard(UnitChecklist cl) {
-    final completion = _navigation.checklistCompletion;
-    final isDone = completion?.isChecklistComplete(cl.id, cl) ?? false;
-    final signature = completion?.getSignature(cl.id);
-    final completedCount = completion?.completedCount(cl.id) ?? 0;
-    final totalItems = cl.totalItems;
-    final pct = totalItems > 0 ? (completedCount / totalItems * 100).round() : 0;
-
+  Widget _buildChecklistSection() {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
         side: BorderSide(
-          color: isDone && signature != null
+          color: _isChecklistsDone
               ? Colors.green.withOpacity(0.3)
               : Colors.grey.withOpacity(0.2),
           width: 1,
         ),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => _openChecklistSheet(cl),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              // Icon
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: isDone && signature != null
-                      ? Colors.green.withOpacity(0.15)
-                      : Colors.grey.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.checklist,
+      child: Column(
+        children: [
+          // Header
+          InkWell(
+            borderRadius: _isChecklistSectionExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(10))
+                : BorderRadius.circular(10),
+            onTap: () {
+              if (!_isChecklistSectionLocked) {
+                setState(() {
+                  _isChecklistSectionExpanded = !_isChecklistSectionExpanded;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  // Step number
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: _isChecklistsDone
+                          ? Colors.green.withOpacity(0.15)
+                          : Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '6',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: _isChecklistsDone
+                            ? Colors.green
+                            : Colors.grey[600],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  // Title
+                  Expanded(
+                    child: Text(
+                      'צ\'ק ליסטים לניווט ודף משתנים',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  // Lock button
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _isChecklistSectionLocked = !_isChecklistSectionLocked;
+                        if (_isChecklistSectionLocked) {
+                          _isChecklistSectionExpanded = true;
+                        }
+                      });
+                    },
+                    child: Icon(
+                      _isChecklistSectionLocked
+                          ? Icons.lock
+                          : Icons.lock_open,
+                      size: 20,
+                      color: _isChecklistSectionLocked
+                          ? Colors.blue
+                          : Colors.grey[400],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Done indicator
+                  Icon(
+                    _isChecklistsDone
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    color: _isChecklistsDone ? Colors.green : Colors.grey,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 4),
+                  // Expand/collapse chevron
+                  Icon(
+                    _isChecklistSectionExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Body (animated)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: _isChecklistSectionExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 24, bottom: 12),
+                    child: Column(
+                      children: _buildChecklistSubItems(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildChecklistSubItems() {
+    final items = <Widget>[];
+
+    // Variables sheet sub-card
+    if (_navigation.displaySettings.enableVariablesSheet) {
+      items.add(_buildSubChecklistCard(
+        icon: Icons.description,
+        title: 'דף משתנים',
+        isDone: _navigation.variablesSheet != null,
+        onTap: _openVariablesSheet,
+      ));
+    }
+
+    // Checklist sub-cards
+    for (final cl in _unitChecklists) {
+      final completion = _navigation.checklistCompletion;
+      final isDone = completion?.isChecklistComplete(cl.id, cl) ?? false;
+      final signature = completion?.getSignature(cl.id);
+      final completedCount = completion?.completedCount(cl.id) ?? 0;
+      final totalItems = cl.totalItems;
+      final pct =
+          totalItems > 0 ? (completedCount / totalItems * 100).round() : 0;
+
+      items.add(_buildSubChecklistCard(
+        icon: Icons.checklist,
+        title: cl.title,
+        isDone: isDone && signature != null,
+        subtitle: '$completedCount/$totalItems · $pct%',
+        signatureName: signature?.completedByName,
+        isMandatory: cl.isMandatory,
+        onTap: () async {
+          _openChecklistSheet(cl);
+        },
+      ));
+    }
+
+    return items;
+  }
+
+  Widget _buildSubChecklistCard({
+    required IconData icon,
+    required String title,
+    required bool isDone,
+    required VoidCallback onTap,
+    String? subtitle,
+    String? signatureName,
+    bool isMandatory = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, right: 8),
+      child: Card(
+        elevation: 1,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: isDone
+                ? Colors.green.withOpacity(0.3)
+                : Colors.grey.withOpacity(0.15),
+            width: 1,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
                   size: 20,
-                  color: isDone && signature != null
-                      ? Colors.green
-                      : Colors.grey[600],
+                  color: isDone ? Colors.green : Colors.grey[600],
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(cl.title,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              title,
                               style: const TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w600),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                        if (cl.isMandatory) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                  color: Colors.red.withOpacity(0.3)),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            child: const Text('חובה',
+                          ),
+                          if (isMandatory) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                    color: Colors.red.withOpacity(0.3)),
+                              ),
+                              child: const Text('חובה',
+                                  style: TextStyle(
+                                      fontSize: 9,
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (subtitle != null || signatureName != null) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            if (subtitle != null)
+                              Text(
+                                subtitle,
                                 style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.red,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Text(
-                          '$completedCount/$totalItems · $pct%',
-                          style: TextStyle(
-                              fontSize: 12, color: Colors.grey[600]),
+                                    fontSize: 11, color: Colors.grey[600]),
+                              ),
+                            if (signatureName != null) ...[
+                              const SizedBox(width: 6),
+                              Icon(Icons.verified,
+                                  size: 12, color: Colors.green[600]),
+                              const SizedBox(width: 2),
+                              Text(
+                                'נחתם ע"י $signatureName',
+                                style: TextStyle(
+                                    fontSize: 10, color: Colors.green[700]),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (signature != null) ...[
-                          const SizedBox(width: 8),
-                          Icon(Icons.verified, size: 14, color: Colors.green[600]),
-                          const SizedBox(width: 2),
-                          Text(
-                            'נחתם ע"י ${signature.completedByName}',
-                            style: TextStyle(
-                                fontSize: 11, color: Colors.green[700]),
-                          ),
-                        ],
                       ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Icon(
-                isDone && signature != null
-                    ? Icons.check_circle
-                    : Icons.radio_button_unchecked,
-                color: isDone && signature != null
-                    ? Colors.green
-                    : Colors.grey,
-                size: 28,
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_left, color: Colors.grey[400], size: 24),
-            ],
+                Icon(
+                  isDone
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  color: isDone ? Colors.green : Colors.grey,
+                  size: 22,
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_left, color: Colors.grey[400], size: 20),
+              ],
+            ),
           ),
         ),
       ),

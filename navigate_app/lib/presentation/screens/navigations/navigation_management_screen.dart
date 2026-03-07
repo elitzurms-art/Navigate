@@ -1249,8 +1249,301 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           liveData.trackStartedAt = DateTime.tryParse(startedAtRaw);
         }
 
+        // ניווט כוכב — קריאת שדות star
+        if (_currentNavigation.navigationType == 'star') {
+          final oldReturned = liveData.starReturnedToCenter;
+          liveData.starCurrentPointIndex = (data['starCurrentPointIndex'] as num?)?.toInt();
+          final slEnd = data['starLearningEndTime'];
+          liveData.starLearningEndTime = slEnd is Timestamp ? slEnd.toDate() : (slEnd is String ? DateTime.tryParse(slEnd) : null);
+          final snEnd = data['starNavigatingEndTime'];
+          liveData.starNavigatingEndTime = snEnd is Timestamp ? snEnd.toDate() : (snEnd is String ? DateTime.tryParse(snEnd) : null);
+          liveData.starReturnedToCenter = data['starReturnedToCenter'] as bool? ?? false;
+
+          // Auto mode: פתיחת נקודה הבאה אוטומטית
+          if (_currentNavigation.starAutoMode &&
+              liveData.starReturnedToCenter && !oldReturned) {
+            final route = _currentNavigation.routes[navigatorId];
+            final currentIdx = liveData.starCurrentPointIndex ?? -1;
+            final totalPoints = route?.sequence.length ?? 0;
+            if (currentIdx >= 0 && currentIdx < totalPoints - 1) {
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) _openStarPointForNavigator(navigatorId, currentIdx + 1);
+              });
+            }
+          }
+        }
+
       }
     });
+  }
+
+  // ===========================================================================
+  // ניווט כוכב — פתיחת נקודה, סטטוס, הארכה
+  // ===========================================================================
+
+  /// חישוב שלב כוכב למנווט
+  StarPhase _computeStarPhaseForNavigator(String navigatorId) {
+    final data = _navigatorData[navigatorId];
+    if (data == null) return StarPhase.atCenter;
+    final route = _currentNavigation.routes[navigatorId];
+    final totalPoints = route?.sequence.length ?? 0;
+    // בדיקה אם הנקודה הנוכחית הוגעה (punched)
+    final idx = data.starCurrentPointIndex;
+    bool punched = false;
+    if (idx != null && idx >= 0 && route != null && idx < route.sequence.length) {
+      final targetCpId = route.sequence[idx];
+      punched = data.punches.any((p) => p.checkpointId == targetCpId);
+    }
+    return computeStarPhase(
+      index: idx,
+      learningEnd: data.starLearningEndTime,
+      navigatingEnd: data.starNavigatingEndTime,
+      currentPointPunched: punched,
+      returned: data.starReturnedToCenter,
+      totalPoints: totalPoints,
+      now: DateTime.now(),
+    );
+  }
+
+  /// טקסט סטטוס כוכב קצר למנווט
+  String _starStatusText(String navigatorId) {
+    final phase = _computeStarPhaseForNavigator(navigatorId);
+    final data = _navigatorData[navigatorId];
+    final route = _currentNavigation.routes[navigatorId];
+    final totalPoints = route?.sequence.length ?? 0;
+    final idx = (data?.starCurrentPointIndex ?? -1) + 1;
+
+    String remaining(DateTime? end) {
+      if (end == null) return '';
+      final diff = end.difference(DateTime.now());
+      if (diff.isNegative) return '0:00';
+      return '${diff.inMinutes}:${(diff.inSeconds % 60).toString().padLeft(2, '0')}';
+    }
+
+    switch (phase) {
+      case StarPhase.atCenter:
+        if (idx <= 0) return 'במרכז — ממתין לנקודה ראשונה';
+        return 'במרכז — $idx/$totalPoints';
+      case StarPhase.learning:
+        return 'בלמידה (${remaining(data?.starLearningEndTime)}) — $idx/$totalPoints';
+      case StarPhase.navigating:
+        final navEnd = data?.starNavigatingEndTime;
+        final timeStr = navEnd != null ? ' (${remaining(navEnd)})' : '';
+        return 'בניווט$timeStr — $idx/$totalPoints';
+      case StarPhase.returning:
+        return 'חוזר למרכז — $idx/$totalPoints';
+      case StarPhase.timeout:
+        return 'זמן נגמר — $idx/$totalPoints';
+      case StarPhase.completed:
+        return 'סיים $totalPoints/$totalPoints';
+    }
+  }
+
+  /// צבע שלב כוכב
+  Color _starPhaseColor(StarPhase phase) {
+    switch (phase) {
+      case StarPhase.atCenter: return Colors.grey;
+      case StarPhase.learning: return Colors.blue;
+      case StarPhase.navigating: return Colors.green;
+      case StarPhase.returning: return Colors.orange;
+      case StarPhase.timeout: return Colors.red;
+      case StarPhase.completed: return Colors.teal;
+    }
+  }
+
+  /// פתיחת נקודה הבאה למנווט (auto-mode או ידני ללא דיאלוג)
+  Future<void> _openStarPointForNavigator(String navigatorId, int pointIndex) async {
+    final trackId = _navigatorTrackIds[navigatorId];
+    if (trackId == null) return;
+
+    final learningMin = _currentNavigation.starLearningMinutes ?? 5;
+    final navigatingMin = _currentNavigation.starNavigatingMinutes ?? 15;
+    final now = DateTime.now();
+    final learningEnd = now.add(Duration(minutes: learningMin));
+    final navigatingEnd = now.add(Duration(minutes: learningMin + navigatingMin));
+
+    await _trackRepo.updateStarState(
+      trackId,
+      pointIndex: pointIndex,
+      learningEndTime: learningEnd,
+      navigatingEndTime: navigatingEnd,
+      returnedToCenter: false,
+    );
+  }
+
+  /// פתיחת נקודה הבאה — עם דיאלוג לעריכת זמנים
+  Future<void> _showOpenStarPointDialog(String navigatorId) async {
+    final data = _navigatorData[navigatorId];
+    if (data == null) return;
+    final route = _currentNavigation.routes[navigatorId];
+    if (route == null) return;
+    final totalPoints = route.sequence.length;
+
+    // חישוב אינדקס הבא
+    final phase = _computeStarPhaseForNavigator(navigatorId);
+    final currentIdx = data.starCurrentPointIndex ?? -1;
+    int nextIndex;
+    if (phase == StarPhase.atCenter && currentIdx < 0) {
+      nextIndex = 0; // נקודה ראשונה
+    } else if (phase == StarPhase.atCenter || phase == StarPhase.completed) {
+      nextIndex = currentIdx + 1;
+    } else {
+      // מנווט לא במרכז — אי אפשר לפתוח
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('המנווט עדיין לא חזר למרכז')),
+        );
+      }
+      return;
+    }
+
+    if (nextIndex >= totalPoints) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('המנווט סיים את כל הנקודות')),
+        );
+      }
+      return;
+    }
+
+    // שם הנקודה הבאה
+    final cpId = route.sequence[nextIndex];
+    final cp = _checkpoints.where((c) => c.id == cpId).firstOrNull;
+    final cpName = cp != null ? 'נ"צ ${cp.sequenceNumber}${cp.name != null ? ' — ${cp.name}' : ''}' : 'נקודה ${nextIndex + 1}';
+
+    final learningCtrl = TextEditingController(text: '${_currentNavigation.starLearningMinutes ?? 5}');
+    final navigatingCtrl = TextEditingController(text: '${_currentNavigation.starNavigatingMinutes ?? 15}');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('פתיחת נקודה ${nextIndex + 1}/$totalPoints'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(cpName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            Text('למנווט: ${_userNames[navigatorId] ?? navigatorId}'),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: learningCtrl,
+              decoration: const InputDecoration(
+                labelText: 'זמן למידה (דקות)',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: navigatingCtrl,
+              decoration: const InputDecoration(
+                labelText: 'זמן ניווט (דקות)',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('פתח נקודה')),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final trackId = _navigatorTrackIds[navigatorId];
+    if (trackId == null) return;
+
+    final learningMin = int.tryParse(learningCtrl.text) ?? _currentNavigation.starLearningMinutes ?? 5;
+    final navigatingMin = int.tryParse(navigatingCtrl.text) ?? _currentNavigation.starNavigatingMinutes ?? 15;
+    final now = DateTime.now();
+
+    await _trackRepo.updateStarState(
+      trackId,
+      pointIndex: nextIndex,
+      learningEndTime: now.add(Duration(minutes: learningMin)),
+      navigatingEndTime: now.add(Duration(minutes: learningMin + navigatingMin)),
+      returnedToCenter: false,
+    );
+  }
+
+  /// הארכת זמן ניווט למנווט בכוכב
+  Future<void> _showExtendStarTimeDialog(String navigatorId) async {
+    final data = _navigatorData[navigatorId];
+    if (data == null) return;
+    final phase = _computeStarPhaseForNavigator(navigatorId);
+    if (phase != StarPhase.timeout && phase != StarPhase.navigating) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('המנווט לא בשלב ניווט או זמן נגמר')),
+        );
+      }
+      return;
+    }
+
+    final extendCtrl = TextEditingController(text: '10');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('הארכת זמן ניווט'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('מנווט: ${_userNames[navigatorId] ?? navigatorId}'),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: extendCtrl,
+              decoration: const InputDecoration(
+                labelText: 'דקות להוספה',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ביטול')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('הארך')),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final trackId = _navigatorTrackIds[navigatorId];
+    if (trackId == null) return;
+
+    final minutes = int.tryParse(extendCtrl.text) ?? 10;
+    // הארכה מהעכשיו (לא מהזמן המקורי)
+    final newEnd = DateTime.now().add(Duration(minutes: minutes));
+    await _trackRepo.updateStarState(trackId, navigatingEndTime: newEnd);
+  }
+
+  /// פתיחת נקודה הבאה לכל המנווטים שבמרכז
+  Future<void> _openStarPointForAllAtCenter() async {
+    int opened = 0;
+    for (final entry in _navigatorData.entries) {
+      final navigatorId = entry.key;
+      final phase = _computeStarPhaseForNavigator(navigatorId);
+      if (phase != StarPhase.atCenter) continue;
+
+      final route = _currentNavigation.routes[navigatorId];
+      if (route == null) continue;
+      final currentIdx = entry.value.starCurrentPointIndex ?? -1;
+      final nextIdx = currentIdx < 0 ? 0 : currentIdx + 1;
+      if (nextIdx >= route.sequence.length) continue;
+
+      await _openStarPointForNavigator(navigatorId, nextIdx);
+      opened++;
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('נפתחה נקודה ל-$opened מנווטים')),
+      );
+    }
   }
 
   Future<void> _finishNavigatorNavigation(String navigatorId) async {
@@ -1679,6 +1972,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           case 'undo_disqualify':
             _undoDisqualification(navigatorId);
             break;
+          case 'star_open':
+            _showOpenStarPointDialog(navigatorId);
+            break;
+          case 'star_extend':
+            _showExtendStarTimeDialog(navigatorId);
+            break;
         }
       },
       itemBuilder: (context) => [
@@ -1742,6 +2041,30 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
+        // ניווט כוכב — פתיחת נקודה הבאה
+        if (_currentNavigation.navigationType == 'star') ...[
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: 'star_open',
+            child: Row(
+              children: [
+                Icon(Icons.star, color: Colors.amber, size: 20),
+                SizedBox(width: 8),
+                Text('פתח נקודה הבאה'),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'star_extend',
+            child: Row(
+              children: [
+                Icon(Icons.more_time, color: Colors.blue, size: 20),
+                SizedBox(width: 8),
+                Text('הארך זמן ניווט'),
+              ],
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -2283,6 +2606,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           ],
         ),
         actions: [
+          // ניווט כוכב — פתיחת נקודה הבאה לכולם
+          if (_currentNavigation.navigationType == 'star')
+            IconButton(
+              icon: const Icon(Icons.star, color: Colors.amber),
+              tooltip: 'פתח נקודה הבאה לכל מי שבמרכז',
+              onPressed: _openStarPointForAllAtCenter,
+            ),
           if (_emergencyActive)
             IconButton(
               icon: const Icon(Icons.crisis_alert, color: Colors.orange),
@@ -2863,6 +3193,26 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         _buildNavigatorActionsMenu(navigatorId, data),
                       ],
                     ),
+                    // סטטוס כוכב
+                    if (_currentNavigation.navigationType == 'star') ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.star, size: 14, color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId))),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              _starStatusText(navigatorId),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     // Stats row (only if active or finished with track data)
                     if (data.trackPoints.isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -4180,6 +4530,36 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
                       // באנר ברבור פעיל (אם יש)
                       ..._buildNavigatorBarburSection(navigatorId),
+
+                      // סטטוס כוכב — פירוט בבוטום שיט
+                      if (_currentNavigation.navigationType == 'star') ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)).withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.star, color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)), size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _starStatusText(navigatorId),
+                                  style: TextStyle(
+                                    color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       const Divider(height: 20),
 
@@ -6385,6 +6765,12 @@ class NavigatorLiveData {
   DateTime? trackStartedAt; // זמן התחלה אישי של המנווט (מה-track doc)
   DateTime? trackEndedAt; // זמן סיום אישי של המנווט (מה-track doc)
 
+  // ניווט כוכב
+  int? starCurrentPointIndex;
+  DateTime? starLearningEndTime;
+  DateTime? starNavigatingEndTime;
+  bool starReturnedToCenter;
+
   NavigatorLiveData({
     required this.navigatorId,
     required this.personalStatus,
@@ -6403,6 +6789,10 @@ class NavigatorLiveData {
     this.resetAt,
     this.trackStartedAt,
     this.trackEndedAt,
+    this.starCurrentPointIndex,
+    this.starLearningEndTime,
+    this.starNavigatingEndTime,
+    this.starReturnedToCenter = false,
   });
 
   /// מרחק כולל שנעבר בק"מ
@@ -6645,6 +7035,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
               _buildAlertsGroup(),
               _buildGpsGroup(),
               _buildCommunicationGroup(),
+              if (_nav.navigationType == 'star') _buildStarSettingsGroup(),
               _buildTimeExtensionsGroup(),
               _buildVerificationGroup(),
               const SizedBox(height: 24),
@@ -7046,6 +7437,60 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'walkieTalkie',
           ),
         ),
+      ],
+    );
+  }
+
+  // ── Group 4.5: הגדרות כוכב ──────────────────────────────────────────────────
+
+  Widget _buildStarSettingsGroup() {
+    return _settingsGroup(
+      title: 'הגדרות כוכב',
+      icon: Icons.star_outline,
+      children: [
+        _sliderRow(
+          label: 'זמן למידה לנקודה',
+          suffix: ' דק\'',
+          value: (_nav.starLearningMinutes ?? 5).toDouble(),
+          min: 1,
+          max: 30,
+          divisions: 29,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(starLearningMinutes: v.round()),
+            'זמן למידה לנקודה',
+            null,
+          ),
+        ),
+        _sliderRow(
+          label: 'זמן ניווט לנקודה',
+          suffix: ' דק\'',
+          value: (_nav.starNavigatingMinutes ?? 15).toDouble(),
+          min: 1,
+          max: 120,
+          divisions: 119,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(starNavigatingMinutes: v.round()),
+            'זמן ניווט לנקודה',
+            null,
+          ),
+        ),
+        _toggleTile(
+          label: 'מצב אוטומטי',
+          value: _nav.starAutoMode,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(starAutoMode: v),
+            'מצב אוטומטי',
+            null,
+          ),
+        ),
+        if (_nav.starAutoMode)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'הנקודה הבאה נפתחת אוטומטית כשהמנווט חוזר למרכז',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+            ),
+          ),
       ],
     );
   }

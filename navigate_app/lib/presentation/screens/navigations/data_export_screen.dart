@@ -26,6 +26,9 @@ import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 
+enum RouteColumn { name, description, utm, length, time }
+enum CheckpointColumn { utm, type, description, sequenceNumber }
+
 /// ייצוא נתונים
 class DataExportScreen extends StatefulWidget {
   final domain.Navigation navigation;
@@ -56,6 +59,12 @@ class _DataExportScreenState extends State<DataExportScreen> {
   Map<String, String> _userNames = {};
   bool _isLoading = false;
 
+  // Advanced export state
+  Set<RouteColumn> _routeColumns = RouteColumn.values.toSet();
+  Set<String> _routeSelectedNavigatorIds = {};  // empty = all
+  Set<CheckpointColumn> _cpColumns = CheckpointColumn.values.toSet();
+  Set<String> _cpSelectedTypes = {};  // empty = all types
+
   String _navigatorName(String uid) => _userNames[uid] ?? uid;
 
   String _formatUtm(Checkpoint cp) {
@@ -71,6 +80,147 @@ class _DataExportScreenState extends State<DataExportScreen> {
     final parts = raw.split(' ');
     if (parts.length == 3) return '${parts[1]} ${parts[2]}';
     return raw;
+  }
+
+  /// Returns a Hebrew role label for a checkpoint based on its role in the navigation
+  String _checkpointRoleLabel(Checkpoint cp) {
+    final startPointIds = <String>{};
+    final endPointIds = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      if (route.startPointId != null) startPointIds.add(route.startPointId!);
+      if (route.endPointId != null) endPointIds.add(route.endPointId!);
+    }
+    final waypointIds = <String>{};
+    if (widget.navigation.waypointSettings.enabled) {
+      for (final wp in widget.navigation.waypointSettings.waypoints) {
+        waypointIds.add(wp.checkpointId);
+      }
+    }
+
+    if (cp.type == 'mandatory_passage') return 'מעבר חובה';
+    if (startPointIds.contains(cp.id)) return 'התחלה';
+    if (endPointIds.contains(cp.id)) return 'סיום';
+    if (waypointIds.contains(cp.id)) return 'החלפה';
+    return 'נ.צ.';
+  }
+
+  /// Sort order for checkpoint role
+  int _checkpointRoleSortOrder(Checkpoint cp) {
+    final startPointIds = <String>{};
+    final endPointIds = <String>{};
+    for (final route in widget.navigation.routes.values) {
+      if (route.startPointId != null) startPointIds.add(route.startPointId!);
+      if (route.endPointId != null) endPointIds.add(route.endPointId!);
+    }
+    final waypointIds = <String>{};
+    if (widget.navigation.waypointSettings.enabled) {
+      for (final wp in widget.navigation.waypointSettings.waypoints) {
+        waypointIds.add(wp.checkpointId);
+      }
+    }
+
+    if (cp.type == 'mandatory_passage') return 3;
+    if (startPointIds.contains(cp.id)) return 0;
+    if (waypointIds.contains(cp.id)) return 1;
+    if (endPointIds.contains(cp.id)) return 2;
+    return 4;
+  }
+
+  /// Sort checkpoints: start → waypoints → end → mandatory_passage → regular (by sequenceNumber)
+  List<Checkpoint> _sortCheckpointsByRole(List<Checkpoint> checkpoints) {
+    final sorted = List<Checkpoint>.from(checkpoints);
+    sorted.sort((a, b) {
+      final orderA = _checkpointRoleSortOrder(a);
+      final orderB = _checkpointRoleSortOrder(b);
+      if (orderA != orderB) return orderA.compareTo(orderB);
+      return a.sequenceNumber.compareTo(b.sequenceNumber);
+    });
+    return sorted;
+  }
+
+  /// Collect special points (start, waypoints, end, mandatory_passage) in display order
+  List<Map<String, String>> _collectSpecialPoints() {
+    final nav = widget.navigation;
+    final points = <Map<String, String>>[];
+    final listedIds = <String>{};
+
+    Checkpoint? findCp(String id) {
+      try {
+        return _checkpoints.firstWhere((cp) => cp.id == id);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    Map<String, String> cpRow(String type, Checkpoint cp) {
+      return {
+        'type': type,
+        'number': '${cp.sequenceNumber}',
+        'description': cp.description,
+        'utm': _formatUtm(cp),
+      };
+    }
+
+    // Star navigation — only the central point
+    if (nav.navigationType == 'star') {
+      if (nav.startPoint != null) {
+        final cp = findCp(nav.startPoint!);
+        if (cp != null) {
+          points.add(cpRow('נקודה מרכזית', cp));
+        }
+      }
+      return points;
+    }
+
+    // Start point
+    if (nav.startPoint != null) {
+      final cp = findCp(nav.startPoint!);
+      if (cp != null) {
+        points.add(cpRow('התחלה', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    // Waypoints (ביניים)
+    if (nav.waypointSettings.enabled) {
+      for (final wp in nav.waypointSettings.waypoints) {
+        final cp = findCp(wp.checkpointId);
+        if (cp != null && !listedIds.contains(cp.id)) {
+          points.add(cpRow('ביניים', cp));
+          listedIds.add(cp.id);
+        }
+      }
+    }
+
+    // End point
+    if (nav.endPoint != null) {
+      final cp = findCp(nav.endPoint!);
+      if (cp != null && !listedIds.contains(cp.id)) {
+        points.add(cpRow('סיום', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    // Mandatory passages — only those distributed in routes
+    final distributedIds = _distributedCheckpointIds;
+    for (final cp in _checkpoints) {
+      if (cp.type == 'mandatory_passage' && !listedIds.contains(cp.id) && distributedIds.contains(cp.id)) {
+        points.add(cpRow('מעבר חובה', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    return points;
+  }
+
+  /// Build CSV rows for special points
+  List<List<dynamic>> _buildSpecialPointsCsvRows() {
+    return _collectSpecialPoints().map((sp) => [
+      sp['type'],
+      sp['number'],
+      sp['description'],
+      sp['utm'],
+    ]).toList();
   }
 
   Future<String?> _showFormatPicker() async {
@@ -94,6 +244,344 @@ class _DataExportScreenState extends State<DataExportScreen> {
         ]),
       ),
     );
+  }
+
+  Future<String?> _showExportModeDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('סוג ייצוא'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.download, color: Colors.blue),
+            title: const Text('ייצוא רגיל'),
+            subtitle: const Text('ייצוא כל העמודות והשורות'),
+            onTap: () => Navigator.pop(ctx, 'regular'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.tune, color: Colors.deepPurple),
+            title: const Text('ייצוא מתקדם'),
+            subtitle: const Text('בחירת עמודות ושורות לייצוא'),
+            onTap: () => Navigator.pop(ctx, 'advanced'),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  String _routeColumnLabel(RouteColumn col) {
+    switch (col) {
+      case RouteColumn.name: return 'מספר סידורי';
+      case RouteColumn.description: return 'תיאור';
+      case RouteColumn.utm: return 'UTM';
+      case RouteColumn.length: return 'אורך ציר';
+      case RouteColumn.time: return 'זמן ניווט';
+    }
+  }
+
+  String _checkpointColumnLabel(CheckpointColumn col) {
+    switch (col) {
+      case CheckpointColumn.utm: return 'UTM';
+      case CheckpointColumn.type: return 'סוג';
+      case CheckpointColumn.description: return 'תיאור';
+      case CheckpointColumn.sequenceNumber: return 'מספר סידורי';
+    }
+  }
+
+  Future<bool?> _showAdvancedRoutesConfigDialog() async {
+    var tempColumns = Set<RouteColumn>.from(_routeColumns);
+    var tempNavigators = Set<String>.from(_routeSelectedNavigatorIds);
+    if (tempNavigators.isEmpty) {
+      tempNavigators = widget.navigation.routes.keys.toSet();
+    }
+    final allNavigatorIds = widget.navigation.routes.keys.toList();
+
+    final availableColumns = RouteColumn.values.where((col) {
+      if (col == RouteColumn.time) {
+        return widget.navigation.timeCalculationSettings.enabled;
+      }
+      return true;
+    }).toList();
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('הגדרות ייצוא צירים'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('עמודות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 8),
+                  ...availableColumns.map((col) => CheckboxListTile(
+                    title: Text(_routeColumnLabel(col)),
+                    value: tempColumns.contains(col),
+                    dense: true,
+                    onChanged: (v) => setDialogState(() {
+                      if (v == true) { tempColumns.add(col); } else { tempColumns.remove(col); }
+                    }),
+                  )),
+                  const Divider(height: 24),
+                  Row(
+                    children: [
+                      Text(
+                        'נווטים (${tempNavigators.length}/${allNavigatorIds.length})',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => setDialogState(() => tempNavigators = allNavigatorIds.toSet()),
+                        child: const Text('הכל'),
+                      ),
+                      TextButton(
+                        onPressed: () => setDialogState(() => tempNavigators.clear()),
+                        child: const Text('נקה'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ...allNavigatorIds.map((id) => CheckboxListTile(
+                    title: Text(_navigatorName(id)),
+                    value: tempNavigators.contains(id),
+                    dense: true,
+                    onChanged: (v) => setDialogState(() {
+                      if (v == true) { tempNavigators.add(id); } else { tempNavigators.remove(id); }
+                    }),
+                  )),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (tempColumns.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('יש לבחור לפחות עמודה אחת')),
+                  );
+                  return;
+                }
+                if (tempNavigators.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('יש לבחור לפחות נווט אחד')),
+                  );
+                  return;
+                }
+                _routeColumns = tempColumns;
+                _routeSelectedNavigatorIds = tempNavigators;
+                Navigator.pop(ctx, true);
+              },
+              child: const Text('ייצא'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _showAdvancedCheckpointsConfigDialog() async {
+    var tempColumns = Set<CheckpointColumn>.from(_cpColumns);
+    // Collect all existing types from filtered checkpoints
+    final existingTypes = _filteredCheckpoints.map((cp) => _checkpointRoleLabel(cp)).toSet().toList();
+    var tempTypes = Set<String>.from(_cpSelectedTypes);
+    if (tempTypes.isEmpty) {
+      tempTypes = existingTypes.toSet();
+    }
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('הגדרות ייצוא נקודות'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('עמודות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 8),
+                  ...CheckpointColumn.values.map((col) => CheckboxListTile(
+                    title: Text(_checkpointColumnLabel(col)),
+                    value: tempColumns.contains(col),
+                    dense: true,
+                    onChanged: (v) => setDialogState(() {
+                      if (v == true) { tempColumns.add(col); } else { tempColumns.remove(col); }
+                    }),
+                  )),
+                  const Divider(height: 24),
+                  Row(
+                    children: [
+                      Text(
+                        'סוגי נקודות (${tempTypes.length}/${existingTypes.length})',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => setDialogState(() => tempTypes = existingTypes.toSet()),
+                        child: const Text('הכל'),
+                      ),
+                      TextButton(
+                        onPressed: () => setDialogState(() => tempTypes.clear()),
+                        child: const Text('נקה'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ...existingTypes.map((type) => CheckboxListTile(
+                    title: Text(type),
+                    value: tempTypes.contains(type),
+                    dense: true,
+                    onChanged: (v) => setDialogState(() {
+                      if (v == true) { tempTypes.add(type); } else { tempTypes.remove(type); }
+                    }),
+                  )),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ביטול'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (tempColumns.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('יש לבחור לפחות עמודה אחת')),
+                  );
+                  return;
+                }
+                if (tempTypes.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('יש לבחור לפחות סוג נקודה אחד')),
+                  );
+                  return;
+                }
+                _cpColumns = tempColumns;
+                _cpSelectedTypes = tempTypes;
+                Navigator.pop(ctx, true);
+              },
+              child: const Text('ייצא'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shared data builder for routes table — used by CSV and PDF
+  (List<String> headers, List<List<String>> rows) _buildRoutesTableData({
+    required Set<RouteColumn> columns,
+    Set<String>? navigatorFilter,
+  }) {
+    final showName = columns.contains(RouteColumn.name);
+    final showDesc = columns.contains(RouteColumn.description);
+    final showUtm = columns.contains(RouteColumn.utm);
+    final showLength = columns.contains(RouteColumn.length);
+    final showTime = columns.contains(RouteColumn.time) &&
+        widget.navigation.timeCalculationSettings.enabled;
+
+    final colsPerCheckpoint = [showName, showDesc, showUtm].where((v) => v).length;
+
+    int maxCheckpoints = 0;
+    for (final route in widget.navigation.routes.values) {
+      if (route.sequence.length > maxCheckpoints) {
+        maxCheckpoints = route.sequence.length;
+      }
+    }
+
+    // Build header
+    List<String> header = ['שם מנווט'];
+    for (int i = 1; i <= maxCheckpoints; i++) {
+      if (showName) header.add('נ.צ $i');
+      if (showDesc) header.add('תיאור $i');
+      if (showUtm) header.add('UTM $i');
+    }
+    if (showLength) header.add('אורך ציר (ק"מ)');
+    if (showTime) header.add('זמן ניווט');
+
+    // Build data rows
+    final dataRows = <List<String>>[];
+    var entries = widget.navigation.routes.entries;
+    if (navigatorFilter != null && navigatorFilter.isNotEmpty) {
+      entries = entries.where((e) => navigatorFilter.contains(e.key));
+    }
+
+    for (final entry in entries) {
+      final navigatorId = entry.key;
+      final route = entry.value;
+      List<String> row = [_navigatorName(navigatorId)];
+
+      for (final checkpointId in route.sequence) {
+        final checkpoint = _checkpoints.firstWhere(
+          (cp) => cp.id == checkpointId,
+          orElse: () => _checkpoints.first,
+        );
+        if (showName) row.add('${checkpoint.sequenceNumber}');
+        if (showDesc) row.add(checkpoint.description);
+        if (showUtm) row.add(_formatUtm(checkpoint));
+      }
+
+      // Pad empty cells
+      final expectedLen = maxCheckpoints * colsPerCheckpoint + 1;
+      while (row.length < expectedLen) {
+        row.add('');
+      }
+
+      if (showLength) row.add(route.routeLengthKm.toStringAsFixed(2));
+      if (showTime) {
+        final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
+          route: route,
+          settings: widget.navigation.timeCalculationSettings,
+        );
+        row.add(GeometryUtils.formatNavigationTime(totalMinutes));
+      }
+      dataRows.add(row);
+    }
+
+    return (header, dataRows);
+  }
+
+  /// Shared data builder for checkpoints table — used by CSV and PDF
+  (List<String> headers, List<List<String>> rows) _buildCheckpointsTableData({
+    required Set<CheckpointColumn> columns,
+    Set<String>? typeFilter,
+  }) {
+    var checkpoints = _sortCheckpointsByRole(_filteredCheckpoints);
+    if (typeFilter != null && typeFilter.isNotEmpty) {
+      checkpoints = checkpoints.where((cp) => typeFilter.contains(_checkpointRoleLabel(cp))).toList();
+    }
+
+    // Build header in enum order, only selected
+    List<String> header = [];
+    if (columns.contains(CheckpointColumn.utm)) header.add('UTM');
+    if (columns.contains(CheckpointColumn.type)) header.add('סוג');
+    if (columns.contains(CheckpointColumn.description)) header.add('תיאור');
+    if (columns.contains(CheckpointColumn.sequenceNumber)) header.add('מספר סידורי');
+
+    // Build data rows
+    final dataRows = <List<String>>[];
+    for (final cp in checkpoints) {
+      List<String> row = [];
+      if (columns.contains(CheckpointColumn.utm)) row.add(_formatUtm(cp));
+      if (columns.contains(CheckpointColumn.type)) row.add(_checkpointRoleLabel(cp));
+      if (columns.contains(CheckpointColumn.description)) row.add(cp.description);
+      if (columns.contains(CheckpointColumn.sequenceNumber)) row.add('${cp.sequenceNumber}');
+      dataRows.add(row);
+    }
+
+    return (header, dataRows);
   }
 
   // הגדרות ייצוא מפה - כל שכבה עם בהירות משלה
@@ -186,70 +674,37 @@ class _DataExportScreenState extends State<DataExportScreen> {
     }
   }
 
-  Future<void> _exportRoutesTable() async {
+  Future<void> _exportRoutesTable({bool advanced = false}) async {
     final format = await _showFormatPicker();
     if (format == null) return;
 
     if (format == 'pdf') {
-      await _exportRoutesTablePdf();
+      await _exportRoutesTablePdf(advanced: advanced);
       return;
     }
 
     try {
+      final columns = advanced ? _routeColumns : RouteColumn.values.toSet();
+      final navigatorFilter = advanced && _routeSelectedNavigatorIds.isNotEmpty
+          ? _routeSelectedNavigatorIds
+          : null;
+      final (header, dataRows) = _buildRoutesTableData(
+        columns: columns,
+        navigatorFilter: navigatorFilter,
+      );
+
       List<List<dynamic>> rows = [];
-
-      List<dynamic> header = ['שם מנווט'];
-      int maxCheckpoints = 0;
-
-      for (final route in widget.navigation.routes.values) {
-        if (route.sequence.length > maxCheckpoints) {
-          maxCheckpoints = route.sequence.length;
-        }
-      }
-
-      // 3 columns per checkpoint: name, description, UTM
-      for (int i = 1; i <= maxCheckpoints; i++) {
-        header.add('נ.צ $i');
-        header.add('תיאור $i');
-        header.add('UTM $i');
-      }
-      header.add('אורך ציר (ק"מ)');
-      if (widget.navigation.timeCalculationSettings.enabled) {
-        header.add('זמן ניווט');
-      }
       rows.add(widget.afterLearning ? header : header.reversed.toList());
-
-      for (final entry in widget.navigation.routes.entries) {
-        final navigatorId = entry.key;
-        final route = entry.value;
-
-        List<dynamic> row = [_navigatorName(navigatorId)];
-
-        for (final checkpointId in route.sequence) {
-          final checkpoint = _checkpoints.firstWhere(
-            (cp) => cp.id == checkpointId,
-            orElse: () => _checkpoints.first,
-          );
-
-          row.add('${checkpoint.name} (${checkpoint.sequenceNumber})');
-          row.add(checkpoint.description);
-          row.add(_formatUtm(checkpoint));
-        }
-
-        // Pad empty cells: 3 cols per missing checkpoint + 1 for name
-        while (row.length < (maxCheckpoints * 3) + 1) {
-          row.add('');
-        }
-
-        row.add(route.routeLengthKm.toStringAsFixed(2));
-        if (widget.navigation.timeCalculationSettings.enabled) {
-          final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
-            route: route,
-            settings: widget.navigation.timeCalculationSettings,
-          );
-          row.add(GeometryUtils.formatNavigationTime(totalMinutes));
-        }
+      for (final row in dataRows) {
         rows.add(widget.afterLearning ? row : row.reversed.toList());
+      }
+
+      // Add special points section below navigators
+      final specialRows = _buildSpecialPointsCsvRows();
+      if (specialRows.isNotEmpty) {
+        rows.add([]); // empty separator row
+        rows.add(['סוג', 'מספר', 'תיאור', 'UTM']);
+        rows.addAll(specialRows);
       }
 
       final csv = const ListToCsvConverter().convert(rows);
@@ -284,10 +739,38 @@ class _DataExportScreenState extends State<DataExportScreen> {
     }
   }
 
-  Future<void> _exportRoutesTablePdf() async {
+  Future<void> _exportRoutesTablePdf({bool advanced = false}) async {
     try {
       final regularFont = await PdfGoogleFonts.rubikRegular();
       final boldFont = await PdfGoogleFonts.rubikBold();
+
+      final columns = advanced ? _routeColumns : RouteColumn.values.toSet();
+      final navigatorFilter = advanced && _routeSelectedNavigatorIds.isNotEmpty
+          ? _routeSelectedNavigatorIds
+          : null;
+      final (header, rows) = _buildRoutesTableData(
+        columns: columns,
+        navigatorFilter: navigatorFilter,
+      );
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
+      );
+
+      // Build header cells
+      final headerCells = header.map((h) => _pdfCell(h, bold: true, fontSize: 7)).toList();
+
+      // Build column widths with running counter
+      final colWidths = <int, pw.TableColumnWidth>{};
+      int col = 0;
+      colWidths[col++] = const pw.FlexColumnWidth(0.8); // navigator name
+
+      final showName = columns.contains(RouteColumn.name);
+      final showDesc = columns.contains(RouteColumn.description);
+      final showUtm = columns.contains(RouteColumn.utm);
+      final showLength = columns.contains(RouteColumn.length);
+      final showTime = columns.contains(RouteColumn.time) &&
+          widget.navigation.timeCalculationSettings.enabled;
 
       int maxCheckpoints = 0;
       for (final route in widget.navigation.routes.values) {
@@ -296,67 +779,20 @@ class _DataExportScreenState extends State<DataExportScreen> {
         }
       }
 
-      final pdf = pw.Document(
-        theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
-      );
-
-      // Build header row
-      final headerCells = <pw.Widget>[_pdfCell('שם מנווט', bold: true, fontSize: 7)];
-      for (int i = 1; i <= maxCheckpoints; i++) {
-        headerCells.add(_pdfCell('נ.צ $i', bold: true, fontSize: 7));
-        headerCells.add(_pdfCell('תיאור $i', bold: true, fontSize: 7));
-        headerCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
-      }
-      headerCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
-      if (widget.navigation.timeCalculationSettings.enabled) {
-        headerCells.add(_pdfCell('זמן ניווט', bold: true, fontSize: 7));
-      }
-
-      // Build column widths
-      final colWidths = <int, pw.TableColumnWidth>{
-        0: const pw.FlexColumnWidth(0.8),
-      };
       for (int i = 0; i < maxCheckpoints; i++) {
-        colWidths[1 + i * 3] = const pw.FlexColumnWidth(1.5);
-        colWidths[2 + i * 3] = const pw.FlexColumnWidth(1.2);
-        colWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
+        if (showName) colWidths[col++] = const pw.FlexColumnWidth(1.5);
+        if (showDesc) colWidths[col++] = const pw.FlexColumnWidth(1.2);
+        if (showUtm) colWidths[col++] = const pw.FlexColumnWidth(1.2);
       }
-      colWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
-      if (widget.navigation.timeCalculationSettings.enabled) {
-        colWidths[2 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.2);
-      }
+      if (showLength) colWidths[col++] = const pw.FlexColumnWidth(1.5);
+      if (showTime) colWidths[col++] = const pw.FlexColumnWidth(1.2);
 
       // Build data rows
-      final dataRows = <pw.TableRow>[];
-      for (final entry in widget.navigation.routes.entries) {
-        final navigatorId = entry.key;
-        final route = entry.value;
-        final cells = <pw.Widget>[_pdfCell(_navigatorName(navigatorId), fontSize: 7)];
-
-        for (final checkpointId in route.sequence) {
-          final checkpoint = _checkpoints.firstWhere(
-            (cp) => cp.id == checkpointId,
-            orElse: () => _checkpoints.first,
-          );
-          cells.add(_pdfCell('${checkpoint.name} (${checkpoint.sequenceNumber})', fontSize: 7));
-          cells.add(_pdfCell(checkpoint.description, fontSize: 7));
-          cells.add(_pdfCell(_formatUtm(checkpoint), fontSize: 7));
-        }
-
-        // Pad empty cells
-        while (cells.length < (maxCheckpoints * 3) + 1) {
-          cells.add(_pdfCell('', fontSize: 7));
-        }
-        cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
-        if (widget.navigation.timeCalculationSettings.enabled) {
-          final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
-            route: route,
-            settings: widget.navigation.timeCalculationSettings,
-          );
-          cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));
-        }
-        dataRows.add(pw.TableRow(children: cells.reversed.toList()));
-      }
+      final dataRows = rows.map((row) =>
+        pw.TableRow(
+          children: row.map((cell) => _pdfCell(cell, fontSize: 7)).toList().reversed.toList(),
+        ),
+      ).toList();
 
       pdf.addPage(
         pw.MultiPage(
@@ -373,22 +809,69 @@ class _DataExportScreenState extends State<DataExportScreen> {
               pw.SizedBox(height: 6),
             ],
           ),
-          build: (context) => [
-            pw.Directionality(
-              textDirection: pw.TextDirection.rtl,
-              child: pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey400),
-                columnWidths: colWidths,
-                children: [
-                  pw.TableRow(
-                    decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                    children: headerCells.reversed.toList(),
-                  ),
-                  ...dataRows,
-                ],
+          build: (context) {
+            final widgets = <pw.Widget>[
+              pw.Directionality(
+                textDirection: pw.TextDirection.rtl,
+                child: pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey400),
+                  columnWidths: colWidths,
+                  children: [
+                    pw.TableRow(
+                      repeat: true,
+                      decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                      children: headerCells.reversed.toList(),
+                    ),
+                    ...dataRows,
+                  ],
+                ),
               ),
-            ),
-          ],
+            ];
+
+            // Special points table below routes
+            final specialPoints = _collectSpecialPoints();
+            if (specialPoints.isNotEmpty) {
+              widgets.add(pw.SizedBox(height: 16));
+              widgets.add(pw.Text(
+                'נקודות מיוחדות',
+                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+              ));
+              widgets.add(pw.SizedBox(height: 4));
+              widgets.add(pw.Directionality(
+                textDirection: pw.TextDirection.rtl,
+                child: pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey400),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(2),
+                    1: const pw.FlexColumnWidth(2),
+                    2: const pw.FixedColumnWidth(40),
+                    3: const pw.FlexColumnWidth(1.2),
+                  },
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                      children: [
+                        _pdfCell('סוג', bold: true, fontSize: 8),
+                        _pdfCell('מספר', bold: true, fontSize: 8),
+                        _pdfCell('תיאור', bold: true, fontSize: 8),
+                        _pdfCell('UTM', bold: true, fontSize: 8),
+                      ].reversed.toList(),
+                    ),
+                    ...specialPoints.map((sp) => pw.TableRow(
+                      children: [
+                        _pdfCell(sp['type']!, fontSize: 8),
+                        _pdfCell(sp['number']!, fontSize: 8),
+                        _pdfCell(sp['description']!, fontSize: 8),
+                        _pdfCell(sp['utm']!, fontSize: 8),
+                      ].reversed.toList(),
+                    )),
+                  ],
+                ),
+              ));
+            }
+
+            return widgets;
+          },
         ),
       );
 
@@ -420,38 +903,29 @@ class _DataExportScreenState extends State<DataExportScreen> {
     }
   }
 
-  Future<void> _exportCheckpointsLayer() async {
+  Future<void> _exportCheckpointsLayer({bool advanced = false}) async {
     final format = await _showFormatPicker();
     if (format == null) return;
 
     if (format == 'pdf') {
-      await _exportCheckpointsLayerPdf();
+      await _exportCheckpointsLayerPdf(advanced: advanced);
       return;
     }
 
     try {
-      List<Checkpoint> checkpointsToExport = _filteredCheckpoints;
+      final columns = advanced ? _cpColumns : CheckpointColumn.values.toSet();
+      final typeFilter = advanced && _cpSelectedTypes.isNotEmpty
+          ? _cpSelectedTypes
+          : null;
+      final (header, dataRows) = _buildCheckpointsTableData(
+        columns: columns,
+        typeFilter: typeFilter,
+      );
 
       List<List<dynamic>> rows = [];
-
-      rows.add([
-        'UTM',
-        'צבע',
-        'סוג',
-        'תיאור',
-        'שם',
-        'מספר סידורי',
-      ]);
-
-      for (final cp in checkpointsToExport) {
-        rows.add([
-          _formatUtm(cp),
-          cp.color,
-          cp.type,
-          cp.description,
-          cp.name,
-          cp.sequenceNumber,
-        ]);
+      rows.add(header.reversed.toList());
+      for (final row in dataRows) {
+        rows.add(row.reversed.toList());
       }
 
       final csv = const ListToCsvConverter().convert(rows);
@@ -461,23 +935,21 @@ class _DataExportScreenState extends State<DataExportScreen> {
       final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.csv';
       final fileBytes = Uint8List.fromList(utf8.encode(csvWithBom));
       final result = await saveFileWithBytes(
-        dialogTitle: 'שמור שכבת נ.צ.',
+        dialogTitle: 'שמור טבלת נקודות ציון',
         fileName: fileName,
         bytes: fileBytes,
         type: FileType.custom,
         allowedExtensions: ['csv'],
       );
 
-      if (result != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('שכבת נ.צ. נשמרה (${checkpointsToExport.length} נקודות)\n$result'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('טבלת נקודות ציון נשמרה (${dataRows.length} נקודות)\n$result'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -491,15 +963,31 @@ class _DataExportScreenState extends State<DataExportScreen> {
     }
   }
 
-  Future<void> _exportCheckpointsLayerPdf() async {
+  Future<void> _exportCheckpointsLayerPdf({bool advanced = false}) async {
     try {
-      final checkpointsToExport = _filteredCheckpoints;
+      final columns = advanced ? _cpColumns : CheckpointColumn.values.toSet();
+      final typeFilter = advanced && _cpSelectedTypes.isNotEmpty
+          ? _cpSelectedTypes
+          : null;
+      final (header, dataRows) = _buildCheckpointsTableData(
+        columns: columns,
+        typeFilter: typeFilter,
+      );
+
       final regularFont = await PdfGoogleFonts.rubikRegular();
       final boldFont = await PdfGoogleFonts.rubikBold();
 
       final pdf = pw.Document(
         theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
       );
+
+      // Build column widths with running counter
+      final colWidths = <int, pw.TableColumnWidth>{};
+      int col = 0;
+      if (columns.contains(CheckpointColumn.utm)) colWidths[col++] = const pw.FlexColumnWidth(2.5);
+      if (columns.contains(CheckpointColumn.type)) colWidths[col++] = const pw.FlexColumnWidth(1.2);
+      if (columns.contains(CheckpointColumn.description)) colWidths[col++] = const pw.FlexColumnWidth(2);
+      if (columns.contains(CheckpointColumn.sequenceNumber)) colWidths[col++] = const pw.FixedColumnWidth(35);
 
       pdf.addPage(
         pw.MultiPage(
@@ -510,7 +998,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(
-                '${widget.navigation.name} — שכבת נ.צ. (${checkpointsToExport.length})',
+                '${widget.navigation.name} — טבלת נקודות ציון (${dataRows.length})',
                 style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 8),
@@ -521,35 +1009,14 @@ class _DataExportScreenState extends State<DataExportScreen> {
               textDirection: pw.TextDirection.rtl,
               child: pw.Table(
                 border: pw.TableBorder.all(color: PdfColors.grey400),
-                columnWidths: {
-                  0: const pw.FlexColumnWidth(2),
-                  1: const pw.FlexColumnWidth(1),
-                  2: const pw.FlexColumnWidth(1.2),
-                  3: const pw.FlexColumnWidth(2),
-                  4: const pw.FlexColumnWidth(2),
-                  5: const pw.FixedColumnWidth(35),
-                },
+                columnWidths: colWidths,
                 children: [
                   pw.TableRow(
                     decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                    children: [
-                      _pdfCell('UTM', bold: true),
-                      _pdfCell('צבע', bold: true),
-                      _pdfCell('סוג', bold: true),
-                      _pdfCell('תיאור', bold: true),
-                      _pdfCell('שם', bold: true),
-                      _pdfCell('#', bold: true),
-                    ],
+                    children: header.map((h) => _pdfCell(h, bold: true)).toList(),
                   ),
-                  ...checkpointsToExport.map((cp) => pw.TableRow(
-                    children: [
-                      _pdfCell(_formatUtm(cp)),
-                      _pdfCell(cp.color),
-                      _pdfCell(cp.type),
-                      _pdfCell(cp.description),
-                      _pdfCell(cp.name),
-                      _pdfCell('${cp.sequenceNumber}'),
-                    ],
+                  ...dataRows.map((row) => pw.TableRow(
+                    children: row.map((cell) => _pdfCell(cell)).toList(),
                   )),
                 ],
               ),
@@ -561,7 +1028,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
       final pdfBytes = Uint8List.fromList(await pdf.save());
       final fileName = 'נקודות_ציון_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final result = await saveFileWithBytes(
-        dialogTitle: 'שמור שכבת נ.צ.',
+        dialogTitle: 'שמור טבלת נקודות ציון',
         fileName: fileName,
         bytes: pdfBytes,
         type: FileType.custom,
@@ -571,7 +1038,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
       if (result != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('שכבת נ.צ. נשמרה (${checkpointsToExport.length} נקודות)\n$result'),
+            content: Text('טבלת נקודות ציון נשמרה (${dataRows.length} נקודות)\n$result'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
@@ -600,57 +1067,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   }
 
   Future<void> _exportMap() async {
-    // בחירת פורמט
-    final format = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('בחר פורמט ייצוא'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
-              title: const Text('PDF'),
-              subtitle: const Text('מסמך PDF איכותי'),
-              onTap: () => Navigator.pop(context, 'pdf'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.image, color: Colors.blue),
-              title: const Text('JPG'),
-              subtitle: const Text('תמונה JPG (בפיתוח)'),
-              onTap: () => Navigator.pop(context, 'jpg'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (format == null) return;
-
-    try {
-      if (format == 'pdf') {
-        await _exportMapToPdf();
-      } else {
-        // JPG - בפיתוח
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('ייצוא ל-JPG בפיתוח'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('שגיאה: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+    await _exportMapToPdf();
   }
 
   Future<void> _exportMapToPdf() async {
@@ -728,18 +1145,34 @@ class _DataExportScreenState extends State<DataExportScreen> {
                     description: 'ייצא טבלת צירים עם שמות מנווטים, נקודות ציון ואורכי צירים',
                     icon: Icons.table_chart,
                     color: Colors.blue,
-                    onTap: _exportRoutesTable,
+                    onTap: () async {
+                      final mode = await _showExportModeDialog();
+                      if (mode == null) return;
+                      if (mode == 'advanced') {
+                        final ok = await _showAdvancedRoutesConfigDialog();
+                        if (ok != true) return;
+                      }
+                      await _exportRoutesTable(advanced: mode == 'advanced');
+                    },
                   ),
 
                   const SizedBox(height: 16),
 
-                  // 2. שכבת נ.צ.
+                  // 2. טבלת נקודות ציון
                   _buildExportCard(
-                    title: 'שכבת נ.צ.',
+                    title: 'טבלת נקודות ציון',
                     description: 'ייצא את כל נקודות הציון בג.ג כולל מסד ותיאור',
                     icon: Icons.place,
                     color: Colors.green,
-                    onTap: _exportCheckpointsLayer,
+                    onTap: () async {
+                      final mode = await _showExportModeDialog();
+                      if (mode == null) return;
+                      if (mode == 'advanced') {
+                        final ok = await _showAdvancedCheckpointsConfigDialog();
+                        if (ok != true) return;
+                      }
+                      await _exportCheckpointsLayer(advanced: mode == 'advanced');
+                    },
                   ),
 
                   const SizedBox(height: 16),
@@ -903,6 +1336,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
   late bool _showDistributedOnly;
 
   bool _isExporting = false;
+  bool _showSpecialPoints = true;
 
   // סינון צירים לפי מנווט
   late Set<String> _visibleRouteNavigatorIds;
@@ -934,6 +1368,122 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
         ),
       ),
     );
+  }
+
+  List<Map<String, String>> _collectSpecialPoints() {
+    final nav = widget.navigation;
+    final cps = widget.checkpoints;
+    final points = <Map<String, String>>[];
+    final listedIds = <String>{};
+
+    Checkpoint? findCp(String id) {
+      try {
+        return cps.firstWhere((cp) => cp.id == id);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    Map<String, String> cpRow(String type, Checkpoint cp) {
+      return {
+        'type': type,
+        'number': '${cp.sequenceNumber}',
+        'description': cp.description,
+        'utm': _formatUtm(cp),
+      };
+    }
+
+    // Star navigation — only the central point
+    if (nav.navigationType == 'star') {
+      if (nav.startPoint != null) {
+        final cp = findCp(nav.startPoint!);
+        if (cp != null) {
+          points.add(cpRow('נקודה מרכזית', cp));
+        }
+      }
+      return points;
+    }
+
+    if (nav.startPoint != null) {
+      final cp = findCp(nav.startPoint!);
+      if (cp != null) {
+        points.add(cpRow('התחלה', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    if (nav.waypointSettings.enabled) {
+      for (final wp in nav.waypointSettings.waypoints) {
+        final cp = findCp(wp.checkpointId);
+        if (cp != null && !listedIds.contains(cp.id)) {
+          points.add(cpRow('ביניים', cp));
+          listedIds.add(cp.id);
+        }
+      }
+    }
+
+    if (nav.endPoint != null) {
+      final cp = findCp(nav.endPoint!);
+      if (cp != null && !listedIds.contains(cp.id)) {
+        points.add(cpRow('סיום', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    // Mandatory passages — only those distributed in routes
+    final distributedIds = _distributedCheckpointIds;
+    for (final cp in cps) {
+      if (cp.type == 'mandatory_passage' && !listedIds.contains(cp.id) && distributedIds.contains(cp.id)) {
+        points.add(cpRow('מעבר חובה', cp));
+        listedIds.add(cp.id);
+      }
+    }
+
+    return points;
+  }
+
+  List<pw.Widget> _buildSpecialPointsPdfTable() {
+    final specialPoints = _collectSpecialPoints();
+    if (specialPoints.isEmpty) return [];
+    return [
+      pw.SizedBox(height: 16),
+      pw.Text(
+        'נקודות מיוחדות',
+        style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+      ),
+      pw.SizedBox(height: 4),
+      pw.Directionality(
+        textDirection: pw.TextDirection.rtl,
+        child: pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey400),
+          columnWidths: {
+            0: const pw.FlexColumnWidth(2),
+            1: const pw.FlexColumnWidth(2),
+            2: const pw.FixedColumnWidth(40),
+            3: const pw.FlexColumnWidth(1.2),
+          },
+          children: [
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _pdfCell('סוג', bold: true, fontSize: 8),
+                _pdfCell('מספר', bold: true, fontSize: 8),
+                _pdfCell('תיאור', bold: true, fontSize: 8),
+                _pdfCell('UTM', bold: true, fontSize: 8),
+              ].reversed.toList(),
+            ),
+            ...specialPoints.map((sp) => pw.TableRow(
+              children: [
+                _pdfCell(sp['type']!, fontSize: 8),
+                _pdfCell(sp['number']!, fontSize: 8),
+                _pdfCell(sp['description']!, fontSize: 8),
+                _pdfCell(sp['utm']!, fontSize: 8),
+              ].reversed.toList(),
+            )),
+          ],
+        ),
+      ),
+    ];
   }
 
   late LatLng _initialCenter;
@@ -1268,6 +1818,35 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
               );
             }).toList(),
           ),
+        // Star navigation routes — lines from central point to each checkpoint
+        if (widget.navigation.navigationType == 'star' && widget.navigation.routes.isNotEmpty)
+          PolylineLayer(
+            polylines: widget.navigation.routes.entries
+                .where((e) => _visibleRouteNavigatorIds.contains(e.key))
+                .expand((entry) {
+              final route = entry.value;
+              final color = Colors.primaries[
+                  entry.key.hashCode.abs() % Colors.primaries.length];
+              final centralCp = route.startPointId != null
+                  ? widget.checkpoints.cast<Checkpoint?>().firstWhere(
+                      (cp) => cp!.id == route.startPointId, orElse: () => null)
+                  : null;
+              if (centralCp == null || centralCp.isPolygon || centralCp.coordinates == null) {
+                return <Polyline>[];
+              }
+              final center = LatLng(centralCp.coordinates!.lat, centralCp.coordinates!.lng);
+              return route.checkpointIds.map((cpId) {
+                final cp = widget.checkpoints.cast<Checkpoint?>().firstWhere(
+                    (c) => c!.id == cpId, orElse: () => null);
+                if (cp == null || cp.isPolygon || cp.coordinates == null) return null;
+                return Polyline(
+                  points: [center, LatLng(cp.coordinates!.lat, cp.coordinates!.lng)],
+                  strokeWidth: 3.0,
+                  color: color.withValues(alpha: 0.8),
+                );
+              }).whereType<Polyline>();
+            }).toList(),
+          ),
       ],
     );
   }
@@ -1357,110 +1936,33 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
         ),
       );
 
-      // Page 2+: Routes pivot table OR simple checkpoint list
+      // Page 2+: Special points table OR simple checkpoint list
       if (_showNZ && filteredCps.isNotEmpty) {
         if (widget.navigation.routes.isNotEmpty) {
-          // Pivot table: routes × checkpoints
-          int maxCheckpoints = 0;
-          for (final route in widget.navigation.routes.values) {
-            if (route.sequence.length > maxCheckpoints) {
-              maxCheckpoints = route.sequence.length;
-            }
-          }
-
-          final timeEnabled = widget.navigation.timeCalculationSettings.enabled;
-
-          final pivotHeaderCells = <pw.Widget>[_pdfCell('שם מנווט', bold: true, fontSize: 7)];
-          for (int i = 1; i <= maxCheckpoints; i++) {
-            pivotHeaderCells.add(_pdfCell('נ.צ $i', bold: true, fontSize: 7));
-            pivotHeaderCells.add(_pdfCell('תיאור $i', bold: true, fontSize: 7));
-            pivotHeaderCells.add(_pdfCell('UTM $i', bold: true, fontSize: 7));
-          }
-          pivotHeaderCells.add(_pdfCell('אורך (ק"מ)', bold: true, fontSize: 7));
-          if (timeEnabled) {
-            pivotHeaderCells.add(_pdfCell('זמן ניווט', bold: true, fontSize: 7));
-          }
-
-          final pivotColWidths = <int, pw.TableColumnWidth>{
-            0: const pw.FlexColumnWidth(0.8),
-          };
-          for (int i = 0; i < maxCheckpoints; i++) {
-            pivotColWidths[1 + i * 3] = const pw.FlexColumnWidth(1.5);
-            pivotColWidths[2 + i * 3] = const pw.FlexColumnWidth(1.2);
-            pivotColWidths[3 + i * 3] = const pw.FlexColumnWidth(1.2);
-          }
-          pivotColWidths[1 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.5);
-          if (timeEnabled) {
-            pivotColWidths[2 + maxCheckpoints * 3] = const pw.FlexColumnWidth(1.2);
-          }
-
-          // שמות מנווטים — טעינה מ-_userNames דרך ה-parent
-          final userNames = widget.userNames;
-
-          final pivotDataRows = <pw.TableRow>[];
-          for (final entry in widget.navigation.routes.entries) {
-            final navigatorId = entry.key;
-            final route = entry.value;
-            final navigatorName = userNames[navigatorId] ?? navigatorId;
-            final cells = <pw.Widget>[_pdfCell(navigatorName, fontSize: 7)];
-
-            for (final checkpointId in route.sequence) {
-              final checkpoint = widget.checkpoints.firstWhere(
-                (cp) => cp.id == checkpointId,
-                orElse: () => widget.checkpoints.first,
-              );
-              cells.add(_pdfCell('${checkpoint.name} (${checkpoint.sequenceNumber})', fontSize: 7));
-              cells.add(_pdfCell(checkpoint.description, fontSize: 7));
-              cells.add(_pdfCell(_formatUtm(checkpoint), fontSize: 7));
-            }
-
-            while (cells.length < (maxCheckpoints * 3) + 1) {
-              cells.add(_pdfCell('', fontSize: 7));
-            }
-            cells.add(_pdfCell(route.routeLengthKm.toStringAsFixed(2), fontSize: 7));
-            if (timeEnabled) {
-              final totalMinutes = GeometryUtils.getEffectiveTimeMinutes(
-                route: route,
-                settings: widget.navigation.timeCalculationSettings,
-              );
-              cells.add(_pdfCell(GeometryUtils.formatNavigationTime(totalMinutes), fontSize: 7));
-            }
-            pivotDataRows.add(pw.TableRow(children: cells.reversed.toList()));
-          }
-
-          pdf.addPage(
-            pw.MultiPage(
-              pageFormat: PdfPageFormat.a4.landscape,
-              textDirection: pw.TextDirection.rtl,
-              margin: const pw.EdgeInsets.all(16),
-              header: (context) => pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text(
-                    '${widget.navigation.name} — טבלת צירים',
-                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.SizedBox(height: 6),
-                ],
-              ),
-              build: (context) => [
-                pw.Directionality(
+          // Only special points table (no routes table in map PDF)
+          if (_showSpecialPoints) {
+            final specialWidgets = _buildSpecialPointsPdfTable();
+            if (specialWidgets.isNotEmpty) {
+              pdf.addPage(
+                pw.MultiPage(
+                  pageFormat: PdfPageFormat.a4,
                   textDirection: pw.TextDirection.rtl,
-                  child: pw.Table(
-                    border: pw.TableBorder.all(color: PdfColors.grey400),
-                    columnWidths: pivotColWidths,
+                  margin: const pw.EdgeInsets.all(16),
+                  header: (context) => pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      pw.TableRow(
-                        decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                        children: pivotHeaderCells.reversed.toList(),
+                      pw.Text(
+                        '${widget.navigation.name} — נקודות מיוחדות',
+                        style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
                       ),
-                      ...pivotDataRows,
+                      pw.SizedBox(height: 6),
                     ],
                   ),
+                  build: (context) => specialWidgets,
                 ),
-              ],
-            ),
-          );
+              );
+            }
+          }
         } else {
           // Fallback: simple checkpoint list when no routes
           pdf.addPage(
@@ -1478,38 +1980,44 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                   pw.SizedBox(height: 12),
                 ],
               ),
-              build: (context) => [
-                pw.Directionality(
-                  textDirection: pw.TextDirection.rtl,
-                  child: pw.Table(
-                    border: pw.TableBorder.all(color: PdfColors.grey400),
-                    columnWidths: {
-                      0: const pw.FixedColumnWidth(40),
-                      1: const pw.FlexColumnWidth(2),
-                      2: const pw.FlexColumnWidth(3),
-                    },
-                    children: [
-                      pw.TableRow(
-                        decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                        children: [
-                          _pdfCell('#', bold: true, fontSize: 10),
-                          _pdfCell('שם', bold: true, fontSize: 10),
-                          _pdfCell('UTM', bold: true, fontSize: 10),
-                        ],
-                      ),
-                      ...filteredCps.map((cp) {
-                        return pw.TableRow(
+              build: (context) {
+                final widgets = <pw.Widget>[
+                  pw.Directionality(
+                    textDirection: pw.TextDirection.rtl,
+                    child: pw.Table(
+                      border: pw.TableBorder.all(color: PdfColors.grey400),
+                      columnWidths: {
+                        0: const pw.FixedColumnWidth(40),
+                        1: const pw.FlexColumnWidth(2),
+                        2: const pw.FlexColumnWidth(3),
+                      },
+                      children: [
+                        pw.TableRow(
+                          decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                           children: [
-                            _pdfCell('${cp.sequenceNumber}'),
-                            _pdfCell(cp.name),
-                            _pdfCell(_formatUtm(cp)),
+                            _pdfCell('#', bold: true, fontSize: 10),
+                            _pdfCell('שם', bold: true, fontSize: 10),
+                            _pdfCell('UTM', bold: true, fontSize: 10),
                           ],
-                        );
-                      }),
-                    ],
+                        ),
+                        ...filteredCps.map((cp) {
+                          return pw.TableRow(
+                            children: [
+                              _pdfCell('${cp.sequenceNumber}'),
+                              _pdfCell(cp.name),
+                              _pdfCell(_formatUtm(cp)),
+                            ],
+                          );
+                        }),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ];
+                if (_showSpecialPoints) {
+                  widgets.addAll(_buildSpecialPointsPdfTable());
+                }
+                return widgets;
+              },
             ),
           );
         }
@@ -1552,6 +2060,102 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _exportToJpg() async {
+    setState(() => _isExporting = true);
+
+    // Wait for tiles to load after any recent pan/zoom
+    await Future.delayed(const Duration(seconds: 3));
+
+    if (!mounted) return;
+
+    try {
+      final boundary = _mapRepaintBoundaryKey.currentContext
+          ?.findRenderObject() as RenderRepaintBoundary?;
+
+      if (boundary == null) {
+        throw Exception('לא ניתן ללכוד את המפה');
+      }
+
+      // A3 landscape at 300dpi = 4961×3508 pixels
+      // Calculate pixel ratio to reach ~4961px width
+      final logicalWidth = boundary.size.width;
+      final pixelRatio = (4961 / logicalWidth).clamp(3.0, 10.0);
+
+      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
+      final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+      if (byteData == null) {
+        throw Exception('שגיאה ביצירת תמונה');
+      }
+
+      final Uint8List imageBytes = byteData.buffer.asUint8List();
+      final fileName = 'map_${widget.navigation.name}_${DateTime.now().millisecondsSinceEpoch}.png';
+      final result = await saveFileWithBytes(
+        dialogTitle: 'שמור מפה כתמונה',
+        fileName: fileName,
+        bytes: imageBytes,
+        type: FileType.custom,
+        allowedExtensions: ['png'],
+      );
+
+      if (result != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('המפה נשמרה כתמונה (A3)\n$result'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          Navigator.pop(context);
+        }
+      } else {
+        if (mounted) {
+          setState(() => _isExporting = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isExporting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('שגיאה בייצוא תמונה: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showExportFormatAndExport() async {
+    final format = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('בחר פורמט'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
+            title: const Text('PDF'),
+            subtitle: const Text('מסמך PDF עם מפה וטבלאות'),
+            onTap: () => Navigator.pop(ctx, 'pdf'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.image, color: Colors.blue),
+            title: const Text('תמונה (A3)'),
+            subtitle: const Text('תמונה באיכות גבוהה בגודל A3'),
+            onTap: () => Navigator.pop(ctx, 'jpg'),
+          ),
+        ]),
+      ),
+    );
+    if (format == null) return;
+    if (format == 'pdf') {
+      await _exportToPdf();
+    } else {
+      await _exportToJpg();
     }
   }
 
@@ -1644,6 +2248,13 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: Icon(_showSpecialPoints ? Icons.pin_drop : Icons.pin_drop_outlined),
+            tooltip: 'נקודות מיוחדות',
+            onPressed: () => setState(() => _showSpecialPoints = !_showSpecialPoints),
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -1864,7 +2475,7 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                     CircularProgressIndicator(color: Colors.white),
                     SizedBox(height: 16),
                     Text(
-                      'מייצא PDF...',
+                      'מייצא...',
                       style: TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ],
@@ -1876,9 +2487,9 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
       floatingActionButton: _isExporting
           ? null
           : FloatingActionButton.extended(
-              onPressed: _exportToPdf,
-              icon: const Icon(Icons.picture_as_pdf),
-              label: const Text('ייצא PDF'),
+              onPressed: _showExportFormatAndExport,
+              icon: const Icon(Icons.save_alt),
+              label: const Text('ייצא מפה'),
               backgroundColor: Colors.orange,
               foregroundColor: Colors.white,
             ),

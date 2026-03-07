@@ -343,6 +343,22 @@ class RoutesDistributionService {
       }
     }
 
+    // --- כוכב: אלגוריתם חלוקה ייעודי ---
+    if (navigation.navigationType == 'star') {
+      return _distributeStarNavigation(
+        navigators: virtualNavigators,
+        checkpoints: availableCheckpoints,
+        centralPointId: startPointId!,
+        checkpointsPerNavigator: checkpointsPerNavigator,
+        minDistance: minRouteLength,
+        maxDistance: maxRouteLength,
+        scoringCriterion: scoringCriterion,
+        composition: composition,
+        groups: groups,
+        onProgress: onProgress,
+      );
+    }
+
     // --- שלב 2: הרצת אלגוריתם ב-Isolate עם מנווטים וירטואליים ---
     // מאבטח: כל מנווט וירטואלי מייצג 2 מנווטים שמתחלקים בציר — כפול נקודות
     final effectiveCpPerNav = composition.isGuard
@@ -387,6 +403,229 @@ class RoutesDistributionService {
     );
   }
 
+  /// חלוקת ניווט כוכב — כל נקודה חייבת להיות בטווח מרחק מהנקודה המרכזית
+  domain.DistributionResult _distributeStarNavigation({
+    required List<String> navigators,
+    required List<Checkpoint> checkpoints,
+    required String centralPointId,
+    required int checkpointsPerNavigator,
+    required double minDistance,
+    required double maxDistance,
+    required String scoringCriterion,
+    required ForceComposition composition,
+    required Map<String, List<String>> groups,
+    void Function(int current, int total)? onProgress,
+  }) {
+    final K = checkpointsPerNavigator;
+    final N = navigators.length;
+
+    // מציאת הנקודה המרכזית
+    final centralCp = checkpoints.where((cp) => cp.id == centralPointId).firstOrNull;
+    if (centralCp == null || centralCp.coordinates == null) {
+      throw Exception('נקודה מרכזית לא נמצאה');
+    }
+    final centralCoord = centralCp.coordinates!;
+
+    // חישוב מרחק כל נקודה מהנקודה המרכזית וסינון לפי טווח
+    final eligibleCheckpoints = <Checkpoint>[];
+    final distancesFromCenter = <String, double>{};
+    for (final cp in checkpoints) {
+      if (cp.id == centralPointId) continue;
+      if (cp.isPolygon || cp.coordinates == null) continue;
+      final distKm = GeometryUtils.distanceBetweenMeters(centralCoord, cp.coordinates!) / 1000.0;
+      distancesFromCenter[cp.id] = distKm;
+      if (distKm >= minDistance && distKm <= maxDistance) {
+        eligibleCheckpoints.add(cp);
+      }
+    }
+
+    onProgress?.call(10, 100);
+
+    if (eligibleCheckpoints.length < K) {
+      throw Exception(
+        'אין מספיק נקודות בטווח ${minDistance.toStringAsFixed(1)}-${maxDistance.toStringAsFixed(1)} ק"מ '
+        'מהנקודה המרכזית: ${eligibleCheckpoints.length} נקודות זמינות, נדרשות $K',
+      );
+    }
+
+    final isDoubleCheck = scoringCriterion == 'doubleCheck';
+    final needsSharing = eligibleCheckpoints.length < N * K;
+
+    if (!isDoubleCheck && !needsSharing && eligibleCheckpoints.length < N * K) {
+      throw Exception(
+        'אין מספיק נקודות ייחודיות: ${eligibleCheckpoints.length} זמינות, '
+        'נדרשות ${N * K} ($N מנווטים × $K נקודות)',
+      );
+    }
+
+    onProgress?.call(20, 100);
+
+    // חלוקת נקודות — Monte Carlo optimization
+    final random = Random();
+    Map<String, domain.AssignedRoute>? bestRoutes;
+    double bestScore = double.negativeInfinity;
+    bool bestAllInRange = false;
+    bool bestHasSharing = false;
+    int bestSharedCount = 0;
+
+    final iterations = 500;
+    for (int iter = 0; iter < iterations; iter++) {
+      if (iter % 10 == 0) {
+        onProgress?.call(20 + (iter * 70 ~/ iterations), 100);
+      }
+
+      // חלוקה רנדומלית
+      final shuffled = List<Checkpoint>.from(eligibleCheckpoints)..shuffle(random);
+      final routeMap = <String, domain.AssignedRoute>{};
+      bool valid = true;
+
+      if (isDoubleCheck) {
+        // אימות כפול: כל נקודה ל-2 מנווטים
+        // מקסם כיסוי כפול ע"י חלוקה מחזורית
+        final pool = <Checkpoint>[];
+        // כל נקודה פעמיים (אם מספיק)
+        for (int pass = 0; pass < 2; pass++) {
+          pool.addAll(shuffled);
+        }
+        pool.shuffle(random);
+
+        for (int i = 0; i < N; i++) {
+          final navId = navigators[i];
+          final points = <Checkpoint>[];
+          final seen = <String>{};
+          for (final cp in pool) {
+            if (points.length >= K) break;
+            if (!seen.contains(cp.id)) {
+              seen.add(cp.id);
+              points.add(cp);
+            }
+          }
+          if (points.length < K) { valid = false; break; }
+          // הסר נקודות שנתפסו (אחרת אימות כפול לא מובטח)
+          for (final cp in points) {
+            final idx = pool.indexWhere((p) => p.id == cp.id);
+            if (idx >= 0) pool.removeAt(idx);
+          }
+
+          final totalRoundTrip = points.fold<double>(0, (sum, cp) =>
+            sum + 2 * (distancesFromCenter[cp.id] ?? 0));
+
+          routeMap[navId] = domain.AssignedRoute(
+            checkpointIds: points.map((cp) => cp.id).toList(),
+            routeLengthKm: totalRoundTrip,
+            sequence: points.map((cp) => cp.id).toList(),
+            startPointId: centralPointId,
+            endPointId: centralPointId,
+            status: _starRouteStatus(points, distancesFromCenter, minDistance, maxDistance)
+          );
+        }
+      } else {
+        // ייחודיות: כל נקודה למנווט אחד (אם אפשר)
+        if (needsSharing) {
+          // שיתוף — חלוקה מחזורית
+          final pool = <Checkpoint>[];
+          while (pool.length < N * K) {
+            pool.addAll(shuffled);
+          }
+          for (int i = 0; i < N; i++) {
+            final navId = navigators[i];
+            final points = pool.skip(i * K).take(K).toList();
+            final totalRoundTrip = points.fold<double>(0, (sum, cp) =>
+              sum + 2 * (distancesFromCenter[cp.id] ?? 0));
+            routeMap[navId] = domain.AssignedRoute(
+              checkpointIds: points.map((cp) => cp.id).toList(),
+              routeLengthKm: totalRoundTrip,
+              sequence: points.map((cp) => cp.id).toList(),
+              startPointId: centralPointId,
+              endPointId: centralPointId,
+              status: _starRouteStatus(points, distancesFromCenter, minDistance, maxDistance),
+            );
+          }
+        } else {
+          // ייחודי — כל נקודה פעם אחת
+          for (int i = 0; i < N; i++) {
+            final navId = navigators[i];
+            final points = shuffled.skip(i * K).take(K).toList();
+            if (points.length < K) { valid = false; break; }
+            final totalRoundTrip = points.fold<double>(0, (sum, cp) =>
+              sum + 2 * (distancesFromCenter[cp.id] ?? 0));
+            routeMap[navId] = domain.AssignedRoute(
+              checkpointIds: points.map((cp) => cp.id).toList(),
+              routeLengthKm: totalRoundTrip,
+              sequence: points.map((cp) => cp.id).toList(),
+              startPointId: centralPointId,
+              endPointId: centralPointId,
+              status: _starRouteStatus(points, distancesFromCenter, minDistance, maxDistance),
+            );
+          }
+        }
+      }
+
+      if (!valid) continue;
+
+      // ניקוד
+      final allCpIds = routeMap.values.expand((r) => r.checkpointIds).toList();
+      final uniqueCount = allCpIds.toSet().length;
+      final hasSharing = allCpIds.length != uniqueCount;
+      final sharedCount = allCpIds.length - uniqueCount;
+
+      double score = 0;
+      if (isDoubleCheck) {
+        // ניקוד: מקסימום נקודות שנדקרו ע"י 2 מנווטים
+        final cpCounts = <String, int>{};
+        for (final id in allCpIds) {
+          cpCounts[id] = (cpCounts[id] ?? 0) + 1;
+        }
+        final doubleVisited = cpCounts.values.where((c) => c >= 2).length;
+        score = doubleVisited / uniqueCount; // 1.0 = כל הנקודות נבדקו כפול
+      } else {
+        // ניקוד ייחודיות: מקסימום נקודות ייחודיות
+        score = uniqueCount / allCpIds.length; // 1.0 = אין שיתוף כלל
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestRoutes = routeMap;
+        bestAllInRange = true; // כל הנקודות כבר סוננו לטווח
+        bestHasSharing = hasSharing;
+        bestSharedCount = sharedCount;
+      }
+
+      // early exit — תוצאה מושלמת
+      if (score >= 1.0) break;
+    }
+
+    onProgress?.call(100, 100);
+
+    if (bestRoutes == null) {
+      throw Exception('לא נמצאה חלוקה מתאימה');
+    }
+
+    // הרחבת קבוצות (pair/squad)
+    if (composition.isGrouped) {
+      final expandedRoutes = <String, domain.AssignedRoute>{};
+      for (final entry in bestRoutes.entries) {
+        final groupId = entry.key;
+        final route = entry.value;
+        final members = groups[groupId];
+        if (members == null || members.isEmpty) continue;
+        for (final memberId in members) {
+          expandedRoutes[memberId] = route.copyWith(groupId: groupId);
+        }
+      }
+      bestRoutes = expandedRoutes;
+    }
+
+    return domain.DistributionResult(
+      status: 'success',
+      routes: bestRoutes,
+      approvalOptions: [],
+      hasSharedCheckpoints: bestHasSharing,
+      sharedCheckpointCount: bestSharedCount,
+      forceComposition: composition,
+    );
+  }
+
   /// תווית הרכב הכוח
   static String _compositionLabel(String type) => switch (type) {
     'guard' => 'מאבטח',
@@ -399,6 +638,17 @@ class RoutesDistributionService {
   static String _routeStatus(double length, double min, double max) {
     if (length < min) return 'too_short';
     if (length > max) return 'too_long';
+    return 'optimal';
+  }
+
+  /// סטטוס ציר כוכב — בדיקת מרחק כל נקודה מהנקודה המרכזית
+  static String _starRouteStatus(List<Checkpoint> points, Map<String, double> distances, double min, double max) {
+    for (final cp in points) {
+      final dist = distances[cp.id];
+      if (dist == null) return 'invalid';
+      if (dist < min) return 'too_short';
+      if (dist > max) return 'too_long';
+    }
     return 'optimal';
   }
 

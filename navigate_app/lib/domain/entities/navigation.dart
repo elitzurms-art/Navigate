@@ -363,6 +363,11 @@ class Navigation extends Equatable {
   // Force composition (הרכב הכוח)
   final ForceComposition forceComposition;
 
+  // Star navigation (ניווט כוכב)
+  final int? starLearningMinutes; // זמן למידה לנקודה (דקות)
+  final int? starNavigatingMinutes; // זמן ניווט לנקודה (דקות)
+  final bool starAutoMode; // פתיחת נקודה הבאה אוטומטית
+
   // Communication (PTT)
   final CommunicationSettings communicationSettings;
 
@@ -428,6 +433,9 @@ class Navigation extends Equatable {
     this.gpsSpoofingDetectionEnabled = true,
     this.gpsSpoofingMaxDistanceKm = 50,
     this.forceComposition = const ForceComposition(),
+    this.starLearningMinutes,
+    this.starNavigatingMinutes,
+    this.starAutoMode = false,
     this.communicationSettings = const CommunicationSettings(),
     this.variablesSheet,
     this.checklistCompletion,
@@ -494,6 +502,9 @@ class Navigation extends Equatable {
     bool? gpsSpoofingDetectionEnabled,
     int? gpsSpoofingMaxDistanceKm,
     ForceComposition? forceComposition,
+    int? starLearningMinutes,
+    int? starNavigatingMinutes,
+    bool? starAutoMode,
     CommunicationSettings? communicationSettings,
     VariablesSheet? variablesSheet,
     bool clearVariablesSheet = false,
@@ -551,6 +562,9 @@ class Navigation extends Equatable {
       gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
       gpsSpoofingMaxDistanceKm: gpsSpoofingMaxDistanceKm ?? this.gpsSpoofingMaxDistanceKm,
       forceComposition: forceComposition ?? this.forceComposition,
+      starLearningMinutes: starLearningMinutes ?? this.starLearningMinutes,
+      starNavigatingMinutes: starNavigatingMinutes ?? this.starNavigatingMinutes,
+      starAutoMode: starAutoMode ?? this.starAutoMode,
       communicationSettings: communicationSettings ?? this.communicationSettings,
       variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
       checklistCompletion: clearChecklistCompletion ? null : (checklistCompletion ?? this.checklistCompletion),
@@ -613,6 +627,9 @@ class Navigation extends Equatable {
       'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
       'gpsSpoofingMaxDistanceKm': gpsSpoofingMaxDistanceKm,
       'forceComposition': forceComposition.toMap(),
+      if (starLearningMinutes != null) 'starLearningMinutes': starLearningMinutes,
+      if (starNavigatingMinutes != null) 'starNavigatingMinutes': starNavigatingMinutes,
+      'starAutoMode': starAutoMode,
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
@@ -705,6 +722,9 @@ class Navigation extends Equatable {
       forceComposition: map['forceComposition'] is Map
           ? ForceComposition.fromMap(map['forceComposition'] as Map<String, dynamic>)
           : const ForceComposition(),
+      starLearningMinutes: (map['starLearningMinutes'] as num?)?.toInt(),
+      starNavigatingMinutes: (map['starNavigatingMinutes'] as num?)?.toInt(),
+      starAutoMode: map['starAutoMode'] as bool? ?? false,
       communicationSettings: map['communicationSettings'] is Map
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
@@ -773,6 +793,9 @@ class Navigation extends Equatable {
     gpsSpoofingDetectionEnabled,
     gpsSpoofingMaxDistanceKm,
     forceComposition,
+    starLearningMinutes,
+    starNavigatingMinutes,
+    starAutoMode,
     communicationSettings,
     variablesSheet,
     checklistCompletion,

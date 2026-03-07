@@ -218,6 +218,9 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
   /// חישוב אורך ציר בק"מ
   double _calculateRouteLength(List<String> sequence) {
+    if (widget.navigation.navigationType == 'star') {
+      return _calculateStarRouteLength(sequence);
+    }
     final coords = <Coordinate>[];
     for (final cpId in sequence) {
       final cp = _getCheckpoint(cpId);
@@ -228,12 +231,48 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
     return GeometryUtils.calculatePathLengthKm(coords);
   }
 
+  /// חישוב אורך ציר כוכב — סכום הלוך-חזור מהנקודה המרכזית לכל נקודה
+  double _calculateStarRouteLength(List<String> sequence) {
+    if (_startPointId == null) return 0;
+    final centralCp = _getCheckpoint(_startPointId!);
+    if (centralCp?.coordinates == null) return 0;
+    final centralCoord = centralCp!.coordinates!;
+    double total = 0;
+    for (final cpId in sequence) {
+      if (cpId == _startPointId || cpId == _endPointId) continue;
+      final cp = _getCheckpoint(cpId);
+      if (cp?.coordinates != null) {
+        total += 2 * GeometryUtils.distanceBetweenMeters(centralCoord, cp!.coordinates!) / 1000.0;
+      }
+    }
+    return total;
+  }
+
   /// קביעת סטטוס ציר לפי טווח אורך
-  String _getRouteStatus(double lengthKm) {
+  String _getRouteStatus(double lengthKm, {List<String>? checkpointIds}) {
     final range = widget.navigation.routeLengthKm;
     if (range == null) return 'optimal';
+    if (widget.navigation.navigationType == 'star') {
+      return _getStarRouteStatus(checkpointIds ?? [], range.min, range.max);
+    }
     if (lengthKm < range.min) return 'too_short';
     if (lengthKm > range.max) return 'too_long';
+    return 'optimal';
+  }
+
+  /// סטטוס ציר כוכב — בדיקת מרחק כל נקודה מהנקודה המרכזית
+  String _getStarRouteStatus(List<String> checkpointIds, double min, double max) {
+    if (_startPointId == null) return 'optimal';
+    final centralCp = _getCheckpoint(_startPointId!);
+    if (centralCp?.coordinates == null) return 'optimal';
+    final centralCoord = centralCp!.coordinates!;
+    for (final cpId in checkpointIds) {
+      final cp = _getCheckpoint(cpId);
+      if (cp?.coordinates == null) return 'invalid';
+      final distKm = GeometryUtils.distanceBetweenMeters(centralCoord, cp!.coordinates!) / 1000.0;
+      if (distKm < min) return 'too_short';
+      if (distKm > max) return 'too_long';
+    }
     return 'optimal';
   }
 
@@ -557,7 +596,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
           endOverride: existingRoute?.endPointId,
         );
         final lengthKm = _calculateRouteLength(sequence);
-        final status = _getRouteStatus(lengthKm);
+        final status = _getRouteStatus(lengthKm, checkpointIds: manualCps);
 
         // שמירת ה-route הקיים עם עדכון הנקודות (שימור start/end per-navigator למאבטח)
         routes[uid] = domain.AssignedRoute(

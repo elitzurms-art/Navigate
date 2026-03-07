@@ -748,18 +748,39 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               ),
               Padding(
                 padding: const EdgeInsets.all(8),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: color,
-                        shape: BoxShape.circle,
-                      ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(route.routeLengthKm.toStringAsFixed(2)),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text(route.routeLengthKm.toStringAsFixed(2)),
+                    if (widget.navigation.navigationType == 'star')
+                      Builder(
+                        builder: (context) {
+                          final checkpointsById = {for (final cp in _checkpoints) cp.id: cp};
+                          final centralCp = checkpointsById[widget.navigation.startPoint];
+                          if (centralCp?.coordinates == null) return const SizedBox();
+                          final dists = route.checkpointIds.map((cpId) {
+                            final cp = checkpointsById[cpId];
+                            if (cp?.coordinates == null) return '?';
+                            final distKm = GeometryUtils.distanceBetweenMeters(
+                              centralCp!.coordinates!, cp!.coordinates!) / 1000.0;
+                            return distKm.toStringAsFixed(1);
+                          }).join(', ');
+                          return Text(dists, style: TextStyle(fontSize: 10, color: Colors.grey[600]));
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -1157,8 +1178,24 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     );
   }
 
+  static const _navigatorColors = [
+    Colors.blue,
+    Colors.red,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.teal,
+    Colors.pink,
+    Colors.indigo,
+    Colors.amber,
+    Colors.cyan,
+    Colors.brown,
+    Colors.lime,
+  ];
+
   List<Widget> _buildRoutePolylines() {
     List<Widget> polylines = [];
+    final navigatorKeys = _filteredRoutes.keys.toList();
 
     for (final entry in _filteredRoutes.entries) {
       final navigatorId = entry.key;
@@ -1166,6 +1203,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
 
       // בדיקה אם המנווט נבחר
       if (_selectedNavigators[navigatorId] != true) continue;
+
+      final navigatorIndex = navigatorKeys.indexOf(navigatorId);
+      final navigatorColor = _navigatorColors[navigatorIndex % _navigatorColors.length];
 
       // בניית הציר — עדיפות ל-plannedPath (הציר שהמנווט צייר), fallback לנקודות ציון
       List<LatLng> points = [];
@@ -1176,48 +1216,59 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
             .map((c) => LatLng(c.lat, c.lng))
             .toList();
       } else if (_checkpoints.isNotEmpty) {
-        // fallback — חיבור נקודות ציון בלבד
-        if (route.startPointId != null) {
-          try {
-            final startPoint = _checkpoints.firstWhere(
-              (cp) => cp.id == route.startPointId,
-            );
-            if (!startPoint.isPolygon && startPoint.coordinates != null) {
+        final checkpointsById = {for (final cp in _checkpoints) cp.id: cp};
+
+        if (widget.navigation.navigationType == 'star' && route.startPointId != null) {
+          // כוכב — קווים מהנקודה המרכזית לכל נקודת ציון
+          final centralCp = checkpointsById[route.startPointId];
+          if (centralCp != null && !centralCp.isPolygon && centralCp.coordinates != null) {
+            final centerLatLng = LatLng(centralCp.coordinates!.lat, centralCp.coordinates!.lng);
+            final starLines = <Polyline>[];
+            for (final cpId in route.checkpointIds) {
+              final cp = checkpointsById[cpId];
+              if (cp != null && !cp.isPolygon && cp.coordinates != null) {
+                starLines.add(Polyline(
+                  points: [centerLatLng, LatLng(cp.coordinates!.lat, cp.coordinates!.lng)],
+                  strokeWidth: 3,
+                  color: navigatorColor.withValues(alpha: _routesOpacity),
+                ));
+              }
+            }
+            if (starLines.isNotEmpty) {
+              polylines.add(PolylineLayer(polylines: starLines));
+            }
+          }
+        } else {
+          // fallback — חיבור נקודות ציון ברצף
+          if (route.startPointId != null) {
+            final startPoint = checkpointsById[route.startPointId];
+            if (startPoint != null && !startPoint.isPolygon && startPoint.coordinates != null) {
               points.add(LatLng(startPoint.coordinates!.lat, startPoint.coordinates!.lng));
             }
-          } catch (_) {}
-        }
-        for (final checkpointId in route.sequence) {
-          try {
-            final checkpoint = _checkpoints.firstWhere(
-              (cp) => cp.id == checkpointId,
-            );
-            if (!checkpoint.isPolygon && checkpoint.coordinates != null) {
+          }
+          for (final checkpointId in route.sequence) {
+            final checkpoint = checkpointsById[checkpointId];
+            if (checkpoint != null && !checkpoint.isPolygon && checkpoint.coordinates != null) {
               points.add(LatLng(checkpoint.coordinates!.lat, checkpoint.coordinates!.lng));
             }
-          } catch (_) {}
-        }
-        if (route.endPointId != null && route.endPointId != route.startPointId) {
-          try {
-            final endPoint = _checkpoints.firstWhere(
-              (cp) => cp.id == route.endPointId,
-            );
-            if (!endPoint.isPolygon && endPoint.coordinates != null) {
+          }
+          if (route.endPointId != null && route.endPointId != route.startPointId) {
+            final endPoint = checkpointsById[route.endPointId];
+            if (endPoint != null && !endPoint.isPolygon && endPoint.coordinates != null) {
               points.add(LatLng(endPoint.coordinates!.lat, endPoint.coordinates!.lng));
             }
-          } catch (_) {}
+          }
         }
       }
 
       if (points.isNotEmpty) {
-        final color = _getRouteColor(route.status);
         polylines.add(
           PolylineLayer(
             polylines: [
               Polyline(
                 points: points,
                 strokeWidth: 3,
-                color: color.withValues(alpha: _routesOpacity),
+                color: navigatorColor.withValues(alpha: _routesOpacity),
               ),
             ],
           ),

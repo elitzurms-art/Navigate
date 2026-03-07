@@ -977,6 +977,31 @@ class WaypointSettings extends Equatable {
   List<Object?> get props => [enabled, waypoints];
 }
 
+/// שלבי ניווט כוכב — מחושב מ-timestamps + punch state בזמן ריצה, אף פעם לא נשמר
+enum StarPhase { atCenter, learning, navigating, returning, timeout, completed }
+
+/// חישוב שלב כוכב נוכחי מנתונים שמורים
+StarPhase computeStarPhase({
+  int? index,
+  DateTime? learningEnd,
+  DateTime? navigatingEnd,
+  bool currentPointPunched = false,
+  bool returned = false,
+  int totalPoints = 0,
+  required DateTime now,
+}) {
+  if (index == null || index < 0) return StarPhase.atCenter;
+  if (returned && currentPointPunched) {
+    if (index >= totalPoints - 1) return StarPhase.completed;
+    return StarPhase.atCenter;
+  }
+  if (returned && !currentPointPunched) return StarPhase.atCenter; // safety
+  if (learningEnd != null && now.isBefore(learningEnd)) return StarPhase.learning;
+  if (currentPointPunched) return StarPhase.returning;
+  if (navigatingEnd == null || now.isBefore(navigatingEnd)) return StarPhase.navigating;
+  return StarPhase.timeout;
+}
+
 /// הרכב הכוח — בדד / מאבטח / צמד / חוליה
 class ForceComposition extends Equatable {
   final String type; // 'solo', 'guard', 'pair', 'squad'

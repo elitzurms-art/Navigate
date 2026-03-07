@@ -70,6 +70,18 @@ class NavigationTrackRepository {
                 : DateTime.tryParse(data['manualPositionUsedAt'].toString()))
             : null,
         isGroupSecondary: data['isGroupSecondary'] as bool? ?? false,
+        starCurrentPointIndex: (data['starCurrentPointIndex'] as num?)?.toInt(),
+        starLearningEndTime: data['starLearningEndTime'] != null
+            ? (data['starLearningEndTime'] is Timestamp
+                ? (data['starLearningEndTime'] as Timestamp).toDate()
+                : DateTime.tryParse(data['starLearningEndTime'].toString()))
+            : null,
+        starNavigatingEndTime: data['starNavigatingEndTime'] != null
+            ? (data['starNavigatingEndTime'] is Timestamp
+                ? (data['starNavigatingEndTime'] as Timestamp).toDate()
+                : DateTime.tryParse(data['starNavigatingEndTime'].toString()))
+            : null,
+        starReturnedToCenter: data['starReturnedToCenter'] as bool? ?? false,
       );
     }).toList();
   }
@@ -407,6 +419,43 @@ class NavigationTrackRepository {
     }).catchError((_) {
       // Firestore לא זמין — יתוקן בסנכרון הבא
     });
+  }
+
+  /// עדכון מצב כוכב — Drift + Firestore (dual write)
+  Future<void> updateStarState(
+    String trackId, {
+    int? pointIndex,
+    DateTime? learningEndTime,
+    DateTime? navigatingEndTime,
+    bool? returnedToCenter,
+  }) async {
+    // עדכון ב-Drift
+    final companion = NavigationTracksCompanion(
+      starCurrentPointIndex: pointIndex != null ? Value(pointIndex) : const Value.absent(),
+      starLearningEndTime: learningEndTime != null ? Value(learningEndTime) : const Value.absent(),
+      starNavigatingEndTime: navigatingEndTime != null ? Value(navigatingEndTime) : const Value.absent(),
+      starReturnedToCenter: returnedToCenter != null ? Value(returnedToCenter) : const Value.absent(),
+    );
+    await (_db.update(_db.navigationTracks)
+          ..where((t) => t.id.equals(trackId)))
+        .write(companion);
+
+    // עדכון ישיר ב-Firestore
+    try {
+      final data = <String, dynamic>{};
+      if (pointIndex != null) data['starCurrentPointIndex'] = pointIndex;
+      if (learningEndTime != null) data['starLearningEndTime'] = learningEndTime.toUtc().toIso8601String();
+      if (navigatingEndTime != null) data['starNavigatingEndTime'] = navigatingEndTime.toUtc().toIso8601String();
+      if (returnedToCenter != null) data['starReturnedToCenter'] = returnedToCenter;
+      if (data.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .doc(trackId)
+            .update(data);
+      }
+    } catch (_) {
+      // Firestore לא זמין — יתוקן בסנכרון הבא
+    }
   }
 
   /// גזירת סטטוס אישי מרשומת track
