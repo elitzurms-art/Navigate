@@ -5,10 +5,15 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/nav_layer.dart' as nav;
+import '../../../../domain/entities/checkpoint.dart' as domain_cp;
+import '../../../../domain/entities/boundary.dart' as domain_boundary;
+import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/coordinate.dart';
 import '../../../../domain/entities/user.dart';
-import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../data/repositories/checkpoint_repository.dart';
+import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/checkpoint_punch_repository.dart';
 import '../../../../services/gps_tracking_service.dart';
@@ -50,7 +55,9 @@ class ApprovalView extends StatefulWidget {
 class _ApprovalViewState extends State<ApprovalView> {
   VoiceService? _voiceService;
 
-  final NavLayerRepository _navLayerRepo = NavLayerRepository();
+  final CheckpointRepository _checkpointRepo = CheckpointRepository();
+  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
   final RouteExportService _exportService = RouteExportService();
@@ -62,9 +69,9 @@ class _ApprovalViewState extends State<ApprovalView> {
 
   bool _isLoading = true;
 
-  List<nav.NavCheckpoint> _checkpoints = [];
-  List<nav.NavSafetyPoint> _safetyPoints = [];
-  List<nav.NavBoundary> _boundaries = [];
+  List<domain_cp.Checkpoint> _checkpoints = [];
+  List<domain_sp.SafetyPoint> _safetyPoints = [];
+  List<domain_boundary.Boundary> _boundaries = [];
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = [];
   List<TrackPoint> _trackPoints = [];
@@ -99,64 +106,26 @@ class _ApprovalViewState extends State<ApprovalView> {
       final userId = widget.currentUser.uid;
       final route = widget.navigation.routes[userId];
 
-      // שכבות ניווט
-      _checkpoints =
-          await _navLayerRepo.getCheckpointsByNavigation(navId);
-      _safetyPoints =
-          await _navLayerRepo.getSafetyPointsByNavigation(navId);
-      _boundaries =
-          await _navLayerRepo.getBoundariesByNavigation(navId);
+      // שכבות שטח (area-level) — נתונים נכונים, כמו active_view
+      final areaId = widget.navigation.areaId;
+      _checkpoints = await _checkpointRepo.getByArea(areaId);
+      _safetyPoints = await _safetyPointRepo.getByArea(areaId);
+      _boundaries = await _boundaryRepo.getByArea(areaId);
 
-      // Firestore fallback — שכבות נוצרות במכשיר המפקד, מכשירים אחרים צריכים לסנכרן
-      if (_checkpoints.isEmpty && _safetyPoints.isEmpty && _boundaries.isEmpty) {
-        try {
-          await _navLayerRepo.syncAllLayersFromFirestore(navId);
-          _checkpoints =
-              await _navLayerRepo.getCheckpointsByNavigation(navId);
-          _safetyPoints =
-              await _navLayerRepo.getSafetyPointsByNavigation(navId);
-          _boundaries =
-              await _navLayerRepo.getBoundariesByNavigation(navId);
-        } catch (_) {}
-      }
-
-      // סינון נקודות לציר הזה — כולל התחלה/סיום/ביניים
+      // סינון נקודות לציר הזה
       if (route != null && route.checkpointIds.isNotEmpty) {
-        // אותה גישה כמו active_view — Set<String> של IDs
-        final routeRelatedIds = <String>{
-          ...route.checkpointIds,
-          if (route.startPointId != null) route.startPointId!,
-          if (route.endPointId != null) route.endPointId!,
-          ...route.waypointIds,
-        };
-        // ניווט כוכב — מוסיף את הנקודה המרכזית מהניווט עצמו (גיבוי)
+        final routeCpIds = route.checkpointIds.toSet();
+        if (route.startPointId != null) routeCpIds.add(route.startPointId!);
+        if (route.endPointId != null) routeCpIds.add(route.endPointId!);
+        routeCpIds.addAll(route.waypointIds);
+        // ניווט כוכב — מוסיף נקודה מרכזית
         if (widget.navigation.navigationType == 'star' && widget.navigation.startPoint != null) {
-          routeRelatedIds.add(widget.navigation.startPoint!);
+          routeCpIds.add(widget.navigation.startPoint!);
         }
-        // התאמה גם לפי NavCheckpoint.id (nav_{navId}_{sourceId}) כ-fallback
-        final navId = widget.navigation.id;
-        final expandedIds = <String>{
-          ...routeRelatedIds,
-          for (final cpId in routeRelatedIds) 'nav_${navId}_$cpId',
-        };
         final routeCps = _checkpoints
-            .where((c) => expandedIds.contains(c.id) || expandedIds.contains(c.sourceId))
+            .where((cp) => routeCpIds.contains(cp.id))
             .toList();
         if (routeCps.isNotEmpty) _checkpoints = routeCps;
-      }
-      // ניווט כוכב — fallback: אם route ריק או הסינון כשל, מציג רק נקודה מרכזית
-      if (widget.navigation.navigationType == 'star' &&
-          widget.navigation.startPoint != null &&
-          route != null &&
-          route.checkpointIds.isNotEmpty &&
-          _checkpoints.length > route.checkpointIds.length + 3) {
-        // הסינון כנראה נכשל — מנסה בכוח לפי ID מרכזי בלבד
-        final centralId = widget.navigation.startPoint!;
-        final centralOnly = _checkpoints
-            .where((c) => c.id == centralId || c.sourceId == centralId ||
-                          c.id == 'nav_${widget.navigation.id}_$centralId')
-            .toList();
-        if (centralOnly.isNotEmpty) _checkpoints = centralOnly;
       }
 
       // ציר מתוכנן
@@ -222,6 +191,26 @@ class _ApprovalViewState extends State<ApprovalView> {
     if (mounted) setState(() => _isLoading = false);
   }
 
+  /// המרת Checkpoint (שטח) ל-NavCheckpoint (לשירותי ניתוח/ייצוא)
+  List<nav.NavCheckpoint> _toNavCheckpoints() => _checkpoints.map((cp) => nav.NavCheckpoint(
+    id: cp.id,
+    navigationId: widget.navigation.id,
+    sourceId: cp.id,
+    areaId: cp.areaId,
+    name: cp.name,
+    description: cp.description,
+    type: cp.type,
+    color: cp.color,
+    geometryType: cp.geometryType,
+    coordinates: cp.coordinates,
+    polygonCoordinates: cp.polygonCoordinates,
+    sequenceNumber: cp.sequenceNumber,
+    labels: cp.labels,
+    createdBy: cp.createdBy,
+    createdAt: cp.createdAt,
+    updatedAt: cp.createdAt,
+  )).toList();
+
   void _computeAnalysis() {
     if (_trackPoints.length < 2) return;
     final route = widget.navigation.routes[widget.currentUser.uid];
@@ -229,7 +218,7 @@ class _ApprovalViewState extends State<ApprovalView> {
 
     final stats = _analysisService.calculateStatistics(
       trackPoints: _trackPoints,
-      checkpoints: _checkpoints,
+      checkpoints: _toNavCheckpoints(),
       punches: _punches,
       route: route,
       plannedRoute: _plannedRoute.length >= 2 ? _plannedRoute : null,
@@ -282,7 +271,7 @@ class _ApprovalViewState extends State<ApprovalView> {
           navigationName: widget.navigation.name,
           navigatorName: widget.currentUser.fullName,
           trackPoints: _trackPoints,
-          checkpoints: _checkpoints,
+          checkpoints: _toNavCheckpoints(),
           punches: _punches,
           plannedPath: route?.plannedPath,
         ));
@@ -489,12 +478,10 @@ class _ApprovalViewState extends State<ApprovalView> {
                       String letter;
                       Color borderOverride = Colors.white;
 
-                      final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
-                      final isStart = (startId != null &&
-                              (cp.id == startId || cp.sourceId == startId)) ||
+                      final isSwapPoint = swapId != null && cp.id == swapId;
+                      final isStart = (startId != null && cp.id == startId) ||
                           cp.type == 'start';
-                      final isEnd = !isSwapPoint && ((endId != null &&
-                              (cp.id == endId || cp.sourceId == endId)) ||
+                      final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) ||
                           cp.type == 'end');
 
                       if (isSwapPoint) {
@@ -665,9 +652,9 @@ class _ApprovalViewState extends State<ApprovalView> {
                             Color bgColor;
                             String letter;
                             Color borderColor = Colors.white;
-                            final isSwapPoint = swapId != null && (cp.id == swapId || cp.sourceId == swapId);
-                            final isStart = (startId != null && (cp.id == startId || cp.sourceId == startId)) || cp.type == 'start';
-                            final isEnd = !isSwapPoint && ((endId != null && (cp.id == endId || cp.sourceId == endId)) || cp.type == 'end');
+                            final isSwapPoint = swapId != null && cp.id == swapId;
+                            final isStart = (startId != null && cp.id == startId) || cp.type == 'start';
+                            final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) || cp.type == 'end');
                             if (isSwapPoint) { bgColor = Colors.white; borderColor = Colors.grey[700]!; letter = 'S'; }
                             else if (isStart) { bgColor = _kStartColor; letter = 'H'; }
                             else if (isEnd) { bgColor = _kEndColor; letter = 'F'; }
