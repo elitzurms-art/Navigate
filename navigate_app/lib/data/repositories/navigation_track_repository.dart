@@ -428,8 +428,9 @@ class NavigationTrackRepository {
     DateTime? learningEndTime,
     DateTime? navigatingEndTime,
     bool? returnedToCenter,
+    DateTime? starStartedAt,
   }) async {
-    // עדכון ב-Drift
+    // עדכון ב-Drift (starStartedAt is Firestore-only, no Drift column)
     final companion = NavigationTracksCompanion(
       starCurrentPointIndex: pointIndex != null ? Value(pointIndex) : const Value.absent(),
       starLearningEndTime: learningEndTime != null ? Value(learningEndTime) : const Value.absent(),
@@ -447,6 +448,7 @@ class NavigationTrackRepository {
       if (learningEndTime != null) data['starLearningEndTime'] = learningEndTime.toUtc().toIso8601String();
       if (navigatingEndTime != null) data['starNavigatingEndTime'] = navigatingEndTime.toUtc().toIso8601String();
       if (returnedToCenter != null) data['starReturnedToCenter'] = returnedToCenter;
+      if (starStartedAt != null) data['starStartedAt'] = Timestamp.fromDate(starStartedAt);
       if (data.isNotEmpty) {
         await FirebaseFirestore.instance
             .collection(AppConstants.navigationTracksCollection)

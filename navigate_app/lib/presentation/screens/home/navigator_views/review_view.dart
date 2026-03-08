@@ -144,22 +144,41 @@ class _ReviewViewState extends State<ReviewView> {
 
       // סינון נקודות לציר הזה — כולל התחלה/סיום/ביניים
       if (route != null && route.checkpointIds.isNotEmpty) {
+        // אותה גישה כמו active_view — Set<String> של IDs
         final routeRelatedIds = <String>{
           ...route.checkpointIds,
           if (route.startPointId != null) route.startPointId!,
           if (route.endPointId != null) route.endPointId!,
           ...route.waypointIds,
         };
-        final routeCps = <nav.NavCheckpoint>[];
-        for (final cpId in routeRelatedIds) {
-          final matches = _checkpoints
-              .where((c) => c.id == cpId || c.sourceId == cpId)
-              .toList();
-          if (matches.isNotEmpty && !routeCps.contains(matches.first)) {
-            routeCps.add(matches.first);
-          }
+        // ניווט כוכב — מוסיף את הנקודה המרכזית מהניווט עצמו (גיבוי)
+        if (widget.navigation.navigationType == 'star' && widget.navigation.startPoint != null) {
+          routeRelatedIds.add(widget.navigation.startPoint!);
         }
+        // התאמה גם לפי NavCheckpoint.id (nav_{navId}_{sourceId}) כ-fallback
+        final navId = widget.navigation.id;
+        final expandedIds = <String>{
+          ...routeRelatedIds,
+          for (final cpId in routeRelatedIds) 'nav_${navId}_$cpId',
+        };
+        final routeCps = _checkpoints
+            .where((c) => expandedIds.contains(c.id) || expandedIds.contains(c.sourceId))
+            .toList();
         if (routeCps.isNotEmpty) _checkpoints = routeCps;
+      }
+      // ניווט כוכב — fallback: אם route ריק או הסינון כשל, מציג רק נקודה מרכזית
+      if (widget.navigation.navigationType == 'star' &&
+          widget.navigation.startPoint != null &&
+          route != null &&
+          route.checkpointIds.isNotEmpty &&
+          _checkpoints.length > route.checkpointIds.length + 3) {
+        // הסינון כנראה נכשל — מנסה בכוח לפי ID מרכזי בלבד
+        final centralId = widget.navigation.startPoint!;
+        final centralOnly = _checkpoints
+            .where((c) => c.id == centralId || c.sourceId == centralId ||
+                          c.id == 'nav_${widget.navigation.id}_$centralId')
+            .toList();
+        if (centralOnly.isNotEmpty) _checkpoints = centralOnly;
       }
 
       // ציר מתוכנן

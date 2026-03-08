@@ -1331,6 +1331,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         final timeStr = navEnd != null ? ' (${remaining(navEnd)})' : '';
         return 'בניווט$timeStr — $idx/$totalPoints';
       case StarPhase.returning:
+        final navEnd = data?.starNavigatingEndTime;
+        if (navEnd != null) {
+          final diff = navEnd.difference(DateTime.now());
+          final abs = diff.abs();
+          final m = abs.inMinutes;
+          final s = abs.inSeconds % 60;
+          final timeStr = '${diff.isNegative ? '+' : ''}$m:${s.toString().padLeft(2, '0')}';
+          return 'חוזר למרכז ($timeStr) — $idx/$totalPoints';
+        }
         return 'חוזר למרכז — $idx/$totalPoints';
       case StarPhase.timeout:
         return 'זמן נגמר — $idx/$totalPoints';
@@ -1368,6 +1377,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       learningEndTime: learningEnd,
       navigatingEndTime: navigatingEnd,
       returnedToCenter: false,
+      starStartedAt: pointIndex == 0 ? now : null,
     );
   }
 

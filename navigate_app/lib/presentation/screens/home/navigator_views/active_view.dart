@@ -32,6 +32,10 @@ import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/safety_point_repository.dart';
+import '../../../../domain/entities/boundary.dart' as domain_boundary;
+import '../../../../domain/entities/safety_point.dart' as domain_sp;
+import 'star_learning_map_widget.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'manual_position_pin_screen.dart';
 import '../../../../services/voice_service.dart';
@@ -69,6 +73,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
 
   NavigatorPersonalStatus _personalStatus = NavigatorPersonalStatus.waiting;
   NavigationTrack? _track;
@@ -168,8 +173,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   DateTime? _starLearningEndTime;
   DateTime? _starNavigatingEndTime;
   bool _starReturnedToCenter = false;
+  DateTime? _starStartedAt;
   Duration _serverTimeOffset = Duration.zero;
   Timer? _starTicker;
+  List<domain_sp.SafetyPoint> _starMapSafetyPoints = [];
+  List<domain_boundary.Boundary> _starMapBoundaries = [];
+  bool _starMapLayersLoaded = false;
 
   DateTime get _adjustedNow => DateTime.now().add(_serverTimeOffset);
 
@@ -297,8 +306,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       );
 
       final punches = await _punchRepo.getByNavigator(widget.currentUser.uid);
-      final navPunches = punches.where((p) => p.navigationId == _nav.id).toList();
-      final activePunches = navPunches.where((p) => p.isActive).toList();
+      var navPunches = punches.where((p) => p.navigationId == _nav.id).toList();
+      var activePunches = navPunches.where((p) => p.isActive).toList();
 
       NavigatorPersonalStatus status;
       NavigationTrack? effectiveTrack = track;
@@ -354,6 +363,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           effectiveTrack = null;
         }
         status = NavigatorPersonalStatus.waiting;
+        navPunches = [];
+        activePunches = [];
       }
 
       if (mounted) {
@@ -476,6 +487,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       final allCheckpoints = await _checkpointRepo.getByArea(_nav.areaId);
       final routeCpIds = route.checkpointIds.toSet();
+      // כולל נקודת התחלה/סיום כדי שיוצגו במפה (ניווט כוכב — נקודה מרכזית)
+      if (route.startPointId != null) routeCpIds.add(route.startPointId!);
+      if (route.endPointId != null) routeCpIds.add(route.endPointId!);
       _routeCheckpoints = allCheckpoints
           .where((cp) => routeCpIds.contains(cp.id) && !cp.isPolygon && cp.coordinates != null)
           .toList();
@@ -1323,6 +1337,15 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         });
         _startStarTicker();
       }
+
+      // starStartedAt — elapsed timer override
+      final newStartedAt = _parseTrackDateTime(data['starStartedAt']);
+      if (newStartedAt != null && newStartedAt != _starStartedAt) {
+        _starStartedAt = newStartedAt;
+        if (_startTime == null || newStartedAt.isAfter(_startTime!)) {
+          _startTime = newStartedAt;
+        }
+      }
     }
     }, onError: (e) {
       print('DEBUG ActiveView: track doc listener error: $e');
@@ -1392,6 +1415,14 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _starNavigatingEndTime = _parseTrackDateTime(data['starNavigatingEndTime']);
           _starReturnedToCenter = data['starReturnedToCenter'] as bool? ?? false;
         });
+        // starStartedAt — elapsed timer override
+        final loadedStartedAt = _parseTrackDateTime(data['starStartedAt']);
+        if (loadedStartedAt != null) {
+          _starStartedAt = loadedStartedAt;
+          if (_startTime == null || loadedStartedAt.isAfter(_startTime!)) {
+            _startTime = loadedStartedAt;
+          }
+        }
         _startStarTicker();
       }
     } catch (e) {
@@ -1399,6 +1430,24 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     }
     // טעינת דקירות פעילות
     _activePunches = await _punchRepo.getActivePunchesByNavigator(_nav.id, widget.currentUser.uid);
+    // טעינת שכבות מפה לשלב למידה
+    if (!_starMapLayersLoaded) {
+      _loadStarMapLayers();
+    }
+  }
+
+  Future<void> _loadStarMapLayers() async {
+    try {
+      final boundaries = await _boundaryRepo.getByArea(_nav.areaId);
+      final safetyPoints = await _safetyPointRepo.getByArea(_nav.areaId);
+      if (mounted) {
+        setState(() {
+          _starMapBoundaries = boundaries;
+          _starMapSafetyPoints = safetyPoints;
+          _starMapLayersLoaded = true;
+        });
+      }
+    } catch (_) {}
   }
 
   /// דקירת כוכב — רק כשהשלב הוא navigating
@@ -1449,6 +1498,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _punchCount++;
+          _currentPunchIndex = _activePunches.length;
+          _lastPunchId = punch.id;
+          _lastPunchIndex = _starCurrentPointIndex;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1469,9 +1521,27 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     }
   }
 
-  /// "סיימתי ללמוד" — מקצר למידה
+  /// "סיימתי ללמוד" — מקצר למידה (עם אישור)
   Future<void> _finishStarLearning() async {
     if (_track == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('סיום למידה'),
+        content: const Text('האם סיימת ללמוד? הניווט לנקודה יתחיל מיד.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('כן, סיימתי'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     final now = _adjustedNow;
     await _trackRepo.updateStarState(_track!.id, learningEndTime: now);
     setState(() => _starLearningEndTime = now);
@@ -2337,6 +2407,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         setState(() {
           _lastPunchId = newPunch.id;
           // _currentPunchIndex לא משתנה — תיקון, לא דקירה חדשה
+          // עדכון _activePunches לניווט כוכב
+          if (_isStarNavigation) {
+            final idx = _activePunches.indexWhere((p) => p.id == oldPunch.id);
+            if (idx >= 0) {
+              _activePunches[idx] = newPunch;
+            }
+          }
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2844,32 +2921,35 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ---------------------------------------------------------------------------
 
   Widget _buildStarActiveView() {
-    final phase = _currentStarPhase;
     final route = _route;
-    final totalPoints = route?.sequence.length ?? 0;
+    if (route == null || _starCurrentPointIndex < 0 || _starCurrentPointIndex >= route.sequence.length) {
+      return const SizedBox();
+    }
+    final totalPoints = route.sequence.length;
     final completedPoints = _activePunches.length;
+    final targetCpId = route.sequence[_starCurrentPointIndex];
+    final targetCp = _routeCheckpoints.where((cp) => cp.id == targetCpId).firstOrNull;
+    final centralCp = route.startPointId != null
+        ? _routeCheckpoints.where((cp) => cp.id == route.startPointId).firstOrNull
+        : null;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Progress bar
-          LinearProgressIndicator(
-            value: totalPoints > 0 ? completedPoints / totalPoints : 0,
-            backgroundColor: Colors.grey[200],
-            color: Colors.green,
-            minHeight: 6,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'נקודה $completedPoints/$totalPoints',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 16),
-          // Phase-specific content
-          Expanded(child: _buildStarPhaseContent(phase, route, totalPoints)),
-        ],
-      ),
+    // Learning timer — guard negative
+    var remaining = _starLearningEndTime?.difference(_adjustedNow) ?? Duration.zero;
+    if (remaining.isNegative) remaining = Duration.zero;
+    final minutes = remaining.inMinutes;
+    final seconds = remaining.inSeconds % 60;
+
+    return StarLearningMapWidget(
+      centralPoint: centralCp,
+      targetPoint: targetCp,
+      boundaries: _starMapBoundaries,
+      safetyPoints: _starMapSafetyPoints,
+      fallbackCenter: _boundaryCenter,
+      completedPoints: completedPoints,
+      totalPoints: totalPoints,
+      pointLabel: 'למידה — ${targetCp?.name ?? 'נקודה ${_starCurrentPointIndex + 1}'}',
+      timerText: '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}',
+      onFinishLearning: _finishStarLearning,
     );
   }
 
@@ -2984,10 +3064,25 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       case StarPhase.returning:
         final isNear = _isNearCentralPoint();
+        String? returningTimerText;
+        if (_starNavigatingEndTime != null) {
+          final remaining = _starNavigatingEndTime!.difference(_adjustedNow);
+          final isOvertime = remaining.isNegative;
+          final abs = remaining.abs();
+          final m = abs.inMinutes;
+          final s = abs.inSeconds % 60;
+          returningTimerText = '${isOvertime ? '+' : ''}${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+        }
         return Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (returningTimerText != null) ...[
+                Text(returningTimerText,
+                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, fontFamily: 'monospace',
+                    color: returningTimerText.startsWith('+') ? Colors.red : Colors.blue)),
+                const SizedBox(height: 8),
+              ],
               Icon(Icons.flag, size: 56, color: Colors.green[400]),
               const SizedBox(height: 16),
               const Text('חזור לנקודה המרכזית', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -3014,11 +3109,32 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text('יש להגיע ל-50 מ\' מהמרכז', style: TextStyle(color: Colors.orange[700], fontSize: 13)),
                 ),
+              if (_lastPunchId != null) ...[
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () async {
+                    await _correctLastPunch();
+                    onActionDone?.call();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Text('תקן דקירה',
+                      style: TextStyle(fontSize: 13, color: Colors.orange[700], fontWeight: FontWeight.w500)),
+                  ),
+                ),
+              ],
             ],
           ),
         );
 
       case StarPhase.timeout:
+        String? overtimeText;
+        if (_starNavigatingEndTime != null) {
+          final overtime = _adjustedNow.difference(_starNavigatingEndTime!);
+          final m = overtime.inMinutes;
+          final s = overtime.inSeconds % 60;
+          overtimeText = '+${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+        }
         return Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -3026,6 +3142,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
               Icon(Icons.timer_off, size: 64, color: Colors.red[300]),
               const SizedBox(height: 16),
               const Text('הזמן נגמר', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.red)),
+              if (overtimeText != null) ...[
+                const SizedBox(height: 4),
+                Text(overtimeText,
+                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.red)),
+              ],
               const SizedBox(height: 8),
               Text('ממתין למפקד', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
             ],
@@ -3345,7 +3466,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Widget _buildActiveStatusBar() {
-    final showCountdown = _route != null && _nav.timeCalculationSettings.enabled;
+    final showCountdown = _isStarNavigation
+        ? ((_currentStarPhase == StarPhase.navigating || _currentStarPhase == StarPhase.returning || _currentStarPhase == StarPhase.timeout) && _starNavigatingEndTime != null)
+        : (_route != null && _nav.timeCalculationSettings.enabled);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -3357,7 +3480,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           _buildPunchBadge(),
           const SizedBox(width: 8),
           if (showCountdown) ...[
-            _buildCountdownChip(),
+            _isStarNavigation ? _buildStarCountdownChip() : _buildCountdownChip(),
             const SizedBox(width: 8),
           ],
           _buildGpsChip(),
@@ -3367,6 +3490,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Widget _buildTimerChip() {
+    // Star navigation before first point — show 00:00:00
+    final displayElapsed = (_isStarNavigation && _starStartedAt == null)
+        ? Duration.zero
+        : _elapsed;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -3379,7 +3506,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           Icon(Icons.timer, size: 16, color: Colors.green[700]),
           const SizedBox(width: 3),
           Text(
-            _formatDuration(_elapsed),
+            _formatDuration(displayElapsed),
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.bold,
@@ -3427,6 +3554,39 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     final timeStr = h > 0
         ? '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
         : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    final color = isOvertime ? Colors.red : Colors.blue;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.flag, size: 16, color: color[700]),
+          const SizedBox(width: 3),
+          Text(
+            isOvertime ? '+$timeStr' : timeStr,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+              color: color[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStarCountdownChip() {
+    final remaining = _starNavigatingEndTime!.difference(_adjustedNow);
+    final isOvertime = remaining.isNegative;
+    final abs = remaining.abs();
+    final m = abs.inMinutes;
+    final s = abs.inSeconds % 60;
+    final timeStr = '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     final color = isOvertime ? Colors.red : Colors.blue;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -4133,6 +4293,17 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           prev.status == ExtensionRequestStatus.pending &&
           active.status != ExtensionRequestStatus.pending) {
         _showExtensionResponseNotification(active);
+
+        // ניווט כוכב — הארכה מתווספת לזמן הנקודה הנוכחית
+        if (_isStarNavigation &&
+            active.status == ExtensionRequestStatus.approved &&
+            active.approvedMinutes != null &&
+            _starNavigatingEndTime != null &&
+            _track != null) {
+          final newEnd = _starNavigatingEndTime!.add(Duration(minutes: active.approvedMinutes!));
+          _starNavigatingEndTime = newEnd;
+          _trackRepo.updateStarState(_track!.id, navigatingEndTime: newEnd);
+        }
       }
 
       setState(() {
@@ -4194,6 +4365,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _isExtensionWindowOpen() {
     final settings = _nav.timeCalculationSettings;
     if (!settings.allowExtensionRequests) return false;
+
+    // ניווט כוכב — הארכה זמינה בשלבי navigating ו-timeout
+    if (_isStarNavigation) {
+      return _currentStarPhase == StarPhase.navigating || _currentStarPhase == StarPhase.timeout;
+    }
+
     if (settings.extensionWindowType == 'all') return true;
 
     // timed — חלון מוגדר לפני סיום הניווט
