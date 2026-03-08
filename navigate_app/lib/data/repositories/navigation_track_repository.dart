@@ -82,6 +82,7 @@ class NavigationTrackRepository {
                 : DateTime.tryParse(data['starNavigatingEndTime'].toString()))
             : null,
         starReturnedToCenter: data['starReturnedToCenter'] as bool? ?? false,
+        overrideRevealEnabled: data['overrideRevealEnabled'] as bool?,
       );
     }).toList();
   }
@@ -116,12 +117,28 @@ class NavigationTrackRepository {
 
   /// סיום ניווט — עדכון isActive=false, endedAt=now
   Future<void> endNavigation(String trackId) async {
+    final now = DateTime.now();
+
+    // עדכון ב-Drift
     await (_db.update(_db.navigationTracks)
           ..where((t) => t.id.equals(trackId)))
         .write(NavigationTracksCompanion(
       isActive: const Value(false),
-      endedAt: Value(DateTime.now()),
+      endedAt: Value(now),
     ));
+
+    // עדכון ישיר ב-Firestore — set+merge בטוח גם אם המסמך לא קיים (אופליין start)
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .set({
+        'isActive': false,
+        'endedAt': now.toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // Firestore לא זמין — syncTrackToFirestore יטפל בהמשך
+    }
   }
 
   /// המשך ניווט — עדכון isActive=true, endedAt=null (הפוך מ-endNavigation)
@@ -334,6 +351,20 @@ class NavigationTrackRepository {
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
           .update({'overrideEnabledPositionSources': enabledSources});
+    } catch (_) {}
+  }
+
+  /// עדכון דריסת חשיפת אשכולות פר-מנווט (Drift + Firestore)
+  Future<void> updateRevealOverride(String trackId, {required bool? enabled}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideRevealEnabled: Value(enabled),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'overrideRevealEnabled': enabled});
     } catch (_) {}
   }
 

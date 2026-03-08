@@ -1446,6 +1446,8 @@ class SyncManager {
             (data['variablesSheet'] != null ? jsonEncode(data['variablesSheet']) : null)),
         forceCompositionJson: Value(data['forceCompositionJson'] as String? ??
             (data['forceComposition'] != null ? jsonEncode(data['forceComposition']) : null)),
+        clusterSettingsJson: Value(data['clusterSettingsJson'] as String? ??
+            (data['clusterSettings'] != null ? jsonEncode(data['clusterSettings']) : null)),
         starLearningMinutes: Value((data['starLearningMinutes'] as num?)?.toInt()),
         starNavigatingMinutes: Value((data['starNavigatingMinutes'] as num?)?.toInt()),
         starAutoMode: Value(data['starAutoMode'] as bool? ?? false),

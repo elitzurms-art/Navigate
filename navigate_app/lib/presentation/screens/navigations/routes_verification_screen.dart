@@ -18,6 +18,9 @@ import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 
+/// מצב הצגת נקודות ציון
+enum _NzDisplayMode { selectedNavigators, participatingOnly, allCheckpoints }
+
 /// שלב 3 - וידוא צירים
 class RoutesVerificationScreen extends StatefulWidget {
   final domain.Navigation navigation;
@@ -58,6 +61,10 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
+
+  _NzDisplayMode _nzMode = _NzDisplayMode.participatingOnly;
+  Set<String>? _participatingIdsCache;
+  Set<String>? _selectedIdsCache;
 
   // נקודות משותפות
   Set<String> _sharedCheckpointIds = {};
@@ -109,6 +116,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           for (final uid in _filteredRoutes.keys) uid: true,
         };
         _buildCheckpointAssigneesCache();
+        _participatingIdsCache = null;
+        _selectedIdsCache = null;
       });
     }
   }
@@ -134,6 +143,83 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       }
     }
     _checkpointAssigneesCache = cache;
+  }
+
+  /// אוסף מזהי נקודות ציון המשתתפות במסלולים
+  Set<String> _collectParticipatingCheckpointIds({bool selectedOnly = false}) {
+    final ids = <String>{};
+    for (final entry in widget.navigation.routes.entries) {
+      if (selectedOnly && _selectedNavigators[entry.key] != true) continue;
+      final route = entry.value;
+      if (route.startPointId != null) ids.add(route.startPointId!);
+      if (route.endPointId != null) ids.add(route.endPointId!);
+      if (route.swapPointId != null) ids.add(route.swapPointId!);
+      ids.addAll(route.checkpointIds);
+      ids.addAll(route.waypointIds);
+    }
+    if (!selectedOnly) {
+      if (widget.navigation.startPoint != null) ids.add(widget.navigation.startPoint!);
+      if (widget.navigation.endPoint != null) ids.add(widget.navigation.endPoint!);
+      if (widget.navigation.waypointSettings.enabled) {
+        for (final wp in widget.navigation.waypointSettings.waypoints) {
+          ids.add(wp.checkpointId);
+        }
+      }
+    }
+    return ids;
+  }
+
+  /// מחזיר נקודות ציון מסוננות לפי מצב התצוגה הנבחר
+  List<Checkpoint> _getCheckpointsForDisplay() {
+    var base = _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList();
+
+    if (_boundary != null && _boundary!.coordinates.isNotEmpty) {
+      base = GeometryUtils.filterPointsInPolygon(
+        points: base,
+        getCoordinate: (cp) => cp.coordinates!,
+        polygon: _boundary!.coordinates,
+      );
+    }
+
+    switch (_nzMode) {
+      case _NzDisplayMode.selectedNavigators:
+        final ids = _selectedIdsCache ??= _collectParticipatingCheckpointIds(selectedOnly: true);
+        return base.where((cp) => ids.contains(cp.id)).toList();
+      case _NzDisplayMode.participatingOnly:
+        final ids = _participatingIdsCache ??= _collectParticipatingCheckpointIds();
+        return base.where((cp) => ids.contains(cp.id)).toList();
+      case _NzDisplayMode.allCheckpoints:
+        return base;
+    }
+  }
+
+  /// בורר מצב הצגת נקודות ציון — 3 chips
+  Widget _buildNzModeSelector() {
+    final displayCps = _getCheckpointsForDisplay();
+    const modes = [
+      (_NzDisplayMode.selectedNavigators, 'מנווט נבחר'),
+      (_NzDisplayMode.participatingOnly, 'משתתפות בניווט'),
+      (_NzDisplayMode.allCheckpoints, 'כל הנקודות'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 2,
+        children: modes.map((m) => ChoiceChip(
+          label: Text(
+            _nzMode == m.$1 ? '${m.$2} (${displayCps.length})' : m.$2,
+            style: const TextStyle(fontSize: 10),
+          ),
+          selected: _nzMode == m.$1,
+          onSelected: (_) => setState(() => _nzMode = m.$1),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: EdgeInsets.zero,
+        )).toList(),
+      ),
+    );
   }
 
   String _getNavigatorName(String uid) {
@@ -838,6 +924,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     onSelected: (selected) {
                       setState(() {
                         _selectedNavigators[navigatorId] = selected;
+                        _selectedIdsCache = null;
                       });
                     },
                   ),
@@ -896,13 +983,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                   // נקודות ציון — עם סימון התחלה/סיום/ביניים
                   if (_showNZ)
                     MarkerLayer(
-                      markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                              ? GeometryUtils.filterPointsInPolygon(
-                                  points: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList(),
-                                  getCoordinate: (cp) => cp.coordinates!,
-                                  polygon: _boundary!.coordinates,
-                                )
-                              : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
+                      markers: _getCheckpointsForDisplay()
                           .map((cp) {
                         final isShared = _sharedCheckpointIds.contains(cp.id);
                         final isSwapPoint = _swapPointIds.contains(cp.id);
@@ -1065,13 +1146,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                         if (visibility['routes'] == true) ..._buildRoutePolylines(),
                         if (visibility['nz'] == true)
                           MarkerLayer(
-                            markers: (_boundary != null && _boundary!.coordinates.isNotEmpty
-                                    ? GeometryUtils.filterPointsInPolygon(
-                                        points: _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList(),
-                                        getCoordinate: (cp) => cp.coordinates!,
-                                        polygon: _boundary!.coordinates,
-                                      )
-                                    : _checkpoints.where((cp) => !cp.isPolygon && cp.coordinates != null).toList())
+                            markers: _getCheckpointsForDisplay()
                                 .map((cp) {
                               final isShared = _sharedCheckpointIds.contains(cp.id);
                               final isSwapPoint = _swapPointIds.contains(cp.id);
@@ -1154,6 +1229,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                     onVisibilityChanged: (v) => setState(() => _showNZ = v),
                     opacity: _nzOpacity,
                     onOpacityChanged: (v) => setState(() => _nzOpacity = v),
+                    child: _buildNzModeSelector(),
                   ),
                   MapLayerConfig(
                     id: 'nb', label: 'נקודות בטיחות', color: Colors.red,

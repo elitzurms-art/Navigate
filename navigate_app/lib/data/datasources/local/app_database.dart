@@ -215,6 +215,7 @@ class Navigations extends Table {
   IntColumn get starLearningMinutes => integer().nullable()();
   IntColumn get starNavigatingMinutes => integer().nullable()();
   BoolColumn get starAutoMode => boolean().withDefault(const Constant(false))();
+  TextColumn get clusterSettingsJson => text().nullable()(); // JSON הגדרות אשכולות
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -252,6 +253,7 @@ class NavigationTracks extends Table {
   DateTimeColumn get starLearningEndTime => dateTime().nullable()();
   DateTimeColumn get starNavigatingEndTime => dateTime().nullable()();
   BoolColumn get starReturnedToCenter => boolean().withDefault(const Constant(false))();
+  BoolColumn get overrideRevealEnabled => boolean().nullable()(); // nullable: null=nav default, true=force open, false=force closed
 
   @override
   Set<Column> get primaryKey => {id};
@@ -419,7 +421,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 39;
+  int get schemaVersion => 40;
 
   @override
   MigrationStrategy get migration {
@@ -677,6 +679,11 @@ class AppDatabase extends _$AppDatabase {
           await safeAddColumn(navigationTracks, navigationTracks.starLearningEndTime);
           await safeAddColumn(navigationTracks, navigationTracks.starNavigatingEndTime);
           await safeAddColumn(navigationTracks, navigationTracks.starReturnedToCenter);
+        }
+        if (from <= 39 && to >= 40) {
+          // Cluster navigation fields
+          await safeAddColumn(navigations, navigations.clusterSettingsJson);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideRevealEnabled);
         }
       },
     );

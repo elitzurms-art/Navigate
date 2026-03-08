@@ -70,6 +70,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   int _starNavigatingMinutes = 15;
   bool _starAutoMode = false;
 
+  // אשכולות
+  int _clusterSize = 3;
+  int _clusterSpreadMeters = 200;
+  bool _revealEnabled = true;
+  int _revealAfterMinutes = 30;
+
   // Progress
   bool _isDistributing = false;
   double _maxProgressRatio = 0;
@@ -83,7 +89,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   void _initializeFromNavigation(domain.Navigation nav) {
     setState(() {
-      final knownTypes = {'regular', 'star', 'reverse', 'parachute', 'clusters'};
+      final knownTypes = {'regular', 'star', 'reverse', 'parachute', 'clusters', 'clusters_reverse'};
       _navigationType = knownTypes.contains(nav.navigationType) ? nav.navigationType! : 'regular';
       _executionOrder = nav.executionOrder ?? 'sequential';
       if (nav.routeLengthKm != null) {
@@ -105,6 +111,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       _starLearningMinutes = nav.starLearningMinutes ?? 5;
       _starNavigatingMinutes = nav.starNavigatingMinutes ?? 15;
       _starAutoMode = nav.starAutoMode;
+
+      // אשכולות
+      _clusterSize = nav.clusterSettings.clusterSize;
+      _clusterSpreadMeters = nav.clusterSettings.clusterSpreadMeters;
+      _revealEnabled = nav.clusterSettings.revealEnabled;
+      _revealAfterMinutes = nav.clusterSettings.revealAfterMinutes;
 
       // הרכב הכוח
       _forceComposition = nav.forceComposition.type;
@@ -269,6 +281,14 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       starLearningMinutes: _navigationType == 'star' ? _starLearningMinutes : null,
       starNavigatingMinutes: _navigationType == 'star' ? _starNavigatingMinutes : null,
       starAutoMode: _navigationType == 'star' ? _starAutoMode : false,
+      clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
+          ? ClusterSettings(
+              clusterSize: _clusterSize,
+              clusterSpreadMeters: _clusterSpreadMeters,
+              revealEnabled: _revealEnabled,
+              revealAfterMinutes: _revealAfterMinutes,
+            )
+          : const ClusterSettings(),
       updatedAt: DateTime.now(),
     );
     await _navRepo.update(settingsNav);
@@ -570,6 +590,17 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         swapPointId: _swapPointId,
         manualGroups: _manualGroups,
       ),
+      clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
+          ? ClusterSettings(
+              clusterSize: _clusterSize,
+              clusterSpreadMeters: _clusterSpreadMeters,
+              revealEnabled: _revealEnabled,
+              revealAfterMinutes: _revealAfterMinutes,
+            )
+          : const ClusterSettings(),
+      starLearningMinutes: _navigationType == 'star' ? _starLearningMinutes : null,
+      starNavigatingMinutes: _navigationType == 'star' ? _starNavigatingMinutes : null,
+      starAutoMode: _navigationType == 'star' ? _starAutoMode : false,
       updatedAt: DateTime.now(),
     );
 
@@ -670,8 +701,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         _buildScoringCriterionSection(),
                         const SizedBox(height: 24),
 
-                        // אשכולות/ביצים (בפיתוח)
-                        if (_navigationType == 'clusters' || _navigationType == 'eggs')
+                        // אשכולות
+                        if (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
                           _buildClustersSection(),
 
                         const SizedBox(height: 32),
@@ -855,6 +886,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                   child: Text('צנחנים (בפיתוח)', style: TextStyle(color: Colors.grey)),
                 ),
                 DropdownMenuItem(value: 'clusters', child: Text('אשכולות')),
+                DropdownMenuItem(value: 'clusters_reverse', child: Text('אשכולות הפוך')),
               ],
               onChanged: (value) {
                 setState(() {
@@ -875,6 +907,14 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                     _waypoints = [];
                     // כוכב: נקודת סיום = נקודת התחלה (נקודה מרכזית)
                     _endPointId = _startPointId;
+                  }
+                  if (value == 'clusters' || value == 'clusters_reverse') {
+                    // אשכולות: אין מאבטח
+                    if (_forceComposition == 'guard') {
+                      _forceComposition = 'solo';
+                      _swapPointId = null;
+                      _manualGroups = {};
+                    }
                   }
                 });
               },
@@ -1121,7 +1161,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             Row(
               children: [
                 Text(
-                  isStar ? 'נקודה מרכזית' : 'נקודות התחלה וסיום',
+                  isStar ? 'נקודה מרכזית' : (_forceComposition == 'guard' ? 'נקודות התחלה, החלפה וסיום' : 'נקודות התחלה וסיום'),
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
@@ -1231,6 +1271,56 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 },
               ),
               const SizedBox(height: 12),
+
+              // נקודת החלפה — רק למאבטח
+              if (_forceComposition == 'guard') ...[
+                DropdownButtonFormField<String>(
+                  value: _swapPointId,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'נקודת החלפה *',
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: '__pick_on_map__',
+                      child: Row(
+                        children: [
+                          Icon(Icons.map, size: 18, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text('בחר במפה'),
+                        ],
+                      ),
+                    ),
+                    ..._checkpoints.map((cp) => DropdownMenuItem(
+                      value: cp.id,
+                      child: Text(cp.displayLabel),
+                    )),
+                  ],
+                  onChanged: (value) async {
+                    if (value == '__pick_on_map__') {
+                      final selectedId = await Navigator.push<String>(context,
+                        MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                          checkpoints: _checkpoints,
+                          boundary: _boundary,
+                        )));
+                      if (selectedId != null) setState(() => _swapPointId = selectedId);
+                      return;
+                    }
+                    setState(() => _swapPointId = value);
+                  },
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _swapPointId == null
+                      ? 'יש לבחור נקודה כדי לאפשר חלוקה'
+                      : 'כל הזוגות יתחלפו בין המנווט למאבטח בנקודה זו',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _swapPointId == null ? Colors.orange[700] : Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               // נקודת סיום
               DropdownButtonFormField<String>(
@@ -1569,7 +1659,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               ),
               items: [
                 const DropdownMenuItem(value: 'solo', child: Text('בדד')),
-                if (_navigationType != 'star')
+                if (_navigationType != 'star' && _navigationType != 'clusters' && _navigationType != 'clusters_reverse')
                   const DropdownMenuItem(value: 'guard', child: Text('מאבטח')),
                 const DropdownMenuItem(value: 'pair', child: Text('צמד')),
                 const DropdownMenuItem(value: 'squad', child: Text('חוליה')),
@@ -1594,55 +1684,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
 
-            // בורר נקודת החלפה — רק למאבטח
-            if (_forceComposition == 'guard') ...[
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: _swapPointId,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'נקודת החלפה גלובלית',
-                ),
-                items: [
-                  DropdownMenuItem(
-                    value: '__pick_on_map__',
-                    child: Row(
-                      children: [
-                        Icon(Icons.map, size: 18, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Text('בחר במפה'),
-                      ],
-                    ),
-                  ),
-                  ..._checkpoints.map((cp) => DropdownMenuItem(
-                    value: cp.id,
-                    child: Text(cp.displayLabel),
-                  )),
-                ],
-                onChanged: (value) async {
-                  if (value == '__pick_on_map__') {
-                    final selectedId = await Navigator.push<String>(context,
-                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
-                        checkpoints: _checkpoints,
-                        boundary: _boundary,
-                      )));
-                    if (selectedId != null) setState(() => _swapPointId = selectedId);
-                    return;
-                  }
-                  setState(() => _swapPointId = value);
-                },
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _swapPointId == null
-                    ? 'יש לבחור נקודה כדי לאפשר חלוקה'
-                    : 'כל הזוגות יחליפו באותה נקודה',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _swapPointId == null ? Colors.orange[700] : Colors.grey[600],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -1793,22 +1834,90 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   Widget _buildClustersSection() {
     return Card(
-      color: Colors.amber[50],
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.construction, size: 48, color: Colors.amber[700]),
-            const SizedBox(height: 8),
             const Text(
-              'אשכולות / ביצים',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              'הגדרות אשכולות',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             Text(
-              'תכונה בפיתוח',
-              style: TextStyle(color: Colors.amber[700]),
+              'כל נקודה אמיתית מוקפת בנקודות מטעות — המנווט לא יודע איזו הנקודה שלו',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
             ),
+            const SizedBox(height: 16),
+            // מספר נקודות באשכול
+            Row(
+              children: [
+                const Expanded(child: Text('מספר נקודות באשכול')),
+                Text('$_clusterSize', style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            Slider(
+              value: _clusterSize.toDouble(),
+              min: 2,
+              max: 8,
+              divisions: 6,
+              label: '$_clusterSize',
+              onChanged: (v) => setState(() => _clusterSize = v.round()),
+            ),
+            Text(
+              'כולל הנקודה האמיתית + ${_clusterSize - 1} נקודות מטעות',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            // רדיוס אשכול
+            Row(
+              children: [
+                const Expanded(child: Text('רדיוס אשכול (מטרים)')),
+                Text('$_clusterSpreadMeters', style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            Slider(
+              value: _clusterSpreadMeters.toDouble(),
+              min: 50,
+              max: 500,
+              divisions: 9,
+              label: '$_clusterSpreadMeters מ\'',
+              onChanged: (v) => setState(() => _clusterSpreadMeters = (v / 50).round() * 50),
+            ),
+            Text(
+              'נקודות מטעות ייבחרו מתוך נ"צ בטווח הרדיוס. אם אין מספיק — הרדיוס יורחב אוטומטית',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
+            const Divider(height: 24),
+            // חשיפת נקודות
+            SwitchListTile(
+              title: const Text('חשיפת נקודות אמיתיות'),
+              subtitle: const Text('אפשר למנווטים לראות את הנקודה האמיתית לאחר זמן מוגדר'),
+              value: _revealEnabled,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (v) => setState(() => _revealEnabled = v),
+            ),
+            if (_revealEnabled) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Expanded(child: Text('חשיפה אחרי (דקות)')),
+                  Text('$_revealAfterMinutes', style: const TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+              Slider(
+                value: _revealAfterMinutes.toDouble(),
+                min: 5,
+                max: 120,
+                divisions: 23,
+                label: '$_revealAfterMinutes דקות',
+                onChanged: (v) => setState(() => _revealAfterMinutes = (v / 5).round() * 5),
+              ),
+              Text(
+                'הנקודות האמיתיות ייחשפו $_revealAfterMinutes דקות אחרי תחילת הניווט',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+            ],
           ],
         ),
       ),

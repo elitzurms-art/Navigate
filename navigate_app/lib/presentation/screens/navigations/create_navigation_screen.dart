@@ -81,9 +81,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   String _distributionMethod = 'automatic'; // automatic, manual_app, manual_full
   bool _distributeNow = false;
 
-  // הגדרות תחקיר
-  bool _showScoresAfterApproval = true;
-
   // הגדרות ניווט
   int _gpsUpdateInterval = 5; // דינמי ברירת מחדל
 
@@ -128,7 +125,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   bool _isHeavyLoad = false;
   bool _isNightNavigation = true;
   bool _isSummer = true;
-  bool _allowExtensionRequests = false;
+  bool _allowExtensionRequests = true;
   String _extensionWindowType = 'all';
   int _extensionWindowHours = 0;
   int _extensionWindowMinutes = 30;
@@ -427,9 +424,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       _distanceMax = nav.routeLengthKm!.max;
     }
 
-    // הגדרות תחקיר
-    _showScoresAfterApproval = nav.reviewSettings.showScoresAfterApproval;
-
     // הגדרות GPS
     _gpsUpdateInterval = nav.gpsUpdateIntervalSeconds;
 
@@ -704,11 +698,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                     // תקשורת
                     _buildSectionTitle('תקשורת'),
                     _buildCommunicationSettings(),
-                    const SizedBox(height: 24),
-
-                    // הגדרות תחקיר
-                    _buildSectionTitle('הגדרות תחקיר'),
-                    _buildReviewSettings(),
                     const SizedBox(height: 24),
 
                     // הגדרות תצוגה
@@ -1396,27 +1385,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 },
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReviewSettings() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SwitchListTile(
-              title: const Text('הצג ציונים לאחר אישרור'),
-              value: _showScoresAfterApproval,
-              onChanged: (value) {
-                setState(() => _showScoresAfterApproval = value);
-                _onSettingChanged();
-              },
-            ),
           ],
         ),
       ),
@@ -2185,9 +2153,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       final learningSettings = (widget.navigation?.learningSettings ?? const LearningSettings())
           .copyWith(requireCommanderQuiz: _requireCommanderQuiz, requireSoloQuiz: _requireSoloQuiz, quizType: _quizType, quizOpenManually: false);
 
-      final reviewSettings = ReviewSettings(
-        showScoresAfterApproval: _showScoresAfterApproval,
-      );
+      const reviewSettings = ReviewSettings();
 
       final verificationSettings = VerificationSettings(
         autoVerification: _autoVerification,

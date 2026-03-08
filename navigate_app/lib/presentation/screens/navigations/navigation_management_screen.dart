@@ -129,6 +129,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideShowRouteOnMap = {};
   final Map<String, String> _navigatorTrackIds = {}; // cache trackId per navigator
   final Map<String, bool> _navigatorOverrideWalkieTalkieEnabled = {};
+  Map<String, bool?> _navigatorOverrideRevealEnabled = {};
   final Map<String, int?> _navigatorGpsIntervalOverride = {};
   final Map<String, List<String>?> _navigatorPositionSourcesOverride = {};
 
@@ -1232,6 +1233,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
         if (data.containsKey('overrideWalkieTalkieEnabled')) {
           _navigatorOverrideWalkieTalkieEnabled[navigatorId] = data['overrideWalkieTalkieEnabled'] as bool? ?? false;
+        }
+        if (data.containsKey('overrideRevealEnabled')) {
+          _navigatorOverrideRevealEnabled[navigatorId] = data['overrideRevealEnabled'] as bool?;
         }
         if (data.containsKey('overrideGpsIntervalSeconds')) {
           _navigatorGpsIntervalOverride[navigatorId] = data['overrideGpsIntervalSeconds'] as int?;
@@ -4782,6 +4786,42 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           }
                         },
                       ),
+                      if (_currentNavigation != null && _currentNavigation!.isClusters) ...[
+                        SwitchListTile(
+                          title: const Text('חשיפת נקודות', style: TextStyle(fontSize: 13)),
+                          subtitle: Text(
+                            _navigatorOverrideRevealEnabled[navigatorId] == true
+                                ? 'נקודות אמיתיות חשופות'
+                                : _navigatorOverrideRevealEnabled[navigatorId] == false
+                                    ? 'חשיפה חסומה'
+                                    : 'לפי ברירת מחדל',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          value: _navigatorOverrideRevealEnabled[navigatorId] ?? false,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (v) {
+                            setState(() {
+                              // 3-state: first tap → true, second → null (default), from null → true
+                              if (_navigatorOverrideRevealEnabled[navigatorId] == true) {
+                                _navigatorOverrideRevealEnabled[navigatorId] = false;
+                              } else if (_navigatorOverrideRevealEnabled[navigatorId] == false) {
+                                _navigatorOverrideRevealEnabled[navigatorId] = null;
+                              } else {
+                                _navigatorOverrideRevealEnabled[navigatorId] = true;
+                              }
+                            });
+                            setSheetState(() {});
+                            final trackId = _navigatorTrackIds[navigatorId];
+                            if (trackId != null) {
+                              NavigationTrackRepository().updateRevealOverride(
+                                trackId,
+                                enabled: _navigatorOverrideRevealEnabled[navigatorId],
+                              );
+                            }
+                          },
+                        ),
+                      ],
 
                       // 6.5 אמצעי מיקום
                       const Divider(height: 16),
@@ -7447,6 +7487,17 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'walkieTalkie',
           ),
         ),
+        if (_nav.isClusters) ...[
+          _toggleTile(
+            label: 'חשיפת נקודות אמיתיות',
+            value: _nav.clusterSettings.revealEnabled,
+            onChanged: (v) => _applySetting(
+              _nav.copyWith(clusterSettings: _nav.clusterSettings.copyWith(revealEnabled: v)),
+              'חשיפת נקודות',
+              'clusterReveal',
+            ),
+          ),
+        ],
       ],
     );
   }

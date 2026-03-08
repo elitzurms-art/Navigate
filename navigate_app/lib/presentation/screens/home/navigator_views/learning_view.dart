@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
@@ -89,7 +90,12 @@ class _LearningViewState extends State<LearningView>
   Checkpoint? _startCheckpoint;
   Checkpoint? _endCheckpoint;
 
-  bool get _isReverseNavigation => _currentNavigation.navigationType == 'reverse';
+  // Cluster navigation state
+  Map<String, List<Checkpoint>> _clusterMap = {};
+  List<Checkpoint> _allAreaCheckpoints = [];
+  bool _revealAvailable = false;
+
+  bool get _isReverseNavigation => _currentNavigation.isReverse;
 
   /// סיפור דרך — state
   List<NarrationEntry> _narrationEntries = [];
@@ -361,6 +367,85 @@ class _LearningViewState extends State<LearningView>
     } catch (_) {
       if (mounted) setState(() => _checkpointsLoaded = true);
     }
+
+    // Load all area checkpoints for cluster decoy selection
+    if (_currentNavigation.isClusters) {
+      final allCps = await _checkpointRepo.getByArea(_currentNavigation.areaId);
+      if (mounted) {
+        setState(() {
+          _allAreaCheckpoints = allCps;
+        });
+        _buildClusters();
+        setState(() {});
+      }
+    }
+  }
+
+  void _buildClusters() {
+    if (_clusterMap.isNotEmpty) return; // cached
+    if (_routeCheckpoints.isEmpty) return; // guard
+
+    final settings = _currentNavigation.clusterSettings;
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route == null) return;
+
+    final specialIds = <String>{};
+    if (route.startPointId != null) specialIds.add(route.startPointId!);
+    if (route.endPointId != null) specialIds.add(route.endPointId!);
+    for (final wpId in route.waypointIds) {
+      specialIds.add(wpId);
+    }
+
+    // Middle checkpoints only (skip start/end/waypoints/polygons)
+    final middleCps = _routeCheckpoints.where(
+      (cp) => !specialIds.contains(cp.id) && cp.coordinates != null && !cp.isPolygon,
+    ).toList();
+    if (middleCps.isEmpty) return;
+
+    final usedDecoys = <String>{};
+    final assignedCpIds = route.checkpointIds.toSet();
+    const maxRadius = 400;
+
+    for (final realCp in middleCps) {
+      var currentRadius = settings.clusterSpreadMeters;
+      const radiusStep = 100;
+      List<Checkpoint> candidates = [];
+      final neededDecoys = settings.clusterSize - 1;
+
+      while (candidates.length < neededDecoys && currentRadius <= maxRadius) {
+        candidates = _allAreaCheckpoints
+            .where((cp) => cp.id != realCp.id
+                && !specialIds.contains(cp.id)
+                && !assignedCpIds.contains(cp.id)
+                && !usedDecoys.contains(cp.id)
+                && cp.coordinates != null && !cp.isPolygon
+                && _distanceMeters(realCp, cp) <= currentRadius)
+            .toList();
+
+        if (candidates.length < neededDecoys && currentRadius < maxRadius) {
+          currentRadius += radiusStep;
+        } else {
+          break;
+        }
+      }
+
+      candidates.sort((a, b) =>
+          _distanceMeters(realCp, a).compareTo(_distanceMeters(realCp, b)));
+
+      final actualDecoys = candidates.take(neededDecoys).toList();
+      for (final d in actualDecoys) {
+        usedDecoys.add(d.id);
+      }
+
+      final cluster = [realCp, ...actualDecoys];
+      cluster.shuffle(Random(realCp.id.hashCode));
+      _clusterMap[realCp.id] = cluster;
+    }
+  }
+
+  double _distanceMeters(Checkpoint a, Checkpoint b) {
+    if (a.coordinates == null || b.coordinates == null) return double.infinity;
+    return GeometryUtils.distanceBetweenMeters(a.coordinates!, b.coordinates!);
   }
 
   /// טעינת שמות שטח, גבול גזרה ויחידה לתצוגה
@@ -601,37 +686,84 @@ class _LearningViewState extends State<LearningView>
         ),
       ));
     }
-    for (var i = 0; i < _routeCheckpoints.length; i++) {
-      final cp = _routeCheckpoints[i];
-      if (cp.isPolygon || cp.coordinates == null) continue;
-      // דילוג על נקודות התחלה/סיום — כבר מוצגות בצבע ייחודי
-      if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
+    if (_currentNavigation.isClusters && _clusterMap.isNotEmpty) {
+      // מצב אשכולות — כל הנקודות עם sequenceNumber מהדומיין
+      final seen = <String>{};
+      const jitter = 0.0002; // ~10m
+      for (final cluster in _clusterMap.values) {
+        for (final cp in cluster) {
+          if (cp.isPolygon || cp.coordinates == null) continue;
+          if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
+          if (!seen.add(cp.id)) continue;
 
-      markers.add(Marker(
-        point: cp.coordinates!.toLatLng(),
-        width: 32,
-        height: 32,
-        child: Tooltip(
-          message: cp.name,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
+          final rng = Random(cp.id.hashCode);
+          final jitterLat = (rng.nextDouble() - 0.5) * 2 * jitter;
+          final jitterLng = (rng.nextDouble() - 0.5) * 2 * jitter;
+          final point = LatLng(
+            cp.coordinates!.lat + jitterLat,
+            cp.coordinates!.lng + jitterLng,
+          );
+
+          markers.add(Marker(
+            point: point,
+            width: 32,
+            height: 32,
+            child: Tooltip(
+              message: cp.name,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: Center(
+                  child: Text(
+                    '${cp.sequenceNumber}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
             ),
-            child: Center(
-              child: Text(
-                '${i + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+          ));
+        }
+      }
+    } else {
+      // מצב רגיל — נקודות עם מספור
+      for (var i = 0; i < _routeCheckpoints.length; i++) {
+        final cp = _routeCheckpoints[i];
+        if (cp.isPolygon || cp.coordinates == null) continue;
+        if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
+
+        markers.add(Marker(
+          point: cp.coordinates!.toLatLng(),
+          width: 32,
+          height: 32,
+          child: Tooltip(
+            message: cp.name,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Center(
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ));
+        ));
+      }
     }
     // marker לנקודת סיום
     if (_endCheckpoint != null && !_endCheckpoint!.isPolygon && _endCheckpoint!.coordinates != null) {
@@ -729,8 +861,8 @@ class _LearningViewState extends State<LearningView>
                       isFilled: true,
                     )).toList(),
                   ),
-                // ציר רפרנס (כחול בהיר)
-                if (_showRoutes && refPoints.length > 1)
+                // ציר רפרנס (כחול בהיר) — מוסתר במצב אשכולות
+                if (_showRoutes && refPoints.length > 1 && !(_currentNavigation.isClusters && _clusterMap.isNotEmpty))
                   PolylineLayer(polylines: [
                     Polyline(
                       points: refPoints,
@@ -819,12 +951,10 @@ class _LearningViewState extends State<LearningView>
   Widget _buildCheckpointList() {
     // בניית רשימה מסודרת: התחלה, נקודות ציון, סיום
     final allCheckpoints = <_CheckpointDisplayItem>[];
-    int seq = 1;
 
     if (_startCheckpoint != null) {
       allCheckpoints.add(_CheckpointDisplayItem(
         checkpoint: _startCheckpoint!,
-        sequenceNumber: seq++,
         role: _CheckpointRole.start,
       ));
     }
@@ -837,21 +967,62 @@ class _LearningViewState extends State<LearningView>
       }
     }
 
-    for (final cp in _routeCheckpoints) {
-      // דילוג על נקודות התחלה/סיום — כבר ברשימה
-      if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
-      final isWaypoint = waypointIds.contains(cp.id);
-      allCheckpoints.add(_CheckpointDisplayItem(
-        checkpoint: cp,
-        sequenceNumber: seq++,
-        role: isWaypoint ? _CheckpointRole.waypoint : _CheckpointRole.middle,
-      ));
+    final middleCps = _routeCheckpoints.where(
+      (cp) => cp.id != _startCheckpoint?.id && cp.id != _endCheckpoint?.id,
+    ).toList();
+
+    if (_currentNavigation.isClusters && _clusterMap.isNotEmpty) {
+      // מצב אשכולות — הצגה מקובצת עם decoys
+      final addedClusters = <String>{};
+      int clusterIndex = 0;
+
+      for (final cp in middleCps) {
+        if (addedClusters.contains(cp.id)) continue;
+        final isWaypoint = waypointIds.contains(cp.id);
+
+        final cluster = _clusterMap[cp.id];
+        if (cluster != null) {
+          // אשכול — header + חברי אשכול
+          addedClusters.add(cp.id);
+          clusterIndex++;
+          allCheckpoints.add(_CheckpointDisplayItem(
+            checkpoint: cp,
+            role: isWaypoint ? _CheckpointRole.waypoint : _CheckpointRole.middle,
+            isClusterHeader: true,
+            clusterSize: cluster.length,
+            clusterId: cp.id,
+            clusterIndex: clusterIndex,
+          ));
+          for (final clusterCp in cluster) {
+            allCheckpoints.add(_CheckpointDisplayItem(
+              checkpoint: clusterCp,
+              role: _CheckpointRole.middle,
+              isClusterMember: true,
+              clusterId: cp.id,
+            ));
+          }
+        } else {
+          // אין אשכול — תצוגה רגילה
+          allCheckpoints.add(_CheckpointDisplayItem(
+            checkpoint: cp,
+            role: isWaypoint ? _CheckpointRole.waypoint : _CheckpointRole.middle,
+          ));
+        }
+      }
+    } else {
+      // מצב רגיל — ללא אשכולות
+      for (final cp in middleCps) {
+        final isWaypoint = waypointIds.contains(cp.id);
+        allCheckpoints.add(_CheckpointDisplayItem(
+          checkpoint: cp,
+          role: isWaypoint ? _CheckpointRole.waypoint : _CheckpointRole.middle,
+        ));
+      }
     }
 
     if (_endCheckpoint != null) {
       allCheckpoints.add(_CheckpointDisplayItem(
         checkpoint: _endCheckpoint!,
-        sequenceNumber: seq++,
         role: _CheckpointRole.end,
       ));
     }
@@ -874,6 +1045,52 @@ class _LearningViewState extends State<LearningView>
         itemBuilder: (context, index) {
           final item = allCheckpoints[index];
           final cp = item.checkpoint;
+
+          // אשכול — header או חבר
+          if (item.isCluster) {
+            if (item.isClusterHeader) {
+              final headerText = item.clusterSize > 1
+                  ? 'אשכול ${item.clusterIndex} (${item.clusterSize} נקודות)'
+                  : 'אשכול ${item.clusterIndex} (ללא נקודות הסחה)';
+              return ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  backgroundColor: Colors.purple,
+                  radius: 16,
+                  child: Text(
+                    '${item.clusterIndex}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                title: Text(
+                  headerText,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              );
+            }
+            // חבר אשכול — נקודה בתוך אשכול
+            final utmStr = (cp.coordinates != null && cp.coordinates!.utm.isNotEmpty)
+                ? cp.coordinates!.utm
+                : cp.coordinates != null
+                    ? UTMConverter.convertToUTM(cp.coordinates!.lat, cp.coordinates!.lng)
+                    : '';
+            return ListTile(
+              dense: true,
+              leading: CircleAvatar(
+                backgroundColor: Colors.blue,
+                radius: 14,
+                child: Text(
+                  '${cp.sequenceNumber}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ),
+              title: Text(cp.name),
+              subtitle: Text(
+                utmStr,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
+              ),
+            );
+          }
 
           // צבע, אות ואייקון לפי תפקיד
           final Color circleColor;
@@ -913,7 +1130,7 @@ class _LearningViewState extends State<LearningView>
             leading: CircleAvatar(
               backgroundColor: circleColor,
               child: Text(
-                roleLetter ?? '${item.sequenceNumber}',
+                roleLetter ?? '${cp.sequenceNumber}',
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
             ),
@@ -959,6 +1176,7 @@ class _LearningViewState extends State<LearningView>
           navigation: _currentNavigation,
           navigatorUid: widget.currentUser.uid,
           checkpoints: _routeCheckpoints,
+          clusterMap: _currentNavigation.isClusters ? _clusterMap : null,
           onNavigationUpdated: (updatedNav) {
             setState(() => _currentNavigation = updatedNav);
             widget.onNavigationUpdated(updatedNav);
@@ -2139,14 +2357,24 @@ enum _CheckpointRole { start, middle, end, waypoint }
 
 class _CheckpointDisplayItem {
   final Checkpoint checkpoint;
-  final int sequenceNumber;
   final _CheckpointRole role;
+  final bool isClusterHeader;
+  final bool isClusterMember;
+  final int clusterSize;
+  final String? clusterId;
+  final int clusterIndex;
 
   const _CheckpointDisplayItem({
     required this.checkpoint,
-    required this.sequenceNumber,
-    required this.role,
+    this.role = _CheckpointRole.middle,
+    this.isClusterHeader = false,
+    this.isClusterMember = false,
+    this.clusterSize = 0,
+    this.clusterId,
+    this.clusterIndex = 0,
   });
+
+  bool get isCluster => isClusterHeader || isClusterMember;
 }
 
 /// מסך מפה במסך מלא — הציר שלי

@@ -1172,6 +1172,8 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         return 'רגיל';
       case 'clusters':
         return 'אשכולות';
+      case 'clusters_reverse':
+        return 'אשכולות הפוך';
       case 'star':
         return 'כוכב';
       case 'reverse':

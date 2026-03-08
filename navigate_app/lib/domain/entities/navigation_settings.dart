@@ -769,7 +769,7 @@ class TimeCalculationSettings extends Equatable {
     this.isHeavyLoad = false,
     this.isNightNavigation = false,
     this.isSummer = true,
-    this.allowExtensionRequests = false,
+    this.allowExtensionRequests = true,
     this.extensionWindowType = 'all',
     this.extensionWindowMinutes,
   });
@@ -826,7 +826,7 @@ class TimeCalculationSettings extends Equatable {
       isHeavyLoad: map['isHeavyLoad'] as bool? ?? false,
       isNightNavigation: map['isNightNavigation'] as bool? ?? false,
       isSummer: map['isSummer'] as bool? ?? true,
-      allowExtensionRequests: map['allowExtensionRequests'] as bool? ?? false,
+      allowExtensionRequests: map['allowExtensionRequests'] as bool? ?? true,
       extensionWindowType: map['extensionWindowType'] as String? ?? 'all',
       extensionWindowMinutes: map['extensionWindowMinutes'] as int?,
     );
@@ -1000,6 +1000,56 @@ StarPhase computeStarPhase({
   if (currentPointPunched) return StarPhase.returning;
   if (navigatingEnd == null || now.isBefore(navigatingEnd)) return StarPhase.navigating;
   return StarPhase.timeout;
+}
+
+/// הגדרות אשכולות
+class ClusterSettings extends Equatable {
+  final int clusterSize;           // 2-8, default 3
+  final int clusterSpreadMeters;   // רדיוס התחלתי לנקודות מטעות (50-500m, default 200)
+  final bool revealEnabled;        // חשיפת נקודות אמיתיות
+  final int revealAfterMinutes;    // דקות אחרי activeStartTime
+
+  const ClusterSettings({
+    this.clusterSize = 3,
+    this.clusterSpreadMeters = 200,
+    this.revealEnabled = true,
+    this.revealAfterMinutes = 30,
+  });
+
+  ClusterSettings copyWith({
+    int? clusterSize,
+    int? clusterSpreadMeters,
+    bool? revealEnabled,
+    int? revealAfterMinutes,
+  }) {
+    return ClusterSettings(
+      clusterSize: clusterSize ?? this.clusterSize,
+      clusterSpreadMeters: clusterSpreadMeters ?? this.clusterSpreadMeters,
+      revealEnabled: revealEnabled ?? this.revealEnabled,
+      revealAfterMinutes: revealAfterMinutes ?? this.revealAfterMinutes,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'clusterSize': clusterSize,
+      'clusterSpreadMeters': clusterSpreadMeters,
+      'revealEnabled': revealEnabled,
+      'revealAfterMinutes': revealAfterMinutes,
+    };
+  }
+
+  factory ClusterSettings.fromMap(Map<String, dynamic> map) {
+    return ClusterSettings(
+      clusterSize: (map['clusterSize'] as num?)?.toInt() ?? 3,
+      clusterSpreadMeters: (map['clusterSpreadMeters'] as num?)?.toInt() ?? 200,
+      revealEnabled: map['revealEnabled'] as bool? ?? true,
+      revealAfterMinutes: (map['revealAfterMinutes'] as num?)?.toInt() ?? 30,
+    );
+  }
+
+  @override
+  List<Object?> get props => [clusterSize, clusterSpreadMeters, revealEnabled, revealAfterMinutes];
 }
 
 /// הרכב הכוח — בדד / מאבטח / צמד / חוליה

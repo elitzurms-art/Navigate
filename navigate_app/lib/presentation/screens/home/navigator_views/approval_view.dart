@@ -129,9 +129,16 @@ class _ApprovalViewState extends State<ApprovalView> {
       }
 
       // ציר מתוכנן
-      if (route != null && route.plannedPath.isNotEmpty) {
+      if (widget.navigation.navigationType == 'star') {
+        // ניווט כוכב — אין ציר מתוכנן ליניארי
+        _plannedRoute = [];
+      } else if (route != null && route.plannedPath.isNotEmpty) {
         _plannedRoute =
             route.plannedPath.map((c) => LatLng(c.lat, c.lng)).toList();
+        // מאבטח — חיתוך הציר לחצי הרלוונטי בלבד
+        if (route.segmentType == 'first_half' || route.segmentType == 'second_half') {
+          _plannedRoute = _trimPlannedRouteForGuard(route, _plannedRoute);
+        }
       } else {
         _plannedRoute = _checkpoints
             .where((c) => !c.isPolygon && c.coordinates != null)
@@ -210,6 +217,32 @@ class _ApprovalViewState extends State<ApprovalView> {
     createdAt: cp.createdAt,
     updatedAt: cp.createdAt,
   )).toList();
+
+  /// מאבטח — חיתוך ציר מתוכנן לחצי הרלוונטי (first_half או second_half)
+  List<LatLng> _trimPlannedRouteForGuard(domain.AssignedRoute route, List<LatLng> fullPath) {
+    if (fullPath.length < 2 || route.swapPointId == null) return fullPath;
+
+    final swapCp = _checkpoints.where((c) => c.id == route.swapPointId).firstOrNull;
+    if (swapCp == null || swapCp.coordinates == null) return fullPath;
+
+    final swapLatLng = LatLng(swapCp.coordinates!.lat, swapCp.coordinates!.lng);
+
+    int closestIdx = 0;
+    double closestDist = double.infinity;
+    for (int i = 0; i < fullPath.length; i++) {
+      final d = const Distance().as(LengthUnit.Meter, fullPath[i], swapLatLng);
+      if (d < closestDist) {
+        closestDist = d;
+        closestIdx = i;
+      }
+    }
+
+    if (route.segmentType == 'first_half') {
+      return fullPath.sublist(0, closestIdx + 1);
+    } else {
+      return fullPath.sublist(closestIdx);
+    }
+  }
 
   void _computeAnalysis() {
     if (_trackPoints.length < 2) return;

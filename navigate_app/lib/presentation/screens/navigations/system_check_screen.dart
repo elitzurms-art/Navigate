@@ -715,7 +715,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
               ],
             ),
       bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).padding.bottom),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

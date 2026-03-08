@@ -308,7 +308,7 @@ class Navigation extends Equatable {
 
   // Settings - הגדרות שטח ומשתתפים
   final String distributionMethod; // 'automatic', 'manual_app', 'manual_full'
-  final String? navigationType; // 'regular', 'clusters', 'star', 'reverse', 'parachute', 'developing'
+  final String? navigationType; // 'regular', 'clusters', 'clusters_reverse', 'star', 'reverse', 'parachute', 'developing'
   final String? executionOrder;
   final RouteLengthRange? routeLengthKm; // טווח מרחק ניווט
   final int? checkpointsPerNavigator;
@@ -367,6 +367,9 @@ class Navigation extends Equatable {
   final int? starLearningMinutes; // זמן למידה לנקודה (דקות)
   final int? starNavigatingMinutes; // זמן ניווט לנקודה (דקות)
   final bool starAutoMode; // פתיחת נקודה הבאה אוטומטית
+
+  // Cluster settings (אשכולות)
+  final ClusterSettings clusterSettings;
 
   // Communication (PTT)
   final CommunicationSettings communicationSettings;
@@ -436,6 +439,7 @@ class Navigation extends Equatable {
     this.starLearningMinutes,
     this.starNavigatingMinutes,
     this.starAutoMode = false,
+    this.clusterSettings = const ClusterSettings(),
     this.communicationSettings = const CommunicationSettings(),
     this.variablesSheet,
     this.checklistCompletion,
@@ -454,6 +458,11 @@ class Navigation extends Equatable {
   bool get isActive => status == 'active';
   bool get isApproval => status == 'approval'; // backward compat — mapped to review
   bool get isReview => status == 'review' || status == 'approval';
+
+  /// האם ניווט אשכולות (כולל אשכולות הפוך)
+  bool get isClusters => navigationType == 'clusters' || navigationType == 'clusters_reverse';
+  /// האם ניווט הפוך (כולל אשכולות הפוך)
+  bool get isReverse => navigationType == 'reverse' || navigationType == 'clusters_reverse';
 
   Navigation copyWith({
     String? id,
@@ -505,6 +514,7 @@ class Navigation extends Equatable {
     int? starLearningMinutes,
     int? starNavigatingMinutes,
     bool? starAutoMode,
+    ClusterSettings? clusterSettings,
     CommunicationSettings? communicationSettings,
     VariablesSheet? variablesSheet,
     bool clearVariablesSheet = false,
@@ -565,6 +575,7 @@ class Navigation extends Equatable {
       starLearningMinutes: starLearningMinutes ?? this.starLearningMinutes,
       starNavigatingMinutes: starNavigatingMinutes ?? this.starNavigatingMinutes,
       starAutoMode: starAutoMode ?? this.starAutoMode,
+      clusterSettings: clusterSettings ?? this.clusterSettings,
       communicationSettings: communicationSettings ?? this.communicationSettings,
       variablesSheet: clearVariablesSheet ? null : (variablesSheet ?? this.variablesSheet),
       checklistCompletion: clearChecklistCompletion ? null : (checklistCompletion ?? this.checklistCompletion),
@@ -630,6 +641,7 @@ class Navigation extends Equatable {
       if (starLearningMinutes != null) 'starLearningMinutes': starLearningMinutes,
       if (starNavigatingMinutes != null) 'starNavigatingMinutes': starNavigatingMinutes,
       'starAutoMode': starAutoMode,
+      if (isClusters) 'clusterSettings': clusterSettings.toMap(),
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
@@ -725,6 +737,9 @@ class Navigation extends Equatable {
       starLearningMinutes: (map['starLearningMinutes'] as num?)?.toInt(),
       starNavigatingMinutes: (map['starNavigatingMinutes'] as num?)?.toInt(),
       starAutoMode: map['starAutoMode'] as bool? ?? false,
+      clusterSettings: map['clusterSettings'] is Map
+          ? ClusterSettings.fromMap(map['clusterSettings'] as Map<String, dynamic>)
+          : const ClusterSettings(),
       communicationSettings: map['communicationSettings'] is Map
           ? CommunicationSettings.fromMap(map['communicationSettings'] as Map<String, dynamic>)
           : const CommunicationSettings(),
@@ -796,6 +811,7 @@ class Navigation extends Equatable {
     starLearningMinutes,
     starNavigatingMinutes,
     starAutoMode,
+    clusterSettings,
     communicationSettings,
     variablesSheet,
     checklistCompletion,

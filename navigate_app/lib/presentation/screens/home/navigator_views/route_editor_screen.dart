@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -24,6 +25,7 @@ class RouteEditorScreen extends StatefulWidget {
   final String navigatorUid;
   final List<Checkpoint> checkpoints;
   final ValueChanged<domain.Navigation> onNavigationUpdated;
+  final Map<String, List<Checkpoint>>? clusterMap;
 
   const RouteEditorScreen({
     super.key,
@@ -31,6 +33,7 @@ class RouteEditorScreen extends StatefulWidget {
     required this.navigatorUid,
     required this.checkpoints,
     required this.onNavigationUpdated,
+    this.clusterMap,
   });
 
   @override
@@ -542,41 +545,94 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
 
     // markers לנקודות ציון קבועות (עיגול כחול עם מספר)
     final cpMarkers = <Marker>[];
-    for (var i = 0; i < widget.checkpoints.length; i++) {
-      final cp = widget.checkpoints[i];
-      if (cp.isPolygon || cp.coordinates == null) continue;
+    if (widget.navigation.isClusters && widget.clusterMap != null) {
+      // מצב אשכולות — כל הנקודות (אמיתיות + הסחה) עם sequenceNumber
+      final seen = <String>{};
+      const jitter = 0.0002; // ~10m
+      for (final cluster in widget.clusterMap!.values) {
+        for (final cp in cluster) {
+          if (cp.isPolygon || cp.coordinates == null) continue;
+          if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
+          if (!seen.add(cp.id)) continue;
 
-      cpMarkers.add(Marker(
-        point: cp.coordinates!.toLatLng(),
-        width: 36,
-        height: 36,
-        child: Tooltip(
-          message: cp.name,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 4,
+          final rng = Random(cp.id.hashCode);
+          final jitterLat = (rng.nextDouble() - 0.5) * 2 * jitter;
+          final jitterLng = (rng.nextDouble() - 0.5) * 2 * jitter;
+          final point = LatLng(
+            cp.coordinates!.lat + jitterLat,
+            cp.coordinates!.lng + jitterLng,
+          );
+
+          cpMarkers.add(Marker(
+            point: point,
+            width: 36,
+            height: 36,
+            child: Tooltip(
+              message: cp.name,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                    ),
+                  ],
                 ),
-              ],
+                child: Center(
+                  child: Text(
+                    '${cp.sequenceNumber}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
             ),
-            child: Center(
-              child: Text(
-                '${i + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
+          ));
+        }
+      }
+    } else {
+      for (var i = 0; i < widget.checkpoints.length; i++) {
+        final cp = widget.checkpoints[i];
+        if (cp.isPolygon || cp.coordinates == null) continue;
+
+        cpMarkers.add(Marker(
+          point: cp.coordinates!.toLatLng(),
+          width: 36,
+          height: 36,
+          child: Tooltip(
+            message: cp.name,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ));
+        ));
+      }
     }
 
     // markers לנקודות התחלה/סיום
@@ -896,7 +952,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                         ),
                       ]),
                     // קו בין נקודות ציון (רפרנס) — כולל התחלה וסיום
-                    if (_showRoutes && refPoints.length > 1)
+                    if (_showRoutes && refPoints.length > 1
+                        && !(widget.navigation.isClusters && widget.clusterMap != null))
                       PolylineLayer(polylines: [
                         Polyline(
                           points: refPoints,

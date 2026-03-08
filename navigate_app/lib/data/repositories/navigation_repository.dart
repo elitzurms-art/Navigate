@@ -135,6 +135,9 @@ class NavigationRepository {
               forceCompositionJson: Value(!navigation.forceComposition.isSolo
                   ? jsonEncode(navigation.forceComposition.toMap())
                   : null),
+              clusterSettingsJson: Value(navigation.isClusters
+                  ? jsonEncode(navigation.clusterSettings.toMap())
+                  : null),
               checklistCompletionJson: Value(navigation.checklistCompletion != null
                   ? jsonEncode(navigation.checklistCompletion!.toMap())
                   : null),
@@ -223,6 +226,9 @@ class NavigationRepository {
               : null),
           forceCompositionJson: Value(!navigation.forceComposition.isSolo
               ? jsonEncode(navigation.forceComposition.toMap())
+              : null),
+          clusterSettingsJson: Value(navigation.isClusters
+              ? jsonEncode(navigation.clusterSettings.toMap())
               : null),
           checklistCompletionJson: Value(navigation.checklistCompletion != null
               ? jsonEncode(navigation.checklistCompletion!.toMap())
@@ -442,6 +448,9 @@ class NavigationRepository {
       forceComposition: data.forceCompositionJson != null && _parseJsonAsMap(data.forceCompositionJson!) != null
           ? domain.ForceComposition.fromMap(_parseJsonAsMap(data.forceCompositionJson!)!)
           : const domain.ForceComposition(),
+      clusterSettings: data.clusterSettingsJson != null && _parseJsonAsMap(data.clusterSettingsJson!) != null
+          ? domain.ClusterSettings.fromMap(_parseJsonAsMap(data.clusterSettingsJson!)!)
+          : const domain.ClusterSettings(),
       communicationSettings: _parseJsonAsMap(data.communicationSettingsJson) != null
           ? domain.CommunicationSettings.fromMap(_parseJsonAsMap(data.communicationSettingsJson)!)
           : const domain.CommunicationSettings(),
@@ -961,6 +970,9 @@ class NavigationRepository {
               : null),
           forceCompositionJson: Value(!nav.forceComposition.isSolo
               ? jsonEncode(nav.forceComposition.toMap())
+              : null),
+          clusterSettingsJson: Value(nav.isClusters
+              ? jsonEncode(nav.clusterSettings.toMap())
               : null),
           permissionsJson: jsonEncode(nav.permissions.toMap()),
           createdAt: nav.createdAt,

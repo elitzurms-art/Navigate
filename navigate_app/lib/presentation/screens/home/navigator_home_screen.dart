@@ -14,6 +14,8 @@ import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/navigation_score.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../domain/entities/checkpoint_punch.dart';
+import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
@@ -57,6 +59,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   bool _perNavigatorAllowOpenMap = false;
   bool _perNavigatorShowSelfLocation = false;
   bool _perNavigatorShowRouteOnMap = false;
+  bool? _perNavigatorRevealEnabled;
 
   /// אתחול דגלי מפה פר-מנווט מערכי הניווט הגלובליים
   void _initPerNavigatorFlags(domain.Navigation nav) {
@@ -643,6 +646,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         });
       }
 
+      // טעינת דריסות track מ-Firestore (reveal override)
+      _loadTrackOverrides();
+
       // בדיקת מבחן ניווט מ-Firestore
       _loadQuizStatus();
 
@@ -677,6 +683,29 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         setState(() {
           _quizPassed = doc.exists && doc.data()?['passed'] == true;
         });
+      }
+    } catch (_) {
+      // שקט — לא חוסם
+    }
+  }
+
+  /// טעינת דריסות track מ-Firestore (reveal override וכו')
+  Future<void> _loadTrackOverrides() async {
+    final nav = _currentNavigation;
+    final user = _currentUser;
+    if (nav == null || user == null) return;
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('navigation_tracks')
+          .where('navigationId', isEqualTo: nav.id)
+          .where('navigatorId', isEqualTo: user.uid)
+          .limit(1)
+          .get();
+      if (snapshot.docs.isNotEmpty && mounted) {
+        final data = snapshot.docs.first.data();
+        if (data.containsKey('overrideRevealEnabled')) {
+          _perNavigatorRevealEnabled = data['overrideRevealEnabled'] as bool?;
+        }
       }
     } catch (_) {
       // שקט — לא חוסם
@@ -1005,6 +1034,18 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
                   );
                 },
               ),
+
+            // חשיפת נקודות אמיתיות — רק בניווט אשכולות כשמותר
+            if (_currentNavigation != null && _currentNavigation!.isClusters && _canReveal()) ...[
+              ListTile(
+                leading: const Icon(Icons.visibility, color: Colors.blue),
+                title: const Text('צפה בנקודות שקיבלת'),
+                onTap: () {
+                  Navigator.pop(context); // close drawer
+                  _showRevealDialog();
+                },
+              ),
+            ],
 
             // מפה פתוחה — רק במצב active + (allowOpenMap ברמת ניווט או דריסה פר-מנווט)
             if (isActive && nav != null && _perNavigatorAllowOpenMap) ...[
@@ -1586,6 +1627,63 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           ),
           const SizedBox(height: 32),
           const CircularProgressIndicator(),
+        ],
+      ),
+    );
+  }
+
+  /// האם ניתן לחשוף נקודות אמיתיות (ניווט אשכולות)
+  bool _canReveal() {
+    if (_currentNavigation == null || !_currentNavigation!.isClusters) return false;
+    if (_perNavigatorRevealEnabled != null) return _perNavigatorRevealEnabled!;
+    if (!_currentNavigation!.clusterSettings.revealEnabled) return false;
+    if (_currentNavigation!.activeStartTime == null) return false;
+    return DateTime.now().difference(_currentNavigation!.activeStartTime!).inMinutes
+        >= _currentNavigation!.clusterSettings.revealAfterMinutes;
+  }
+
+  /// דיאלוג חשיפת נקודות אמיתיות (ניווט אשכולות)
+  Future<void> _showRevealDialog() async {
+    if (_currentNavigation == null) return;
+    final route = _currentNavigation!.routes[_currentUser?.uid];
+    if (route == null) return;
+
+    // טעינת שמות נקודות ציון
+    final cpRepo = CheckpointRepository();
+    final navLayerRepo = NavLayerRepository();
+    final futures = route.checkpointIds.map((cpId) async {
+      final cp = await cpRepo.getById(cpId);
+      if (cp != null) return cp.displayLabel;
+      final navCp = await navLayerRepo.getCheckpointById(cpId);
+      return navCp?.name ?? cpId;
+    });
+    final cpNames = await Future.wait(futures);
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('הנקודות שקיבלת'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('הנקודות האמיתיות שלך:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ...cpNames.asMap().entries.map((e) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text('${e.key + 1}. ${e.value}'),
+              )),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('סגור'),
+          ),
         ],
       ),
     );
