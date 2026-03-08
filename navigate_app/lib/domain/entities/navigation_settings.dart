@@ -1163,3 +1163,79 @@ class ForceComposition extends Equatable {
   @override
   List<Object?> get props => [type, swapPointId, manualGroups, learningRepresentatives, activeRepresentatives];
 }
+
+/// הגדרות ניווט צנחנים
+class ParachuteSettings extends Equatable {
+  final List<String> dropPointIds; // נקודות הצנחה — מתוך נ"צ
+  final String assignmentMethod; // 'random', 'manual', 'by_sub_framework'
+  final Map<String, String> navigatorDropPoints; // navigatorId -> dropPointId (תוצאה סופית)
+  final Map<String, List<String>> subFrameworkDropPoints; // sfId -> [dropPointIds] (לשיטת תת-מסגרת)
+  final bool samePointPerSubFramework; // כל מנווטי תת-מסגרת באותה נקודה
+  final String routeMode; // 'checkpoints' (ברירת מחדל) או 'clusters'
+
+  const ParachuteSettings({
+    this.dropPointIds = const [],
+    this.assignmentMethod = 'random',
+    this.navigatorDropPoints = const {},
+    this.subFrameworkDropPoints = const {},
+    this.samePointPerSubFramework = false,
+    this.routeMode = 'checkpoints',
+  });
+
+  ParachuteSettings copyWith({
+    List<String>? dropPointIds,
+    String? assignmentMethod,
+    Map<String, String>? navigatorDropPoints,
+    Map<String, List<String>>? subFrameworkDropPoints,
+    bool? samePointPerSubFramework,
+    String? routeMode,
+  }) {
+    return ParachuteSettings(
+      dropPointIds: dropPointIds ?? this.dropPointIds,
+      assignmentMethod: assignmentMethod ?? this.assignmentMethod,
+      navigatorDropPoints: navigatorDropPoints ?? this.navigatorDropPoints,
+      subFrameworkDropPoints: subFrameworkDropPoints ?? this.subFrameworkDropPoints,
+      samePointPerSubFramework: samePointPerSubFramework ?? this.samePointPerSubFramework,
+      routeMode: routeMode ?? this.routeMode,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'dropPointIds': dropPointIds,
+      'assignmentMethod': assignmentMethod,
+      if (navigatorDropPoints.isNotEmpty) 'navigatorDropPoints': navigatorDropPoints,
+      if (subFrameworkDropPoints.isNotEmpty)
+        'subFrameworkDropPoints': subFrameworkDropPoints.map((k, v) => MapEntry(k, v)),
+      'samePointPerSubFramework': samePointPerSubFramework,
+      'routeMode': routeMode,
+    };
+  }
+
+  factory ParachuteSettings.fromMap(Map<String, dynamic> map) {
+    return ParachuteSettings(
+      dropPointIds: map['dropPointIds'] is List
+          ? List<String>.from(map['dropPointIds'] as List)
+          : const [],
+      assignmentMethod: map['assignmentMethod'] as String? ?? 'random',
+      navigatorDropPoints: map['navigatorDropPoints'] is Map
+          ? (map['navigatorDropPoints'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, v as String),
+            )
+          : const {},
+      subFrameworkDropPoints: map['subFrameworkDropPoints'] is Map
+          ? (map['subFrameworkDropPoints'] as Map<String, dynamic>).map(
+              (k, v) => MapEntry(k, List<String>.from(v as List)),
+            )
+          : const {},
+      samePointPerSubFramework: map['samePointPerSubFramework'] as bool? ?? false,
+      routeMode: map['routeMode'] as String? ?? 'checkpoints',
+    );
+  }
+
+  @override
+  List<Object?> get props => [
+    dropPointIds, assignmentMethod, navigatorDropPoints,
+    subFrameworkDropPoints, samePointPerSubFramework, routeMode,
+  ];
+}

@@ -4786,7 +4786,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                           }
                         },
                       ),
-                      if (_currentNavigation != null && _currentNavigation!.isClusters) ...[
+                      if (_currentNavigation != null && _currentNavigation!.usesClusters) ...[
                         SwitchListTile(
                           title: const Text('חשיפת נקודות', style: TextStyle(fontSize: 13)),
                           subtitle: Text(
@@ -7487,7 +7487,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'walkieTalkie',
           ),
         ),
-        if (_nav.isClusters) ...[
+        if (_nav.usesClusters) ...[
           _toggleTile(
             label: 'חשיפת נקודות אמיתיות',
             value: _nav.clusterSettings.revealEnabled,

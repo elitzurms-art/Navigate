@@ -216,6 +216,7 @@ class Navigations extends Table {
   IntColumn get starNavigatingMinutes => integer().nullable()();
   BoolColumn get starAutoMode => boolean().withDefault(const Constant(false))();
   TextColumn get clusterSettingsJson => text().nullable()(); // JSON הגדרות אשכולות
+  TextColumn get parachuteSettingsJson => text().nullable()(); // JSON הגדרות צנחנים
   TextColumn get permissionsJson => text()();
   DateTimeColumn get trainingStartTime => dateTime().nullable()();
   DateTimeColumn get systemCheckStartTime => dateTime().nullable()();
@@ -421,7 +422,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 40;
+  int get schemaVersion => 41;
 
   @override
   MigrationStrategy get migration {
@@ -684,6 +685,10 @@ class AppDatabase extends _$AppDatabase {
           // Cluster navigation fields
           await safeAddColumn(navigations, navigations.clusterSettingsJson);
           await safeAddColumn(navigationTracks, navigationTracks.overrideRevealEnabled);
+        }
+        if (from <= 40 && to >= 41) {
+          // Parachute navigation settings
+          await safeAddColumn(navigations, navigations.parachuteSettingsJson);
         }
       },
     );

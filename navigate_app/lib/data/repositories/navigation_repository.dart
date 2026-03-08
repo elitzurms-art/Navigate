@@ -135,8 +135,11 @@ class NavigationRepository {
               forceCompositionJson: Value(!navigation.forceComposition.isSolo
                   ? jsonEncode(navigation.forceComposition.toMap())
                   : null),
-              clusterSettingsJson: Value(navigation.isClusters
+              clusterSettingsJson: Value(navigation.usesClusters
                   ? jsonEncode(navigation.clusterSettings.toMap())
+                  : null),
+              parachuteSettingsJson: Value(navigation.isParachute && navigation.parachuteSettings != null
+                  ? jsonEncode(navigation.parachuteSettings!.toMap())
                   : null),
               checklistCompletionJson: Value(navigation.checklistCompletion != null
                   ? jsonEncode(navigation.checklistCompletion!.toMap())
@@ -227,8 +230,11 @@ class NavigationRepository {
           forceCompositionJson: Value(!navigation.forceComposition.isSolo
               ? jsonEncode(navigation.forceComposition.toMap())
               : null),
-          clusterSettingsJson: Value(navigation.isClusters
+          clusterSettingsJson: Value(navigation.usesClusters
               ? jsonEncode(navigation.clusterSettings.toMap())
+              : null),
+          parachuteSettingsJson: Value(navigation.isParachute && navigation.parachuteSettings != null
+              ? jsonEncode(navigation.parachuteSettings!.toMap())
               : null),
           checklistCompletionJson: Value(navigation.checklistCompletion != null
               ? jsonEncode(navigation.checklistCompletion!.toMap())
@@ -451,6 +457,9 @@ class NavigationRepository {
       clusterSettings: data.clusterSettingsJson != null && _parseJsonAsMap(data.clusterSettingsJson!) != null
           ? domain.ClusterSettings.fromMap(_parseJsonAsMap(data.clusterSettingsJson!)!)
           : const domain.ClusterSettings(),
+      parachuteSettings: data.parachuteSettingsJson != null && _parseJsonAsMap(data.parachuteSettingsJson!) != null
+          ? domain.ParachuteSettings.fromMap(_parseJsonAsMap(data.parachuteSettingsJson!)!)
+          : null,
       communicationSettings: _parseJsonAsMap(data.communicationSettingsJson) != null
           ? domain.CommunicationSettings.fromMap(_parseJsonAsMap(data.communicationSettingsJson)!)
           : const domain.CommunicationSettings(),
@@ -971,7 +980,7 @@ class NavigationRepository {
           forceCompositionJson: Value(!nav.forceComposition.isSolo
               ? jsonEncode(nav.forceComposition.toMap())
               : null),
-          clusterSettingsJson: Value(nav.isClusters
+          clusterSettingsJson: Value(nav.usesClusters
               ? jsonEncode(nav.clusterSettings.toMap())
               : null),
           permissionsJson: jsonEncode(nav.permissions.toMap()),

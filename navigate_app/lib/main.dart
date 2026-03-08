@@ -102,8 +102,10 @@ void main() async {
     userId: (await SharedPreferences.getInstance()).getString('logged_in_uid'),
   );
 
-  // בקשת הרשאות חסרות בהפעלה
-  await _requestMissingPermissions();
+  // בקשת הרשאות חסרות בהפעלה (רק מובייל — macOS/Linux אין תמיכה ב-permission_handler)
+  if (Platform.isAndroid || Platform.isIOS) {
+    await _requestMissingPermissions();
+  }
 
   runApp(const NavigateApp());
 }

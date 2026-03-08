@@ -368,6 +368,9 @@ class Navigation extends Equatable {
   final int? starNavigatingMinutes; // זמן ניווט לנקודה (דקות)
   final bool starAutoMode; // פתיחת נקודה הבאה אוטומטית
 
+  // Parachute settings (צנחנים)
+  final ParachuteSettings? parachuteSettings;
+
   // Cluster settings (אשכולות)
   final ClusterSettings clusterSettings;
 
@@ -436,6 +439,7 @@ class Navigation extends Equatable {
     this.gpsSpoofingDetectionEnabled = true,
     this.gpsSpoofingMaxDistanceKm = 50,
     this.forceComposition = const ForceComposition(),
+    this.parachuteSettings,
     this.starLearningMinutes,
     this.starNavigatingMinutes,
     this.starAutoMode = false,
@@ -463,6 +467,10 @@ class Navigation extends Equatable {
   bool get isClusters => navigationType == 'clusters' || navigationType == 'clusters_reverse';
   /// האם ניווט הפוך (כולל אשכולות הפוך)
   bool get isReverse => navigationType == 'reverse' || navigationType == 'clusters_reverse';
+  /// האם ניווט צנחנים
+  bool get isParachute => navigationType == 'parachute';
+  /// האם משתמש באשכולות (אשכולות ישיר או צנחנים+אשכולות)
+  bool get usesClusters => isClusters || (isParachute && parachuteSettings?.routeMode == 'clusters');
 
   Navigation copyWith({
     String? id,
@@ -511,6 +519,8 @@ class Navigation extends Equatable {
     bool? gpsSpoofingDetectionEnabled,
     int? gpsSpoofingMaxDistanceKm,
     ForceComposition? forceComposition,
+    ParachuteSettings? parachuteSettings,
+    bool clearParachuteSettings = false,
     int? starLearningMinutes,
     int? starNavigatingMinutes,
     bool? starAutoMode,
@@ -572,6 +582,7 @@ class Navigation extends Equatable {
       gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
       gpsSpoofingMaxDistanceKm: gpsSpoofingMaxDistanceKm ?? this.gpsSpoofingMaxDistanceKm,
       forceComposition: forceComposition ?? this.forceComposition,
+      parachuteSettings: clearParachuteSettings ? null : (parachuteSettings ?? this.parachuteSettings),
       starLearningMinutes: starLearningMinutes ?? this.starLearningMinutes,
       starNavigatingMinutes: starNavigatingMinutes ?? this.starNavigatingMinutes,
       starAutoMode: starAutoMode ?? this.starAutoMode,
@@ -638,10 +649,11 @@ class Navigation extends Equatable {
       'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
       'gpsSpoofingMaxDistanceKm': gpsSpoofingMaxDistanceKm,
       'forceComposition': forceComposition.toMap(),
+      if (parachuteSettings != null) 'parachuteSettings': parachuteSettings!.toMap(),
       if (starLearningMinutes != null) 'starLearningMinutes': starLearningMinutes,
       if (starNavigatingMinutes != null) 'starNavigatingMinutes': starNavigatingMinutes,
       'starAutoMode': starAutoMode,
-      if (isClusters) 'clusterSettings': clusterSettings.toMap(),
+      if (usesClusters) 'clusterSettings': clusterSettings.toMap(),
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
@@ -734,6 +746,9 @@ class Navigation extends Equatable {
       forceComposition: map['forceComposition'] is Map
           ? ForceComposition.fromMap(map['forceComposition'] as Map<String, dynamic>)
           : const ForceComposition(),
+      parachuteSettings: map['parachuteSettings'] is Map
+          ? ParachuteSettings.fromMap(map['parachuteSettings'] as Map<String, dynamic>)
+          : null,
       starLearningMinutes: (map['starLearningMinutes'] as num?)?.toInt(),
       starNavigatingMinutes: (map['starNavigatingMinutes'] as num?)?.toInt(),
       starAutoMode: map['starAutoMode'] as bool? ?? false,
@@ -808,6 +823,7 @@ class Navigation extends Equatable {
     gpsSpoofingDetectionEnabled,
     gpsSpoofingMaxDistanceKm,
     forceComposition,
+    parachuteSettings,
     starLearningMinutes,
     starNavigatingMinutes,
     starAutoMode,

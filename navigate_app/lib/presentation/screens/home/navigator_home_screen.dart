@@ -1036,7 +1036,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
               ),
 
             // חשיפת נקודות אמיתיות — רק בניווט אשכולות כשמותר
-            if (_currentNavigation != null && _currentNavigation!.isClusters && _canReveal()) ...[
+            if (_currentNavigation != null && _currentNavigation!.usesClusters && _canReveal()) ...[
               ListTile(
                 leading: const Icon(Icons.visibility, color: Colors.blue),
                 title: const Text('צפה בנקודות שקיבלת'),
@@ -1634,7 +1634,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   /// האם ניתן לחשוף נקודות אמיתיות (ניווט אשכולות)
   bool _canReveal() {
-    if (_currentNavigation == null || !_currentNavigation!.isClusters) return false;
+    if (_currentNavigation == null || !_currentNavigation!.usesClusters) return false;
     if (_perNavigatorRevealEnabled != null) return _perNavigatorRevealEnabled!;
     if (!_currentNavigation!.clusterSettings.revealEnabled) return false;
     if (_currentNavigation!.activeStartTime == null) return false;
