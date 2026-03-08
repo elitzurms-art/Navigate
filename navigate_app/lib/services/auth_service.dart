@@ -403,6 +403,8 @@ class AuthService {
         final firestoreData = currentUser.toMap();
         firestoreData.remove('role');
         firestoreData.remove('isApproved');
+        firestoreData.remove('unitId');
+        firestoreData.remove('approvalStatus');
         firestoreData['updatedAt'] = FieldValue.serverTimestamp();
         await _firestore.collection('users').doc(personalNumber)
             .set(firestoreData, SetOptions(merge: true));

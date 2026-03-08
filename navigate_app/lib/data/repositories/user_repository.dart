@@ -487,6 +487,8 @@ class UserRepository {
           'isApproved': true,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+        // Cancel any pending sync items that might push stale data back
+        await db.markPendingSyncItemsForRecordAsSynced(AppConstants.usersCollection, uid);
       } catch (e) {
         print('DEBUG: Direct Firestore failed for addUserToUnit, queueing: $e');
         await _syncManager.queueOperation(
@@ -654,13 +656,15 @@ class UserRepository {
         'isApproved': false,
         'approvalStatus': null,
         if (shouldResetRole) 'role': 'navigator',
-        'updatedAt': now.toIso8601String(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
       try {
         await FirebaseFirestore.instance
             .collection(AppConstants.usersCollection)
             .doc(uid)
             .update(firestoreData);
+        // Cancel any pending sync items that might push stale unitId back
+        await db.markPendingSyncItemsForRecordAsSynced(AppConstants.usersCollection, uid);
         print('DEBUG: Direct Firestore update for user $uid (removeFromUnit)');
       } catch (e) {
         // Firestore לא זמין — fallback לסנכרון רגיל

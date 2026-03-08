@@ -715,6 +715,16 @@ class AppDatabase extends _$AppDatabase {
     ));
   }
 
+  /// סימון כל הרשומות הממתינות לסנכרון עבור רשומה מסוימת כמסונכרנות
+  Future<int> markPendingSyncItemsForRecordAsSynced(String collection, String recordId) {
+    return (update(syncQueue)
+      ..where((tbl) => tbl.collectionName.equals(collection) & tbl.recordId.equals(recordId) & tbl.synced.equals(false))
+    ).write(SyncQueueCompanion(
+      synced: const Value(true),
+      syncedAt: Value(DateTime.now()),
+    ));
+  }
+
   /// מחיקת כל הרשומות שלא סונכרנו (לניקוי תור סנכרון ישן בהחלפת משתמש)
   Future<int> purgeAllUnsynced() async {
     return await (delete(syncQueue)

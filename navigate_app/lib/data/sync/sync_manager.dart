@@ -1489,43 +1489,14 @@ class SyncManager {
     var isApproved = approvalStatus == 'approved';
     final serverUnitId = unitId;
 
-    try {
-      final localRow = await ((_db.select(_db.users))
-            ..where((tbl) => tbl.uid.equals(id)))
-          .getSingleOrNull();
-
-      if (localRow != null &&
-          localRow.unitId != null &&
-          localRow.unitId!.isNotEmpty &&
-          (serverUnitId == null || serverUnitId.isEmpty)) {
-        final serverUpdatedAt = _parseDateTime(data['updatedAt']);
-        final localUpdatedAt = localRow.updatedAt;
-
-        if (serverUpdatedAt != null &&
-            localUpdatedAt != null &&
-            !serverUpdatedAt.isBefore(localUpdatedAt)) {
-          // Server is newer or equal — accept removal (admin action is authoritative)
-          // Also cancel any pending sync items for this user
-          final pending = await _db.getPendingSyncItemsByCollection('users');
-          for (final item in pending.where((i) => i.recordId == id)) {
-            await _db.markAsSynced(item.id);
-          }
-          print('DEBUG SyncManager: Accepting server removal for user $id '
-              '(server=$serverUpdatedAt >= local=$localUpdatedAt)');
-        } else {
-          // Local is strictly newer — protect (e.g., user just chose a unit, push pending)
-          final hasFailed = await _hasFailedSyncItems('users', id);
-          if (hasFailed) {
-            unitId = localRow.unitId;
-            isApproved = localRow.isApproved;
-            approvalStatus = localRow.approvalStatus ?? (localRow.isApproved ? 'approved' : null);
-            print('DEBUG SyncManager: Protecting local unitId for user $id '
-                '(server has null, local has ${localRow.unitId})');
-          }
-        }
+    // Firestore is authoritative for unitId — always accept server value.
+    // Cancel any pending sync items that might push stale unitId back.
+    if (serverUnitId == null || serverUnitId.isEmpty) {
+      try {
+        await _db.markPendingSyncItemsForRecordAsSynced('users', id);
+      } catch (e) {
+        // לא חוסם — ממשיכים עם נתוני השרת
       }
-    } catch (e) {
-      // לא חוסם — ממשיכים עם נתוני השרת
     }
 
     await _db.into(_db.users).insertOnConflictUpdate(
