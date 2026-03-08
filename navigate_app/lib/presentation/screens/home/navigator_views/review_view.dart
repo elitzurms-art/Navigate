@@ -29,13 +29,13 @@ import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/elevation_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
+import '../../../widgets/checkpoint_style_utils.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
 const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
 const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
 const _kEndColor = Color(0xFFF44336); // אדום — F (סיום)
-const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
 const _kBoundaryColor = Colors.black;
 const _kSafetyColor = Color(0xFFFF9800); // כתום
 
@@ -144,6 +144,9 @@ class _ReviewViewState extends State<ReviewView> {
         if (widget.navigation.navigationType == 'star' && widget.navigation.startPoint != null) {
           routeCpIds.add(widget.navigation.startPoint!);
         }
+        // fallback — הגדרות ניווט (אשכולות / חלוקה כללית)
+        if (widget.navigation.startPoint != null) routeCpIds.add(widget.navigation.startPoint!);
+        if (widget.navigation.endPoint != null) routeCpIds.add(widget.navigation.endPoint!);
         final routeCps = _checkpoints
             .where((cp) => routeCpIds.contains(cp.id))
             .toList();
@@ -575,37 +578,23 @@ class _ReviewViewState extends State<ReviewView> {
                   if (_showNZ && pointCps.isNotEmpty)
                     Builder(builder: (_) {
                       final route = widget.navigation.routes[widget.currentUser.uid];
-                      final startId = route?.startPointId;
-                      final endId = route?.endPointId;
-                      final swapId = route?.swapPointId;
+                      final roles = collectSingleRouteRoleIds(widget.navigation, route);
+                      final startIds = <String>{if (roles.startId != null) roles.startId!};
+                      final endIds = <String>{if (roles.endId != null) roles.endId!};
+                      final swapIds = <String>{if (roles.swapId != null) roles.swapId!};
+                      endIds.removeAll(swapIds);
 
                       return MarkerLayer(
                         markers: pointCps.map((cp) {
-                          Color bgColor;
-                          String letter;
-                          Color borderOverride = Colors.white;
-
-                          final isSwapPoint = swapId != null && cp.id == swapId;
-                          final isStart = (startId != null && cp.id == startId) ||
-                              cp.type == 'start';
-                          final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) ||
-                              cp.type == 'end');
-
-                          if (isSwapPoint) {
-                            bgColor = Colors.white;
-                            borderOverride = Colors.grey[700]!;
-                            letter = 'S';
-                          } else if (isStart) {
-                            bgColor = _kStartColor;
-                            letter = 'H';
-                          } else if (isEnd) {
-                            bgColor = _kEndColor;
-                            letter = 'F';
-                          } else {
-                            bgColor = _kCheckpointColor;
-                            letter = 'B';
-                          }
-                          final label = '${cp.sequenceNumber}$letter';
+                          final style = getCheckpointStyle(
+                            checkpointId: cp.id,
+                            sourceId: null,
+                            swapIds: swapIds,
+                            startIds: startIds,
+                            endIds: endIds,
+                            waypointIds: roles.waypointIds,
+                          );
+                          final label = '${cp.sequenceNumber}${style.letter}';
 
                           return Marker(
                             point: LatLng(
@@ -616,10 +605,10 @@ class _ReviewViewState extends State<ReviewView> {
                               opacity: _nzOpacity,
                               child: Container(
                                 decoration: BoxDecoration(
-                                  color: bgColor,
+                                  color: style.color,
                                   shape: BoxShape.circle,
                                   border: Border.all(
-                                      color: borderOverride, width: 2),
+                                      color: style.borderColor, width: 2),
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withOpacity(0.3),
@@ -631,7 +620,7 @@ class _ReviewViewState extends State<ReviewView> {
                                   child: Text(
                                     label,
                                     style: TextStyle(
-                                      color: isSwapPoint ? Colors.grey[800]! : Colors.white,
+                                      color: style.textColor,
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -1052,9 +1041,8 @@ class _ReviewViewState extends State<ReviewView> {
             punches: _punches,
             deviations: _deviations,
             navigatorName: widget.currentUser.fullName,
-            startPointId: route?.startPointId,
-            endPointId: route?.endPointId,
-            swapPointId: route?.swapPointId,
+            navigation: widget.navigation,
+            route: route,
             defaultMap: widget.navigation.displaySettings.defaultMap,
           );
         },
@@ -1075,9 +1063,8 @@ class _FullscreenReviewMap extends StatefulWidget {
   final List<CheckpointPunch> punches;
   final List<DeviationSegment> deviations;
   final String navigatorName;
-  final String? startPointId;
-  final String? endPointId;
-  final String? swapPointId;
+  final domain.Navigation navigation;
+  final domain.AssignedRoute? route;
   final String? defaultMap;
 
   const _FullscreenReviewMap({
@@ -1091,9 +1078,8 @@ class _FullscreenReviewMap extends StatefulWidget {
     required this.punches,
     required this.deviations,
     required this.navigatorName,
-    this.startPointId,
-    this.endPointId,
-    this.swapPointId,
+    required this.navigation,
+    this.route,
     this.defaultMap,
   });
 
@@ -1248,37 +1234,23 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
               // נקודות ציון
               if (_showNZ && pointCps.isNotEmpty)
                 Builder(builder: (_) {
-                  final startId = widget.startPointId;
-                  final endId = widget.endPointId;
-                  final swapId = widget.swapPointId;
+                  final roles = collectSingleRouteRoleIds(widget.navigation, widget.route);
+                  final startIds = <String>{if (roles.startId != null) roles.startId!};
+                  final endIds = <String>{if (roles.endId != null) roles.endId!};
+                  final swapIds = <String>{if (roles.swapId != null) roles.swapId!};
+                  endIds.removeAll(swapIds);
 
                   return MarkerLayer(
                     markers: pointCps.map((cp) {
-                      Color bgColor;
-                      String letter;
-                      Color borderOverride = Colors.white;
-
-                      final isSwapPoint = swapId != null && cp.id == swapId;
-                      final isStart = (startId != null && cp.id == startId) ||
-                          cp.type == 'start';
-                      final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) ||
-                          cp.type == 'end');
-
-                      if (isSwapPoint) {
-                        bgColor = Colors.white;
-                        borderOverride = Colors.grey[700]!;
-                        letter = 'S';
-                      } else if (isStart) {
-                        bgColor = _kStartColor;
-                        letter = 'H';
-                      } else if (isEnd) {
-                        bgColor = _kEndColor;
-                        letter = 'F';
-                      } else {
-                        bgColor = _kCheckpointColor;
-                        letter = 'B';
-                      }
-                      final label = '${cp.sequenceNumber}$letter';
+                      final style = getCheckpointStyle(
+                        checkpointId: cp.id,
+                        sourceId: null,
+                        swapIds: swapIds,
+                        startIds: startIds,
+                        endIds: endIds,
+                        waypointIds: roles.waypointIds,
+                      );
+                      final label = '${cp.sequenceNumber}${style.letter}';
                       return Marker(
                         point: LatLng(
                             cp.coordinates!.lat, cp.coordinates!.lng),
@@ -1288,10 +1260,10 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                           opacity: _nzOpacity,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: bgColor,
+                              color: style.color,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                  color: borderOverride, width: 2),
+                                  color: style.borderColor, width: 2),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.3),
@@ -1303,7 +1275,7 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
                               child: Text(
                                 label,
                                 style: TextStyle(
-                                  color: isSwapPoint ? Colors.grey[800]! : Colors.white,
+                                  color: style.textColor,
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),

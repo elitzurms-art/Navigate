@@ -28,15 +28,13 @@ import '../../widgets/navigator_heatmap.dart';
 import '../../widgets/navigator_comparison_widget.dart';
 import '../../widgets/map_image_export.dart';
 import '../../widgets/fullscreen_map_screen.dart';
+import '../../widgets/checkpoint_style_utils.dart';
 import '../home/navigator_views/approval_view.dart';
 import '../../../data/repositories/user_repository.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
 const _kActualRouteColor = Color(0xFF2196F3); // כחול — בפועל
-const _kStartColor = Color(0xFF4CAF50); // ירוק — H (התחלה)
-const _kEndColor = Color(0xFFF44336); // אדום — F (סיום)
-const _kCheckpointColor = Color(0xFFFFC107); // צהוב — B (ביניים)
 const _kBoundaryColor = Colors.black;
 const _kSafetyColor = Color(0xFFFF9800); // כתום
 
@@ -1378,48 +1376,20 @@ class _ApprovalScreenState extends State<ApprovalScreen>
         .toList();
     if (pointCps.isEmpty) return [];
 
-    // זיהוי סוג לפי הציר (startPointId/endPointId) — fallback ל-cp.type
-    final startIds = <String>{};
-    final endIds = <String>{};
-    final swapIds = <String>{};
-    for (final route in _currentNavigation.routes.values) {
-      if (route.startPointId != null) startIds.add(route.startPointId!);
-      if (route.endPointId != null) endIds.add(route.endPointId!);
-      if (route.swapPointId != null) swapIds.add(route.swapPointId!);
-    }
-    // swap point לא נחשב נקודת סיום
-    endIds.removeAll(swapIds);
+    final roles = collectCheckpointRoleIds(_currentNavigation);
 
     return [
       MarkerLayer(
         markers: pointCps.map((cp) {
-          Color bgColor;
-          String letter;
-          Color? borderColorOverride;
-
-          final isSwapPoint = swapIds.contains(cp.id) || swapIds.contains(cp.sourceId);
-          final isStart = startIds.contains(cp.id) ||
-              startIds.contains(cp.sourceId) ||
-              cp.type == 'start';
-          final isEnd = endIds.contains(cp.id) ||
-              endIds.contains(cp.sourceId) ||
-              cp.type == 'end';
-
-          if (isSwapPoint) {
-            bgColor = Colors.white;
-            borderColorOverride = Colors.grey[700]!;
-            letter = 'S';
-          } else if (isStart) {
-            bgColor = _kStartColor;
-            letter = 'H';
-          } else if (isEnd) {
-            bgColor = _kEndColor;
-            letter = 'F';
-          } else {
-            bgColor = _kCheckpointColor;
-            letter = 'B';
-          }
-          final label = '${cp.sequenceNumber}$letter';
+          final style = getCheckpointStyle(
+            checkpointId: cp.id,
+            sourceId: cp.sourceId,
+            swapIds: roles.swapIds,
+            startIds: roles.startIds,
+            endIds: roles.endIds,
+            waypointIds: roles.waypointIds,
+          );
+          final label = '${cp.sequenceNumber}${style.letter}';
 
           return Marker(
             point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
@@ -1429,9 +1399,9 @@ class _ApprovalScreenState extends State<ApprovalScreen>
               opacity: _nzOpacity,
               child: Container(
                 decoration: BoxDecoration(
-                  color: bgColor,
+                  color: style.color,
                   shape: BoxShape.circle,
-                  border: Border.all(color: borderColorOverride ?? Colors.white, width: 2),
+                  border: Border.all(color: style.borderColor, width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.3),
@@ -1443,7 +1413,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
                   child: Text(
                     label,
                     style: TextStyle(
-                      color: isSwapPoint ? Colors.grey[800]! : Colors.white,
+                      color: style.textColor,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                     ),

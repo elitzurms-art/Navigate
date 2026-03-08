@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +26,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   bool _isLoading = false;
   _LoginMode _loginMode = _LoginMode.phoneOrEmail;
+  bool _showPersonalNumberOption = false;
+  final List<DateTime> _navigateTapTimestamps = [];
+  Timer? _hidePersonalNumberTimer;
 
   bool get _isDesktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -37,6 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _hidePersonalNumberTimer?.cancel();
     _personalNumberController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
@@ -294,8 +299,50 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.of(context).pushNamed('/register');
   }
 
+  void _onNavigateTitleTap() {
+    if (_isDesktop) return;
+
+    final now = DateTime.now();
+    _navigateTapTimestamps.removeWhere(
+      (t) => now.difference(t).inSeconds > 10,
+    );
+    _navigateTapTimestamps.add(now);
+
+    if (_navigateTapTimestamps.length > 5) {
+      _navigateTapTimestamps.removeRange(0, _navigateTapTimestamps.length - 5);
+    }
+
+    if (_navigateTapTimestamps.length >= 3) {
+      setState(() {
+        _showPersonalNumberOption = true;
+        _navigateTapTimestamps.clear();
+      });
+      _hidePersonalNumberTimer?.cancel();
+      _hidePersonalNumberTimer = Timer(const Duration(minutes: 1), () {
+        if (mounted) {
+          setState(() {
+            _showPersonalNumberOption = false;
+            _loginMode = _LoginMode.phoneOrEmail;
+          });
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('כניסה במספר אישי זמינה לדקה אחת'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Guard: force phoneOrEmail mode if personal number option is hidden on mobile
+    if (!_isDesktop && !_showPersonalNumberOption && _loginMode == _LoginMode.personalNumber) {
+      _loginMode = _LoginMode.phoneOrEmail;
+    }
+    final showPersonalNumber = _isDesktop || _showPersonalNumberOption;
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -324,11 +371,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 24),
 
                   // כותרת
-                  Text(
-                    'Navigate',
-                    style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+                  GestureDetector(
+                    onTap: _onNavigateTitleTap,
+                    child: Text(
+                      'Navigate',
+                      style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -361,31 +411,33 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 24),
 
-                            // טוגל בין מצבי כניסה
-                            SegmentedButton<_LoginMode>(
-                              segments: [
-                                ButtonSegment<_LoginMode>(
-                                  value: _LoginMode.phoneOrEmail,
-                                  label: Text(_isDesktop ? 'כתובת מייל' : 'מספר טלפון'),
-                                  icon: Icon(_isDesktop ? Icons.email : Icons.phone),
-                                ),
-                                const ButtonSegment<_LoginMode>(
-                                  value: _LoginMode.personalNumber,
-                                  label: Text('מספר אישי'),
-                                  icon: Icon(Icons.badge),
-                                ),
-                              ],
-                              selected: {_loginMode},
-                              onSelectionChanged: _isLoading
-                                  ? null
-                                  : (Set<_LoginMode> newSelection) {
-                                      setState(() {
-                                        _loginMode = newSelection.first;
-                                        _formKey.currentState?.reset();
-                                      });
-                                    },
-                            ),
-                            const SizedBox(height: 8),
+                            // טוגל בין מצבי כניסה (מוסתר במובייל עד הפעלה)
+                            if (showPersonalNumber) ...[
+                              SegmentedButton<_LoginMode>(
+                                segments: [
+                                  ButtonSegment<_LoginMode>(
+                                    value: _LoginMode.phoneOrEmail,
+                                    label: Text(_isDesktop ? 'כתובת מייל' : 'מספר טלפון'),
+                                    icon: Icon(_isDesktop ? Icons.email : Icons.phone),
+                                  ),
+                                  const ButtonSegment<_LoginMode>(
+                                    value: _LoginMode.personalNumber,
+                                    label: Text('מספר אישי'),
+                                    icon: Icon(Icons.badge),
+                                  ),
+                                ],
+                                selected: {_loginMode},
+                                onSelectionChanged: _isLoading
+                                    ? null
+                                    : (Set<_LoginMode> newSelection) {
+                                        setState(() {
+                                          _loginMode = newSelection.first;
+                                          _formKey.currentState?.reset();
+                                        });
+                                      },
+                              ),
+                              const SizedBox(height: 8),
+                            ],
                             Text(
                               _loginMode == _LoginMode.phoneOrEmail
                                   ? (_isDesktop

@@ -25,6 +25,7 @@ import '../../../../core/map_config.dart';
 import '../../../widgets/fullscreen_map_screen.dart';
 import '../../../widgets/speed_profile_chart.dart';
 import '../../../widgets/route_playback_widget.dart';
+import '../../../widgets/checkpoint_style_utils.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/voice_messages_panel.dart';
 
@@ -122,6 +123,9 @@ class _ApprovalViewState extends State<ApprovalView> {
         if (widget.navigation.navigationType == 'star' && widget.navigation.startPoint != null) {
           routeCpIds.add(widget.navigation.startPoint!);
         }
+        // fallback — הגדרות ניווט (אשכולות / חלוקה כללית)
+        if (widget.navigation.startPoint != null) routeCpIds.add(widget.navigation.startPoint!);
+        if (widget.navigation.endPoint != null) routeCpIds.add(widget.navigation.endPoint!);
         final routeCps = _checkpoints
             .where((cp) => routeCpIds.contains(cp.id))
             .toList();
@@ -499,39 +503,24 @@ class _ApprovalViewState extends State<ApprovalView> {
               // נקודות ציון
               if (_showCheckpoints && pointCps.isNotEmpty)
                 Builder(builder: (_) {
-                  // זיהוי סוג לפי הציר — fallback ל-cp.type
                   final route = widget.navigation.routes[widget.currentUser.uid];
-                  final startId = route?.startPointId;
-                  final endId = route?.endPointId;
-                  final swapId = route?.swapPointId;
+                  final roles = collectSingleRouteRoleIds(widget.navigation, route);
+                  final startIds = <String>{if (roles.startId != null) roles.startId!};
+                  final endIds = <String>{if (roles.endId != null) roles.endId!};
+                  final swapIds = <String>{if (roles.swapId != null) roles.swapId!};
+                  endIds.removeAll(swapIds);
 
                   return MarkerLayer(
                     markers: pointCps.map((cp) {
-                      Color bgColor;
-                      String letter;
-                      Color borderOverride = Colors.white;
-
-                      final isSwapPoint = swapId != null && cp.id == swapId;
-                      final isStart = (startId != null && cp.id == startId) ||
-                          cp.type == 'start';
-                      final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) ||
-                          cp.type == 'end');
-
-                      if (isSwapPoint) {
-                        bgColor = Colors.white;
-                        borderOverride = Colors.grey[700]!;
-                        letter = 'S';
-                      } else if (isStart) {
-                        bgColor = _kStartColor;
-                        letter = 'H';
-                      } else if (isEnd) {
-                        bgColor = _kEndColor;
-                        letter = 'F';
-                      } else {
-                        bgColor = _kCheckpointColor;
-                        letter = 'B';
-                      }
-                      final label = '${cp.sequenceNumber}$letter';
+                      final style = getCheckpointStyle(
+                        checkpointId: cp.id,
+                        sourceId: null,
+                        swapIds: swapIds,
+                        startIds: startIds,
+                        endIds: endIds,
+                        waypointIds: roles.waypointIds,
+                      );
+                      final label = '${cp.sequenceNumber}${style.letter}';
 
                       return Marker(
                         point:
@@ -540,10 +529,10 @@ class _ApprovalViewState extends State<ApprovalView> {
                         height: 38,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: bgColor,
+                            color: style.color,
                             shape: BoxShape.circle,
                             border:
-                                Border.all(color: borderOverride, width: 2),
+                                Border.all(color: style.borderColor, width: 2),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(0.3),
@@ -555,7 +544,7 @@ class _ApprovalViewState extends State<ApprovalView> {
                             child: Text(
                               label,
                               style: TextStyle(
-                                color: isSwapPoint ? Colors.grey[800]! : Colors.white,
+                                color: style.textColor,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -643,9 +632,11 @@ class _ApprovalViewState extends State<ApprovalView> {
                     MapLayerConfig(id: 'checkpoints', label: 'נ.צ', color: _kCheckpointColor, visible: _showCheckpoints, onVisibilityChanged: (_) {}),
                   ],
                   layerBuilder: (visibility, opacity) {
-                    final startId = route?.startPointId;
-                    final endId = route?.endPointId;
-                    final swapId = route?.swapPointId;
+                    final fsRoles = collectSingleRouteRoleIds(widget.navigation, route);
+                    final fsStartIds = <String>{if (fsRoles.startId != null) fsRoles.startId!};
+                    final fsEndIds = <String>{if (fsRoles.endId != null) fsRoles.endId!};
+                    final fsSwapIds = <String>{if (fsRoles.swapId != null) fsRoles.swapId!};
+                    fsEndIds.removeAll(fsSwapIds);
                     return [
                       if (visibility['boundary'] == true && _boundaries.isNotEmpty)
                         PolygonLayer(
@@ -682,29 +673,27 @@ class _ApprovalViewState extends State<ApprovalView> {
                       if (visibility['checkpoints'] == true && pointCps.isNotEmpty)
                         MarkerLayer(
                           markers: pointCps.map((cp) {
-                            Color bgColor;
-                            String letter;
-                            Color borderColor = Colors.white;
-                            final isSwapPoint = swapId != null && cp.id == swapId;
-                            final isStart = (startId != null && cp.id == startId) || cp.type == 'start';
-                            final isEnd = !isSwapPoint && ((endId != null && cp.id == endId) || cp.type == 'end');
-                            if (isSwapPoint) { bgColor = Colors.white; borderColor = Colors.grey[700]!; letter = 'S'; }
-                            else if (isStart) { bgColor = _kStartColor; letter = 'H'; }
-                            else if (isEnd) { bgColor = _kEndColor; letter = 'F'; }
-                            else { bgColor = _kCheckpointColor; letter = 'B'; }
-                            final label = '${cp.sequenceNumber}$letter';
+                            final s = getCheckpointStyle(
+                              checkpointId: cp.id,
+                              sourceId: null,
+                              swapIds: fsSwapIds,
+                              startIds: fsStartIds,
+                              endIds: fsEndIds,
+                              waypointIds: fsRoles.waypointIds,
+                            );
+                            final label = '${cp.sequenceNumber}${s.letter}';
                             return Marker(
                               point: LatLng(cp.coordinates!.lat, cp.coordinates!.lng),
                               width: 38, height: 38,
                               child: Container(
                                 decoration: BoxDecoration(
-                                  color: bgColor,
+                                  color: s.color,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: borderColor, width: 2),
+                                  border: Border.all(color: s.borderColor, width: 2),
                                   boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)],
                                 ),
                                 child: Center(
-                                  child: Text(label, style: TextStyle(color: isSwapPoint ? Colors.grey[800]! : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  child: Text(label, style: TextStyle(color: s.textColor, fontSize: 11, fontWeight: FontWeight.bold)),
                                 ),
                               ),
                             );
