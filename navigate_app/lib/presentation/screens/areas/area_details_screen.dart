@@ -3,11 +3,9 @@ import '../../../domain/entities/area.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
-import '../../../data/repositories/cluster_repository.dart';
 import '../layers/checkpoints_list_screen.dart';
 import '../layers/safety_points_list_screen.dart';
 import '../layers/boundaries_list_screen.dart';
-import '../layers/clusters_list_screen.dart';
 import '../layers/map_with_layers_screen.dart';
 
 /// מסך פרטי אזור - מציג את כל השכבות של אזור ספציפי
@@ -24,12 +22,9 @@ class _AreaDetailsScreenState extends State<AreaDetailsScreen> with WidgetsBindi
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
-
   int _checkpointsCount = 0;
   int _safetyPointsCount = 0;
   int _boundariesCount = 0;
-  int _clustersCount = 0;
   bool _isLoading = true;
 
   @override
@@ -58,13 +53,11 @@ class _AreaDetailsScreenState extends State<AreaDetailsScreen> with WidgetsBindi
       final checkpoints = await _checkpointRepo.getByArea(widget.area.id);
       final safetyPoints = await _safetyPointRepo.getByArea(widget.area.id);
       final boundaries = await _boundaryRepo.getByArea(widget.area.id);
-      final clusters = await _clusterRepo.getByArea(widget.area.id);
 
       setState(() {
         _checkpointsCount = checkpoints.length;
         _safetyPointsCount = safetyPoints.length;
         _boundariesCount = boundaries.length;
-        _clustersCount = clusters.length;
         _isLoading = false;
       });
     } catch (e) {
@@ -210,27 +203,6 @@ class _AreaDetailsScreenState extends State<AreaDetailsScreen> with WidgetsBindi
                       MaterialPageRoute(
                         builder: (context) =>
                             BoundariesListScreen(area: widget.area),
-                      ),
-                    );
-                    _loadCounts();
-                  },
-                ),
-
-                const SizedBox(height: 12),
-
-                // ביצי אזור
-                _buildLayerCard(
-                  context: context,
-                  title: 'ב"א - ביצי אזור',
-                  subtitle: '$_clustersCount פוליגונים',
-                  icon: Icons.grid_on,
-                  color: Colors.green,
-                  onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            ClustersListScreen(area: widget.area),
                       ),
                     );
                     _loadCounts();

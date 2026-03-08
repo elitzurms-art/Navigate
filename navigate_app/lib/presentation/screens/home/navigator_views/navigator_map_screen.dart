@@ -6,11 +6,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/boundary_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
-import '../../../../data/repositories/cluster_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../domain/entities/boundary.dart';
 import '../../../../domain/entities/checkpoint.dart';
-import '../../../../domain/entities/cluster.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/safety_point.dart';
 import '../../../../domain/entities/user.dart';
@@ -45,7 +43,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   final GpsService _gpsService = GpsService();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
 
   LatLng? _currentPosition;
@@ -55,12 +52,10 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
   List<Checkpoint> _checkpoints = [];
 
   bool _showGG = true;
   bool _showNB = false;
-  bool _showBA = false;
   bool _showRoutes = true;
   bool _showNZ = true;
 
@@ -73,7 +68,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   double _ggOpacity = 1.0;
   double _nbOpacity = 1.0;
-  double _baOpacity = 1.0;
   double _routesOpacity = 1.0;
   double _nzOpacity = 1.0;
 
@@ -91,12 +85,11 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
     _startEmergencyFlagListener();
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב, נ"צ
+  /// טעינת שכבות מפה: ג"ג, נת"ב, נ"צ
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
-      final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
 
       // טעינת נקודות ציון — סינון לנקודות שמוקצות למנווט הנוכחי
       final allCheckpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
@@ -120,7 +113,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
         setState(() {
           _safetyPoints = safetyPoints;
           _boundaries = boundaries;
-          _clusters = clusters;
           _checkpoints = checkpoints;
         });
         // התמקד בגבול גזרה אם קיים
@@ -483,17 +475,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
                           ))
                       .toList(),
                 ),
-              // א"ב
-              if (_showBA && _clusters.isNotEmpty)
-                PolygonLayer(
-                  polygons: _clusters.map((cluster) => Polygon(
-                    points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                    color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                    borderColor: Colors.green.withValues(alpha: _baOpacity),
-                    borderStrokeWidth: cluster.strokeWidth,
-                    isFilled: true,
-                  )).toList(),
-                ),
               // נקודות ציון
               if (_showNZ && _checkpoints.isNotEmpty)
                 MarkerLayer(markers: _buildCheckpointMarkers()),
@@ -520,7 +501,6 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
             layers: [
               MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
               MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
-              MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
               MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
               MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
             ],

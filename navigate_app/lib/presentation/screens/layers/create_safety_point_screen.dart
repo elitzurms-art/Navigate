@@ -7,11 +7,9 @@ import '../../../domain/entities/safety_point.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
-import '../../../domain/entities/cluster.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
-import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -35,7 +33,6 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
 
   String _selectedSeverity = 'medium';
   String _geometryType = 'point'; // 'point' או 'polygon'
@@ -44,11 +41,9 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   bool _isLoading = false;
   bool _showOtherLayers = true;
   bool _showGG = true;
-  bool _showBA = true;
   bool _showNZ = true;
   bool _showNB = true;
   double _ggOpacity = 1.0;
-  double _baOpacity = 1.0;
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
   bool _measureMode = false;
@@ -58,7 +53,6 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _existingSafetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
 
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
@@ -75,13 +69,11 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
       final checkpoints = await _checkpointRepo.getByArea(widget.area.id);
       final safetyPoints = await _safetyPointRepo.getByArea(widget.area.id);
       final boundaries = await _boundaryRepo.getByArea(widget.area.id);
-      final clusters = await _clusterRepo.getByArea(widget.area.id);
 
       setState(() {
         _checkpoints = checkpoints;
         _existingSafetyPoints = safetyPoints;
         _boundaries = boundaries;
-        _clusters = clusters;
       });
     } catch (e) {
       print('שגיאה בטעינת שכבות: $e');
@@ -394,19 +386,6 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                               );
                             }).toList(),
                           ),
-                        // שכבת ביצי איזור (בא) — ירוק
-                        if (_showOtherLayers && _showBA && _clusters.isNotEmpty)
-                          PolygonLayer(
-                            polygons: _clusters.map((cluster) {
-                              return Polygon(
-                                points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                                borderColor: Colors.green.withValues(alpha: _baOpacity),
-                                borderStrokeWidth: cluster.strokeWidth,
-                                isFilled: true,
-                              );
-                            }).toList(),
-                          ),
                         // שכבת נקודות ציון (עיגול כחול/ירוק עם מספר)
                         if (_showOtherLayers && _showNZ && _checkpoints.isNotEmpty)
                           MarkerLayer(
@@ -559,7 +538,6 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
                       }),
                       layers: [
                         MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (v) => setState(() => _showGG = v), onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
-                        MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (v) => setState(() => _showBA = v), onOpacityChanged: (v) => setState(() => _baOpacity = v)),
                         MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (v) => setState(() => _showNZ = v), onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
                         MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (v) => setState(() => _showNB = v), onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
                       ],
@@ -627,17 +605,4 @@ class _CreateSafetyPointScreenState extends State<CreateSafetyPointScreen> {
     );
   }
 
-  /// המרת מחרוזת צבע ל-Color
-  Color _parseColor(String colorStr) {
-    final colorMap = {
-      'black': Colors.black,
-      'blue': Colors.blue,
-      'green': Colors.green,
-      'red': Colors.red,
-      'yellow': Colors.yellow,
-      'orange': Colors.orange,
-      'purple': Colors.purple,
-    };
-    return colorMap[colorStr.toLowerCase()] ?? Colors.grey;
-  }
 }

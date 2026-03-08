@@ -34,17 +34,14 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
 
   List<LatLng> _polygonPoints = [];
   bool _isLoading = false;
   bool _showOtherLayers = true;
   bool _showGG = true;
-  bool _showBA = true;
   bool _showNZ = true;
   bool _showNB = true;
   double _ggOpacity = 1.0;
-  double _baOpacity = 1.0;
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
   bool _measureMode = false;
@@ -54,7 +51,6 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _existingClusters = [];
 
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
@@ -69,13 +65,10 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
       final checkpoints = await _checkpointRepo.getByArea(widget.area.id);
       final safetyPoints = await _safetyPointRepo.getByArea(widget.area.id);
       final boundaries = await _boundaryRepo.getByArea(widget.area.id);
-      final clusters = await _clusterRepo.getByArea(widget.area.id);
-
       setState(() {
         _checkpoints = checkpoints;
         _safetyPoints = safetyPoints;
         _boundaries = boundaries;
-        _existingClusters = clusters;
       });
     } catch (e) {
       print('שגיאה בטעינת שכבות: $e');
@@ -303,19 +296,6 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
                             );
                           }).toList(),
                         ),
-                      // שכבת ביצי איזור קיימות
-                      if (_showOtherLayers && _showBA && _existingClusters.isNotEmpty)
-                        PolygonLayer(
-                          polygons: _existingClusters.map((cluster) {
-                            return Polygon(
-                              points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                              color: _parseColor(cluster.color).withValues(alpha: cluster.fillOpacity * 0.4 * _baOpacity),
-                              borderColor: _parseColor(cluster.color).withValues(alpha: 0.6 * _baOpacity),
-                              borderStrokeWidth: cluster.strokeWidth,
-                              isFilled: true,
-                            );
-                          }).toList(),
-                        ),
                       // שכבת נקודות ציון
                       if (_showOtherLayers && _showNZ && _checkpoints.isNotEmpty)
                         MarkerLayer(
@@ -423,7 +403,6 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
                     }),
                     layers: [
                       MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (v) => setState(() => _showGG = v), onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
-                      MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (v) => setState(() => _showBA = v), onOpacityChanged: (v) => setState(() => _baOpacity = v)),
                       MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (v) => setState(() => _showNZ = v), onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
                       MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (v) => setState(() => _showNB = v), onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
                     ],
@@ -435,20 +414,6 @@ class _CreateClusterScreenState extends State<CreateClusterScreen> {
         ),
       ),
     );
-  }
-
-  /// המרת מחרוזת צבע ל-Color
-  Color _parseColor(String colorStr) {
-    final colorMap = {
-      'black': Colors.black,
-      'blue': Colors.blue,
-      'green': Colors.green,
-      'red': Colors.red,
-      'yellow': Colors.yellow,
-      'orange': Colors.orange,
-      'purple': Colors.purple,
-    };
-    return colorMap[colorStr.toLowerCase()] ?? Colors.grey;
   }
 
   /// קבלת צבע לפי רמת חומרה

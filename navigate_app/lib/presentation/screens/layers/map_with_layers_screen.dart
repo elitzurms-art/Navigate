@@ -5,11 +5,9 @@ import '../../../domain/entities/area.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../../domain/entities/boundary.dart';
-import '../../../domain/entities/cluster.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
-import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -28,25 +26,21 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
   final CheckpointRepository _checkpointRepository = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepository = SafetyPointRepository();
   final BoundaryRepository _boundaryRepository = BoundaryRepository();
-  final ClusterRepository _clusterRepository = ClusterRepository();
 
   // מצב שכבות
   bool _showNZ = true;
-  bool _showNB = false;
-  bool _showGG = false;
-  bool _showBA = false;
+  bool _showNB = true;
+  bool _showGG = true;
 
   // שקיפות שכבות (0.0 - 1.0)
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
   double _ggOpacity = 0.5;
-  double _baOpacity = 0.5;
 
   // נתונים
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
   bool _isLoading = true;
 
   bool _measureMode = false;
@@ -68,14 +62,12 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
         _checkpointRepository.getByArea(widget.area.id),
         _safetyPointRepository.getByArea(widget.area.id),
         _boundaryRepository.getByArea(widget.area.id),
-        _clusterRepository.getByArea(widget.area.id),
       ]);
 
       setState(() {
         _checkpoints = results[0] as List<Checkpoint>;
         _safetyPoints = results[1] as List<SafetyPoint>;
         _boundaries = results[2] as List<Boundary>;
-        _clusters = results[3] as List<Cluster>;
         _isLoading = false;
       });
 
@@ -238,19 +230,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
                   }).toList(),
                 ),
 
-              // שכבת ב"א - ביצי איזור
-              if (_showBA && _clusters.isNotEmpty)
-                PolygonLayer(
-                  polygons: _clusters.map((cluster) {
-                    return Polygon(
-                      points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                      color: Colors.green.withOpacity(cluster.fillOpacity * _baOpacity),
-                      borderColor: Colors.green.withOpacity(_baOpacity),
-                      borderStrokeWidth: cluster.strokeWidth,
-                      isFilled: true,
-                    );
-                  }).toList(),
-                ),
               ...MapControls.buildMeasureLayers(_measurePoints),
             ],
           ),
@@ -285,15 +264,6 @@ class _MapWithLayersScreenState extends State<MapWithLayersScreen> {
                 opacity: _ggOpacity,
                 onVisibilityChanged: (v) => setState(() => _showGG = v),
                 onOpacityChanged: (v) => setState(() => _ggOpacity = v),
-              ),
-              MapLayerConfig(
-                id: 'ba',
-                label: 'ביצי אזור',
-                color: Colors.green,
-                visible: _showBA,
-                opacity: _baOpacity,
-                onVisibilityChanged: (v) => setState(() => _showBA = v),
-                onOpacityChanged: (v) => setState(() => _baOpacity = v),
               ),
             ],
             measureMode: _measureMode,

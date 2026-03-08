@@ -19,14 +19,12 @@ import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/area_repository.dart';
 import '../../../../data/repositories/boundary_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
-import '../../../../data/repositories/cluster_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/user_repository.dart';
 import '../../../../data/repositories/unit_repository.dart';
 import '../../../../domain/entities/safety_point.dart';
 import '../../../../domain/entities/boundary.dart';
-import '../../../../domain/entities/cluster.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
@@ -59,7 +57,6 @@ class _LearningViewState extends State<LearningView>
   final NavigationRepository _navigationRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
   final MapController _mapController = MapController();
 
   bool _measureMode = false;
@@ -67,18 +64,15 @@ class _LearningViewState extends State<LearningView>
 
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
 
   bool _showGG = true;
   bool _showNZ = true;
   bool _showNB = false;
-  bool _showBA = false;
   bool _showRoutes = true;
 
   double _ggOpacity = 1.0;
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
-  double _baOpacity = 1.0;
   double _routesOpacity = 1.0;
 
   /// ניווט נוכחי — mutable, מתעדכן אחרי כל שמירה
@@ -404,30 +398,17 @@ class _LearningViewState extends State<LearningView>
 
     final usedDecoys = <String>{};
     final assignedCpIds = route.checkpointIds.toSet();
-    const maxRadius = 400;
 
     for (final realCp in middleCps) {
-      var currentRadius = settings.clusterSpreadMeters;
-      const radiusStep = 100;
-      List<Checkpoint> candidates = [];
       final neededDecoys = settings.clusterSize - 1;
-
-      while (candidates.length < neededDecoys && currentRadius <= maxRadius) {
-        candidates = _allAreaCheckpoints
-            .where((cp) => cp.id != realCp.id
-                && !specialIds.contains(cp.id)
-                && !assignedCpIds.contains(cp.id)
-                && !usedDecoys.contains(cp.id)
-                && cp.coordinates != null && !cp.isPolygon
-                && _distanceMeters(realCp, cp) <= currentRadius)
-            .toList();
-
-        if (candidates.length < neededDecoys && currentRadius < maxRadius) {
-          currentRadius += radiusStep;
-        } else {
-          break;
-        }
-      }
+      final candidates = _allAreaCheckpoints
+          .where((cp) => cp.id != realCp.id
+              && !specialIds.contains(cp.id)
+              && !assignedCpIds.contains(cp.id)
+              && !usedDecoys.contains(cp.id)
+              && cp.coordinates != null && !cp.isPolygon
+              && _distanceMeters(realCp, cp) <= settings.clusterSpreadMeters)
+          .toList();
 
       candidates.sort((a, b) =>
           _distanceMeters(realCp, a).compareTo(_distanceMeters(realCp, b)));
@@ -471,17 +452,15 @@ class _LearningViewState extends State<LearningView>
     } catch (_) {}
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב, א"ב
+  /// טעינת שכבות מפה: ג"ג, נת"ב
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
-      final clusters = await _clusterRepo.getByArea(widget.navigation.areaId);
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
           _boundaries = boundaries;
-          _clusters = clusters;
         });
       }
     } catch (_) {}
@@ -850,17 +829,6 @@ class _LearningViewState extends State<LearningView>
                             ))
                         .toList(),
                   ),
-                // א"ב
-                if (_showBA && _clusters.isNotEmpty)
-                  PolygonLayer(
-                    polygons: _clusters.map((cluster) => Polygon(
-                      points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                      color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                      borderColor: Colors.green.withValues(alpha: _baOpacity),
-                      borderStrokeWidth: cluster.strokeWidth,
-                      isFilled: true,
-                    )).toList(),
-                  ),
                 // ציר רפרנס (כחול בהיר) — מוסתר במצב אשכולות
                 if (_showRoutes && refPoints.length > 1 && !(_currentNavigation.isClusters && _clusterMap.isNotEmpty))
                   PolylineLayer(polylines: [
@@ -912,7 +880,6 @@ class _LearningViewState extends State<LearningView>
                 MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
                 MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
                 MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
-                MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
                 MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
               ],
             ),
@@ -940,7 +907,6 @@ class _LearningViewState extends State<LearningView>
           bounds: bounds,
           boundaries: _boundaries,
           safetyPoints: _safetyPoints,
-          clusters: _clusters,
           defaultMap: widget.navigation.displaySettings.defaultMap,
         ),
       ),
@@ -2386,7 +2352,6 @@ class _FullscreenRouteMap extends StatefulWidget {
   final LatLngBounds bounds;
   final List<Boundary> boundaries;
   final List<SafetyPoint> safetyPoints;
-  final List<Cluster> clusters;
   final String? defaultMap;
 
   const _FullscreenRouteMap({
@@ -2397,7 +2362,6 @@ class _FullscreenRouteMap extends StatefulWidget {
     required this.bounds,
     required this.boundaries,
     required this.safetyPoints,
-    required this.clusters,
     this.defaultMap,
   });
 
@@ -2413,13 +2377,11 @@ class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
   bool _showGG = true;
   bool _showNZ = true;
   bool _showNB = false;
-  bool _showBA = false;
   bool _showRoutes = true;
 
   double _ggOpacity = 1.0;
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
-  double _baOpacity = 1.0;
   double _routesOpacity = 1.0;
 
   @override
@@ -2482,16 +2444,6 @@ class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
                           ))
                       .toList(),
                 ),
-              if (_showBA && widget.clusters.isNotEmpty)
-                PolygonLayer(
-                  polygons: widget.clusters.map((cluster) => Polygon(
-                    points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                    color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                    borderColor: Colors.green.withValues(alpha: _baOpacity),
-                    borderStrokeWidth: cluster.strokeWidth,
-                    isFilled: true,
-                  )).toList(),
-                ),
               if (_showRoutes && widget.refPoints.length > 1)
                 PolylineLayer(polylines: [
                   Polyline(
@@ -2534,7 +2486,6 @@ class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
               MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, onVisibilityChanged: (v) => setState(() => _showGG = v), opacity: _ggOpacity, onOpacityChanged: (v) => setState(() => _ggOpacity = v)),
               MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, onVisibilityChanged: (v) => setState(() => _showNZ = v), opacity: _nzOpacity, onOpacityChanged: (v) => setState(() => _nzOpacity = v)),
               MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, onVisibilityChanged: (v) => setState(() => _showNB = v), opacity: _nbOpacity, onOpacityChanged: (v) => setState(() => _nbOpacity = v)),
-              MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, onVisibilityChanged: (v) => setState(() => _showBA = v), opacity: _baOpacity, onOpacityChanged: (v) => setState(() => _baOpacity = v)),
               MapLayerConfig(id: 'routes', label: 'מסלול', color: Colors.orange, visible: _showRoutes, onVisibilityChanged: (v) => setState(() => _showRoutes = v), opacity: _routesOpacity, onOpacityChanged: (v) => setState(() => _routesOpacity = v)),
             ],
           ),

@@ -7,12 +7,10 @@ import '../../../domain/entities/user_role.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../../domain/entities/boundary.dart';
-import '../../../domain/entities/cluster.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
-import '../../../data/repositories/cluster_repository.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/fullscreen_map_screen.dart';
@@ -34,7 +32,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
   final CheckpointRepository _checkpointRepository = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepository = SafetyPointRepository();
   final BoundaryRepository _boundaryRepository = BoundaryRepository();
-  final ClusterRepository _clusterRepository = ClusterRepository();
   final MapController _mapController = MapController();
 
   List<domain.Navigation> _navigations = [];
@@ -45,14 +42,12 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
   bool _showNZ = true;
   bool _showNB = false;
   bool _showGG = false;
-  bool _showBA = false;
   bool _showMap = true;
 
   // שקיפות שכבות
   double _nzOpacity = 1.0;
   double _nbOpacity = 1.0;
   double _ggOpacity = 1.0;
-  double _baOpacity = 1.0;
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -61,7 +56,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
   bool _isLoadingLayers = false;
 
   // ניווט שנבחר לטעינת שכבות
@@ -122,14 +116,12 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
         _checkpointRepository.getByArea(navigation.areaId),
         _safetyPointRepository.getByArea(navigation.areaId),
         _boundaryRepository.getByArea(navigation.areaId),
-        _clusterRepository.getByArea(navigation.areaId),
       ]);
 
       setState(() {
         _checkpoints = results[0] as List<Checkpoint>;
         _safetyPoints = results[1] as List<SafetyPoint>;
         _boundaries = results[2] as List<Boundary>;
-        _clusters = results[3] as List<Cluster>;
         _isLoadingLayers = false;
       });
 
@@ -599,19 +591,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
             }).toList(),
           ),
 
-        // שכבת BA - ביצי אזור
-        if (_showBA && _clusters.isNotEmpty)
-          PolygonLayer(
-            polygons: _clusters.map((cluster) {
-              return Polygon(
-                points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.green.withValues(alpha: cluster.fillOpacity * _baOpacity),
-                borderColor: Colors.green.withValues(alpha: _baOpacity),
-                borderStrokeWidth: cluster.strokeWidth,
-                isFilled: true,
-              );
-            }).toList(),
-          ),
           ...MapControls.buildMeasureLayers(_measurePoints),
         ],
       ),
@@ -628,7 +607,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
                 MapLayerConfig(id: 'nz', label: 'נקודות ציון', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
                 MapLayerConfig(id: 'nb', label: 'נקודות בטיחות', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
                 MapLayerConfig(id: 'gg', label: 'גבול גזרה', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                MapLayerConfig(id: 'ba', label: 'ביצי אזור', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
               ],
               layerBuilder: (visibility, opacity) => [
                 if (visibility['nz'] == true && _checkpoints.isNotEmpty)
@@ -696,16 +674,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
                           isFilled: true,
                         )).toList(),
                   ),
-                if (visibility['ba'] == true && _clusters.isNotEmpty)
-                  PolygonLayer(
-                    polygons: _clusters.map((cluster) => Polygon(
-                          points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.green.withValues(alpha: cluster.fillOpacity * (opacity['ba'] ?? 1.0)),
-                          borderColor: Colors.green.withValues(alpha: (opacity['ba'] ?? 1.0)),
-                          borderStrokeWidth: cluster.strokeWidth,
-                          isFilled: true,
-                        )).toList(),
-                  ),
               ],
             ),
           ));
@@ -737,15 +705,6 @@ class _TrainingNavigationsScreenState extends State<TrainingNavigationsScreen> {
             onVisibilityChanged: (v) => setState(() => _showGG = v),
             opacity: _ggOpacity,
             onOpacityChanged: (v) => setState(() => _ggOpacity = v),
-          ),
-          MapLayerConfig(
-            id: 'ba',
-            label: 'ביצי אזור',
-            color: Colors.green,
-            visible: _showBA,
-            onVisibilityChanged: (v) => setState(() => _showBA = v),
-            opacity: _baOpacity,
-            onOpacityChanged: (v) => setState(() => _baOpacity = v),
           ),
         ],
         measureMode: _measureMode,

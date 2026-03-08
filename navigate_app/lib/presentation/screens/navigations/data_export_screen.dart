@@ -15,11 +15,9 @@ import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/boundary.dart';
 import '../../../domain/entities/safety_point.dart';
-import '../../../domain/entities/cluster.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
-import '../../../data/repositories/cluster_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
@@ -48,13 +46,11 @@ class _DataExportScreenState extends State<DataExportScreen> {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final BoundaryRepository _boundaryRepo = BoundaryRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final ClusterRepository _clusterRepo = ClusterRepository();
   final UserRepository _userRepo = UserRepository();
 
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
-  List<Cluster> _clusters = [];
   Boundary? _boundary;
   Map<String, String> _userNames = {};
   bool _isLoading = false;
@@ -594,9 +590,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
   bool _showGG = true;
   double _ggOpacity = 0.5;
 
-  bool _showBA = false;
-  double _baOpacity = 0.7;
-
   // סינון נקודות ציון
   bool _showDistributedOnly = true;
 
@@ -640,7 +633,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
         _checkpointRepo.getByArea(widget.navigation.areaId),
         _safetyPointRepo.getByArea(widget.navigation.areaId),
         _boundaryRepo.getByArea(widget.navigation.areaId),
-        _clusterRepo.getByArea(widget.navigation.areaId),
       ]);
 
       Boundary? boundary;
@@ -659,7 +651,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
         _checkpoints = results[0] as List<Checkpoint>;
         _safetyPoints = results[1] as List<SafetyPoint>;
         _boundaries = results[2] as List<Boundary>;
-        _clusters = results[3] as List<Cluster>;
         _boundary = boundary;
         _userNames = names;
         _isLoading = false;
@@ -1091,7 +1082,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
           checkpoints: _checkpoints,
           safetyPoints: _safetyPoints,
           boundaries: _boundaries,
-          clusters: _clusters,
           boundary: _boundary,
           initialShowNZ: _showNZ,
           initialNzOpacity: _nzOpacity,
@@ -1099,8 +1089,6 @@ class _DataExportScreenState extends State<DataExportScreen> {
           initialNbOpacity: _nbOpacity,
           initialShowGG: _showGG,
           initialGgOpacity: _ggOpacity,
-          initialShowBA: _showBA,
-          initialBaOpacity: _baOpacity,
           initialShowDistributedOnly: _showDistributedOnly,
           afterLearning: widget.afterLearning,
           userNames: _userNames,
@@ -1261,7 +1249,7 @@ class _DataExportScreenState extends State<DataExportScreen> {
   Widget _buildMapExportCard() {
     return _buildExportCard(
       title: 'ייצא מפה',
-      description: 'ייצא מפה עם שכבות (נ.צ, ג.ג, נ.ב, ב.א) לקובץ PDF',
+      description: 'ייצא מפה עם שכבות (נ.צ, ג.ג, נ.ב) לקובץ PDF',
       icon: Icons.map,
       color: Colors.orange,
       onTap: _exportMap,
@@ -1283,7 +1271,6 @@ class _MapPreviewScreen extends StatefulWidget {
   final List<Checkpoint> checkpoints;
   final List<SafetyPoint> safetyPoints;
   final List<Boundary> boundaries;
-  final List<Cluster> clusters;
   final Boundary? boundary;
   final bool initialShowNZ;
   final double initialNzOpacity;
@@ -1291,8 +1278,6 @@ class _MapPreviewScreen extends StatefulWidget {
   final double initialNbOpacity;
   final bool initialShowGG;
   final double initialGgOpacity;
-  final bool initialShowBA;
-  final double initialBaOpacity;
   final bool initialShowDistributedOnly;
   final bool afterLearning;
   final Map<String, String> userNames;
@@ -1302,15 +1287,12 @@ class _MapPreviewScreen extends StatefulWidget {
     required this.checkpoints,
     required this.safetyPoints,
     required this.boundaries,
-    required this.clusters,
     required this.initialShowNZ,
     required this.initialNzOpacity,
     required this.initialShowNB,
     required this.initialNbOpacity,
     required this.initialShowGG,
     required this.initialGgOpacity,
-    required this.initialShowBA,
-    required this.initialBaOpacity,
     required this.initialShowDistributedOnly,
     this.boundary,
     this.afterLearning = false,
@@ -1331,8 +1313,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
   late double _nbOpacity;
   late bool _showGG;
   late double _ggOpacity;
-  late bool _showBA;
-  late double _baOpacity;
   late bool _showDistributedOnly;
 
   bool _isExporting = false;
@@ -1498,8 +1478,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     _nbOpacity = widget.initialNbOpacity;
     _showGG = widget.initialShowGG;
     _ggOpacity = widget.initialGgOpacity;
-    _showBA = widget.initialShowBA;
-    _baOpacity = widget.initialBaOpacity;
     _showDistributedOnly = widget.initialShowDistributedOnly;
     _visibleRouteNavigatorIds = widget.navigation.routes.keys.toSet();
 
@@ -1561,14 +1539,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
     if (_showGG) {
       for (final b in widget.boundaries) {
         for (final c in b.coordinates) {
-          allPoints.add(LatLng(c.lat, c.lng));
-        }
-      }
-    }
-
-    if (_showBA) {
-      for (final cl in widget.clusters) {
-        for (final c in cl.coordinates) {
           allPoints.add(LatLng(c.lat, c.lng));
         }
       }
@@ -1786,19 +1756,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
             }).toList(),
           ),
 
-        // BA layer - clusters
-        if (_showBA && widget.clusters.isNotEmpty)
-          PolygonLayer(
-            polygons: widget.clusters.map((cluster) {
-              return Polygon(
-                points: cluster.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                color: Colors.green.withOpacity(cluster.fillOpacity * _baOpacity),
-                borderColor: Colors.green.withOpacity(_baOpacity),
-                borderStrokeWidth: cluster.strokeWidth,
-                isFilled: true,
-              );
-            }).toList(),
-          ),
         ...MapControls.buildMeasureLayers(_measurePoints),
         // שכבת צירים מעודכנים (afterLearning) — מסוננת לפי מנווט
         if (widget.afterLearning)
@@ -1912,7 +1869,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                     if (_showNZ) pw.Text('NZ ', style: pw.TextStyle(font: regularFont, fontSize: 9, color: PdfColors.blue)),
                     if (_showNB) pw.Text('NB ', style: pw.TextStyle(font: regularFont, fontSize: 9, color: PdfColors.red)),
                     if (_showGG) pw.Text('GG ', style: pw.TextStyle(font: regularFont, fontSize: 9, color: PdfColors.black)),
-                    if (_showBA) pw.Text('BA ', style: pw.TextStyle(font: regularFont, fontSize: 9, color: PdfColors.green)),
                     pw.Text(
                       '  |  ${widget.navigation.createdAt.toString().split(' ')[0]}',
                       style: pw.TextStyle(font: regularFont, fontSize: 9, color: PdfColors.grey700),
@@ -2296,12 +2252,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                 onVisibilityChanged: (v) => setState(() => _showGG = v),
                 onOpacityChanged: (v) => setState(() => _ggOpacity = v),
               ),
-              MapLayerConfig(
-                id: 'ba', label: 'ב.א', color: Colors.green,
-                visible: _showBA, opacity: _baOpacity,
-                onVisibilityChanged: (v) => setState(() => _showBA = v),
-                onOpacityChanged: (v) => setState(() => _baOpacity = v),
-              ),
             ],
             onFullscreen: () {
               final camera = _mapController.camera;
@@ -2314,7 +2264,6 @@ class _MapPreviewScreenState extends State<_MapPreviewScreen> {
                     MapLayerConfig(id: 'nz', label: 'נ.צ', color: Colors.blue, visible: _showNZ, opacity: _nzOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
                     MapLayerConfig(id: 'nb', label: 'נ.ב', color: Colors.red, visible: _showNB, opacity: _nbOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
                     MapLayerConfig(id: 'gg', label: 'ג.ג', color: Colors.black, visible: _showGG, opacity: _ggOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
-                    MapLayerConfig(id: 'ba', label: 'ב.א', color: Colors.green, visible: _showBA, opacity: _baOpacity, onVisibilityChanged: (_) {}, onOpacityChanged: (_) {}),
                   ],
                   layerBuilder: (visibility, opacity) => [
                     if (visibility['gg'] == true && widget.boundary != null && widget.boundary!.coordinates.isNotEmpty)

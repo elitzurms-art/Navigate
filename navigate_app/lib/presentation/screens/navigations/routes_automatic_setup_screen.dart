@@ -1,4 +1,7 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
+import '../../../core/utils/geometry_utils.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/checkpoint.dart';
@@ -549,6 +552,109 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     );
   }
 
+  /// בודק אם יש מספיק נקודות הסחה לכל אשכול בכל ציר.
+  /// מחזיר null אם הכל תקין, אחרת מפה: navigatorId → רשימת (cpName, actualSize).
+  Map<String, List<(String, int)>>? _validateClusterDecoys(
+      Map<String, domain.AssignedRoute> routes) {
+    if (_navigationType != 'clusters' && _navigationType != 'clusters_reverse') return null;
+
+    final allUndersized = <String, List<(String, int)>>{};
+
+    for (final entry in routes.entries) {
+      final route = entry.value;
+      final specialIds = <String>{};
+      if (route.startPointId != null) specialIds.add(route.startPointId!);
+      if (route.endPointId != null) specialIds.add(route.endPointId!);
+      for (final wpId in route.waypointIds) {
+        specialIds.add(wpId);
+      }
+
+      final assignedCpIds = route.checkpointIds.toSet();
+      final usedDecoys = <String>{};
+      final neededDecoys = _clusterSize - 1;
+      final undersized = <(String, int)>[];
+
+      // נקודות אמצע בלבד (ללא התחלה/סיום/ביניים/פוליגון)
+      final middleCps = route.checkpointIds
+          .where((id) => !specialIds.contains(id))
+          .map((id) {
+            try {
+              return _checkpoints.firstWhere((cp) => cp.id == id);
+            } catch (_) {
+              return null;
+            }
+          })
+          .where((cp) => cp != null && cp.coordinates != null && !cp.isPolygon)
+          .cast<Checkpoint>()
+          .toList();
+
+      for (final realCp in middleCps) {
+        final candidates = _checkpoints
+            .where((cp) => cp.id != realCp.id
+                && !specialIds.contains(cp.id)
+                && !assignedCpIds.contains(cp.id)
+                && !usedDecoys.contains(cp.id)
+                && cp.coordinates != null && !cp.isPolygon
+                && GeometryUtils.distanceBetweenMeters(realCp.coordinates!, cp.coordinates!) <= _clusterSpreadMeters)
+            .toList();
+        candidates.sort((a, b) =>
+            GeometryUtils.distanceBetweenMeters(realCp.coordinates!, a.coordinates!)
+                .compareTo(GeometryUtils.distanceBetweenMeters(realCp.coordinates!, b.coordinates!)));
+        final actualDecoys = candidates.take(neededDecoys).toList();
+        for (final d in actualDecoys) {
+          usedDecoys.add(d.id);
+        }
+
+        final actualSize = 1 + actualDecoys.length;
+        if (actualSize < _clusterSize) {
+          undersized.add((realCp.name, actualSize));
+        }
+      }
+
+      if (undersized.isNotEmpty) allUndersized[entry.key] = undersized;
+    }
+
+    return allUndersized.isEmpty ? null : allUndersized;
+  }
+
+  Future<String?> _showClusterValidationDialog(
+      Map<String, List<(String, int)>> undersized) {
+    final minSize = undersized.values
+        .expand((list) => list.map((e) => e.$2))
+        .reduce(min);
+
+    final totalUndersized = undersized.values.expand((l) => l).length;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('אשכולות עם חוסר בנקודות'),
+        content: Text(
+          'רדיוס חיפוש: $_clusterSpreadMeters מטר\n'
+          'גודל אשכול: $_clusterSize\n\n'
+          '$totalUndersized אשכולות עם פחות נקודות מהנדרש.\n'
+          'גודל מינימלי שנמצא: $minSize',
+        ),
+        actions: [
+          if (_clusterSpreadMeters < 6000)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'increase_radius'),
+              child: const Text('הגדל רדיוס'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'reduce_all'),
+            child: Text('הקטן אשכולות ל-$minSize'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, 'accept'),
+            child: const Text('המשך בכל זאת'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _saveAndNavigate(
     Map<String, domain.AssignedRoute> routes,
     domain.DistributionResult distributionResult,
@@ -564,6 +670,31 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
           duration: const Duration(seconds: 3),
         ),
       );
+    }
+
+    // ולידציית אשכולות — בדיקת מספיק נקודות הסחה
+    if (_navigationType == 'clusters' || _navigationType == 'clusters_reverse') {
+      final undersized = _validateClusterDecoys(routes);
+      if (undersized != null && mounted) {
+        final action = await _showClusterValidationDialog(undersized);
+        if (!mounted) return;
+
+        if (action == 'increase_radius') {
+          _clusterSpreadMeters = (_clusterSpreadMeters + 100).clamp(50, 6000);
+          setState(() {});
+          return _saveAndNavigate(routes, distributionResult);
+        } else if (action == 'reduce_all') {
+          final minSize = undersized.values
+              .expand((l) => l.map((e) => e.$2))
+              .reduce(min);
+          _clusterSize = minSize;
+          setState(() {});
+          // ממשיכים עם גודל מוקטן
+        } else if (action == null) {
+          return; // ביטל
+        }
+        // 'accept' → ממשיכים כרגיל
+      }
     }
 
     // שמירת הגדרות + צירים + סטטוס חלוקה
@@ -1879,13 +2010,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             Slider(
               value: _clusterSpreadMeters.toDouble(),
               min: 50,
-              max: 500,
-              divisions: 9,
+              max: 6000,
+              divisions: 119,
               label: '$_clusterSpreadMeters מ\'',
               onChanged: (v) => setState(() => _clusterSpreadMeters = (v / 50).round() * 50),
             ),
             Text(
-              'נקודות מטעות ייבחרו מתוך נ"צ בטווח הרדיוס. אם אין מספיק — הרדיוס יורחב אוטומטית',
+              'נקודות מטעות ייבחרו מתוך נ"צ בטווח הרדיוס',
               style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
             const Divider(height: 24),

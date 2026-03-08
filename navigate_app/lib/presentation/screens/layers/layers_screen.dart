@@ -4,7 +4,6 @@ import '../../../data/repositories/area_repository.dart';
 import 'checkpoints_list_screen.dart';
 import 'safety_points_list_screen.dart';
 import 'boundaries_list_screen.dart';
-import 'clusters_list_screen.dart';
 import 'map_with_layers_screen.dart';
 
 /// מסך שכבות
@@ -131,14 +130,6 @@ class _LayersScreenState extends State<LayersScreen> {
                       icon: Icons.border_all,
                       color: Colors.black,
                     ),
-                    _buildLayerCategory(
-                      context,
-                      layerType: 'ba',
-                      title: 'ב"א - ביצי איזור',
-                      description: 'פוליגון ירוק',
-                      icon: Icons.grid_on,
-                      color: Colors.green,
-                    ),
                   ],
                 ),
       floatingActionButton: _selectedArea != null
@@ -204,15 +195,6 @@ class _LayersScreenState extends State<LayersScreen> {
                   MaterialPageRoute(
                     builder: (context) =>
                         BoundariesListScreen(area: _selectedArea!),
-                  ),
-                );
-                break;
-              case 'ba':
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        ClustersListScreen(area: _selectedArea!),
                   ),
                 );
                 break;
