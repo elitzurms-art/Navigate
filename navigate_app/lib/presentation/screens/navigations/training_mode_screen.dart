@@ -105,6 +105,13 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   TimeOfDay _quizStartTime = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _quizEndTime = const TimeOfDay(hour: 17, minute: 0);
 
+  // הגדרות חשיפת אשכולות
+  bool _revealOpenManually = false;
+  bool _autoRevealTimes = false;
+  DateTime _revealDate = DateTime.now();
+  TimeOfDay _revealStartTime = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _revealEndTime = const TimeOfDay(hour: 17, minute: 0);
+
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
   // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
@@ -202,6 +209,32 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           hour: int.tryParse(parts[0]) ?? 17,
           minute: int.tryParse(parts[1]) ?? 0,
         );
+      }
+    }
+
+    // חשיפת אשכולות
+    if (_currentNavigation.usesClusters) {
+      final cs = _currentNavigation.clusterSettings;
+      _revealOpenManually = cs.revealOpenManually;
+      _autoRevealTimes = cs.autoRevealTimes;
+      if (cs.revealDate != null) _revealDate = cs.revealDate!;
+      if (cs.revealStartTime != null) {
+        final parts = cs.revealStartTime!.split(':');
+        if (parts.length == 2) {
+          _revealStartTime = TimeOfDay(
+            hour: int.tryParse(parts[0]) ?? 8,
+            minute: int.tryParse(parts[1]) ?? 0,
+          );
+        }
+      }
+      if (cs.revealEndTime != null) {
+        final parts = cs.revealEndTime!.split(':');
+        if (parts.length == 2) {
+          _revealEndTime = TimeOfDay(
+            hour: int.tryParse(parts[0]) ?? 17,
+            minute: int.tryParse(parts[1]) ?? 0,
+          );
+        }
       }
     }
   }
@@ -1149,6 +1182,97 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
                 ],
               ],
 
+              // חשיפת נקודות באשכולות (רק לניווט אשכולות)
+              if (_currentNavigation.usesClusters) ...[
+                const Divider(),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.visibility, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Text(
+                      'חשיפת נקודות אמיתיות',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                SwitchListTile(
+                  title: const Text('פתח חשיפה ידנית'),
+                  subtitle: const Text('הנקודות האמיתיות ייחשפו מיידית לכל המנווטים'),
+                  value: _revealOpenManually,
+                  onChanged: (value) {
+                    setState(() => _revealOpenManually = value);
+                    _autoSaveClusterRevealSettings();
+                  },
+                ),
+
+                SwitchListTile(
+                  title: const Text('הגדר זמני חשיפה אוטומטית'),
+                  value: _autoRevealTimes,
+                  onChanged: (value) {
+                    setState(() => _autoRevealTimes = value);
+                    _autoSaveClusterRevealSettings();
+                  },
+                ),
+
+                if (_autoRevealTimes) ...[
+                  const SizedBox(height: 8),
+                  ListTile(
+                    title: const Text('תאריך חשיפה'),
+                    subtitle: Text(
+                      '${_revealDate.day}/${_revealDate.month}/${_revealDate.year}',
+                    ),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _revealDate,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 60)),
+                      );
+                      if (date != null) {
+                        setState(() => _revealDate = date);
+                        _autoSaveClusterRevealSettings();
+                      }
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('שעת התחלה'),
+                    subtitle: Text(_revealStartTime.format(context)),
+                    trailing: const Icon(Icons.access_time),
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _revealStartTime,
+                      );
+                      if (time != null) {
+                        setState(() => _revealStartTime = time);
+                        _autoSaveClusterRevealSettings();
+                      }
+                    },
+                  ),
+                  ListTile(
+                    title: const Text('שעת סיום'),
+                    subtitle: Text(_revealEndTime.format(context)),
+                    trailing: const Icon(Icons.access_time),
+                    onTap: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _revealEndTime,
+                      );
+                      if (time != null) {
+                        setState(() => _revealEndTime = time);
+                        _autoSaveClusterRevealSettings();
+                      }
+                    },
+                  ),
+                ],
+              ],
+
               const SizedBox(height: 24),
             ],
           ),
@@ -1203,6 +1327,32 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       _scheduleAutoLearning();
     } catch (e) {
       print('DEBUG TrainingMode: auto-save error: $e');
+    }
+  }
+
+  /// שמירה אוטומטית של הגדרות חשיפת אשכולות
+  Future<void> _autoSaveClusterRevealSettings() async {
+    final newCluster = _currentNavigation.clusterSettings.copyWith(
+      revealOpenManually: _revealOpenManually,
+      autoRevealTimes: _autoRevealTimes,
+      revealDate: _autoRevealTimes ? _revealDate : null,
+      revealStartTime: _autoRevealTimes
+          ? '${_revealStartTime.hour.toString().padLeft(2, '0')}:${_revealStartTime.minute.toString().padLeft(2, '0')}'
+          : null,
+      revealEndTime: _autoRevealTimes
+          ? '${_revealEndTime.hour.toString().padLeft(2, '0')}:${_revealEndTime.minute.toString().padLeft(2, '0')}'
+          : null,
+    );
+    if (newCluster == _currentNavigation.clusterSettings) return;
+    try {
+      final updatedNav = _currentNavigation.copyWith(
+        clusterSettings: newCluster,
+        updatedAt: DateTime.now(),
+      );
+      await _navRepo.update(updatedNav);
+      if (mounted) setState(() => _currentNavigation = updatedNav);
+    } catch (e) {
+      print('DEBUG TrainingMode: cluster reveal auto-save error: $e');
     }
   }
 

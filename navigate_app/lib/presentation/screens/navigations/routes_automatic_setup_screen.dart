@@ -76,8 +76,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   // אשכולות
   int _clusterSize = 3;
   int _clusterSpreadMeters = 200;
-  bool _revealEnabled = true;
-  int _revealAfterMinutes = 30;
 
   // צנחנים
   List<String> _dropPointIds = [];
@@ -126,8 +124,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       // אשכולות
       _clusterSize = nav.clusterSettings.clusterSize;
       _clusterSpreadMeters = nav.clusterSettings.clusterSpreadMeters;
-      _revealEnabled = nav.clusterSettings.revealEnabled;
-      _revealAfterMinutes = nav.clusterSettings.revealAfterMinutes;
 
       // צנחנים
       if (nav.parachuteSettings != null) {
@@ -304,11 +300,9 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       starNavigatingMinutes: _navigationType == 'star' ? _starNavigatingMinutes : null,
       starAutoMode: _navigationType == 'star' ? _starAutoMode : false,
       clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse' || (_navigationType == 'parachute' && _routeMode == 'clusters'))
-          ? ClusterSettings(
+          ? widget.navigation.clusterSettings.copyWith(
               clusterSize: _clusterSize,
               clusterSpreadMeters: _clusterSpreadMeters,
-              revealEnabled: _revealEnabled,
-              revealAfterMinutes: _revealAfterMinutes,
             )
           : const ClusterSettings(),
       parachuteSettings: _navigationType == 'parachute'
@@ -762,11 +756,9 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
         manualGroups: _manualGroups,
       ),
       clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
-          ? ClusterSettings(
+          ? widget.navigation.clusterSettings.copyWith(
               clusterSize: _clusterSize,
               clusterSpreadMeters: _clusterSpreadMeters,
-              revealEnabled: _revealEnabled,
-              revealAfterMinutes: _revealAfterMinutes,
             )
           : const ClusterSettings(),
       starLearningMinutes: _navigationType == 'star' ? _starLearningMinutes : null,
@@ -2191,36 +2183,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               'נקודות מטעות ייבחרו מתוך נ"צ בטווח הרדיוס',
               style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),
-            const Divider(height: 24),
-            // חשיפת נקודות
-            SwitchListTile(
-              title: const Text('חשיפת נקודות אמיתיות'),
-              subtitle: const Text('אפשר למנווטים לראות את הנקודה האמיתית לאחר זמן מוגדר'),
-              value: _revealEnabled,
-              contentPadding: EdgeInsets.zero,
-              onChanged: (v) => setState(() => _revealEnabled = v),
-            ),
-            if (_revealEnabled) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Expanded(child: Text('חשיפה אחרי (דקות)')),
-                  Text('$_revealAfterMinutes', style: const TextStyle(fontWeight: FontWeight.bold)),
-                ],
-              ),
-              Slider(
-                value: _revealAfterMinutes.toDouble(),
-                min: 5,
-                max: 120,
-                divisions: 23,
-                label: '$_revealAfterMinutes דקות',
-                onChanged: (v) => setState(() => _revealAfterMinutes = (v / 5).round() * 5),
-              ),
-              Text(
-                'הנקודות האמיתיות ייחשפו $_revealAfterMinutes דקות אחרי תחילת הניווט',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-              ),
-            ],
           ],
         ),
       ),

@@ -4789,6 +4789,17 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         },
                       ),
                       if (_currentNavigation != null && _currentNavigation!.usesClusters) ...[
+                        const Divider(height: 16),
+                        Text('חשיפת נקודות', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(height: 2),
+                        Text(
+                          _currentNavigation!.clusterSettings.isRevealCurrentlyOpen
+                              ? 'חשיפה גלובלית פעילה'
+                              : 'חשיפה גלובלית כבויה',
+                          style: TextStyle(fontSize: 11,
+                              color: _currentNavigation!.clusterSettings.isRevealCurrentlyOpen ? Colors.green : Colors.grey),
+                        ),
+                        const SizedBox(height: 4),
                         SwitchListTile(
                           title: const Text('חשיפת נקודות', style: TextStyle(fontSize: 13)),
                           subtitle: Text(
@@ -5222,6 +5233,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         case 'positionSources':
           _navigatorPositionSourcesOverride[navigatorId] = null;
           await _trackRepo.updatePositionSourcesOverride(trackId, enabledSources: null);
+          break;
+        case 'clusterReveal':
+          _navigatorOverrideRevealEnabled[navigatorId] = null;
+          await _trackRepo.updateRevealOverride(trackId, enabled: null);
           break;
         case 'alertToggle':
           // איפוס כל דריסות ההתראות לערכי ברירת מחדל של הניווט
@@ -7088,6 +7103,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
               _buildAlertsGroup(),
               _buildGpsGroup(),
               _buildCommunicationGroup(),
+              if (_nav.usesClusters) _buildClusterRevealGroup(),
               if (_nav.navigationType == 'star') _buildStarSettingsGroup(),
               _buildTimeExtensionsGroup(),
               _buildVerificationGroup(),
@@ -7490,22 +7506,38 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'walkieTalkie',
           ),
         ),
-        if (_nav.usesClusters) ...[
-          _toggleTile(
-            label: 'חשיפת נקודות אמיתיות',
-            value: _nav.clusterSettings.revealEnabled,
-            onChanged: (v) => _applySetting(
-              _nav.copyWith(clusterSettings: _nav.clusterSettings.copyWith(revealEnabled: v)),
-              'חשיפת נקודות',
-              'clusterReveal',
-            ),
-          ),
-        ],
       ],
     );
   }
 
-  // ── Group 4.5: הגדרות כוכב ──────────────────────────────────────────────────
+  // ── Group 4.5: חשיפת אשכולות ─────────────────────────────────────────────
+
+  Widget _buildClusterRevealGroup() {
+    final cs = _nav.clusterSettings;
+    return _settingsGroup(
+      title: 'חשיפת אשכולות',
+      icon: Icons.visibility_outlined,
+      children: [
+        _toggleTile(
+          label: 'פתח חשיפת נקודות אמיתיות',
+          value: cs.revealOpenManually,
+          onChanged: (v) => _applySetting(
+            _nav.copyWith(clusterSettings: cs.copyWith(revealOpenManually: v)),
+            'חשיפת נקודות אמיתיות',
+            'clusterReveal',
+          ),
+        ),
+        if (cs.isRevealCurrentlyOpen && !cs.revealOpenManually)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Text('חשיפה פעילה (תזמון אוטומטי)',
+                style: TextStyle(color: Colors.green[600], fontSize: 12)),
+          ),
+      ],
+    );
+  }
+
+  // ── Group 5: הגדרות כוכב ──────────────────────────────────────────────────
 
   Widget _buildStarSettingsGroup() {
     return _settingsGroup(

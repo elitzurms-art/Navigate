@@ -1636,10 +1636,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   bool _canReveal() {
     if (_currentNavigation == null || !_currentNavigation!.usesClusters) return false;
     if (_perNavigatorRevealEnabled != null) return _perNavigatorRevealEnabled!;
-    if (!_currentNavigation!.clusterSettings.revealEnabled) return false;
-    if (_currentNavigation!.activeStartTime == null) return false;
-    return DateTime.now().difference(_currentNavigation!.activeStartTime!).inMinutes
-        >= _currentNavigation!.clusterSettings.revealAfterMinutes;
+    return _currentNavigation!.clusterSettings.isRevealCurrentlyOpen;
   }
 
   /// דיאלוג חשיפת נקודות אמיתיות (ניווט אשכולות)

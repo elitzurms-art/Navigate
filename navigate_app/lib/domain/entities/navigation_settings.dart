@@ -1006,27 +1006,59 @@ StarPhase computeStarPhase({
 class ClusterSettings extends Equatable {
   final int clusterSize;           // 2-8, default 3
   final int clusterSpreadMeters;   // רדיוס התחלתי לנקודות מטעות (50-500m, default 200)
-  final bool revealEnabled;        // חשיפת נקודות אמיתיות
-  final int revealAfterMinutes;    // דקות אחרי activeStartTime
+  final bool revealOpenManually;   // חשיפה ידנית מהלמידה — ברירת מחדל false
+  final bool autoRevealTimes;      // תזמון אוטומטי — ברירת מחדל false
+  final DateTime? revealDate;      // תאריך חשיפה
+  final String? revealStartTime;   // שעת התחלה (HH:mm)
+  final String? revealEndTime;     // שעת סיום (HH:mm)
 
   const ClusterSettings({
     this.clusterSize = 3,
     this.clusterSpreadMeters = 200,
-    this.revealEnabled = true,
-    this.revealAfterMinutes = 30,
+    this.revealOpenManually = false,
+    this.autoRevealTimes = false,
+    this.revealDate,
+    this.revealStartTime,
+    this.revealEndTime,
   });
+
+  /// האם החשיפה פתוחה כרגע (ידנית או אוטומטית)
+  bool get isRevealCurrentlyOpen {
+    if (revealOpenManually) return true;
+    if (autoRevealTimes && revealDate != null && revealStartTime != null && revealEndTime != null) {
+      final now = DateTime.now();
+      final todayDate = DateTime(now.year, now.month, now.day);
+      final revealDay = DateTime(revealDate!.year, revealDate!.month, revealDate!.day);
+      if (todayDate.isAtSameMomentAs(revealDay)) {
+        final startParts = revealStartTime!.split(':');
+        final endParts = revealEndTime!.split(':');
+        final start = DateTime(now.year, now.month, now.day,
+            int.parse(startParts[0]), int.parse(startParts[1]));
+        final end = DateTime(now.year, now.month, now.day,
+            int.parse(endParts[0]), int.parse(endParts[1]));
+        return now.isAfter(start) && now.isBefore(end);
+      }
+    }
+    return false;
+  }
 
   ClusterSettings copyWith({
     int? clusterSize,
     int? clusterSpreadMeters,
-    bool? revealEnabled,
-    int? revealAfterMinutes,
+    bool? revealOpenManually,
+    bool? autoRevealTimes,
+    DateTime? revealDate,
+    String? revealStartTime,
+    String? revealEndTime,
   }) {
     return ClusterSettings(
       clusterSize: clusterSize ?? this.clusterSize,
       clusterSpreadMeters: clusterSpreadMeters ?? this.clusterSpreadMeters,
-      revealEnabled: revealEnabled ?? this.revealEnabled,
-      revealAfterMinutes: revealAfterMinutes ?? this.revealAfterMinutes,
+      revealOpenManually: revealOpenManually ?? this.revealOpenManually,
+      autoRevealTimes: autoRevealTimes ?? this.autoRevealTimes,
+      revealDate: revealDate ?? this.revealDate,
+      revealStartTime: revealStartTime ?? this.revealStartTime,
+      revealEndTime: revealEndTime ?? this.revealEndTime,
     );
   }
 
@@ -1034,22 +1066,36 @@ class ClusterSettings extends Equatable {
     return {
       'clusterSize': clusterSize,
       'clusterSpreadMeters': clusterSpreadMeters,
-      'revealEnabled': revealEnabled,
-      'revealAfterMinutes': revealAfterMinutes,
+      'revealOpenManually': revealOpenManually,
+      'autoRevealTimes': autoRevealTimes,
+      if (revealDate != null) 'revealDate': revealDate!.toIso8601String(),
+      if (revealStartTime != null) 'revealStartTime': revealStartTime,
+      if (revealEndTime != null) 'revealEndTime': revealEndTime,
     };
   }
 
   factory ClusterSettings.fromMap(Map<String, dynamic> map) {
+    // תאימות קדימה: פורמט ישן עם revealEnabled + revealAfterMinutes
+    final oldRevealEnabled = map['revealEnabled'] as bool? ?? false;
+
+    DateTime? revealDate;
+    if (map['revealDate'] != null) {
+      revealDate = DateTime.tryParse(map['revealDate'] as String);
+    }
+
     return ClusterSettings(
       clusterSize: (map['clusterSize'] as num?)?.toInt() ?? 3,
       clusterSpreadMeters: (map['clusterSpreadMeters'] as num?)?.toInt() ?? 200,
-      revealEnabled: map['revealEnabled'] as bool? ?? true,
-      revealAfterMinutes: (map['revealAfterMinutes'] as num?)?.toInt() ?? 30,
+      revealOpenManually: map['revealOpenManually'] as bool? ?? oldRevealEnabled,
+      autoRevealTimes: map['autoRevealTimes'] as bool? ?? false,
+      revealDate: revealDate,
+      revealStartTime: map['revealStartTime'] as String?,
+      revealEndTime: map['revealEndTime'] as String?,
     );
   }
 
   @override
-  List<Object?> get props => [clusterSize, clusterSpreadMeters, revealEnabled, revealAfterMinutes];
+  List<Object?> get props => [clusterSize, clusterSpreadMeters, revealOpenManually, autoRevealTimes, revealDate, revealStartTime, revealEndTime];
 }
 
 /// הרכב הכוח — בדד / מאבטח / צמד / חוליה
