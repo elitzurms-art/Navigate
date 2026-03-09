@@ -181,14 +181,25 @@ class _SystemCheckViewState extends State<SystemCheckView> {
 
     // בדיקת הרשאות מכשיר
     try {
-      final perms = {
-        'location': await Permission.location.status,
-        'locationAlways': await Permission.locationAlways.status,
-        'notification': await Permission.notification.status,
-        'microphone': await Permission.microphone.status,
-        'phone': await Permission.phone.status,
-        'activityRecognition': await Permission.activityRecognition.status,
-      };
+      // permission_handler לא נתמך ב-macOS/Linux
+      final Map<String, PermissionStatus> perms;
+      if (Platform.isMacOS || Platform.isLinux) {
+        perms = {
+          'location': PermissionStatus.granted,
+          'locationAlways': PermissionStatus.granted,
+          'notification': PermissionStatus.granted,
+          'microphone': PermissionStatus.granted,
+        };
+      } else {
+        perms = {
+          'location': await Permission.location.status,
+          'locationAlways': await Permission.locationAlways.status,
+          'notification': await Permission.notification.status,
+          'microphone': await Permission.microphone.status,
+          'phone': await Permission.phone.status,
+          'activityRecognition': await Permission.activityRecognition.status,
+        };
+      }
       if (mounted) {
         setState(() {
           _permissions = perms;

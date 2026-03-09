@@ -69,7 +69,12 @@ class VoiceService {
   }
 
   /// בקשת הרשאת מיקרופון
+  /// ב-macOS/Linux: permission_handler לא נתמך — סומכים על entitlements + הרשאת מערכת
   Future<bool> requestMicrophonePermission() async {
+    if (Platform.isMacOS || Platform.isLinux) {
+      // ב-macOS ההרשאה נשאלת אוטומטית ע"י המערכת בזמן הקלטה ראשונה
+      return true;
+    }
     final status = await Permission.microphone.request();
     return status.isGranted;
   }

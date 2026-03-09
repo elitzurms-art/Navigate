@@ -896,8 +896,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       final lastPoint = points.isNotEmpty ? points.last : null;
 
       // בדיקת הרשאות מיקרופון וטלפון
-      final micStatus = await Permission.microphone.status;
-      final phoneStatus = await Permission.phone.status;
+      // permission_handler לא נתמך ב-macOS/Linux
+      final micStatus = (Platform.isMacOS || Platform.isLinux)
+          ? PermissionStatus.granted
+          : await Permission.microphone.status;
+      final phoneStatus = (Platform.isMacOS || Platform.isLinux)
+          ? PermissionStatus.granted
+          : await Permission.phone.status;
 
       // בדיקת DND (Android בלבד)
       final hasDnd = Platform.isAndroid
