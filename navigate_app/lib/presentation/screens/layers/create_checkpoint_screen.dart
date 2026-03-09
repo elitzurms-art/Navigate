@@ -12,6 +12,7 @@ import '../../../data/repositories/safety_point_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../services/auth_service.dart';
 import '../../../core/utils/utm_converter.dart';
+import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -57,6 +58,10 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   List<SafetyPoint> _safetyPoints = [];
   List<Boundary> _boundaries = [];
 
+  // זיהוי גבול גזרה
+  String? _detectedBoundaryId;
+  String? _detectedBoundaryName;
+
   // מיקום ברירת מחדל - מרכז ישראל
   static const LatLng _defaultCenter = LatLng(31.5, 34.75);
 
@@ -65,7 +70,10 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
   Color get _typeColor => Checkpoint.flutterColorForType(_selectedType);
 
   int get _nextAvailableSequence {
-    final usedNumbers = _existingCheckpoints.map((cp) => cp.sequenceNumber).toSet();
+    final usedNumbers = _existingCheckpoints
+        .where((cp) => cp.boundaryId == _detectedBoundaryId)
+        .map((cp) => cp.sequenceNumber)
+        .toSet();
     int candidate = 1;
     while (usedNumbers.contains(candidate)) {
       candidate++;
@@ -102,6 +110,58 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
     _eastingController.dispose();
     _northingController.dispose();
     super.dispose();
+  }
+
+  void _detectBoundary(LatLng point) {
+    final coord = Coordinate(lat: point.latitude, lng: point.longitude, utm: '');
+    final matchingBoundaries = <Boundary>[];
+    for (final b in _boundaries) {
+      // Bounding box check
+      double minLat = double.infinity, maxLat = double.negativeInfinity;
+      double minLng = double.infinity, maxLng = double.negativeInfinity;
+      for (final c in b.coordinates) {
+        if (c.lat < minLat) minLat = c.lat;
+        if (c.lat > maxLat) maxLat = c.lat;
+        if (c.lng < minLng) minLng = c.lng;
+        if (c.lng > maxLng) maxLng = c.lng;
+      }
+      if (point.latitude < minLat || point.latitude > maxLat ||
+          point.longitude < minLng || point.longitude > maxLng) continue;
+      if (GeometryUtils.isPointInPolygon(coord, b.coordinates)) {
+        matchingBoundaries.add(b);
+      }
+    }
+
+    if (matchingBoundaries.isEmpty) {
+      setState(() {
+        _detectedBoundaryId = null;
+        _detectedBoundaryName = null;
+      });
+    } else if (matchingBoundaries.length == 1) {
+      setState(() {
+        _detectedBoundaryId = matchingBoundaries.first.id;
+        _detectedBoundaryName = matchingBoundaries.first.name;
+      });
+    } else {
+      // כמה גבולות — בחירה
+      showDialog<Boundary>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('בחר גבול גזרה'),
+          children: matchingBoundaries.map((b) => SimpleDialogOption(
+            child: Text(b.name),
+            onPressed: () => Navigator.pop(ctx, b),
+          )).toList(),
+        ),
+      ).then((selected) {
+        if (selected != null && mounted) {
+          setState(() {
+            _detectedBoundaryId = selected.id;
+            _detectedBoundaryName = selected.name;
+          });
+        }
+      });
+    }
   }
 
   void _updateLocationFromUtm() {
@@ -212,12 +272,14 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                 if (num == null) {
                   return 'יש להזין מספר תקין';
                 }
-                // בדיקת ייחודיות מספר סידורי באזור
+                // בדיקת ייחודיות מספר סידורי בגבול גזרה
                 final duplicate = _existingCheckpoints.any(
-                  (cp) => cp.sequenceNumber == num,
+                  (cp) => cp.sequenceNumber == num && cp.boundaryId == _detectedBoundaryId,
                 );
                 if (duplicate) {
-                  return 'מספר סידורי $num כבר קיים באזור זה';
+                  return _detectedBoundaryId != null
+                      ? 'מספר סידורי $num כבר קיים בגבול גזרה זה'
+                      : 'מספר סידורי $num כבר קיים באזור זה';
                 }
                 return null;
               },
@@ -261,6 +323,29 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                 ),
               ],
             ),
+            // תצוגת גבול גזרה מזוהה
+            if (_selectedLocation != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    _detectedBoundaryId != null ? Icons.check_circle : Icons.warning_amber,
+                    size: 16,
+                    color: _detectedBoundaryId != null ? Colors.green : Colors.orange,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _detectedBoundaryId != null
+                        ? 'גבול גזרה: $_detectedBoundaryName'
+                        : 'מחוץ לגבול גזרה',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _detectedBoundaryId != null ? Colors.green[700] : Colors.orange[700],
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
 
             // בחירת סוג גאומטריה
@@ -327,6 +412,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
                               _selectedLocation = point;
                               _updateUtmFromLocation(point);
                             });
+                            _detectBoundary(point);
                           }
                         },
                       ),
@@ -696,6 +782,7 @@ class _CreateCheckpointScreenState extends State<CreateCheckpointScreen> {
       final checkpoint = Checkpoint(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         areaId: widget.area.id,
+        boundaryId: _detectedBoundaryId,
         name: '',
         description: _descriptionController.text,
         type: _selectedType,

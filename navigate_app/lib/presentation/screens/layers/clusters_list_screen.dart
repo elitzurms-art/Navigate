@@ -264,6 +264,17 @@ class _ClustersListScreenState extends State<ClustersListScreen> with WidgetsBin
                                 ],
                               ),
                             ),
+                            if (_isDeveloper)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('מחק', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
                           ],
                           onSelected: (value) {
                             switch (value) {
@@ -272,6 +283,9 @@ class _ClustersListScreenState extends State<ClustersListScreen> with WidgetsBin
                                 break;
                               case 'edit':
                                 _editCluster(cluster);
+                                break;
+                              case 'delete':
+                                _deleteSingleCluster(cluster);
                                 break;
                             }
                           },
@@ -316,6 +330,36 @@ class _ClustersListScreenState extends State<ClustersListScreen> with WidgetsBin
               child: const Icon(Icons.add),
             ),
     );
+  }
+
+  Future<void> _deleteSingleCluster(Cluster cluster) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('מחיקת "${cluster.name}"'),
+        content: const Text('הביצה תימחק מהמכשיר ומהפיירסטור.\n\nפעולה זו אינה ניתנת לביטול!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _repository.delete(cluster.id, areaId: widget.area.id);
+      _loadClusters();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${cluster.name}" נמחקה')),
+        );
+      }
+    }
   }
 
   AppBar _buildSelectModeAppBar() {

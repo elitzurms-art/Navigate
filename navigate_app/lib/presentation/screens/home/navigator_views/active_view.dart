@@ -38,6 +38,7 @@ import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import 'star_learning_map_widget.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'manual_position_pin_screen.dart';
+import '../../../../services/auto_map_download_service.dart';
 import '../../../../services/voice_service.dart';
 import '../../../widgets/push_to_talk_button.dart';
 import '../../../../data/repositories/voice_message_repository.dart';
@@ -183,6 +184,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
   bool _trackJustCreated = false; // grace flag — track נוצר מקומית, טרם סונכרן ל-Firestore
+  DateTime? _trackCreatedAt;
+  String? _navigationSessionId; // session guard — מונע פעולות async מניווט ישן אחרי reset
 
   // ניווט כוכב — מצב מחושב מ-timestamps
   bool get _isStarNavigation => _nav.navigationType == 'star';
@@ -929,13 +932,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   void _startStatusReporting() {
     _reportStatusToFirestore();
+    final session = _navigationSessionId;
     _statusReportTimer = Timer.periodic(
       const Duration(seconds: 15),
-      (_) => _reportStatusToFirestore(),
+      (_) {
+        if (session != _navigationSessionId) return;
+        _reportStatusToFirestore();
+      },
     );
   }
 
   Future<void> _reportStatusToFirestore() async {
+    final session = _navigationSessionId;
+    if (session == null) return;
     final uid = widget.currentUser.uid;
     try {
       // עדכון סוללה
@@ -967,6 +976,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           ? await DeviceSecurityService().hasDNDPermission()
           : true;
 
+      if (session != _navigationSessionId) return;
+
       // בניית נתוני סטטוס להשוואה (ללא שדות שמשתנים תמיד כמו updatedAt)
       final compareData = <String, dynamic>{
         'isConnected': lastPoint != null || _gpsSource != PositionSource.none,
@@ -979,6 +990,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         'hasPhonePermission': phoneStatus.isGranted,
         'hasDNDPermission': hasDnd,
         'gpsJammingState': _gpsTracker.jammingState.name,
+        'mapsStatus': AutoMapDownloadService().getStatus(_nav.id).name,
         'latitude': lastPoint?.coordinate.lat,
         'longitude': lastPoint?.coordinate.lng,
       };
@@ -1106,25 +1118,35 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
     // שמירה תקופתית ל-Drift — מינימום 10 שניות גם אם interval קצר יותר
     final saveInterval = interval < 10 ? 10 : (interval < 30 ? interval : 30);
+    final session = _navigationSessionId;
     _trackSaveTimer = Timer.periodic(
       Duration(seconds: saveInterval),
-      (_) => _saveTrackPointsLocal(),
+      (_) {
+        if (session != _navigationSessionId) return;
+        _saveTrackPointsLocal();
+      },
     );
 
     // סנכרון ל-Firestore כל 2 דקות (נפרד משמירה ל-Drift — חיסכון בכתיבות)
+    _firestoreSyncTimer?.cancel();
     _firestoreSyncTimer = Timer.periodic(
       const Duration(minutes: 2),
-      (_) => _syncTrackToFirestore(),
+      (_) {
+        if (session != _navigationSessionId) return;
+        _syncTrackToFirestore();
+      },
     );
   }
 
   /// שמירה מקומית ל-Drift בלבד — מהירה, ללא Firestore (crash recovery)
   Future<void> _saveTrackPointsLocal() async {
+    final session = _navigationSessionId;
     if (_track == null) return;
     if (_isSavingTrack) return;
     _isSavingTrack = true;
 
     try {
+      if (session != _navigationSessionId) return;
       final points = _gpsTracker.trackPoints;
       if (points.isNotEmpty) {
         await _trackRepo.updateTrackPoints(_track!.id, points);
@@ -1138,11 +1160,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   /// סנכרון ל-Firestore — רק כשיש נקודות חדשות מאז הסנכרון האחרון
   Future<void> _syncTrackToFirestore() async {
+    final session = _navigationSessionId;
     if (_track == null) return;
     if (_isSyncingToFirestore) return;
     _isSyncingToFirestore = true;
 
     try {
+      if (session != _navigationSessionId) return;
       // בדיקת עצירה מרחוק BEFORE sync — כדי שלא לדרוס isActive=false של המפקד
       final stopped = await _checkRemoteStop();
       if (stopped) return;
@@ -1166,6 +1190,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         updatedTrack = updatedTrack.copyWith(isDisqualified: _isDisqualified);
       }
       await _trackRepo.syncTrackToFirestore(updatedTrack);
+      _trackJustCreated = false; // סנכרון הצליח — grace period הסתיים
       _lastSyncedPointCount = currentPointCount;
     } catch (e) {
       print('DEBUG ActiveView: Firestore track sync error: $e');
@@ -1680,6 +1705,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           .get();
 
       if (!doc.exists) {
+        if (_trackJustCreated &&
+            _trackCreatedAt != null &&
+            DateTime.now().difference(_trackCreatedAt!) < const Duration(seconds: 10)) {
+          // track נוצר מקומית וטרם סונכרן ל-Firestore — לא מדובר במחיקת מפקד
+          return false;
+        }
         // המפקד מחק את ה-track (איפוס — חזרה למצב ממתין)
         await _performRemoteReset();
         return true;
@@ -1792,6 +1823,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   /// איפוס ניווט מרחוק — המפקד מחק את ה-track, המנווט חוזר למצב ממתין נקי
   Future<void> _performRemoteReset() async {
+    // איפוס session — כל פעולה async מהניווט הישן תיעצר
+    _navigationSessionId = null;
+
     // עצירת listener מיידית — למנוע קריאות כפולות
     _stopTrackDocListener();
 
@@ -1812,6 +1846,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _alertBannerTimer?.cancel();
     await _stopSecurity();
     await DeviceSecurityService().disableDND(); // safety net
+
+    // ביטול טיימרי סנכרון — מונע כתיבות לניווט החדש
+    _firestoreSyncTimer?.cancel();
+    _firestoreSyncTimer = null;
 
     // מחיקת נתונים מקומיים — track + דקירות
     try {
@@ -1839,6 +1877,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         _navigatorAlerts = [];
         _actualDistanceKm = 0;
         _isLoading = false;
+        _lastSyncedPointCount = 0;
+        _isSavingTrack = false;
       });
 
       HapticFeedback.mediumImpact();
@@ -2026,6 +2066,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       );
       _startTime = track.startedAt;
       _track = track;
+      _navigationSessionId = DateTime.now().millisecondsSinceEpoch.toString();
 
       // 2.5. עדכון סטטוס הניווט ל-active (אם עדיין waiting)
       if (_nav.status == 'waiting') {
@@ -2042,6 +2083,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
       // 4. מעבר למצב active מיידית — שירותים לא-קריטיים ברקע
       _trackJustCreated = true; // grace: track עדיין לא ב-Firestore
+      _trackCreatedAt = DateTime.now();
       setState(() {
         _personalStatus = NavigatorPersonalStatus.active;
         _elapsed = Duration.zero;
@@ -2050,14 +2092,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _startElapsedTimer();
 
       // 5. סנכרון ל-Firestore — fire and forget
-      _trackRepo.syncTrackToFirestore(track).catchError((e) {
+      final syncSession = _navigationSessionId;
+      _trackRepo.syncTrackToFirestore(track).then((_) {
+        if (syncSession == _navigationSessionId) {
+          _trackJustCreated = false;
+        }
+      }).catchError((e) {
         print('DEBUG ActiveView: sync error (non-blocking): $e');
       });
 
       // 6. GPS + שמירת נקודה ראשונה — רק לנציג (לא למשני בצמד/חוליה)
       // מאבטח: שני המנווטים primary — כל אחד בחצי שלו
       if (!_isGroupSecondary || _nav.forceComposition.isGuard) {
+        final gpsSession = _navigationSessionId;
         _startGpsTracking().then((_) {
+          if (gpsSession != _navigationSessionId) return;
           _saveTrackPointsLocal();
           _syncTrackToFirestore(); // סנכרון ראשוני ל-Firestore
         }).catchError((e) {
@@ -4418,29 +4467,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.orange.shade300),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.reply, size: 14, color: Colors.orange[700]),
-            const SizedBox(width: 6),
-            Text(
-              'מענה פרטי ← $_pttReplyToName',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange[700],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => setState(() {
-                _pttReplyToId = null;
-                _pttReplyToName = null;
-                _pttPendingReplyChoice = false;
-              }),
-              child: Icon(Icons.close, size: 14, color: Colors.orange[700]),
-            ),
-          ],
+        child: Text(
+          'שיחה פרטית מ$_pttReplyToName',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.orange[700],
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );

@@ -414,29 +414,13 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.orange.shade300),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.reply, size: 14, color: Colors.orange[700]),
-            const SizedBox(width: 6),
-            Text(
-              'מענה פרטי ← $_replyToName',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.orange[700],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => setState(() {
-                _replyToId = null;
-                _replyToName = null;
-                _pendingReplyChoice = false;
-              }),
-              child: Icon(Icons.close, size: 14, color: Colors.orange[700]),
-            ),
-          ],
+        child: Text(
+          'שיחה פרטית מ$_replyToName',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.orange[700],
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );

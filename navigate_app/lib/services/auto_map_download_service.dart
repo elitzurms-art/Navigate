@@ -248,25 +248,29 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       );
 
       final tileCache = TileCacheService();
-      final mapTypes = [
-        (MapType.standard, 12, 19),
-        (MapType.topographic, 12, 17),
-        (MapType.satellite, 12, 19),
-      ];
 
-      final totalTiles = mapTypes.fold<int>(
-        0,
-        (sum, t) => sum + tileCache.countTiles(
+      // הורדת מפות טופוגרפיות בלבד — רמות זום 5-17, חלק אחד לכל רמת זום
+      const downloadMapType = MapType.topographic;
+      const downloadMinZoom = 5;
+      const downloadMaxZoom = 17;
+
+      // יצירת רשימת חלקים — חלק לכל רמת זום
+      final zoomParts = <(int zoom, int tileCount)>[];
+      int totalTiles = 0;
+      for (int z = downloadMinZoom; z <= downloadMaxZoom; z++) {
+        final count = tileCache.countTiles(
           bounds: bounds,
-          minZoom: t.$2,
-          maxZoom: t.$3,
-        ),
-      );
+          minZoom: z,
+          maxZoom: z,
+        );
+        zoomParts.add((z, count));
+        totalTiles += count;
+      }
 
       final isResume = (_downloadProgress[navigation.id] ?? 0.0) > 0.01;
       if (!isResume) {
         print('DEBUG AutoMapDownload: starting download for nav ${navigation.id}');
-        onStatusMessage?.call('מוריד מפות אופליין (~$totalTiles אריחים)...');
+        onStatusMessage?.call('מוריד מפות טופוגרפיות (~$totalTiles אריחים, ${zoomParts.length} חלקים)...');
       } else {
         print('DEBUG AutoMapDownload: resuming download for nav ${navigation.id}');
       }
@@ -282,15 +286,10 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       int completedTiles = isResume ? (savedProgress * totalTiles).round() : 0;
       bool wasInterrupted = false;
 
-      for (int i = 0; i < mapTypes.length; i++) {
-        final (mapType, minZoom, maxZoom) = mapTypes[i];
-        final label = MapConfig().label(mapType);
-        final tileCount = tileCache.countTiles(
-          bounds: bounds,
-          minZoom: minZoom,
-          maxZoom: maxZoom,
-        );
-        print('DEBUG AutoMapDownload: $label — $tileCount tiles (z$minZoom-$maxZoom)');
+      for (int i = 0; i < zoomParts.length; i++) {
+        final (zoom, tileCount) = zoomParts[i];
+        final label = 'טופוגרפית z$zoom';
+        print('DEBUG AutoMapDownload: $label — $tileCount tiles (חלק ${i + 1}/${zoomParts.length})');
 
         final completer = Completer<void>();
         _activeCompleters[navigation.id] = completer;
@@ -299,9 +298,9 @@ class AutoMapDownloadService with WidgetsBindingObserver {
         final sub = tileCache
             .downloadRegion(
               bounds: bounds,
-              mapType: mapType,
-              minZoom: minZoom,
-              maxZoom: maxZoom,
+              mapType: downloadMapType,
+              minZoom: zoom,
+              maxZoom: zoom,
             )
             .listen(
           (progress) {
@@ -371,7 +370,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
         return AutoDownloadResult.started;
       }
 
-      // הושלם באמת — כל 3 סוגי המפות סיימו
+      // הושלם באמת — כל רמות הזום סיימו
       _triggeredNavIds.add(navigation.id);
       _downloadStatus[navigation.id] = MapDownloadStatus.completed;
       _downloadProgress[navigation.id] = 1.0;

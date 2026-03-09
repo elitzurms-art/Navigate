@@ -21,6 +21,7 @@ class CheckpointsListScreen extends StatefulWidget {
 
 class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
   final CheckpointRepository _checkpointRepository = CheckpointRepository();
+  final BoundaryRepository _boundaryRepository = BoundaryRepository();
 
   // Multi-select state (developer only)
   bool _isSelectMode = false;
@@ -43,6 +44,9 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
   }
 
   Future<void> _runDedup() async {
+    // שיוך נקודות לגבולות (run-once) לפני dedup
+    final boundaries = await _boundaryRepository.getByArea(widget.area.id);
+    await _checkpointRepository.assignBoundaryIds(widget.area.id, boundaries);
     await _checkpointRepository.deduplicateSequenceNumbers(widget.area.id);
     if (mounted) {
       setState(() => _dedupDone = true);
@@ -234,12 +238,25 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
                                     ],
                                   ),
                                 ),
+                                if (_isDeveloper)
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete, color: Colors.red),
+                                        SizedBox(width: 8),
+                                        Text('מחק', style: TextStyle(color: Colors.red)),
+                                      ],
+                                    ),
+                                  ),
                               ],
                               onSelected: (value) {
                                 if (value == 'edit') {
                                   _editCheckpoint(checkpoint);
                                 } else if (value == 'view') {
                                   _viewCheckpoint(checkpoint);
+                                } else if (value == 'delete') {
+                                  _deleteSingleCheckpoint(checkpoint);
                                 }
                               },
                             ),
@@ -338,6 +355,35 @@ class _CheckpointsListScreenState extends State<CheckpointsListScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _deleteSingleCheckpoint(Checkpoint checkpoint) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('מחיקת ${_getTypeText(checkpoint.type)} #${checkpoint.sequenceNumber}'),
+        content: const Text('הנקודה תימחק מהמכשיר ומהפיירסטור.\n\nפעולה זו אינה ניתנת לביטול!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _checkpointRepository.delete(checkpoint.id, areaId: widget.area.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${_getTypeText(checkpoint.type)} #${checkpoint.sequenceNumber} נמחקה')),
+        );
+      }
+    }
   }
 
   Future<void> _editCheckpoint(Checkpoint checkpoint) async {

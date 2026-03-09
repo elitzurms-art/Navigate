@@ -5,6 +5,7 @@ import '../../../domain/entities/checkpoint.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../services/auth_service.dart';
+import '../../../domain/entities/checkpoint.dart';
 import '../../../core/utils/geometry_utils.dart';
 import 'create_boundary_screen.dart';
 import 'edit_boundary_screen.dart';
@@ -294,6 +295,17 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
                                 ],
                               ),
                             ),
+                            if (_isDeveloper)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('מחק', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
                           ],
                           onSelected: (value) {
                             switch (value) {
@@ -302,6 +314,9 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
                                 break;
                               case 'edit':
                                 _editBoundary(boundary);
+                                break;
+                              case 'delete':
+                                _deleteBoundary(boundary);
                                 break;
                             }
                           },
@@ -346,6 +361,125 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
               child: const Icon(Icons.add),
             ),
     );
+  }
+
+  Future<void> _deleteBoundary(Boundary boundary) async {
+    // בדיקת כמה נקודות ציון משויכות לגבול
+    final linkedCheckpoints = await _checkpointRepository.getByBoundaryId(
+      widget.area.id,
+      boundary.id,
+    );
+
+    if (!mounted) return;
+
+    if (linkedCheckpoints.isEmpty) {
+      // אין נקודות — דיאלוג פשוט
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('מחיקת גבול "${boundary.name}"'),
+          content: const Text('הגבול יימחק מהמכשיר ומהפיירסטור.\n\nפעולה זו אינה ניתנת לביטול!'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('מחק'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await _repository.delete(boundary.id, areaId: widget.area.id);
+        _loadBoundaries();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('הגבול "${boundary.name}" נמחק')),
+          );
+        }
+      }
+      return;
+    }
+
+    // יש נקודות — דיאלוג עם בחירה
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('מחיקת גבול "${boundary.name}"'),
+        content: Text(
+          'לגבול זה משויכות ${linkedCheckpoints.length} נקודות ציון.\n\n'
+          'מה לעשות עם הנקודות?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'cancel'),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'keep'),
+            child: const Text('מחק ללא נקודות'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'with_checkpoints'),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק עם נקודות'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || result == 'cancel') return;
+
+    if (result == 'with_checkpoints') {
+      // אישור נוסף
+      if (!mounted) return;
+      final confirmed2 = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('אישור מחיקה'),
+          content: Text(
+            'הגבול + ${linkedCheckpoints.length} נקודות ציון יימחקו.\n\n'
+            'לא ניתן לבטל פעולה זו!',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('ביטול'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('מחק'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed2 != true) return;
+
+      // מחיקת הנקודות
+      await _checkpointRepository.deleteMany(
+        linkedCheckpoints.map((c) => c.id).toList(),
+        areaId: widget.area.id,
+      );
+    } else {
+      // keep — איפוס boundaryId ל-null
+      await _checkpointRepository.clearBoundaryId(widget.area.id, boundary.id);
+    }
+
+    // מחיקת הגבול עצמו
+    await _repository.delete(boundary.id, areaId: widget.area.id);
+    _loadBoundaries();
+    if (mounted) {
+      final msg = result == 'with_checkpoints'
+          ? 'הגבול "${boundary.name}" ו-${linkedCheckpoints.length} נקודות נמחקו'
+          : 'הגבול "${boundary.name}" נמחק (${linkedCheckpoints.length} נקודות שוחררו)';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
   }
 
   AppBar _buildSelectModeAppBar() {

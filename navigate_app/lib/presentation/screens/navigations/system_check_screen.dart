@@ -2168,7 +2168,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     _buildDataSummaryRow('גבול גזרה (GG)', _loadedBundle!.boundary != null ? 'נטען' : 'לא קיים', Icons.border_all),
                     _buildDataSummaryRow('נקודות ציון (NZ)', '${_loadedBundle!.checkpoints.length} נקודות', Icons.location_on),
                     _buildDataSummaryRow('נקודות בטיחות (NB)', '${_loadedBundle!.safetyPoints.length} נקודות', Icons.warning_amber),
-                    _buildDataSummaryRow('ביצי איזור (BA)', '${_loadedBundle!.clusters.length} ביצים', Icons.hexagon_outlined),
                     _buildDataSummaryRow('צירים', '${_loadedBundle!.navigation.routes.length} צירים', Icons.route),
                   ],
                 ),

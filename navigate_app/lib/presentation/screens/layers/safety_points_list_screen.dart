@@ -309,6 +309,17 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
                                 ],
                               ),
                             ),
+                            if (_isDeveloper)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('מחק', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
                           ],
                           onSelected: (value) {
                             switch (value) {
@@ -317,6 +328,9 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
                                 break;
                               case 'edit':
                                 _editPoint(point);
+                                break;
+                              case 'delete':
+                                _deleteSinglePoint(point);
                                 break;
                             }
                           },
@@ -361,6 +375,36 @@ class _SafetyPointsListScreenState extends State<SafetyPointsListScreen> with Wi
               child: const Icon(Icons.add),
             ),
     );
+  }
+
+  Future<void> _deleteSinglePoint(SafetyPoint point) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('מחיקת "${point.name}"'),
+        content: const Text('הנקודה תימחק מהמכשיר ומהפיירסטור.\n\nפעולה זו אינה ניתנת לביטול!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _repository.delete(point.id, areaId: widget.area.id);
+      _loadPoints();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('"${point.name}" נמחקה')),
+        );
+      }
+    }
   }
 
   AppBar _buildSelectModeAppBar() {

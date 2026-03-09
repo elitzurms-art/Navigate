@@ -31,9 +31,19 @@ import 'presentation/screens/onboarding/choose_unit_screen.dart';
 import 'presentation/screens/onboarding/waiting_for_approval_screen.dart';
 import 'data/repositories/unit_repository.dart';
 import 'data/repositories/solo_quiz_repository.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // אתחול just_audio backend לדסקטופ (Windows/Linux) דרך media_kit
+  JustAudioMediaKit.ensureInitialized(
+    linux: true,
+    windows: true,
+    android: false,
+    iOS: false,
+    macOS: false,
+  );
 
   // Initialize Firebase
   try {

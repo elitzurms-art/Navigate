@@ -566,11 +566,6 @@ class _DataLoadingScreenState extends State<DataLoadingScreen>
               '${bundle.safetyPoints.length} נקודות',
               Icons.warning_amber,
             ),
-            _buildSummaryRow(
-              'ביצי איזור (BA)',
-              '${bundle.clusters.length} ביצים',
-              Icons.hexagon_outlined,
-            ),
             if (widget.isCommander) ...[
               _buildSummaryRow(
                 'צירים',

@@ -7,6 +7,7 @@ import 'coordinate.dart';
 class Checkpoint extends Equatable {
   final String id;
   final String areaId;
+  final String? boundaryId;
   final String name;
   final String description;
   final String type; // 'checkpoint', 'mandatory_passage', 'start', 'end'
@@ -28,6 +29,7 @@ class Checkpoint extends Equatable {
   const Checkpoint({
     required this.id,
     required this.areaId,
+    this.boundaryId,
     required this.name,
     required this.description,
     required this.type,
@@ -102,6 +104,7 @@ class Checkpoint extends Equatable {
   Checkpoint copyWith({
     String? id,
     String? areaId,
+    String? Function()? boundaryId,
     String? name,
     String? description,
     String? type,
@@ -117,6 +120,7 @@ class Checkpoint extends Equatable {
     return Checkpoint(
       id: id ?? this.id,
       areaId: areaId ?? this.areaId,
+      boundaryId: boundaryId != null ? boundaryId() : this.boundaryId,
       name: name ?? this.name,
       description: description ?? this.description,
       type: type ?? this.type,
@@ -136,6 +140,7 @@ class Checkpoint extends Equatable {
     return {
       'id': id,
       'areaId': areaId,
+      if (boundaryId != null) 'boundaryId': boundaryId,
       'name': name,
       'description': description,
       'type': type,
@@ -157,6 +162,7 @@ class Checkpoint extends Equatable {
     return Checkpoint(
       id: map['id'] as String,
       areaId: map['areaId'] as String,
+      boundaryId: map['boundaryId'] as String?,
       name: map['name'] as String,
       description: map['description'] as String? ?? '',
       type: map['type'] as String,
@@ -181,6 +187,7 @@ class Checkpoint extends Equatable {
   List<Object?> get props => [
     id,
     areaId,
+    boundaryId,
     name,
     description,
     type,

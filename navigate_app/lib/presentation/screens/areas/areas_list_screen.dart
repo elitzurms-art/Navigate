@@ -2,6 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../domain/entities/area.dart';
 import '../../../data/repositories/area_repository.dart';
+import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../data/repositories/safety_point_repository.dart';
+import '../../../data/repositories/boundary_repository.dart';
+import '../../../data/repositories/cluster_repository.dart';
 import '../../../data/sync/sync_manager.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../services/auth_service.dart';
@@ -21,6 +25,7 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
   final AuthService _authService = AuthService();
   List<Area> _areas = [];
   bool _isLoading = true;
+  bool _isDeveloper = false;
   StreamSubscription<String>? _syncSubscription;
   Timer? _debounceTimer;
 
@@ -28,6 +33,7 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _checkUserRole();
     _loadAreas();
     _syncSubscription = SyncManager().onDataChanged.listen((collection) {
       if (collection == AppConstants.areasCollection && mounted) {
@@ -51,6 +57,13 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _loadAreas();
+    }
+  }
+
+  Future<void> _checkUserRole() async {
+    final user = await _authService.getCurrentUser();
+    if (mounted) {
+      setState(() => _isDeveloper = user?.isDeveloper ?? false);
     }
   }
 
@@ -150,6 +163,17 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
                                 ],
                               ),
                             ),
+                            if (_isDeveloper)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('מחק', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
                           ],
                           onSelected: (value) async {
                             if (value == 'edit') {
@@ -163,6 +187,8 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
                               if (result == true) {
                                 _loadAreas();
                               }
+                            } else if (value == 'delete') {
+                              _deleteArea(area);
                             }
                           },
                         ),
@@ -197,5 +223,82 @@ class _AreasListScreenState extends State<AreasListScreen> with WidgetsBindingOb
     );
   }
 
+  Future<void> _deleteArea(Area area) async {
+    // טעינת ספירות השכבות להצגה בדיאלוג
+    final checkpointRepo = CheckpointRepository();
+    final safetyPointRepo = SafetyPointRepository();
+    final boundaryRepo = BoundaryRepository();
+    final clusterRepo = ClusterRepository();
+
+    final checkpoints = await checkpointRepo.getByArea(area.id);
+    final safetyPoints = await safetyPointRepo.getByArea(area.id);
+    final boundaries = await boundaryRepo.getByArea(area.id);
+    final clusters = await clusterRepo.getByArea(area.id);
+
+    if (!mounted) return;
+
+    final details = <String>[];
+    if (checkpoints.isNotEmpty) details.add('${checkpoints.length} נקודות ציון');
+    if (safetyPoints.isNotEmpty) details.add('${safetyPoints.length} נקודות בטיחות');
+    if (boundaries.isNotEmpty) details.add('${boundaries.length} גבולות');
+    if (clusters.isNotEmpty) details.add('${clusters.length} ביצות איזור');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('מחיקת אזור "${area.name}"'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('כל שכבות האזור יימחקו מהמכשיר ומהפיירסטור.'),
+            if (details.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('שכבות שיימחקו:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              ...details.map((d) => Text('• $d')),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'פעולה זו אינה ניתנת לביטול!',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('ביטול'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('מחק'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await _areaRepository.deleteWithCascade(area.id);
+        _loadAreas();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('האזור "${area.name}" נמחק בהצלחה')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('שגיאה במחיקת אזור: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
 }
 

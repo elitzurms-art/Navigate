@@ -6,8 +6,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../domain/entities/area.dart';
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
+import '../../../domain/entities/boundary.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../data/repositories/boundary_repository.dart';
 import '../../../core/utils/utm_converter.dart';
+import '../../../core/utils/geometry_utils.dart';
 import '../../widgets/map_with_selector.dart';
 import '../../widgets/map_controls.dart';
 
@@ -39,7 +42,11 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
   late String _selectedType;
   late LatLng _selectedLocation;
   List<Checkpoint> _existingCheckpoints = [];
+  List<Boundary> _boundaries = [];
+  String? _currentBoundaryId;
+  String? _currentBoundaryName;
   final MapController _mapController = MapController();
+  final BoundaryRepository _boundaryRepo = BoundaryRepository();
   bool _isSaving = false;
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
@@ -72,10 +79,12 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
       _updateUtmFromLocation(_selectedLocation);
     }
 
+    _currentBoundaryId = widget.checkpoint.boundaryId;
     _existingCheckpoints = widget.existingCheckpoints ?? [];
     if (_existingCheckpoints.isEmpty) {
       _loadExistingCheckpoints();
     }
+    _loadBoundaries();
 
     // הזזת המפה למיקום הנקודה
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -90,6 +99,93 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
         _existingCheckpoints = checkpoints;
       });
     } catch (_) {}
+  }
+
+  Future<void> _loadBoundaries() async {
+    try {
+      final boundaries = await _boundaryRepo.getByArea(widget.area.id);
+      if (mounted) {
+        setState(() {
+          _boundaries = boundaries;
+          // שם גבול ראשוני
+          if (_currentBoundaryId != null) {
+            final match = boundaries.where((b) => b.id == _currentBoundaryId);
+            _currentBoundaryName = match.isNotEmpty ? match.first.name : null;
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  String? _detectBoundaryForPoint(LatLng point) {
+    final coord = Coordinate(lat: point.latitude, lng: point.longitude, utm: '');
+    for (final b in _boundaries) {
+      if (GeometryUtils.isPointInPolygon(coord, b.coordinates)) {
+        return b.id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _handleLocationChange(LatLng point) async {
+    final newBoundaryId = _detectBoundaryForPoint(point);
+    if (newBoundaryId == _currentBoundaryId) {
+      _scheduleAutoSave();
+      return;
+    }
+
+    // גבול השתנה — בדיקת קונפליקט
+    final seq = int.tryParse(_sequenceController.text);
+    if (seq != null) {
+      final conflict = _existingCheckpoints.any(
+        (cp) => cp.sequenceNumber == seq && cp.boundaryId == newBoundaryId && cp.id != widget.checkpoint.id,
+      );
+      if (conflict) {
+        // חישוב מספר חופשי בגבול החדש
+        final usedInNew = _existingCheckpoints
+            .where((cp) => cp.boundaryId == newBoundaryId)
+            .map((cp) => cp.sequenceNumber)
+            .toSet();
+        int nextFree = 1;
+        while (usedInNew.contains(nextFree)) nextFree++;
+
+        if (mounted) {
+          final accepted = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('שינוי גבול גזרה'),
+              content: Text('המספר הסידורי $seq קיים בגבול זה. לשנות אוטומטית למספר $nextFree?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('ביטול'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('אישור'),
+                ),
+              ],
+            ),
+          );
+          if (accepted == true) {
+            _sequenceController.text = nextFree.toString();
+          } else {
+            return; // ביטול — לא משנים גבול
+          }
+        }
+      }
+    }
+
+    setState(() {
+      _currentBoundaryId = newBoundaryId;
+      if (newBoundaryId != null) {
+        final match = _boundaries.where((b) => b.id == newBoundaryId);
+        _currentBoundaryName = match.isNotEmpty ? match.first.name : null;
+      } else {
+        _currentBoundaryName = null;
+      }
+    });
+    _scheduleAutoSave();
   }
 
   @override
@@ -127,6 +223,7 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
         description: _descriptionController.text,
         type: _selectedType,
         color: autoColor,
+        boundaryId: () => _currentBoundaryId,
         sequenceNumber: int.parse(_sequenceController.text),
         coordinates: Coordinate(
           lat: _selectedLocation.latitude,
@@ -287,12 +384,14 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
                 if (num == null) {
                   return 'יש להזין מספר תקין';
                 }
-                // בדיקת ייחודיות (לא כולל הנקודה הנוכחית)
+                // בדיקת ייחודיות בגבול גזרה (לא כולל הנקודה הנוכחית)
                 final duplicate = _existingCheckpoints.any(
-                  (cp) => cp.sequenceNumber == num && cp.id != widget.checkpoint.id,
+                  (cp) => cp.sequenceNumber == num && cp.boundaryId == _currentBoundaryId && cp.id != widget.checkpoint.id,
                 );
                 if (duplicate) {
-                  return 'מספר סידורי $num כבר קיים באזור זה';
+                  return _currentBoundaryId != null
+                      ? 'מספר סידורי $num כבר קיים בגבול גזרה זה'
+                      : 'מספר סידורי $num כבר קיים באזור זה';
                 }
                 return null;
               },
@@ -372,7 +471,7 @@ class _EditCheckpointScreenState extends State<EditCheckpointScreen> {
                             _selectedLocation = point;
                             _updateUtmFromLocation(point);
                           });
-                          _scheduleAutoSave();
+                          _handleLocationChange(point);
                         },
                       ),
                       layers: [

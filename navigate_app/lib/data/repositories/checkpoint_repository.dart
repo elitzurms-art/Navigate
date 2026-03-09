@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/geometry_utils.dart';
 import '../../domain/entities/checkpoint.dart' as domain;
 import '../../domain/entities/coordinate.dart';
+import '../../domain/entities/boundary.dart' as domainBoundary;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
 
@@ -56,6 +59,7 @@ class CheckpointRepository {
             CheckpointsCompanion.insert(
               id: checkpoint.id,
               areaId: checkpoint.areaId,
+              boundaryId: Value(checkpoint.boundaryId),
               name: checkpoint.name,
               description: checkpoint.description,
               type: checkpoint.type,
@@ -102,6 +106,7 @@ class CheckpointRepository {
           description: Value(checkpoint.description),
           type: Value(checkpoint.type),
           color: Value(checkpoint.color),
+          boundaryId: Value(checkpoint.boundaryId),
           geometryType: Value(checkpoint.geometryType),
           lat: Value(checkpoint.coordinates?.lat ?? 0.0),
           lng: Value(checkpoint.coordinates?.lng ?? 0.0),
@@ -154,7 +159,38 @@ class CheckpointRepository {
     return await (_db.delete(_db.checkpoints)..where((t) => t.areaId.equals(areaId))).go();
   }
 
-  /// תיקון מספרים סידוריים כפולים באזור
+  /// קבלת נקודות לפי גבול גזרה
+  Future<List<domain.Checkpoint>> getByBoundaryId(String areaId, String boundaryId) async {
+    final checkpoints = await (_db.select(_db.checkpoints)
+          ..where((c) => c.areaId.equals(areaId) & c.boundaryId.equals(boundaryId))
+          ..orderBy([(c) => OrderingTerm(expression: c.sequenceNumber)]))
+        .get();
+    return checkpoints.map((c) => _toDomain(c)).toList();
+  }
+
+  /// איפוס boundaryId ל-null עבור כל הנקודות של גבול גזרה מסוים (מקומי + סנכרון)
+  Future<void> clearBoundaryId(String areaId, String boundaryId) async {
+    final checkpoints = await (_db.select(_db.checkpoints)
+          ..where((c) => c.areaId.equals(areaId) & c.boundaryId.equals(boundaryId)))
+        .get();
+
+    for (final cp in checkpoints) {
+      await (_db.update(_db.checkpoints)
+            ..where((c) => c.id.equals(cp.id)))
+          .write(const CheckpointsCompanion(boundaryId: Value(null)));
+
+      final domainCp = _toDomain(cp).copyWith(boundaryId: () => null);
+      await _syncManager.queueOperation(
+        collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
+        documentId: cp.id,
+        operation: 'update',
+        data: domainCp.toMap(),
+        priority: SyncPriority.normal,
+      );
+    }
+  }
+
+  /// תיקון מספרים סידוריים כפולים — קיבוץ לפי (areaId, boundaryId)
   Future<void> deduplicateSequenceNumbers(String areaId) async {
     final checkpoints = await (_db.select(_db.checkpoints)
           ..where((c) => c.areaId.equals(areaId))
@@ -164,37 +200,111 @@ class CheckpointRepository {
           ]))
         .get();
 
-    final seen = <int>{};
-    int nextAvailable = 1;
-
+    // קיבוץ לפי boundaryId (null = קבוצה נפרדת)
+    final groups = <String?, List<Checkpoint>>{};
     for (final cp in checkpoints) {
-      if (!seen.contains(cp.sequenceNumber)) {
-        seen.add(cp.sequenceNumber);
-        continue;
-      }
-      // כפול — מצא את המספר הבא הפנוי
-      while (seen.contains(nextAvailable)) {
+      groups.putIfAbsent(cp.boundaryId, () => []).add(cp);
+    }
+
+    for (final group in groups.values) {
+      final seen = <int>{};
+      int nextAvailable = 1;
+
+      for (final cp in group) {
+        if (!seen.contains(cp.sequenceNumber)) {
+          seen.add(cp.sequenceNumber);
+          continue;
+        }
+        // כפול — מצא את המספר הבא הפנוי
+        while (seen.contains(nextAvailable)) {
+          nextAvailable++;
+        }
+        seen.add(nextAvailable);
+
+        // עדכון מקומי
+        await (_db.update(_db.checkpoints)
+              ..where((c) => c.id.equals(cp.id)))
+            .write(CheckpointsCompanion(sequenceNumber: Value(nextAvailable)));
+
+        // סנכרון
+        final domainCp = _toDomain(cp).copyWith(sequenceNumber: nextAvailable);
+        await _syncManager.queueOperation(
+          collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
+          documentId: cp.id,
+          operation: 'update',
+          data: domainCp.toMap(),
+          priority: SyncPriority.normal,
+        );
+
         nextAvailable++;
       }
-      seen.add(nextAvailable);
-
-      // עדכון מקומי
-      await (_db.update(_db.checkpoints)
-            ..where((c) => c.id.equals(cp.id)))
-          .write(CheckpointsCompanion(sequenceNumber: Value(nextAvailable)));
-
-      // סנכרון
-      final domainCp = _toDomain(cp).copyWith(sequenceNumber: nextAvailable);
-      await _syncManager.queueOperation(
-        collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
-        documentId: cp.id,
-        operation: 'update',
-        data: domainCp.toMap(),
-        priority: SyncPriority.normal,
-      );
-
-      nextAvailable++;
     }
+  }
+
+  /// שיוך נקודות לגבולות גזרה — רץ פעם אחת לכל אזור
+  Future<void> assignBoundaryIds(String areaId, List<domainBoundary.Boundary> boundaries) async {
+    if (boundaries.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final flagKey = 'boundaryAssigned_$areaId';
+    if (prefs.getBool(flagKey) == true) return;
+
+    final checkpoints = await (_db.select(_db.checkpoints)
+          ..where((c) => c.areaId.equals(areaId)))
+        .get();
+
+    // חישוב bounding box לכל גבול
+    final boundaryBoxes = <domainBoundary.Boundary, ({double minLat, double maxLat, double minLng, double maxLng})>{};
+    for (final b in boundaries) {
+      double minLat = double.infinity, maxLat = double.negativeInfinity;
+      double minLng = double.infinity, maxLng = double.negativeInfinity;
+      for (final c in b.coordinates) {
+        if (c.lat < minLat) minLat = c.lat;
+        if (c.lat > maxLat) maxLat = c.lat;
+        if (c.lng < minLng) minLng = c.lng;
+        if (c.lng > maxLng) maxLng = c.lng;
+      }
+      boundaryBoxes[b] = (minLat: minLat, maxLat: maxLat, minLng: minLng, maxLng: maxLng);
+    }
+
+    for (final cp in checkpoints) {
+      if (cp.boundaryId != null) continue; // כבר משויך
+      final lat = cp.lat;
+      final lng = cp.lng;
+      if (lat == 0.0 && lng == 0.0) continue; // פוליגון ללא קואורדינטות נקודתיות
+
+      String? matchedBoundaryId;
+      for (final b in boundaries) {
+        final box = boundaryBoxes[b]!;
+        // Bounding box check (חוסך ~90%)
+        if (lat < box.minLat || lat > box.maxLat || lng < box.minLng || lng > box.maxLng) {
+          continue;
+        }
+        if (GeometryUtils.isPointInPolygon(
+            Coordinate(lat: lat, lng: lng, utm: ''), b.coordinates)) {
+          matchedBoundaryId = b.id;
+          break;
+        }
+      }
+
+      if (matchedBoundaryId != null) {
+        await (_db.update(_db.checkpoints)
+              ..where((c) => c.id.equals(cp.id)))
+            .write(CheckpointsCompanion(boundaryId: Value(matchedBoundaryId)));
+
+        // סנכרון
+        final domainCp = _toDomain(cp).copyWith(boundaryId: () => matchedBoundaryId);
+        await _syncManager.queueOperation(
+          collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNzSubcollection}',
+          documentId: cp.id,
+          operation: 'update',
+          data: domainCp.toMap(),
+          priority: SyncPriority.normal,
+        );
+      }
+    }
+
+    await prefs.setBool(flagKey, true);
   }
 
   /// המרה מטבלה לישות דומיין
@@ -202,6 +312,7 @@ class CheckpointRepository {
     return domain.Checkpoint(
       id: dbCheckpoint.id,
       areaId: dbCheckpoint.areaId,
+      boundaryId: dbCheckpoint.boundaryId,
       name: dbCheckpoint.name,
       description: dbCheckpoint.description,
       type: dbCheckpoint.type,

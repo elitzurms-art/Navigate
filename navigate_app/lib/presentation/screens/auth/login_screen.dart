@@ -308,11 +308,11 @@ class _LoginScreenState extends State<LoginScreen> {
     );
     _navigateTapTimestamps.add(now);
 
-    if (_navigateTapTimestamps.length > 5) {
-      _navigateTapTimestamps.removeRange(0, _navigateTapTimestamps.length - 5);
+    if (_navigateTapTimestamps.length > 8) {
+      _navigateTapTimestamps.removeRange(0, _navigateTapTimestamps.length - 8);
     }
 
-    if (_navigateTapTimestamps.length >= 3) {
+    if (_navigateTapTimestamps.length >= 6) {
       setState(() {
         _showPersonalNumberOption = true;
         _navigateTapTimestamps.clear();

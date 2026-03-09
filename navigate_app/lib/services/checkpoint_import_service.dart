@@ -441,11 +441,13 @@ class CheckpointImportService {
 
   // ──────── בדיקת התנגשויות ────────
 
-  /// בודק התנגשויות עם נקודות קיימות לפי מספר סידורי
+  /// בודק התנגשויות עם נקודות קיימות לפי מספר סידורי (מסוננות לפי boundaryId)
   static void checkConflicts(
-      List<ParsedCheckpointRow> parsedRows, List<Checkpoint> existingCheckpoints) {
+      List<ParsedCheckpointRow> parsedRows, List<Checkpoint> existingCheckpoints,
+      {String? boundaryId}) {
+    final filtered = existingCheckpoints.where((cp) => cp.boundaryId == boundaryId).toList();
     final existingBySeq = <int, Checkpoint>{};
-    for (final cp in existingCheckpoints) {
+    for (final cp in filtered) {
       existingBySeq[cp.sequenceNumber] = cp;
     }
 
@@ -509,17 +511,21 @@ class CheckpointImportService {
     required Map<int, ConflictResolution> conflictResolutions,
     required List<Checkpoint> existingCheckpoints,
     bool autoNumber = false,
+    String? boundaryId,
   }) {
     final now = DateTime.now();
     final results = <Checkpoint>[];
 
-    // מספור אוטומטי — התחלה אחרי המקסימום הקיים
+    // מספור אוטומטי — התחלה אחרי המקסימום הקיים (באותו boundaryId)
     int nextSeq = 1;
-    if (autoNumber && existingCheckpoints.isNotEmpty) {
-      nextSeq = existingCheckpoints
-              .map((c) => c.sequenceNumber)
-              .reduce((a, b) => a > b ? a : b) +
-          1;
+    if (autoNumber) {
+      final sameBoundary = existingCheckpoints.where((c) => c.boundaryId == boundaryId);
+      if (sameBoundary.isNotEmpty) {
+        nextSeq = sameBoundary
+                .map((c) => c.sequenceNumber)
+                .reduce((a, b) => a > b ? a : b) +
+            1;
+      }
     }
 
     for (final row in rows) {
@@ -530,6 +536,7 @@ class CheckpointImportService {
       results.add(Checkpoint(
         id: '${now.millisecondsSinceEpoch}_${results.length}',
         areaId: areaId,
+        boundaryId: boundaryId,
         name: '',
         description: row.description,
         type: type,

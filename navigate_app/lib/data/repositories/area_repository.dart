@@ -4,6 +4,10 @@ import '../../core/constants/app_constants.dart';
 import '../../domain/entities/area.dart' as domain;
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
+import 'checkpoint_repository.dart';
+import 'safety_point_repository.dart';
+import 'boundary_repository.dart';
+import 'cluster_repository.dart';
 
 /// Area repository -- local DB CRUD + Firestore layer subcollection sync
 ///
@@ -96,9 +100,70 @@ class AreaRepository {
     }
   }
 
-  /// מחיקת אזור — disabled (add-only sync)
-  Future<void> delete(String id) async {
-    print('AreaRepository: delete() is disabled — areas are add-only.');
+  /// מחיקת אזור עם כל השכבות שלו (cascade) — מקומי + Firestore
+  Future<void> deleteWithCascade(String id) async {
+    try {
+      final checkpointRepo = CheckpointRepository();
+      final safetyPointRepo = SafetyPointRepository();
+      final boundaryRepo = BoundaryRepository();
+      final clusterRepo = ClusterRepository();
+
+      // 1. מחיקת כל השכבות של האזור
+      final checkpoints = await checkpointRepo.getByArea(id);
+      if (checkpoints.isNotEmpty) {
+        await checkpointRepo.deleteMany(
+          checkpoints.map((c) => c.id).toList(),
+          areaId: id,
+        );
+      }
+
+      final safetyPoints = await safetyPointRepo.getByArea(id);
+      if (safetyPoints.isNotEmpty) {
+        await safetyPointRepo.deleteMany(
+          safetyPoints.map((p) => p.id).toList(),
+          areaId: id,
+        );
+      }
+
+      final boundaries = await boundaryRepo.getByArea(id);
+      if (boundaries.isNotEmpty) {
+        await boundaryRepo.deleteMany(
+          boundaries.map((b) => b.id).toList(),
+          areaId: id,
+        );
+      }
+
+      final clusters = await clusterRepo.getByArea(id);
+      if (clusters.isNotEmpty) {
+        await clusterRepo.deleteMany(
+          clusters.map((c) => c.id).toList(),
+          areaId: id,
+        );
+      }
+
+      // 2. מחיקת האזור עצמו מ-Drift
+      await (_db.delete(_db.areas)..where((a) => a.id.equals(id))).go();
+
+      // 3. מחיקה ישירה מ-Firestore
+      try {
+        await _firestore
+            .collection(AppConstants.areasCollection)
+            .doc(id)
+            .delete()
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        // fallback — תור סנכרון
+        await _syncManager.queueOperation(
+          collection: AppConstants.areasCollection,
+          documentId: id,
+          operation: 'hard_delete',
+          data: {'id': id},
+          priority: SyncPriority.high,
+        );
+      }
+    } catch (e) {
+      rethrow;
+    }
   }
 
   /// סנכרון מ-Firestore (משיכת נתונים)

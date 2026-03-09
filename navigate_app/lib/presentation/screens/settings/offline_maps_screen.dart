@@ -415,38 +415,30 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
                   ],
                 ),
               ),
+              if (!isActive)
+                IconButton(
+                  onPressed: () => _tileCacheService.removeRecord(record.id),
+                  icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                  tooltip: 'הסרת רשומה',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
             ],
           ),
           if (isFailed)
             Padding(
               padding: const EdgeInsets.only(top: 4, right: 28),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    onPressed: isDownloading
-                        ? null
-                        : () => _tileCacheService.resumeDownload(record),
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('המשך הורדה', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    onPressed: () => _tileCacheService.removeRecord(record.id),
-                    icon: const Icon(Icons.close, size: 18, color: Colors.red),
-                    label: const Text('הסרה',
-                        style: TextStyle(fontSize: 12, color: Colors.red)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                ],
+              child: TextButton.icon(
+                onPressed: isDownloading
+                    ? null
+                    : () => _tileCacheService.resumeDownload(record),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('המשך הורדה', style: TextStyle(fontSize: 12)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
               ),
             ),
         ],

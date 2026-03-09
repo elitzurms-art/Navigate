@@ -1277,6 +1277,7 @@ class SyncManager {
       CheckpointsCompanion.insert(
         id: id,
         areaId: data['areaId'] as String? ?? '',
+        boundaryId: Value(data['boundaryId'] is String ? data['boundaryId'] as String : null),
         name: data['name'] as String? ?? '',
         description: data['description'] as String? ?? '',
         type: data['type'] as String? ?? 'checkpoint',

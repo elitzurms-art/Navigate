@@ -309,6 +309,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
         'hasDNDPermission': _hasDNDPermission,
         if (Platform.isIOS) 'guidedAccessEnabled': _guidedAccessEnabled,
+        'mapsStatus': AutoMapDownloadService().getStatus(widget.navigation.id).name,
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
       };

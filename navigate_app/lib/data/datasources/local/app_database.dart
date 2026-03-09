@@ -78,6 +78,7 @@ class Checkpoints extends Table {
   TextColumn get description => text()();
   TextColumn get type => text()();
   TextColumn get color => text()();
+  TextColumn get boundaryId => text().nullable()(); // גבול גזרה שהנקודה שייכת אליו
   TextColumn get geometryType => text().withDefault(const Constant('point'))(); // 'point' או 'polygon'
   RealColumn get lat => real()();
   RealColumn get lng => real()();
@@ -422,7 +423,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 41;
+  int get schemaVersion => 42;
 
   @override
   MigrationStrategy get migration {
@@ -689,6 +690,31 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 40 && to >= 41) {
           // Parachute navigation settings
           await safeAddColumn(navigations, navigations.parachuteSettingsJson);
+        }
+        if (from <= 41 && to >= 42) {
+          // Checkpoint boundaryId — ייחודיות מספר סידורי לפי גבול גזרה
+          await safeAddColumn(checkpoints, checkpoints.boundaryId);
+          // Partial unique index: נקודות עם boundary
+          try {
+            await customStatement('''
+              CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_boundary_seq
+                ON checkpoints(area_id, boundary_id, sequence_number)
+                WHERE boundary_id IS NOT NULL
+            ''');
+          } catch (e) {
+            print('⚠️ idx_cp_boundary_seq index creation skipped: $e');
+          }
+          // Partial unique index: נקודות ללא boundary (null group)
+          // — may fail if existing data has duplicate (area_id, sequence_number)
+          try {
+            await customStatement('''
+              CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_no_boundary_seq
+                ON checkpoints(area_id, sequence_number)
+                WHERE boundary_id IS NULL
+            ''');
+          } catch (e) {
+            print('⚠️ idx_cp_no_boundary_seq index creation skipped (duplicate data): $e');
+          }
         }
       },
     );

@@ -126,7 +126,8 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
       final existing = await _checkpointRepo.getByArea(widget.area.id);
 
       if (!_autoNumbering) {
-        CheckpointImportService.checkConflicts(result.parsedRows, existing);
+        CheckpointImportService.checkConflicts(
+            result.parsedRows, existing, boundaryId: _selectedBoundary?.id);
       }
 
       // בדיקת גבול
@@ -193,6 +194,7 @@ class _CheckpointImportScreenState extends State<CheckpointImportScreen> {
         conflictResolutions: _conflictResolutions,
         existingCheckpoints: _existingCheckpoints,
         autoNumber: _autoNumbering,
+        boundaryId: _selectedBoundary?.id,
       );
 
       // טיפול בהתנגשויות

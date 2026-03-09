@@ -86,7 +86,6 @@ class NavigationDataBundle {
   final NavBoundary? boundary;
   final List<NavCheckpoint> checkpoints;
   final List<NavSafetyPoint> safetyPoints;
-  final List<NavCluster> clusters;
   final NavigationTree? navigatorTree;
   final Map<String, AssignedRoute> allRoutes;
 
@@ -95,7 +94,6 @@ class NavigationDataBundle {
     this.boundary,
     this.checkpoints = const [],
     this.safetyPoints = const [],
-    this.clusters = const [],
     this.navigatorTree,
     this.allRoutes = const {},
   });
@@ -104,15 +102,13 @@ class NavigationDataBundle {
   bool get hasNavLayers =>
       boundary != null ||
       checkpoints.isNotEmpty ||
-      safetyPoints.isNotEmpty ||
-      clusters.isNotEmpty;
+      safetyPoints.isNotEmpty;
 
   /// סה"כ פריטים בשכבות
   int get totalLayerItems =>
       (boundary != null ? 1 : 0) +
       checkpoints.length +
-      safetyPoints.length +
-      clusters.length;
+      safetyPoints.length;
 }
 
 /// שירות טעינת כל נתוני הניווט (כולל שכבות ניווטיות) לשימוש אופליין
@@ -175,7 +171,6 @@ class NavigationDataLoader {
       LoadStep(id: 'route', label: 'טעינת ציר אישי'),
       LoadStep(id: 'checkpoints', label: 'טעינת נקודות ציון (NZ)'),
       LoadStep(id: 'safety_points', label: 'טעינת נקודות בטיחות (NB)'),
-      LoadStep(id: 'clusters', label: 'טעינת ביצי איזור (BA)'),
     ];
     _emitProgress();
 
@@ -266,18 +261,6 @@ class NavigationDataLoader {
             error: 'שגיאה בטעינת נקודות בטיחות: $e');
       }
 
-      // === שלב 6: טעינת ביצי איזור (BA) ===
-      _updateStep('clusters', LoadStepStatus.loading);
-      List<NavCluster> clusters = [];
-      try {
-        clusters = await _fetchClustersFromServer(navigationId);
-        _updateStep('clusters', LoadStepStatus.completed,
-            itemCount: clusters.length);
-      } catch (e) {
-        _updateStep('clusters', LoadStepStatus.failed,
-            error: 'שגיאה בטעינת ביצי איזור: $e');
-      }
-
       // שמירת חותמת זמן סנכרון אחרון
       await _saveLastSyncTimestamp(navigationId);
 
@@ -289,13 +272,11 @@ class NavigationDataLoader {
         boundary: boundary,
         checkpoints: allCheckpoints,
         safetyPoints: safetyPoints,
-        clusters: clusters,
       );
 
       print('DEBUG: Navigator data loaded - '
           '${allCheckpoints.length} checkpoints, '
-          '${safetyPoints.length} safety points, '
-          '${clusters.length} clusters');
+          '${safetyPoints.length} safety points');
 
       return bundle;
     } catch (e) {
@@ -326,7 +307,6 @@ class NavigationDataLoader {
       LoadStep(id: 'routes', label: 'טעינת כל הצירים'),
       LoadStep(id: 'checkpoints', label: 'טעינת כל נקודות הציון (NZ)'),
       LoadStep(id: 'safety_points', label: 'טעינת כל נקודות הבטיחות (NB)'),
-      LoadStep(id: 'clusters', label: 'טעינת כל ביצי האיזור (BA)'),
     ];
     _emitProgress();
 
@@ -346,7 +326,6 @@ class NavigationDataLoader {
               boundary: cachedBundle.boundary,
               checkpoints: cachedBundle.checkpoints,
               safetyPoints: cachedBundle.safetyPoints,
-              clusters: cachedBundle.clusters,
               navigatorTree: tree,
               allRoutes: cachedBundle.navigation.routes,
             );
@@ -423,18 +402,6 @@ class NavigationDataLoader {
             error: 'שגיאה בטעינת נקודות בטיחות: $e');
       }
 
-      // === שלב 7: טעינת כל ביצי האיזור (BA) ===
-      _updateStep('clusters', LoadStepStatus.loading);
-      List<NavCluster> clusters = [];
-      try {
-        clusters = await _fetchClustersFromServer(navigationId);
-        _updateStep('clusters', LoadStepStatus.completed,
-            itemCount: clusters.length);
-      } catch (e) {
-        _updateStep('clusters', LoadStepStatus.failed,
-            error: 'שגיאה בטעינת ביצי איזור: $e');
-      }
-
       // שמירת חותמת זמן סנכרון
       await _saveLastSyncTimestamp(navigationId);
 
@@ -446,7 +413,6 @@ class NavigationDataLoader {
         boundary: boundary,
         checkpoints: checkpoints,
         safetyPoints: safetyPoints,
-        clusters: clusters,
         navigatorTree: navigatorTree,
         allRoutes: navigation.routes,
       );
@@ -454,7 +420,6 @@ class NavigationDataLoader {
       print('DEBUG: Commander data loaded - '
           '${checkpoints.length} checkpoints, '
           '${safetyPoints.length} safety points, '
-          '${clusters.length} clusters, '
           '${navigation.routes.length} routes');
 
       return bundle;
@@ -491,27 +456,23 @@ class NavigationDataLoader {
         _navLayerRepo.getBoundariesByNavigation(navigationId),
         _navLayerRepo.getCheckpointsByNavigation(navigationId),
         _navLayerRepo.getSafetyPointsByNavigation(navigationId),
-        _navLayerRepo.getClustersByNavigation(navigationId),
       ]);
 
       final boundaries = results[0] as List<NavBoundary>;
       final checkpoints = results[1] as List<NavCheckpoint>;
       final safetyPoints = results[2] as List<NavSafetyPoint>;
-      final clusters = results[3] as List<NavCluster>;
 
       final bundle = NavigationDataBundle(
         navigation: navigation,
         boundary: boundaries.isNotEmpty ? boundaries.first : null,
         checkpoints: checkpoints,
         safetyPoints: safetyPoints,
-        clusters: clusters,
       );
 
       print('DEBUG: Loaded navigation data bundle - '
           '${checkpoints.length} checkpoints, '
           '${safetyPoints.length} safety points, '
-          '${boundaries.length} boundaries, '
-          '${clusters.length} clusters');
+          '${boundaries.length} boundaries');
 
       return bundle;
     } catch (e) {
@@ -732,43 +693,6 @@ class NavigationDataLoader {
     }
   }
 
-  /// טעינת ביצי איזור ניווטיות מ-subcollection ושמירה מקומית
-  Future<List<NavCluster>> _fetchClustersFromServer(
-    String navigationId,
-  ) async {
-    try {
-      final snapshot = await _firestore
-          .collection(AppConstants.navigationsCollection)
-          .doc(navigationId)
-          .collection(AppConstants.navLayersBaSubcollection)
-          .get()
-          .timeout(const Duration(seconds: 15));
-
-      if (snapshot.docs.isNotEmpty) {
-        final clusters = <NavCluster>[];
-
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-          data['id'] = doc.id;
-          _convertTimestamps(data);
-          clusters.add(NavCluster.fromMap(data));
-        }
-
-        // שמירה מקומית
-        try {
-          await _navLayerRepo.addClustersBatch(clusters);
-        } catch (_) {}
-
-        return clusters;
-      }
-
-      return await _navLayerRepo.getClustersByNavigation(navigationId);
-    } catch (e) {
-      print('DEBUG: Error fetching clusters from server: $e');
-      return await _navLayerRepo.getClustersByNavigation(navigationId);
-    }
-  }
-
   /// טעינת עץ מנווטים מ-Firestore ושמירה מקומית
   Future<NavigationTree?> _fetchNavigatorTree(String treeId) async {
     try {
@@ -818,20 +742,17 @@ class NavigationDataLoader {
         _navLayerRepo.getBoundariesByNavigation(navigationId),
         _navLayerRepo.getCheckpointsByNavigation(navigationId),
         _navLayerRepo.getSafetyPointsByNavigation(navigationId),
-        _navLayerRepo.getClustersByNavigation(navigationId),
       ]);
 
       final boundaries = results[0] as List<NavBoundary>;
       final checkpoints = results[1] as List<NavCheckpoint>;
       final safetyPoints = results[2] as List<NavSafetyPoint>;
-      final clusters = results[3] as List<NavCluster>;
 
       return NavigationDataBundle(
         navigation: navigation,
         boundary: boundaries.isNotEmpty ? boundaries.first : null,
         checkpoints: checkpoints,
         safetyPoints: safetyPoints,
-        clusters: clusters,
       );
     } catch (e) {
       print('DEBUG: Error loading from local DB: $e');
