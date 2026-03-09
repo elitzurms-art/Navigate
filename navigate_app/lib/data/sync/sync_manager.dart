@@ -447,7 +447,7 @@ class SyncManager {
       ),
     );
 
-    print('SyncManager: Queued $operation on $collection/$documentId (v$version, priority=$priority)');
+    print('SyncManager: Queued $operation on $collection/$documentId (v$version, priority=$priority, online=$_isOnline, auth=$_isAuthenticated)');
 
     // אם אונליין ועדיפות גבוהה - נסה לסנכרן מיד (fire-and-forget — הנתונים כבר בתור המקומי)
     if (_isOnline && priority >= SyncPriority.high) {
@@ -461,7 +461,18 @@ class SyncManager {
 
   /// עיבוד תור הסנכרון - שולח למתין ל-Firestore
   Future<void> processSyncQueue() async {
-    if (!_isOnline || _isSyncing || !_isAuthenticated) return;
+    if (!_isOnline) {
+      print('SyncManager: processSyncQueue skipped — offline');
+      return;
+    }
+    if (_isSyncing) {
+      print('SyncManager: processSyncQueue skipped — already syncing');
+      return;
+    }
+    if (!_isAuthenticated) {
+      print('SyncManager: processSyncQueue skipped — not authenticated');
+      return;
+    }
     _isSyncing = true;
 
     try {
@@ -921,6 +932,32 @@ class SyncManager {
             }
           }
 
+          // Reconciliation: detect hard-deleted docs missing from Firestore.
+          // Only on subsequent pulls (lastPullAt != null) — skip first pull.
+          if (lastPullAt != null) {
+            try {
+              final allServerDocs = await _firestore.collection(path).get()
+                  .timeout(const Duration(seconds: 30));
+              final serverIds = allServerDocs.docs.map((d) => d.id).toSet();
+              final localIds = await _getLocalLayerIds(subcollectionName, area.id);
+
+              // Safety: if Firestore returns 0 but local has data, skip (possible network issue)
+              if (serverIds.isEmpty && localIds.isNotEmpty) {
+                print('SyncManager: Reconcile skipped for $path — Firestore returned 0 docs but ${localIds.length} local');
+              } else {
+                final orphanIds = localIds.difference(serverIds);
+                if (orphanIds.isNotEmpty) {
+                  print('SyncManager: Reconcile — removing ${orphanIds.length} orphaned local docs from $path');
+                  for (final orphanId in orphanIds) {
+                    await _deleteLayerLocally(subcollectionName, orphanId);
+                  }
+                }
+              }
+            } catch (e) {
+              print('SyncManager: Reconcile error for $path: $e');
+            }
+          }
+
           await _db.updateLastPullAt(metadataKey, DateTime.now());
         } catch (e) {
           print('SyncManager: Error pulling $path: $e');
@@ -1173,9 +1210,29 @@ class SyncManager {
           await (_db.delete(_db.clusters)..where((t) => t.id.equals(id))).go();
           break;
       }
-      print('SyncManager: Soft-delete — removed local layer $subcollection/$id');
+      print('SyncManager: Removed local layer $subcollection/$id');
     } catch (e) {
       print('SyncManager: Error deleting local layer $subcollection/$id: $e');
+    }
+  }
+
+  /// קבלת כל ה-ID-ים המקומיים של שכבה לפי סוג תת-קולקציה ואזור
+  Future<Set<String>> _getLocalLayerIds(String subcollection, String areaId) async {
+    switch (subcollection) {
+      case AppConstants.areaLayersNzSubcollection:
+        final rows = await (_db.select(_db.checkpoints)..where((t) => t.areaId.equals(areaId))).get();
+        return rows.map((r) => r.id).toSet();
+      case AppConstants.areaLayersNbSubcollection:
+        final rows = await (_db.select(_db.safetyPoints)..where((t) => t.areaId.equals(areaId))).get();
+        return rows.map((r) => r.id).toSet();
+      case AppConstants.areaLayersGgSubcollection:
+        final rows = await (_db.select(_db.boundaries)..where((t) => t.areaId.equals(areaId))).get();
+        return rows.map((r) => r.id).toSet();
+      case AppConstants.areaLayersBaSubcollection:
+        final rows = await (_db.select(_db.clusters)..where((t) => t.areaId.equals(areaId))).get();
+        return rows.map((r) => r.id).toSet();
+      default:
+        return {};
     }
   }
 

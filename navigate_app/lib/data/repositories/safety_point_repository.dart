@@ -124,7 +124,7 @@ class SafetyPointRepository {
     await _syncManager.queueOperation(
       collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersNbSubcollection}',
       documentId: id,
-      operation: 'delete',
+      operation: 'hard_delete',
       data: {'id': id},
       priority: SyncPriority.high,
     );

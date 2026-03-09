@@ -173,6 +173,10 @@ class NavigationRepository {
   /// עדכון ניווט
   Future<domain.Navigation> update(domain.Navigation navigation) async {
     try {
+      // Safety: status-only changes should use updateStatusOnly() to avoid overwriting routes
+      if (navigation.routes.isEmpty) {
+        print('WARNING: NavigationRepository.update() called with empty routes for ${navigation.id}');
+      }
       print('DEBUG: Updating navigation: ${navigation.name}');
 
       // עדכון מקומי
