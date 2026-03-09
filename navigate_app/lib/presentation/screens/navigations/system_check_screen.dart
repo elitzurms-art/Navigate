@@ -24,6 +24,7 @@ import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../services/voice_service.dart';
 import '../../widgets/voice_messages_panel.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// מסך בדיקת מערכות
 class SystemCheckScreen extends StatefulWidget {
@@ -792,6 +793,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _startSystemCheck() async {
+    if (!PermissionUtils.checkManagement(context, widget.currentUser)) return;
     if (_systemCheckStarted) return;
 
     // בקשת כל ההרשאות החסרות במכשיר המפקד
@@ -864,6 +866,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _finishSystemCheck() async {
+    if (!PermissionUtils.checkManagement(context, widget.currentUser)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

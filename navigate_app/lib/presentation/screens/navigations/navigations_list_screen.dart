@@ -32,6 +32,7 @@ import 'navigation_management_screen.dart';
 import 'variables_sheet_screen.dart';
 import '../../../data/repositories/voice_message_repository.dart';
 import '../../../data/sync/sync_manager.dart';
+import '../../../core/utils/permission_utils.dart';
 
 
 /// צומת לקיבוץ ניווטים לפי עץ
@@ -307,6 +308,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
   // ======== מחיקה ========
 
   Future<void> _deleteNavigation(domain.Navigation navigation) async {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -658,6 +660,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
           builder: (context) => TrainingModeScreen(
             navigation: updatedNavigation,
             isCommander: isCommander,
+            isUnitAdmin: _currentUser?.isManagement ?? true,
           ),
         ),
       ).then((_) {
@@ -1029,6 +1032,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
           screen = TrainingModeScreen(
             navigation: navigation,
             isCommander: true,
+            isUnitAdmin: _currentUser?.isManagement ?? true,
           );
         } else {
           screen = NavigatorPlanningScreen(navigation: navigation);
@@ -1055,7 +1059,11 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       case 'approval': // backward compat — ניווטים ישנים
       case 'review':
         final isNavigatorReview = _currentUser == null || !_currentUser!.hasCommanderPermissions;
-        screen = InvestigationScreen(navigation: navigation, isNavigator: isNavigatorReview);
+        screen = InvestigationScreen(
+          navigation: navigation,
+          isNavigator: isNavigatorReview,
+          isUnitAdmin: _currentUser?.isManagement ?? false,
+        );
         break;
 
       default:
@@ -1316,6 +1324,17 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
   /// טיפול בבחירת פעולה מה-popup
   Future<void> _handlePopupAction(String action, domain.Navigation navigation) async {
+    const managementActions = {
+      'edit', 'distribute', 'start_learning', 'start_training',
+      'system_check', 'pause_training', 'end_training',
+      'back_to_distribution', 'back_to_verification', 'back_to_ready',
+      'back_to_preparation', 'start_navigation', 'delete',
+    };
+    if (managementActions.contains(action) &&
+        !PermissionUtils.checkManagement(context, _currentUser)) {
+      return;
+    }
+
     switch (action) {
       case 'edit':
         final hasRoutes = navigation.routesDistributed;
@@ -1616,7 +1635,11 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
                 )
               : _buildGroupedList(),
       floatingActionButton: FloatingActionButton(
+        tooltip: (_currentUser?.isManagement ?? false)
+            ? 'צור ניווט'
+            : 'רק מנהל יחידה יכול ליצור ניווט',
         onPressed: () async {
+          if (!PermissionUtils.checkManagement(context, _currentUser)) return;
           final result = await Navigator.push(
             context,
             MaterialPageRoute(

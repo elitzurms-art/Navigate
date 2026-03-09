@@ -31,6 +31,7 @@ import '../../widgets/navigator_comparison_widget.dart';
 import '../../widgets/map_image_export.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/checkpoint_style_utils.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -62,12 +63,14 @@ class InvestigationScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final String? navigatorId;
   final bool isNavigator;
+  final bool isUnitAdmin;
 
   const InvestigationScreen({
     super.key,
     required this.navigation,
     this.navigatorId,
     this.isNavigator = false,
+    this.isUnitAdmin = true,
   });
 
   @override
@@ -1321,6 +1324,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   // ===========================================================================
 
   Future<void> _returnToPreparation() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1374,6 +1378,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   }
 
   Future<void> _deleteNavigation() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

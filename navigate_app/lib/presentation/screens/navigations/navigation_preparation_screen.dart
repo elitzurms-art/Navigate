@@ -16,6 +16,7 @@ import 'training_mode_screen.dart';
 import 'system_check_screen.dart';
 import 'data_export_screen.dart';
 import 'variables_sheet_screen.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// מסך הכנת ניווט - צ'קליסט שלבים
 class NavigationPreparationScreen extends StatefulWidget {
@@ -241,6 +242,7 @@ class _NavigationPreparationScreenState
   // ======== פתיחת מסכי שלבים ========
 
   Future<void> _openSettings() async {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     if (!await _confirmStopActiveMode('הגדרות')) return;
     final result = await Navigator.push(
       context,
@@ -255,6 +257,7 @@ class _NavigationPreparationScreenState
   }
 
   Future<void> _openDistribution() async {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     if (!await _confirmStopActiveMode('חלוקת נקודות')) return;
     final result = await Navigator.push(
       context,
@@ -307,6 +310,7 @@ class _NavigationPreparationScreenState
         builder: (context) => TrainingModeScreen(
           navigation: _navigation,
           isCommander: isCommander,
+          isUnitAdmin: _currentUser?.isManagement ?? true,
         ),
       ),
     );
@@ -456,6 +460,7 @@ class _NavigationPreparationScreenState
   // ======== העברה למצב אימון ========
 
   Future<void> _moveToTrainingMode() async {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     if (!await _confirmStopActiveMode('מצב אימון')) return;
     // בדיקת שלבים שלא הושלמו
     final List<String> warnings = [];

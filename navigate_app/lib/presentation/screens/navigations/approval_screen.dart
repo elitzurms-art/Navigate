@@ -31,6 +31,7 @@ import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/checkpoint_style_utils.dart';
 import '../home/navigator_views/approval_view.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -59,11 +60,13 @@ enum NzDisplayMode { navigatorOnly, participatingOnly, allCheckpoints }
 class ApprovalScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final bool isNavigator;
+  final bool isUnitAdmin;
 
   const ApprovalScreen({
     super.key,
     required this.navigation,
     this.isNavigator = false,
+    this.isUnitAdmin = true,
   });
 
   @override
@@ -894,6 +897,7 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   // ===========================================================================
 
   Future<void> _moveToReview() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

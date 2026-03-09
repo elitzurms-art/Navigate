@@ -19,6 +19,7 @@ import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// פלטת צבעים למנווטים מרובים
 const _kNavigatorColors = [
@@ -41,11 +42,13 @@ enum _NzDisplayMode { participatingOnly, allCheckpoints }
 class TrainingModeScreen extends StatefulWidget {
   final domain.Navigation navigation;
   final bool isCommander; // האם המשתמש הנוכחי הוא מפקד
+  final bool isUnitAdmin; // האם למשתמש הרשאות ניהול (מנהל יחידה ומעלה)
 
   const TrainingModeScreen({
     super.key,
     required this.navigation,
     this.isCommander = true, // ברירת מחדל למפקד (נשנה לפי הרשאות)
+    this.isUnitAdmin = true, // ברירת מחדל למנהל יחידה
   });
 
   @override
@@ -590,6 +593,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
 
   Future<void> _startLearning() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     if (_learningStarted) return;
 
     // הצגת עיגול טעינה
@@ -658,6 +662,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _finishLearning() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     final allApproved = _currentNavigation.routes.values.every((r) => r.isApproved);
 
     if (!allApproved) {
@@ -702,6 +707,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Future<void> _deleteNavigation() async {
+    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

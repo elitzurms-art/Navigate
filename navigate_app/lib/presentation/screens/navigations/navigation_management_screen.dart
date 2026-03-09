@@ -38,6 +38,7 @@ import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/utils/permission_utils.dart';
 
 /// מצב הצגת נקודות ציון
 enum _NzDisplayMode { selectedNavigators, participatingOnly, allCheckpoints }
@@ -2084,6 +2085,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   Future<void> _finishAllNavigation() async {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -5022,6 +5024,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // ===========================================================================
 
   void _showGlobalSettingsSheet() {
+    if (!PermissionUtils.checkManagement(context, _currentUser)) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

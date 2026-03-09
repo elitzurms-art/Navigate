@@ -28,6 +28,11 @@ service cloud.firestore {
       return r == 'developer' || r == 'admin';
     }
 
+    /// Check if the current user has management permissions (unit_admin or higher, NOT regular commander)
+    function isManagement() {
+      return request.auth.token.role in ['unit_admin', 'admin', 'developer'];
+    }
+
     /// Check if the given unitId is within the current user's unit scope
     /// hasFullScope=true for developers/admins OR large-scope commanders (>800 bytes)
     /// For large-scope non-admin commanders, fallback to auth_mapping read (rare)
@@ -292,9 +297,12 @@ service cloud.firestore {
     match /navigations/{navId} {
       allow read: if isAuthenticated() &&
         (isDeveloperOrAdmin() || isParticipant(resource));
-      allow create: if isAuthenticated();
-      allow update, delete: if isAuthenticated() &&
-        (isDeveloperOrAdmin() || isParticipant(resource));
+      allow create: if isAuthenticated() && isManagement();
+      allow update: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || isParticipant(resource)) &&
+        (request.resource.data.status == resource.data.status || isManagement());
+      allow delete: if isAuthenticated() &&
+        (isDeveloperOrAdmin() || (isParticipant(resource) && isManagement()));
 
       // All subcollections inherit parent navigation membership
       match /{subcollection}/{docId} {

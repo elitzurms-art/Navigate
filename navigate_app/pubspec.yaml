@@ -70,7 +70,7 @@ dependencies:
   url_launcher: ^6.2.1
 
   # Utils
-  intl: ^0.20.2
+  intl: ^0.19.0
   uuid: ^4.3.3
   equatable: ^2.0.5
   logger: ^2.0.2

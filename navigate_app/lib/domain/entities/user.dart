@@ -73,6 +73,9 @@ class User extends Equatable {
   bool get hasCommanderPermissions =>
       isAdmin || isCommander || isDeveloper || isUnitAdmin;
 
+  /// האם למשתמש יש הרשאות ניהול (מנהל יחידה ומעלה — לא כולל מפקד רגיל)
+  bool get isManagement => isAdmin || isUnitAdmin || isDeveloper;
+
   /// האם המשתמש הוא מנהל מערכת יחידתי
   bool get isUnitAdmin => role == 'unit_admin';
 
