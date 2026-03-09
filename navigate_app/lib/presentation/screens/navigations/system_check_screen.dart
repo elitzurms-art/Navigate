@@ -168,7 +168,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       // בדיקת הרשאות GPS באמצעות GpsService
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
-      _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
+      // permission_handler לא נתמך ב-macOS/Linux
+      if (Platform.isMacOS || Platform.isLinux) {
+        _hasBackgroundLocationPermission = true;
+      } else {
+        _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
+      }
 
       // בדיקת דיוק GPS + מיקום נוכחי
       if (_hasGpsPermission && _hasLocationService) {
@@ -190,7 +195,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       if (Platform.isAndroid) {
         _hasDNDPermission = await _deviceSecurityService.hasDNDPermission();
       } else {
-        _hasDNDPermission = true; // iOS — לא רלוונטי
+        _hasDNDPermission = true; // iOS/macOS — לא רלוונטי
       }
 
       setState(() => _isCheckingSystem = false);
@@ -214,7 +219,11 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     try {
       _hasLocationService = await _gpsService.isGpsAvailable();
       _hasGpsPermission = await _gpsService.checkPermissions();
-      _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
+      if (Platform.isMacOS || Platform.isLinux) {
+        _hasBackgroundLocationPermission = true;
+      } else {
+        _hasBackgroundLocationPermission = (await Permission.locationAlways.status).isGranted;
+      }
 
       if (_hasGpsPermission && _hasLocationService) {
         _gpsAccuracy = await _gpsService.getCurrentAccuracy();
@@ -287,6 +296,16 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _checkDevicePermissions() async {
+    // permission_handler לא נתמך ב-macOS/Linux — מחזירים granted לכל ההרשאות
+    if (Platform.isMacOS || Platform.isLinux) {
+      _permissionStatuses = {
+        'location': PermissionStatus.granted,
+        'locationAlways': PermissionStatus.granted,
+        'notification': PermissionStatus.granted,
+        'microphone': PermissionStatus.granted,
+      };
+      return;
+    }
     _permissionStatuses = {
       'location': await Permission.location.status,
       'locationAlways': await Permission.locationAlways.status,
@@ -300,6 +319,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   /// בקשת כל ההרשאות החסרות באופן אוטומטי
   Future<void> _requestAllMissingPermissions() async {
+    // permission_handler לא נתמך ב-macOS/Linux
+    if (Platform.isMacOS || Platform.isLinux) return;
+
     final permissions = [
       Permission.notification,
       Permission.location,
@@ -324,6 +346,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<void> _requestPermission(Permission permission) async {
+    // permission_handler לא נתמך ב-macOS/Linux
+    if (Platform.isMacOS || Platform.isLinux) return;
     await permission.request();
     await _checkDevicePermissions();
     if (mounted) setState(() {});
@@ -2866,6 +2890,15 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Future<Map<String, PermissionStatus>> _getAllPermissions() async {
+    // permission_handler לא נתמך ב-macOS/Linux
+    if (Platform.isMacOS || Platform.isLinux) {
+      return {
+        'location': PermissionStatus.granted,
+        'locationAlways': PermissionStatus.granted,
+        'notification': PermissionStatus.granted,
+        'microphone': PermissionStatus.granted,
+      };
+    }
     return {
       'location': await Permission.location.status,
       'locationAlways': await Permission.locationAlways.status,

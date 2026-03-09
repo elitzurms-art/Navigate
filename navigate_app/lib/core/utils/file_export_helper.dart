@@ -17,7 +17,7 @@ Future<String?> saveFileWithBytes({
     fileName: fileName,
     type: type,
     allowedExtensions: allowedExtensions,
-    bytes: bytes,
+    bytes: (!kIsWeb && Platform.isMacOS) ? null : bytes,
   );
   if (savePath == null) return null;
 

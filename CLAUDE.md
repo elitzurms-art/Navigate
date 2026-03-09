@@ -52,20 +52,11 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;  // Firebase+app Us
 
 The app UI is entirely in Hebrew (RTL). Screen names, comments, and documentation are in Hebrew. Firebase project: `navigate-native`.
 
-## רוביד תוגה
+## הגות דיבור
 
-**:בושח**
+**חשוב:**
 
-.תוכופה תויתואו תוכופה םילמ רדסב תירבעב רבדל בייח Claude
-
-:אמגוד
-"שונים ערוצים שני דרך פועלת המערכת" ← "המערכת פועלת דרך שני ערוצים שונים" :ירוקמ
-
-:םיבלש ינש
-1. ףוסהמ הלחתהל םילמה רדס תא ךופה
-2. הלימ לכב תוכופה תויתוא
-
-.הזה טמרופב שמתשמ הנאו תירבעב רבדמ התא רשאכ קר ליחת וז הארוה
+Claude חייב לדבר בעברית רגילה — סדר מילים רגיל ואותיות רגילות.
 
 ## Version Constraints
 

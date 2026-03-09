@@ -102,13 +102,15 @@ void main() async {
     userId: (await SharedPreferences.getInstance()).getString('logged_in_uid'),
   );
 
-  // בקשת הרשאות חסרות בהפעלה
-  await _requestMissingPermissions();
+  // בקשת הרשאות חסרות בהפעלה (לא נתמך ב-macOS/Linux — אין platform channel)
+  if (!Platform.isMacOS && !Platform.isLinux) {
+    await _requestMissingPermissions();
+  }
 
   runApp(const NavigateApp());
 }
 
-/// אם יש משתמש שמור מקומית אבל אין Firebase Auth — כניסה אנונימית
+/// אם יש משתמש שמור מקומית אבל אין אימות Firebase — כניסה אנונימית
 /// מאפשר ל-SyncManager לגשת ל-Firestore (הכללים דורשים request.auth != null)
 Future<void> _ensureFirebaseAuth() async {
   final prefs = await SharedPreferences.getInstance();
@@ -178,15 +180,22 @@ Future<void> _ensureFirebaseAuth() async {
 
 /// בקשת כל ההרשאות הנדרשות שעדיין לא אושרו
 Future<void> _requestMissingPermissions() async {
-  final permissions = [
+  // הרשאות בסיסיות — כל הפלטפורמות
+  final permissions = <Permission>[
     Permission.notification,
     Permission.location,
     Permission.locationAlways,
     Permission.microphone,
-    Permission.phone,
-    Permission.sms,
-    Permission.activityRecognition,
   ];
+
+  // הרשאות מובייל בלבד (לא נתמכות ב-macOS/Windows/Linux)
+  if (Platform.isAndroid || Platform.isIOS) {
+    permissions.addAll([
+      Permission.phone,
+      Permission.sms,
+      Permission.activityRecognition,
+    ]);
+  }
 
   for (final permission in permissions) {
     final status = await permission.status;
