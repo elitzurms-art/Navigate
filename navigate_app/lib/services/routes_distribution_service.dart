@@ -242,6 +242,10 @@ class RoutesDistributionService {
       }
     }
 
+    if (navigation.navigationType == 'parachute' && composition.isGuard) {
+      throw Exception('הרכב מאבטח לא נתמך בניווט צנחנים');
+    }
+
     // --- שיבוץ קבוצות ---
     Map<String, List<String>> groups = {};
     List<String> virtualNavigators = navigators;
@@ -341,6 +345,31 @@ class RoutesDistributionService {
           ).toMap(),
         ];
       }
+    }
+
+    // --- צנחנים: כל מנווט מתחיל מנקודת הצנחה שונה ---
+    if (navigation.navigationType == 'parachute') {
+      return _distributeParachuteNavigation(
+        navigation: navigation,
+        tree: tree,
+        navigators: navigators,
+        virtualNavigators: virtualNavigators,
+        groups: groups,
+        checkpointMaps: checkpointMaps,
+        waypointMaps: waypointMaps,
+        availableCheckpoints: availableCheckpoints,
+        boundary: boundary,
+        startPointId: startPointId,
+        endPointId: endPointId,
+        executionOrder: executionOrder,
+        checkpointsPerNavigator: checkpointsPerNavigator,
+        minRouteLength: minRouteLength,
+        maxRouteLength: maxRouteLength,
+        scoringCriterion: scoringCriterion,
+        composition: composition,
+        safetyPoints: safetyPoints,
+        onProgress: onProgress,
+      );
     }
 
     // --- כוכב: אלגוריתם חלוקה ייעודי ---
@@ -2706,6 +2735,202 @@ class RoutesDistributionService {
   static double _dist(String id1, String id2, Map<String, Map<String, double>> distMatrix) {
     if (id1 == id2) return 0.0;
     return distMatrix[id1]?[id2] ?? 0.0;
+  }
+
+  /// שיוך מנווטים לנקודות הצנחה
+  static Map<String, String> _assignDropPoints({
+    required List<String> navigators,
+    required ParachuteSettings settings,
+    Map<String, List<String>>? subFrameworkNavigators, // sfId -> [navigatorIds]
+  }) {
+    final dropPointIds = settings.dropPointIds;
+    if (dropPointIds.isEmpty) return {};
+
+    switch (settings.assignmentMethod) {
+      case 'manual':
+        // Use existing assignments
+        return Map<String, String>.from(settings.navigatorDropPoints);
+
+      case 'by_sub_framework':
+        final result = <String, String>{};
+        final sfNavigators = subFrameworkNavigators ?? {};
+        final sfDropPoints = settings.subFrameworkDropPoints;
+
+        for (final entry in sfNavigators.entries) {
+          final sfId = entry.key;
+          final sfNavs = entry.value;
+          final sfPoints = sfDropPoints[sfId] ?? dropPointIds;
+          if (sfPoints.isEmpty || sfNavs.isEmpty) continue;
+
+          if (settings.samePointPerSubFramework) {
+            // All navigators in SF get the same random drop point
+            final point = sfPoints[Random().nextInt(sfPoints.length)];
+            for (final nav in sfNavs) {
+              result[nav] = point;
+            }
+          } else {
+            // Round-robin across SF's drop points
+            for (var i = 0; i < sfNavs.length; i++) {
+              result[sfNavs[i]] = sfPoints[i % sfPoints.length];
+            }
+          }
+        }
+        return result;
+
+      case 'random':
+      default:
+        // Round-robin shuffle across drop points
+        final shuffled = List<String>.from(navigators)..shuffle();
+        final result = <String, String>{};
+        for (var i = 0; i < shuffled.length; i++) {
+          result[shuffled[i]] = dropPointIds[i % dropPointIds.length];
+        }
+        return result;
+    }
+  }
+
+  /// מיפוי מנווטים לפי תת-מסגרת (sfId -> navigatorIds)
+  Future<Map<String, List<String>>> _getSubFrameworkNavigators(
+    domain.Navigation navigation,
+    NavigationTree tree,
+  ) async {
+    final result = <String, List<String>>{};
+    for (final sf in tree.subFrameworks) {
+      if (!navigation.selectedSubFrameworkIds.contains(sf.id)) continue;
+      if (sf.isFixed) continue;
+      final navIds = <String>[];
+      for (final uid in sf.userIds) {
+        final user = await _userRepository.getUser(uid);
+        if (user != null && user.role == 'navigator') {
+          navIds.add(uid);
+        }
+      }
+      if (navIds.isNotEmpty) {
+        result[sf.id] = navIds;
+      }
+    }
+    return result;
+  }
+
+  /// חלוקת ניווט צנחנים — כל מנווט מתחיל מנקודת הצנחה שונה
+  /// משתמש באלגוריתם ה-Isolate הרגיל ואז מחליף את נקודת ההתחלה per-navigator
+  Future<domain.DistributionResult> _distributeParachuteNavigation({
+    required domain.Navigation navigation,
+    required NavigationTree tree,
+    required List<String> navigators,
+    required List<String> virtualNavigators,
+    required Map<String, List<String>> groups,
+    required List<Map<String, dynamic>> checkpointMaps,
+    required List<Map<String, dynamic>> waypointMaps,
+    required List<Checkpoint> availableCheckpoints,
+    Boundary? boundary,
+    String? startPointId,
+    String? endPointId,
+    required String executionOrder,
+    required int checkpointsPerNavigator,
+    required double minRouteLength,
+    required double maxRouteLength,
+    String scoringCriterion = 'fairness',
+    required ForceComposition composition,
+    List<SafetyPoint> safetyPoints = const [],
+    void Function(int current, int total)? onProgress,
+  }) async {
+    final parachuteSettings = navigation.parachuteSettings;
+    if (parachuteSettings == null || parachuteSettings.dropPointIds.isEmpty) {
+      throw Exception('לא נבחרו נקודות הצנחה');
+    }
+
+    // 1. שיוך מנווטים לנקודות הצנחה
+    Map<String, String> dropPointAssignments;
+    if (parachuteSettings.assignmentMethod == 'manual' &&
+        parachuteSettings.navigatorDropPoints.isNotEmpty) {
+      dropPointAssignments = Map<String, String>.from(parachuteSettings.navigatorDropPoints);
+    } else {
+      Map<String, List<String>>? sfNavigators;
+      if (parachuteSettings.assignmentMethod == 'by_sub_framework') {
+        sfNavigators = await _getSubFrameworkNavigators(navigation, tree);
+      }
+      dropPointAssignments = _assignDropPoints(
+        navigators: navigators,
+        settings: parachuteSettings,
+        subFrameworkNavigators: sfNavigators,
+      );
+    }
+
+    // 2. הסרת נקודות הצנחה מפול הנקודות (הן משמשות כנקודות התחלה)
+    final dropPointIdSet = parachuteSettings.dropPointIds.toSet();
+    final filteredCheckpointMaps = checkpointMaps
+        .where((m) => !dropPointIdSet.contains(m['id']))
+        .toList();
+
+    // 3. הרצת האלגוריתם הרגיל ב-Isolate (ללא נקודת התחלה — תוחלף per-navigator)
+    final isolateResult = await _runInIsolate(
+      navigators: virtualNavigators,
+      checkpointMaps: filteredCheckpointMaps,
+      startPointId: null, // אין נקודת התחלה גלובלית — כל מנווט מתחיל מנקודה אחרת
+      endPointId: endPointId,
+      waypointMaps: waypointMaps,
+      executionOrder: executionOrder,
+      checkpointsPerNavigator: checkpointsPerNavigator,
+      minRouteLength: minRouteLength,
+      maxRouteLength: maxRouteLength,
+      scoringCriterion: scoringCriterion,
+      onProgress: onProgress,
+    );
+
+    // 4. החלפת נקודת התחלה per-navigator לפי שיוך נקודות הצנחה
+    final updatedRoutes = <String, domain.AssignedRoute>{};
+
+    if (composition.isGroupedPairOrSquad && groups.isNotEmpty) {
+      // הרחבת קבוצות + שיוך drop point per-member
+      for (final entry in isolateResult.routes.entries) {
+        final groupId = entry.key;
+        final route = entry.value;
+        final members = groups[groupId];
+        if (members == null) continue;
+
+        for (final memberId in members) {
+          final dropPointId = dropPointAssignments[memberId];
+          // עדכון רצף: drop point בהתחלה
+          final updatedSequence = <String>[
+            if (dropPointId != null) dropPointId,
+            ...route.sequence,
+          ];
+          updatedRoutes[memberId] = route.copyWith(
+            startPointId: dropPointId,
+            groupId: groupId,
+            sequence: updatedSequence,
+          );
+        }
+      }
+    } else {
+      // solo — כל מנווט מקבל את ה-drop point שלו כנקודת התחלה
+      for (final entry in isolateResult.routes.entries) {
+        final navId = entry.key;
+        final route = entry.value;
+        final dropPointId = dropPointAssignments[navId];
+        // עדכון רצף: drop point בהתחלה
+        final updatedSequence = <String>[
+          if (dropPointId != null) dropPointId,
+          ...route.sequence,
+        ];
+        updatedRoutes[navId] = route.copyWith(
+          startPointId: dropPointId,
+          sequence: updatedSequence,
+        );
+      }
+    }
+
+    return domain.DistributionResult(
+      status: isolateResult.status,
+      routes: updatedRoutes,
+      approvalOptions: isolateResult.approvalOptions,
+      hasSharedCheckpoints: isolateResult.hasSharedCheckpoints,
+      sharedCheckpointCount: isolateResult.sharedCheckpointCount,
+      forceComposition: composition.isGrouped
+          ? composition.copyWith(manualGroups: groups)
+          : null,
+    );
   }
 
   /// המרת תוצאת Isolate ל-DistributionResult

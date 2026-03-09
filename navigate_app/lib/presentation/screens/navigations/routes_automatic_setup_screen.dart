@@ -79,6 +79,14 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   bool _revealEnabled = true;
   int _revealAfterMinutes = 30;
 
+  // צנחנים
+  List<String> _dropPointIds = [];
+  String _parachuteAssignmentMethod = 'random';
+  Map<String, String> _navigatorDropPoints = {};
+  Map<String, List<String>> _subFrameworkDropPoints = {};
+  bool _samePointPerSubFramework = false;
+  String _routeMode = 'checkpoints';
+
   // Progress
   bool _isDistributing = false;
   double _maxProgressRatio = 0;
@@ -120,6 +128,17 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       _clusterSpreadMeters = nav.clusterSettings.clusterSpreadMeters;
       _revealEnabled = nav.clusterSettings.revealEnabled;
       _revealAfterMinutes = nav.clusterSettings.revealAfterMinutes;
+
+      // צנחנים
+      if (nav.parachuteSettings != null) {
+        final ps = nav.parachuteSettings!;
+        _dropPointIds = List.from(ps.dropPointIds);
+        _parachuteAssignmentMethod = ps.assignmentMethod;
+        _navigatorDropPoints = Map.from(ps.navigatorDropPoints);
+        _subFrameworkDropPoints = ps.subFrameworkDropPoints.map((k, v) => MapEntry(k, List<String>.from(v)));
+        _samePointPerSubFramework = ps.samePointPerSubFramework;
+        _routeMode = ps.routeMode;
+      }
 
       // הרכב הכוח
       _forceComposition = nav.forceComposition.type;
@@ -284,7 +303,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       starLearningMinutes: _navigationType == 'star' ? _starLearningMinutes : null,
       starNavigatingMinutes: _navigationType == 'star' ? _starNavigatingMinutes : null,
       starAutoMode: _navigationType == 'star' ? _starAutoMode : false,
-      clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
+      clusterSettings: (_navigationType == 'clusters' || _navigationType == 'clusters_reverse' || (_navigationType == 'parachute' && _routeMode == 'clusters'))
           ? ClusterSettings(
               clusterSize: _clusterSize,
               clusterSpreadMeters: _clusterSpreadMeters,
@@ -292,6 +311,17 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               revealAfterMinutes: _revealAfterMinutes,
             )
           : const ClusterSettings(),
+      parachuteSettings: _navigationType == 'parachute'
+          ? ParachuteSettings(
+              dropPointIds: _dropPointIds,
+              assignmentMethod: _parachuteAssignmentMethod,
+              navigatorDropPoints: _navigatorDropPoints,
+              subFrameworkDropPoints: _subFrameworkDropPoints,
+              samePointPerSubFramework: _samePointPerSubFramework,
+              routeMode: _routeMode,
+            )
+          : null,
+      clearParachuteSettings: _navigationType != 'parachute',
       updatedAt: DateTime.now(),
     );
     await _navRepo.update(settingsNav);
@@ -319,6 +349,16 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       }
       // וידוא שההתחלה = הסיום
       _endPointId = _startPointId;
+    } else if (_navigationType == 'parachute') {
+      if (_endPointId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('חובה לבחור נקודת סיום'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
     } else {
       if (_startPointId == null || _endPointId == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -788,6 +828,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         _buildNavigationTypeSection(),
                         const SizedBox(height: 16),
 
+                        // נקודות הצנחה (צנחנים בלבד)
+                        if (_navigationType == 'parachute') ...[
+                          _buildDropPointsSection(),
+                          const SizedBox(height: 16),
+                        ],
+
                         // הרכב הכוח
                         _buildForceCompositionSection(),
                         const SizedBox(height: 16),
@@ -833,7 +879,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         const SizedBox(height: 24),
 
                         // אשכולות
-                        if (_navigationType == 'clusters' || _navigationType == 'clusters_reverse')
+                        if (_navigationType == 'clusters' || _navigationType == 'clusters_reverse' || (_navigationType == 'parachute' && _routeMode == 'clusters'))
                           _buildClustersSection(),
 
                         const SizedBox(height: 32),
@@ -1012,9 +1058,8 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 DropdownMenuItem(value: 'star', child: Text('כוכב')),
                 DropdownMenuItem(value: 'reverse', child: Text('הפוך')),
                 DropdownMenuItem(
-                  enabled: false,
                   value: 'parachute',
-                  child: Text('צנחנים (בפיתוח)', style: TextStyle(color: Colors.grey)),
+                  child: Text('צנחנים'),
                 ),
                 DropdownMenuItem(value: 'clusters', child: Text('אשכולות')),
                 DropdownMenuItem(value: 'clusters_reverse', child: Text('אשכולות הפוך')),
@@ -1041,6 +1086,14 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                   }
                   if (value == 'clusters' || value == 'clusters_reverse') {
                     // אשכולות: אין מאבטח
+                    if (_forceComposition == 'guard') {
+                      _forceComposition = 'solo';
+                      _swapPointId = null;
+                      _manualGroups = {};
+                    }
+                  }
+                  if (value == 'parachute') {
+                    // צנחנים: אין מאבטח
                     if (_forceComposition == 'guard') {
                       _forceComposition = 'solo';
                       _swapPointId = null;
@@ -1282,6 +1335,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
   Widget _buildStartEndPointsSection() {
     final isStar = _navigationType == 'star';
+    final isParachute = _navigationType == 'parachute';
 
     return Card(
       child: Padding(
@@ -1292,7 +1346,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
             Row(
               children: [
                 Text(
-                  isStar ? 'נקודה מרכזית' : (_forceComposition == 'guard' ? 'נקודות התחלה, החלפה וסיום' : 'נקודות התחלה וסיום'),
+                  isStar ? 'נקודה מרכזית' : isParachute ? 'נקודת סיום' : (_forceComposition == 'guard' ? 'נקודות התחלה, החלפה וסיום' : 'נקודות התחלה וסיום'),
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
@@ -1361,46 +1415,48 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             ] else ...[
-              // רגיל — נקודת התחלה + סיום
-              DropdownButtonFormField<String>(
-                value: _startPointId,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  labelText: 'נקודת התחלה (משותפת) *',
-                ),
-                items: [
-                  DropdownMenuItem(
-                    value: '__pick_on_map__',
-                    child: Row(
-                      children: [
-                        Icon(Icons.map, size: 18, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Text('בחר במפה'),
-                      ],
-                    ),
+              // רגיל — נקודת התחלה + סיום (צנחנים: ללא התחלה)
+              if (!isParachute) ...[
+                DropdownButtonFormField<String>(
+                  value: _startPointId,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'נקודת התחלה (משותפת) *',
                   ),
-                  ..._checkpoints.map((cp) => DropdownMenuItem(
-                    value: cp.id,
-                    child: Text(cp.displayLabel),
-                  )),
-                ],
-                validator: (value) {
-                  if (value == null) return 'חובה לבחור נקודת התחלה';
-                  return null;
-                },
-                onChanged: (value) async {
-                  if (value == '__pick_on_map__') {
-                    final selectedId = await Navigator.push<String>(context,
-                      MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
-                        checkpoints: _checkpoints,
-                        boundary: _boundary,
-                      )));
-                    if (selectedId != null) setState(() => _startPointId = selectedId);
-                    return;
-                  }
-                  setState(() => _startPointId = value);
-                },
-              ),
+                  items: [
+                    DropdownMenuItem(
+                      value: '__pick_on_map__',
+                      child: Row(
+                        children: [
+                          Icon(Icons.map, size: 18, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text('בחר במפה'),
+                        ],
+                      ),
+                    ),
+                    ..._checkpoints.map((cp) => DropdownMenuItem(
+                      value: cp.id,
+                      child: Text(cp.displayLabel),
+                    )),
+                  ],
+                  validator: (value) {
+                    if (value == null) return 'חובה לבחור נקודת התחלה';
+                    return null;
+                  },
+                  onChanged: (value) async {
+                    if (value == '__pick_on_map__') {
+                      final selectedId = await Navigator.push<String>(context,
+                        MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                          checkpoints: _checkpoints,
+                          boundary: _boundary,
+                        )));
+                      if (selectedId != null) setState(() => _startPointId = selectedId);
+                      return;
+                    }
+                    setState(() => _startPointId = value);
+                  },
+                ),
+              ],
               const SizedBox(height: 12),
 
               // נקודת החלפה — רק למאבטח
@@ -1790,7 +1846,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
               ),
               items: [
                 const DropdownMenuItem(value: 'solo', child: Text('בדד')),
-                if (_navigationType != 'star' && _navigationType != 'clusters' && _navigationType != 'clusters_reverse')
+                if (_navigationType != 'star' && _navigationType != 'clusters' && _navigationType != 'clusters_reverse' && _navigationType != 'parachute')
                   const DropdownMenuItem(value: 'guard', child: Text('מאבטח')),
                 const DropdownMenuItem(value: 'pair', child: Text('צמד')),
                 const DropdownMenuItem(value: 'squad', child: Text('חוליה')),
@@ -1957,6 +2013,122 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 );
               }),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDropPointsSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'נקודות הצנחה',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'בחר נקודות ציון שישמשו כנקודות הצנחה (התחלה) למנווטים',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            // רשימת נקודות ציון כ-chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _checkpoints.map((cp) {
+                final isSelected = _dropPointIds.contains(cp.id);
+                return FilterChip(
+                  label: Text(cp.displayLabel),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    setState(() {
+                      if (selected) {
+                        _dropPointIds.add(cp.id);
+                      } else {
+                        _dropPointIds.remove(cp.id);
+                      }
+                    });
+                  },
+                  selectedColor: Colors.orange[100],
+                  checkmarkColor: Colors.orange[800],
+                );
+              }).toList(),
+            ),
+            if (_dropPointIds.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${_dropPointIds.length} נקודות הצנחה נבחרו',
+                style: TextStyle(fontSize: 12, color: Colors.orange[700]),
+              ),
+            ],
+            const Divider(height: 24),
+            // שיטת שיבוץ
+            const Text(
+              'שיטת שיבוץ לנקודות הצנחה',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _parachuteAssignmentMethod,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'שיטת שיבוץ',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'random', child: Text('אקראי')),
+                DropdownMenuItem(value: 'manual', child: Text('ידני')),
+                DropdownMenuItem(value: 'by_sub_framework', child: Text('לפי תת-מסגרת')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _parachuteAssignmentMethod = value);
+                }
+              },
+            ),
+            if (_parachuteAssignmentMethod == 'by_sub_framework') ...[
+              const SizedBox(height: 8),
+              SwitchListTile(
+                title: const Text('אותה נקודה לכל מנווטי תת-מסגרת'),
+                value: _samePointPerSubFramework,
+                contentPadding: EdgeInsets.zero,
+                onChanged: (v) => setState(() => _samePointPerSubFramework = v),
+              ),
+            ],
+            const Divider(height: 24),
+            // מצב מסלול
+            const Text(
+              'מצב מסלול',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _routeMode,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'מצב מסלול',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'checkpoints', child: Text('נקודות ציון')),
+                DropdownMenuItem(value: 'clusters', child: Text('אשכולות')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _routeMode = value);
+                }
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _routeMode == 'clusters'
+                  ? 'כל נקודה תוקף באשכול נקודות מטעות'
+                  : 'נקודות ציון רגילות ללא נקודות מטעות',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
           ],
         ),
       ),

@@ -120,16 +120,23 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     final route = widget.navigation.routes[widget.navigatorUid];
     if (route == null) return;
 
-    if (route.startPointId != null) {
-      _startCheckpoint = await _checkpointRepo.getById(route.startPointId!);
-    }
-    if (route.endPointId != null) {
-      _endCheckpoint = await _checkpointRepo.getById(route.endPointId!);
-    }
+    if (widget.navigation.navigationType == 'parachute') {
+      // Parachute: navigator doesn't know start point during planning
+      if (route.endPointId != null) {
+        _endCheckpoint = await _checkpointRepo.getById(route.endPointId!);
+      }
+    } else {
+      if (route.startPointId != null) {
+        _startCheckpoint = await _checkpointRepo.getById(route.startPointId!);
+      }
+      if (route.endPointId != null) {
+        _endCheckpoint = await _checkpointRepo.getById(route.endPointId!);
+      }
 
-    // אם ציר חדש (ריק) ויש נקודת התחלה — מוסיף אותה אוטומטית
-    if (_waypoints.isEmpty && _startCheckpoint != null && _startCheckpoint!.coordinates != null) {
-      _waypoints.add(_startCheckpoint!.coordinates!.toLatLng());
+      // אם ציר חדש (ריק) ויש נקודת התחלה — מוסיף אותה אוטומטית
+      if (_waypoints.isEmpty && _startCheckpoint != null && _startCheckpoint!.coordinates != null) {
+        _waypoints.add(_startCheckpoint!.coordinates!.toLatLng());
+      }
     }
 
     if (mounted) setState(() {});
@@ -280,7 +287,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     }
 
     // בדיקת מעבר בכל נקודות הציון
-    if (_waypoints.length >= 2 && !widget.navigation.isClusters) {
+    if (_waypoints.length >= 2 && !widget.navigation.usesClusters) {
       for (final cp in widget.checkpoints) {
         bool passesNear = false;
         for (int i = 0; i < _waypoints.length - 1; i++) {
@@ -536,7 +543,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
 
     // markers לנקודות ציון קבועות (עיגול כחול עם מספר)
     final cpMarkers = <Marker>[];
-    if (widget.navigation.isClusters && widget.clusterMap != null) {
+    if (widget.navigation.usesClusters && widget.clusterMap != null) {
       // מצב אשכולות — כל הנקודות (אמיתיות + הסחה) עם sequenceNumber
       final seen = <String>{};
       const jitter = 0.0002; // ~10m
@@ -933,7 +940,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                       ]),
                     // קו בין נקודות ציון (רפרנס) — כולל התחלה וסיום
                     if (_showRoutes && refPoints.length > 1
-                        && !(widget.navigation.isClusters && widget.clusterMap != null))
+                        && !(widget.navigation.usesClusters && widget.clusterMap != null))
                       PolylineLayer(polylines: [
                         Polyline(
                           points: refPoints,

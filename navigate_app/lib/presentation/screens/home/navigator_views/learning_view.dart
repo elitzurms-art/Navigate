@@ -90,6 +90,7 @@ class _LearningViewState extends State<LearningView>
   bool _revealAvailable = false;
 
   bool get _isReverseNavigation => _currentNavigation.isReverse;
+  bool get _isParachute => _currentNavigation.navigationType == 'parachute';
 
   /// סיפור דרך — state
   List<NarrationEntry> _narrationEntries = [];
@@ -342,6 +343,13 @@ class _LearningViewState extends State<LearningView>
         endCp = await _checkpointRepo.getById(route.endPointId!);
       }
 
+      // צנחנים — ערבוב נקודות בסדר דטרמיניסטי, ללא נקודת התחלה
+      if (_isParachute) {
+        startCp = null;
+        final seed = widget.currentUser.uid.hashCode ^ widget.navigation.id.hashCode;
+        loaded.shuffle(Random(seed));
+      }
+
       // ניווט הפוך — היפוך סדר תצוגה (הנתונים השמורים נשארים כמות שהם)
       final displayList = _isReverseNavigation ? loaded.reversed.toList() : loaded;
       if (_isReverseNavigation) {
@@ -363,7 +371,7 @@ class _LearningViewState extends State<LearningView>
     }
 
     // Load all area checkpoints for cluster decoy selection
-    if (_currentNavigation.isClusters) {
+    if (_currentNavigation.usesClusters) {
       final allCps = await _checkpointRepo.getByArea(_currentNavigation.areaId);
       if (mounted) {
         setState(() {
@@ -665,7 +673,7 @@ class _LearningViewState extends State<LearningView>
         ),
       ));
     }
-    if (_currentNavigation.isClusters && _clusterMap.isNotEmpty) {
+    if (_currentNavigation.usesClusters && _clusterMap.isNotEmpty) {
       // מצב אשכולות — כל הנקודות עם sequenceNumber מהדומיין
       final seen = <String>{};
       const jitter = 0.0002; // ~10m
@@ -829,8 +837,8 @@ class _LearningViewState extends State<LearningView>
                             ))
                         .toList(),
                   ),
-                // ציר רפרנס (כחול בהיר) — מוסתר במצב אשכולות
-                if (_showRoutes && refPoints.length > 1 && !(_currentNavigation.isClusters && _clusterMap.isNotEmpty))
+                // ציר רפרנס (כחול בהיר) — מוסתר במצב אשכולות ובמצב צנחנים
+                if (_showRoutes && refPoints.length > 1 && !(_currentNavigation.usesClusters && _clusterMap.isNotEmpty) && !_isParachute)
                   PolylineLayer(polylines: [
                     Polyline(
                       points: refPoints,
@@ -918,7 +926,7 @@ class _LearningViewState extends State<LearningView>
     // בניית רשימה מסודרת: התחלה, נקודות ציון, סיום
     final allCheckpoints = <_CheckpointDisplayItem>[];
 
-    if (_startCheckpoint != null) {
+    if (_startCheckpoint != null && !_isParachute) {
       allCheckpoints.add(_CheckpointDisplayItem(
         checkpoint: _startCheckpoint!,
         role: _CheckpointRole.start,
@@ -937,7 +945,7 @@ class _LearningViewState extends State<LearningView>
       (cp) => cp.id != _startCheckpoint?.id && cp.id != _endCheckpoint?.id,
     ).toList();
 
-    if (_currentNavigation.isClusters && _clusterMap.isNotEmpty) {
+    if (_currentNavigation.usesClusters && _clusterMap.isNotEmpty) {
       // מצב אשכולות — הצגה מקובצת עם decoys
       final addedClusters = <String>{};
       int clusterIndex = 0;
@@ -1142,7 +1150,7 @@ class _LearningViewState extends State<LearningView>
           navigation: _currentNavigation,
           navigatorUid: widget.currentUser.uid,
           checkpoints: _routeCheckpoints,
-          clusterMap: _currentNavigation.isClusters ? _clusterMap : null,
+          clusterMap: _currentNavigation.usesClusters ? _clusterMap : null,
           onNavigationUpdated: (updatedNav) {
             setState(() => _currentNavigation = updatedNav);
             widget.onNavigationUpdated(updatedNav);

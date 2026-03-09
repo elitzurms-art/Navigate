@@ -912,6 +912,17 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                             _getGroupLabel(uid)!,
                             style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                           ),
+                        if (widget.navigation.navigationType == 'parachute') ...[
+                          Builder(builder: (_) {
+                            final dropPointId = widget.navigation.routes[uid]?.startPointId;
+                            if (dropPointId == null) return const SizedBox.shrink();
+                            final dropCp = _getCheckpoint(dropPointId);
+                            return Text(
+                              'נקודת הצנחה: ${dropCp?.name ?? dropPointId}',
+                              style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                            );
+                          }),
+                        ],
                         if (cps.isNotEmpty)
                           Text(
                             '$manualCount נקודות${_intermediatePointIds.isNotEmpty ? ' + ${_intermediatePointIds.length} חובה' : ''} · ${lengthKm.toStringAsFixed(1)} ק"מ',
