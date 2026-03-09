@@ -117,7 +117,7 @@ class ClusterRepository {
     await _syncManager.queueOperation(
       collection: '${AppConstants.areasCollection}/$areaId/${AppConstants.areaLayersBaSubcollection}',
       documentId: id,
-      operation: 'delete',
+      operation: 'hard_delete',
       data: {'id': id},
       priority: SyncPriority.high,
     );

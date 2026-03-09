@@ -259,13 +259,17 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   /// סיום למידה אוטומטי — ללא דיאלוג אישור
   Future<void> _autoFinishLearning() async {
-    final updatedNav = _currentNavigation.copyWith(
-      status: 'preparation',
-      trainingStartTime: DateTime.now(),
-      updatedAt: DateTime.now(),
+    final now = DateTime.now();
+    await _navRepo.updateStatusOnly(
+      _currentNavigation.id,
+      'preparation',
+      trainingStartTime: now,
     );
-    await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
+    _currentNavigation = _currentNavigation.copyWith(
+      status: 'preparation',
+      trainingStartTime: now,
+      updatedAt: now,
+    );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -610,18 +614,18 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     );
 
     try {
-      final updatedNav = _currentNavigation.copyWith(
+      final now = DateTime.now();
+      await _navRepo.updateStatusOnly(_currentNavigation.id, 'learning');
+      _currentNavigation = _currentNavigation.copyWith(
         status: 'learning',
-        updatedAt: DateTime.now(),
+        updatedAt: now,
       );
-      await _navRepo.update(updatedNav);
-      _currentNavigation = updatedNav;
 
       // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
       try {
         await FirebaseFirestore.instance
             .collection(AppConstants.navigationsCollection)
-            .doc(updatedNav.id)
+            .doc(_currentNavigation.id)
             .set({
           'status': 'learning',
           'updatedAt': FieldValue.serverTimestamp(),
@@ -680,13 +684,17 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
 
     // עדכון הניווט - סימון שהלמידה הסתיימה + החזרת סטטוס להכנה
-    final updatedNav = _currentNavigation.copyWith(
-      status: 'preparation',
-      trainingStartTime: DateTime.now(),
-      updatedAt: DateTime.now(),
+    final now = DateTime.now();
+    await _navRepo.updateStatusOnly(
+      _currentNavigation.id,
+      'preparation',
+      trainingStartTime: now,
     );
-    await _navRepo.update(updatedNav);
-    _currentNavigation = updatedNav;
+    _currentNavigation = _currentNavigation.copyWith(
+      status: 'preparation',
+      trainingStartTime: now,
+      updatedAt: now,
+    );
 
     if (mounted) {
       Navigator.pop(context, true);
