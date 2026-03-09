@@ -94,6 +94,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   List<Checkpoint> _checkpoints = [];
   Boundary? _boundary;
   bool _isLoading = false;
+  bool _alreadyClosed = false;
 
   // התראות בזמן אמת
   List<NavigatorAlert> _activeAlerts = [];
@@ -6111,7 +6112,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .doc(widget.navigation.id)
         .snapshots()
         .listen((snap) {
-      if (!mounted) return;
+      if (!mounted || _alreadyClosed) return;
+
+      // Detect external status change — another admin finished/changed the navigation
+      final status = snap.data()?['status'] as String?;
+      const activeStatuses = {'active', 'waiting'};
+      if (status != null && !activeStatuses.contains(status)) {
+        _alreadyClosed = true;
+        Navigator.pop(context, true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('הניווט הסתיים על ידי מפקד אחר'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
       final active = snap.data()?['emergencyActive'] == true;
       final mode = snap.data()?['emergencyMode'] as int? ?? 0;
       final broadcastId = snap.data()?['activeBroadcastId'] as String?;
