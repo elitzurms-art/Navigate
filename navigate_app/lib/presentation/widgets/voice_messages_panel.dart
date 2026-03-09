@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../../data/repositories/voice_message_repository.dart';
@@ -51,6 +52,13 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
   String? _replyToId;
   String? _replyToName;
 
+  /// האם צריך לשאול את המנווט פרטי/קבוצתי בהקלטה הבאה
+  bool _pendingReplyChoice = false;
+
+  /// ההודעה האחרונה שהתקבלה (להשמעה חוזרת)
+  String? _lastReceivedMessageUrl;
+  String? _lastReceivedMessageId;
+
   StreamSubscription<List<VoiceMessage>>? _messagesSub;
   List<VoiceMessage> _messages = [];
   int _readUpToCount = 0;
@@ -91,17 +99,29 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
             _replyToName = privateToMe.first.senderName;
           }
         }
+        // שמירת ההודעה האחרונה שהתקבלה (להשמעה חוזרת)
+        for (final msg in messages) {
+          if (msg.senderId != widget.currentUser.uid) {
+            _lastReceivedMessageUrl = msg.audioUrl;
+            _lastReceivedMessageId = msg.id;
+            break; // הראשונה ברשימה = החדשה ביותר
+          }
+        }
       } else {
         // הודעות חדשות מאחרים — הכנסה לתור (מהישנה לחדשה)
         for (final msg in messages.reversed) {
           if (!_seenMessageIds.contains(msg.id) &&
               msg.senderId != widget.currentUser.uid) {
             widget.voiceService.enqueueMessage(msg.audioUrl, msg.id);
-            // הודעה פרטית חדשה אליי — עדכון יעד המענה
+            // שמירת ההודעה האחרונה שהתקבלה (להשמעה חוזרת)
+            _lastReceivedMessageUrl = msg.audioUrl;
+            _lastReceivedMessageId = msg.id;
+            // הודעה פרטית חדשה אליי — עדכון יעד המענה + דגל שאלה
             if (!widget.isCommander &&
                 msg.targetId == widget.currentUser.uid) {
               _replyToId = msg.senderId;
               _replyToName = msg.senderName;
+              _pendingReplyChoice = true;
             }
           }
           _seenMessageIds.add(msg.id);
@@ -110,6 +130,35 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
     }
 
     setState(() => _messages = messages);
+  }
+
+  /// דיאלוג בחירה: שליחה פרטית או שידור קבוצתי
+  Future<String?> _showReplyChoiceDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('שליחת הודעה'),
+        content: Text('לענות ל-$_replyToName בפרטי או לשדר לכולם?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'broadcast'),
+            child: const Text('שדר לכולם'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'private'),
+            child: Text('פרטי ל-$_replyToName'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// השמעה חוזרת של ההודעה האחרונה שהתקבלה
+  void _replayLastMessage() {
+    if (_lastReceivedMessageUrl != null && _lastReceivedMessageId != null) {
+      widget.voiceService
+          .playMessage(_lastReceivedMessageUrl!, _lastReceivedMessageId!);
+    }
   }
 
   @override
@@ -383,6 +432,7 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
               onTap: () => setState(() {
                 _replyToId = null;
                 _replyToName = null;
+                _pendingReplyChoice = false;
               }),
               child: Icon(Icons.close, size: 14, color: Colors.orange[700]),
             ),
@@ -396,11 +446,39 @@ class _VoiceMessagesPanelState extends State<VoiceMessagesPanel> {
     return PushToTalkButton(
       enabled: widget.enabled,
       voiceService: widget.voiceService,
+      onTap: _lastReceivedMessageUrl != null ? _replayLastMessage : null,
       onRecordingComplete: (filePath, duration) async {
-        final effectiveTargetId =
-            widget.isCommander ? _selectedTargetId : _replyToId;
-        final effectiveTargetName =
-            widget.isCommander ? _selectedTargetName : _replyToName;
+        String? effectiveTargetId;
+        String? effectiveTargetName;
+
+        if (widget.isCommander) {
+          effectiveTargetId = _selectedTargetId;
+          effectiveTargetName = _selectedTargetName;
+        } else if (_replyToId != null && _pendingReplyChoice) {
+          // הודעה פרטית חדשה — שואלים את המנווט
+          final choice = await _showReplyChoiceDialog();
+          _pendingReplyChoice = false;
+          if (choice == null) {
+            // ביטול — מוחקים את ההקלטה
+            try { await File(filePath).delete(); } catch (_) {}
+            return;
+          }
+          if (choice == 'private') {
+            effectiveTargetId = _replyToId;
+            effectiveTargetName = _replyToName;
+          } else {
+            // broadcast — מנקים את יעד המענה
+            setState(() {
+              _replyToId = null;
+              _replyToName = null;
+            });
+          }
+        } else if (!widget.isCommander) {
+          // מענה פרטי רגיל (ללא דיאלוג — כבר בחר קודם)
+          effectiveTargetId = _replyToId;
+          effectiveTargetName = _replyToName;
+        }
+
         try {
           await _repo.sendMessage(
             navigationId: widget.navigationId,

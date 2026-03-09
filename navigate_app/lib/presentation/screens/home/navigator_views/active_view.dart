@@ -158,6 +158,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   final Set<String> _seenPttMessageIds = {};
   bool _pttInitialLoad = true;
 
+  // PTT — מענה פרטי
+  String? _pttReplyToId;
+  String? _pttReplyToName;
+  bool _pttPendingReplyChoice = false;
+  String? _pttLastReceivedMessageUrl;
+  String? _pttLastReceivedMessageId;
+
   // בקשות הארכה
   final ExtensionRequestRepository _extensionRepo = ExtensionRequestRepository();
   StreamSubscription<List<ExtensionRequest>>? _extensionListener;
@@ -3452,8 +3459,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                 ),
               ),
             ),
-            // ווקי טוקי — כפתור PTT בלבד, ממורכז
-            if (hasPtt)
+            // ווקי טוקי — chip מענה פרטי + כפתור PTT
+            if (hasPtt) ...[
+              if (_pttReplyToId != null)
+                _buildPttReplyChip(),
               Builder(builder: (context) {
                 _voiceService ??= VoiceService();
                 return PushToTalkButton(
@@ -3461,8 +3470,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
                   voiceService: _voiceService!,
                   onRecordingComplete: _onPttRecordingComplete,
                   onRecordingCanceled: () {},
+                  onTap: _pttLastReceivedMessageUrl != null ? _replayLastPttMessage : null,
                 );
               }),
+            ],
             const SizedBox(height: 8),
           ],
     );
@@ -4310,6 +4321,34 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // ===========================================================================
 
   Future<void> _onPttRecordingComplete(String filePath, double duration) async {
+    String? targetId;
+    String? targetName;
+
+    if (_pttReplyToId != null && _pttPendingReplyChoice) {
+      // הודעה פרטית חדשה — שואלים את המנווט
+      final choice = await _showPttReplyChoiceDialog();
+      if (choice == null) {
+        // ביטול — מוחקים את ההקלטה
+        try { await File(filePath).delete(); } catch (_) {}
+        return;
+      }
+      if (choice == 'private') {
+        targetId = _pttReplyToId;
+        targetName = _pttReplyToName;
+      } else {
+        // broadcast — מנקים את יעד המענה
+        setState(() {
+          _pttReplyToId = null;
+          _pttReplyToName = null;
+        });
+      }
+      _pttPendingReplyChoice = false;
+    } else if (_pttReplyToId != null) {
+      // מענה פרטי רגיל (ללא דיאלוג — כבר בחר קודם)
+      targetId = _pttReplyToId;
+      targetName = _pttReplyToName;
+    }
+
     try {
       final repo = VoiceMessageRepository();
       await repo.sendMessage(
@@ -4318,6 +4357,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         duration: duration,
         senderId: widget.currentUser.uid,
         senderName: widget.currentUser.fullName,
+        targetId: targetId,
+        targetName: targetName,
       );
     } catch (e) {
       if (mounted) {
@@ -4329,6 +4370,80 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         );
       }
     }
+    // ניקוי state אחרי שליחה
+    setState(() {
+      _pttPendingReplyChoice = false;
+      _pttReplyToId = null;
+      _pttReplyToName = null;
+    });
+  }
+
+  /// דיאלוג בחירה: שליחה פרטית או שידור קבוצתי
+  Future<String?> _showPttReplyChoiceDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('שליחת הודעה'),
+        content: Text('לענות ל-$_pttReplyToName בפרטי או לשדר לכולם?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'broadcast'),
+            child: const Text('שדר לכולם'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'private'),
+            child: Text('פרטי ל-$_pttReplyToName'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// השמעה חוזרת של ההודעה האחרונה שהתקבלה
+  void _replayLastPttMessage() {
+    if (_voiceService == null) return;
+    if (_voiceService!.isRecording) return;
+    if (_pttLastReceivedMessageUrl != null && _pttLastReceivedMessageId != null) {
+      _voiceService!.playMessage(_pttLastReceivedMessageUrl!, _pttLastReceivedMessageId!);
+    }
+  }
+
+  Widget _buildPttReplyChip() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.orange.shade300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.reply, size: 14, color: Colors.orange[700]),
+            const SizedBox(width: 6),
+            Text(
+              'מענה פרטי ← $_pttReplyToName',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.orange[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() {
+                _pttReplyToId = null;
+                _pttReplyToName = null;
+                _pttPendingReplyChoice = false;
+              }),
+              child: Icon(Icons.close, size: 14, color: Colors.orange[700]),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _startPttListener() {
@@ -4348,12 +4463,37 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         _seenPttMessageIds.addAll(messages.map((m) => m.id));
         pttInitialCount = messages.length;
         _pttInitialLoad = false;
+        // אם ההודעה האחרונה הייתה פרטית אליי — להיכנס מיד למצב מענה פרטי
+        final privateToMe = messages.where((m) =>
+            m.targetId == widget.currentUser.uid &&
+            m.senderId != widget.currentUser.uid);
+        if (privateToMe.isNotEmpty) {
+          _pttReplyToId = privateToMe.first.senderId;
+          _pttReplyToName = privateToMe.first.senderName;
+        }
+        // שמירת ההודעה האחרונה שהתקבלה (להשמעה חוזרת)
+        for (final msg in messages) {
+          if (msg.senderId != widget.currentUser.uid) {
+            _pttLastReceivedMessageUrl = msg.audioUrl;
+            _pttLastReceivedMessageId = msg.id;
+            break; // הראשונה ברשימה = החדשה ביותר
+          }
+        }
       } else {
         // הודעות חדשות מאחרים — הכנסה לתור השמעה (מהישנה לחדשה)
         for (final msg in messages.reversed) {
           if (!_seenPttMessageIds.contains(msg.id) &&
               msg.senderId != widget.currentUser.uid) {
             _voiceService!.enqueueMessage(msg.audioUrl, msg.id);
+            // שמירת ההודעה האחרונה שהתקבלה (להשמעה חוזרת)
+            _pttLastReceivedMessageUrl = msg.audioUrl;
+            _pttLastReceivedMessageId = msg.id;
+            // הודעה פרטית חדשה אליי — עדכון יעד המענה + דגל שאלה
+            if (msg.targetId == widget.currentUser.uid) {
+              _pttReplyToId = msg.senderId;
+              _pttReplyToName = msg.senderName;
+              _pttPendingReplyChoice = true;
+            }
           }
           _seenPttMessageIds.add(msg.id);
         }

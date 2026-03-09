@@ -62,6 +62,8 @@ dependencies:
   # Audio (PTT / Walkie Talkie)
   record: ^5.1.0
   audioplayers: ^6.0.0
+  just_audio: ^0.9.36
+  audio_session: ^0.1.16
 
   # Notifications (map download progress)
   flutter_local_notifications: ^19.5.0

@@ -1662,7 +1662,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('התחלת ניווט מחדש'),
-        content: Text('להחזיר את $navigatorId למסך התחלת ניווט?\n\nהמסלול הקודם יישמר במערכת.'),
+        content: Text('להחזיר את $navigatorId למסך התחלת ניווט?\n\nכל הנתונים (מסלול + דקירות) יימחקו.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1683,6 +1683,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       // מחיקת track מ-Drift + Firestore
       await _trackRepo.deleteByNavigator(widget.navigation.id, navigatorId);
 
+      // מחיקת דקירות מ-SharedPreferences + Firestore
+      await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
+
       // עדכון updatedAt בניווט (trigger ל-rebuild במנווט)
       try {
         await FirebaseFirestore.instance
@@ -1698,6 +1701,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           if (data != null) {
             data.personalStatus = NavigatorPersonalStatus.waiting;
             data.trackPoints = [];
+            data.punches = [];
             data.currentPosition = null;
             data.trackStartedAt = null;
             data.trackEndedAt = null;
@@ -1860,6 +1864,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             data.currentPosition = null;
             data.trackStartedAt = null;
             data.trackEndedAt = null;
+            data.isDisqualified = false;
             data.resetAt = DateTime.now();
           }
         });
@@ -2034,17 +2039,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
               ],
             ),
           ),
-        // אפס ניווט — active/finished/noReception
-        const PopupMenuItem(
-          value: 'reset',
-          child: Row(
-            children: [
-              Icon(Icons.restart_alt, color: Colors.orange, size: 20),
-              SizedBox(width: 8),
-              Text('אפס ניווט', style: TextStyle(color: Colors.orange)),
-            ],
+        // אפס ניווט — רק כשיש נתונים (לא waiting)
+        if (status != NavigatorPersonalStatus.waiting)
+          const PopupMenuItem(
+            value: 'reset',
+            child: Row(
+              children: [
+                Icon(Icons.restart_alt, color: Colors.orange, size: 20),
+                SizedBox(width: 8),
+                Text('אפס ניווט', style: TextStyle(color: Colors.orange)),
+              ],
+            ),
           ),
-        ),
         // ביטול פסילה — רק למנווט שנפסל
         if (data.isDisqualified)
           const PopupMenuItem(

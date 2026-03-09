@@ -156,9 +156,16 @@ class MainActivity: FlutterActivity() {
 
     override fun onPause() {
         super.onPause()
-        // דיווח על מעבר לרקע
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // דיווח על מעבר לרקע — רק כשהמסך דלוק (screen-off מטופל ב-screenReceiver)
         if (isInLockTaskMode()) {
-            methodChannel?.invokeMethod("onAppBackgrounded", null)
+            val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (powerManager.isInteractive) {
+                methodChannel?.invokeMethod("onAppBackgrounded", null)
+            }
         }
     }
 

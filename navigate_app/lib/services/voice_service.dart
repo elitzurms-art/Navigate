@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audio_session/audio_session.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 /// שירות הקלטה והשמעה קולית (PTT)
+/// השמעה דרך just_audio עם עוצמה מוגברת (1.2x במובייל, 1.0x בדסקטופ) + USAGE_ALARM לעקיפת DND
 class VoiceService {
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
@@ -29,6 +31,12 @@ class VoiceService {
   final StreamController<Duration> _playbackPositionController =
       StreamController<Duration>.broadcast();
 
+  /// עוצמת השמעה מוגברת — 1.0 בדסקטופ (HTML5 Audio clamp), 1.2 במובייל
+  static double get _effectiveVolume {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) return 1.0;
+    return 1.2;
+  }
+
   /// האם מתבצעת הקלטה כרגע
   bool get isRecording => _isRecording;
 
@@ -42,30 +50,43 @@ class VoiceService {
   Stream<Duration> get playbackPosition => _playbackPositionController.stream;
 
   VoiceService() {
-    final audioContext = AudioContext(
-      android: AudioContextAndroid(
-        usageType: AndroidUsageType.alarm,
-        contentType: AndroidContentType.speech,
-        audioFocus: AndroidAudioFocus.gain,
-      ),
-    );
+    _initAudioSession();
 
-    // הגדרת audio context עם USAGE_ALARM כדי לעקוף DND
-    _player.setAudioContext(audioContext);
-    _beepPlayer.setAudioContext(audioContext);
+    // עוצמה מוגברת — just_audio תומך בערכים מעל 1.0 (במובייל)
+    _player.setVolume(_effectiveVolume);
+    _beepPlayer.setVolume(_effectiveVolume);
 
-    // עוצמה מקסימלית
-    _player.setVolume(1.0);
-    _beepPlayer.setVolume(1.0);
-
-    _player.onPositionChanged.listen((position) {
+    _player.positionStream.listen((position) {
       _playbackPositionController.add(position);
     });
 
-    _player.onPlayerComplete.listen((_) {
-      _currentPlayingMessageId = null;
-      _playNextInQueue();
+    _player.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        _currentPlayingMessageId = null;
+        _playNextInQueue();
+      }
     });
+  }
+
+  /// הגדרת audio session עם USAGE_ALARM לעקיפת DND
+  Future<void> _initAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        androidAudioAttributes: AndroidAudioAttributes(
+          usage: AndroidAudioUsage.alarm,
+          contentType: AndroidAudioContentType.speech,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionMode: AVAudioSessionMode.voiceChat,
+        avAudioSessionRouteSharingPolicy:
+            AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+      ));
+    } catch (_) {
+      // פלטפורמה לא נתמכת (למשל Windows) — ממשיך בלי audio session
+    }
   }
 
   /// בקשת הרשאת מיקרופון
@@ -239,14 +260,11 @@ class VoiceService {
   Future<void> _playBeep() async {
     try {
       final path = await _ensureBeepFile();
-      final completer = Completer<void>();
-      late StreamSubscription sub;
-      sub = _beepPlayer.onPlayerComplete.listen((_) {
-        sub.cancel();
-        completer.complete();
-      });
-      await _beepPlayer.play(DeviceFileSource(path));
-      await completer.future;
+      await _beepPlayer.setFilePath(path);
+      await _beepPlayer.seek(Duration.zero);
+      unawaited(_beepPlayer.play());
+      // הביפ הוא 200ms — ממתינים שיסיים
+      await Future.delayed(const Duration(milliseconds: 250));
     } catch (_) {
       // אם הביפ נכשל — ממשיך להשמעת ההודעה
     }
@@ -262,7 +280,12 @@ class VoiceService {
     if (playBeep) {
       await _playBeep();
     }
-    await _player.play(UrlSource(audioUrl));
+    try {
+      await _player.setUrl(audioUrl);
+      unawaited(_player.play());
+    } catch (_) {
+      _currentPlayingMessageId = null;
+    }
   }
 
   /// השמעת הודעה (ידנית — מנקה תור)

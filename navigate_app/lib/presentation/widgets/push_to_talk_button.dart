@@ -2,12 +2,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../services/voice_service.dart';
 
-/// כפתור Push-To-Talk — לחיצה ארוכה להקלטה, החלקה לביטול
+/// כפתור Push-To-Talk — לחיצה ארוכה להקלטה, החלקה לביטול, לחיצה קצרה להשמעה חוזרת
 class PushToTalkButton extends StatefulWidget {
   final bool enabled;
   final VoiceService voiceService;
   final void Function(String filePath, double duration)? onRecordingComplete;
   final VoidCallback? onRecordingCanceled;
+
+  /// לחיצה קצרה — השמעה חוזרת של ההודעה האחרונה
+  final VoidCallback? onTap;
 
   const PushToTalkButton({
     super.key,
@@ -15,6 +18,7 @@ class PushToTalkButton extends StatefulWidget {
     required this.voiceService,
     this.onRecordingComplete,
     this.onRecordingCanceled,
+    this.onTap,
   });
 
   @override
@@ -117,6 +121,7 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
     final isActive = isRecording || isCanceling;
 
     return GestureDetector(
+      onTap: widget.onTap != null && widget.enabled ? widget.onTap : null,
       onLongPressStart: _onLongPressStart,
       onLongPressMoveUpdate: _onLongPressMoveUpdate,
       onLongPressEnd: _onLongPressEnd,
@@ -232,7 +237,11 @@ class _PushToTalkButtonState extends State<PushToTalkButton>
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  widget.enabled ? 'לחיצה ארוכה לדיבור' : 'ווקי טוקי מושבת',
+                  !widget.enabled
+                      ? 'ווקי טוקי מושבת'
+                      : widget.onTap != null
+                          ? 'ארוכה — דיבור · קצרה — השמעה חוזרת'
+                          : 'לחיצה ארוכה לדיבור',
                   style: TextStyle(
                     color: Colors.grey[500],
                     fontSize: 11,
