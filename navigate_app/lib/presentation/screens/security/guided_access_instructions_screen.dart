@@ -2,13 +2,9 @@ import 'package:flutter/material.dart';
 import '../../../services/device_security_service.dart';
 
 /// מסך הנחיות להפעלת Guided Access (iOS)
+/// מחזיר `true` ב-pop כאשר המשתמש אישר (GA מזוהה או אישור עצמי)
 class GuidedAccessInstructionsScreen extends StatefulWidget {
-  final VoidCallback onConfirmed;
-
-  const GuidedAccessInstructionsScreen({
-    super.key,
-    required this.onConfirmed,
-  });
+  const GuidedAccessInstructionsScreen({super.key});
 
   @override
   State<GuidedAccessInstructionsScreen> createState() =>
@@ -28,36 +24,42 @@ class _GuidedAccessInstructionsScreenState
     setState(() => _isChecking = false);
 
     if (isEnabled) {
-      // Guided Access מופעל - אפשר להמשיך
+      // Guided Access מופעל — pop with true
       if (mounted) {
-        Navigator.pop(context);
-        widget.onConfirmed();
+        Navigator.pop(context, true);
       }
     } else {
-      // לא מופעל - הצגת אזהרה
+      // לא מזוהה — שאל את המשתמש לאישור עצמי
       if (mounted) {
-        showDialog(
+        final selfConfirmed = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
+          builder: (ctx) => AlertDialog(
             title: const Row(
               children: [
-                Icon(Icons.warning, color: Colors.red),
+                Icon(Icons.help_outline, color: Colors.orange),
                 SizedBox(width: 8),
-                Text('Guided Access לא מופעל'),
+                Flexible(child: Text('Guided Access הופעל?')),
               ],
             ),
             content: const Text(
-              'על מנת להתחיל ניווט, חובה להפעיל Guided Access.\n\n'
-              'אנא עקוב אחרי ההוראות והפעל את Guided Access לפני המשך.',
+              'המערכת לא הצליחה לזהות ש-Guided Access מופעל.\n\n'
+              'האם הפעלת Guided Access?',
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('הבנתי'),
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('לא'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('כן, הפעלתי'),
               ),
             ],
           ),
         );
+        if (selfConfirmed == true && mounted) {
+          Navigator.pop(context, true);
+        }
       }
     }
   }
@@ -75,6 +77,34 @@ class _GuidedAccessInstructionsScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // הודעת הרתעה
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                border: Border.all(color: Colors.red.shade300),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.visibility, color: Colors.red[700], size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'יציאה מהאפליקציה במהלך ניווט תירשם במערכת',
+                      style: TextStyle(
+                        color: Colors.red[800],
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
             // אייקון אזהרה
             Center(
               child: Icon(
@@ -112,31 +142,25 @@ class _GuidedAccessInstructionsScreenState
 
             _buildStep(
               number: '1',
-              title: 'פתח הגדרות iOS',
-              description: 'Settings → Accessibility → Guided Access',
+              title: 'לחץ 3 פעמים על כפתור הצד',
+              description: 'יפתח תפריט Guided Access',
             ),
 
             _buildStep(
               number: '2',
-              title: 'הפעל Guided Access',
-              description: 'הפעל את המתג העליון',
+              title: 'בחר Guided Access',
+              description: 'אם לא מופיע — הפעל בהגדרות: Settings → Accessibility → Guided Access',
             ),
 
             _buildStep(
               number: '3',
-              title: 'הגדר קוד',
-              description: 'קבע קוד PIN לביטול (זכור אותו!)',
+              title: 'לחץ Start',
+              description: 'Guided Access יופעל והאפליקציה תינעל',
             ),
 
             _buildStep(
               number: '4',
-              title: 'חזור לאפליקציה',
-              description: 'לחץ 3 פעמים על כפתור הבית (או צד) להפעלה',
-            ),
-
-            _buildStep(
-              number: '5',
-              title: 'לחץ "אישור"',
+              title: 'חזור לאפליקציה ולחץ "אישור"',
               description: 'המערכת תבדוק שהכל מופעל',
             ),
 

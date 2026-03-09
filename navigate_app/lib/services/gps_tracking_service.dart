@@ -44,6 +44,9 @@ class GPSTrackingService {
   StreamSubscription<PdrPositionResult>? _gapFillSubscription;
   static const Duration _gapThreshold = Duration(seconds: 3);
 
+  // --- Soft GPS re-entry after gap-fill ---
+  int _gpsReentryFixCount = 3; // starts past threshold (no inflation at startup)
+
   // --- Jamming State Machine ---
   GpsJammingState _jammingState = GpsJammingState.normal;
   GpsJammingState get jammingState => _jammingState;
@@ -777,35 +780,48 @@ class GPSTrackingService {
     _isGapFilling = false;
     _gapFillSubscription?.cancel();
     _gapFillSubscription = null;
+    _gpsReentryFixCount = 0; // activate soft re-entry for next GPS fixes
     print('GPS returned — exiting PDR gap-fill mode');
   }
 
-  /// Record a PDR position during gap-fill (bypasses Kalman filter).
+  /// Record a PDR position during gap-fill — routed through Kalman filter
+  /// to maintain continuous filter state and smooth GPS↔PDR transitions.
   void _recordGapFillPoint(PdrPositionResult pdrPos) {
+    // Update Kalman filter motion state (ZUPT)
+    _kalmanFilter.setMotionState(isStationary: _isStationary);
+
+    final filtered = _kalmanFilter.update(
+      lat: pdrPos.lat,
+      lng: pdrPos.lon,
+      accuracy: pdrPos.accuracyMeters,
+      timestamp: DateTime.now(),
+    );
+
     final activity = _gpsService.currentActivity;
     final point = TrackPoint(
       coordinate: Coordinate(
-        lat: pdrPos.lat,
-        lng: pdrPos.lon,
-        utm: _convertToUTM(pdrPos.lat, pdrPos.lon),
+        lat: filtered.lat,
+        lng: filtered.lng,
+        utm: _convertToUTM(filtered.lat, filtered.lng),
       ),
       timestamp: DateTime.now(),
-      accuracy: pdrPos.accuracyMeters,
+      accuracy: filtered.accuracy,
       heading: pdrPos.headingDegrees,
       positionSource: 'pdr_gap_fill',
       activityType: activity.name,
     );
 
     _trackPoints.add(point);
+    _pruneWindowOutliers();
     print('רישום נקודה ${_trackPoints.length}: ${point.coordinate.lat}, '
         '${point.coordinate.lng} [pdr_gap_fill]');
 
-    // Emit on position stream so map updates in real-time
+    // Emit filtered position on stream so map updates in real-time
     _positionStream?.add(Position(
-      latitude: pdrPos.lat,
-      longitude: pdrPos.lon,
+      latitude: filtered.lat,
+      longitude: filtered.lng,
       timestamp: DateTime.now(),
-      accuracy: pdrPos.accuracyMeters,
+      accuracy: filtered.accuracy,
       altitude: 0,
       altitudeAccuracy: 0,
       heading: pdrPos.headingDegrees,
@@ -814,7 +830,7 @@ class GPSTrackingService {
       speedAccuracy: 0,
     ));
 
-    _enrichWithDemElevation(_trackPoints.length - 1, pdrPos.lat, pdrPos.lon);
+    _enrichWithDemElevation(_trackPoints.length - 1, filtered.lat, filtered.lng);
   }
 
   // ===========================================================================
@@ -1091,10 +1107,22 @@ class GPSTrackingService {
     // Update Kalman filter motion state (ZUPT)
     _kalmanFilter.setMotionState(isStationary: _isStationary);
 
+    // Soft GPS re-entry: inflate accuracy for first 3 fixes after gap-fill
+    // so Kalman blends gradually with the PDR trajectory (×3, ×2, ×1).
+    var effectiveAccuracy = position.accuracy;
+    if (positionSource == 'gps' && _gpsReentryFixCount < 3) {
+      final inflationFactor = 3 - _gpsReentryFixCount; // 3, 2, 1
+      effectiveAccuracy = position.accuracy * inflationFactor;
+      _gpsReentryFixCount++;
+      print('GPS re-entry fix #$_gpsReentryFixCount/3 — '
+          'accuracy inflated ×$inflationFactor '
+          '(${position.accuracy.toStringAsFixed(1)}m → ${effectiveAccuracy.toStringAsFixed(1)}m)');
+    }
+
     final filtered = _kalmanFilter.update(
       lat: position.latitude,
       lng: position.longitude,
-      accuracy: position.accuracy,
+      accuracy: effectiveAccuracy,
       timestamp: DateTime.now(),
     );
 

@@ -27,7 +27,19 @@ enum ViolationType {
   internetDisconnected('internet_disconnected', 'אינטרנט נותק'),
 
   /// מענה לשיחת טלפון
-  phoneCallAnswered('phone_call_answered', 'מענה לשיחת טלפון');
+  phoneCallAnswered('phone_call_answered', 'מענה לשיחת טלפון'),
+
+  /// יציאה ממצב פעיל (iOS — Control Center, Siri, Notification Center, app switch)
+  appResignedActive('app_resigned_active', 'יציאה ממצב פעיל'),
+
+  /// חזרה למצב פעיל (iOS — informational)
+  appBecameActive('app_became_active', 'חזרה למצב פעיל'),
+
+  /// חריגת שלמות חזית — heartbeat זיהה שהאפליקציה לא בחזית
+  foregroundIntegrityViolation('foreground_integrity_violation', 'חריגת שלמות חזית'),
+
+  /// זיהוי חבלה — jailbreak, debugger, שינוי שעון מערכת
+  securityTamperingDetected('security_tampering_detected', 'זיהוי חבלה');
 
   final String code;
   final String displayName;

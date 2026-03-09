@@ -177,6 +177,53 @@ class DeviceSecurityService {
     }
   }
 
+  /// 4.5 iOS Navigation Monitoring — הגדרת דגל ניווט פעיל ב-native
+
+  /// התחלת ניטור ניווט (iOS) — מפעיל דגל isNavigationActive ב-Swift
+  Future<void> startNavigationMonitoring() async {
+    if (!isIOS) return;
+    try {
+      await _channel.invokeMethod('startNavigationMonitoring');
+      print('🔒 iOS: ניטור ניווט הופעל');
+    } catch (e) {
+      print('❌ שגיאה בהפעלת ניטור ניווט iOS: $e');
+    }
+  }
+
+  /// הפסקת ניטור ניווט (iOS) — מכבה דגל isNavigationActive ב-Swift
+  Future<void> stopNavigationMonitoring() async {
+    if (!isIOS) return;
+    try {
+      await _channel.invokeMethod('stopNavigationMonitoring');
+      print('🔓 iOS: ניטור ניווט הופסק');
+    } catch (e) {
+      print('❌ שגיאה בהפסקת ניטור ניווט iOS: $e');
+    }
+  }
+
+  /// בדיקת חבלה (iOS) — jailbreak, debugger, שעון מערכת
+  Future<Map<String, bool>> checkAntiTampering() async {
+    if (!isIOS) return {};
+    try {
+      final result = await _channel.invokeMethod('checkAntiTampering');
+      return Map<String, bool>.from(result as Map);
+    } catch (e) {
+      print('❌ שגיאה בבדיקת anti-tampering: $e');
+      return {};
+    }
+  }
+
+  /// בדיקת מצב חזית (iOS) — האם האפליקציה בחזית
+  Future<bool> checkForegroundState() async {
+    if (!isIOS) return true;
+    try {
+      final result = await _channel.invokeMethod('checkForegroundState');
+      return result == true;
+    } catch (e) {
+      return true; // ברירת מחדל — מניח שבחזית
+    }
+  }
+
   /// 5️⃣ ניטור שיחות טלפון — Android + iOS
 
   /// התחלת ניטור שיחות
@@ -227,6 +274,12 @@ class DeviceSecurityService {
           break;
         case 'onCallAnswered':
           onViolation(ViolationType.phoneCallAnswered);
+          break;
+        case 'onAppResignedActive':
+          onViolation(ViolationType.appResignedActive);
+          break;
+        case 'onAppBecameActive':
+          onViolation(ViolationType.appBecameActive);
           break;
       }
     });

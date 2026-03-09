@@ -65,6 +65,18 @@ import CallKit
         self.stopCallMonitoring()
         result(true)
 
+      case "checkAntiTampering":
+        let tamperingResult: [String: Bool] = [
+          "debugger": self.isDebuggerAttached(),
+          "jailbreak": self.isJailbroken(),
+          "timeAnomaly": self.hasSystemTimeAnomaly(),
+        ]
+        result(tamperingResult)
+
+      case "checkForegroundState":
+        let isActive = UIApplication.shared.applicationState == .active
+        result(isActive)
+
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -96,6 +108,30 @@ import CallKit
       self,
       selector: #selector(screenUnlocked),
       name: UIApplication.protectedDataDidBecomeAvailableNotification,
+      object: nil
+    )
+
+    // willResignActive — fires on Control Center, Notification Center, Siri, app switch
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(appWillResignActive),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+
+    // didBecomeActive — app returned to foreground
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(appDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+
+    // Guided Access status change
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(guidedAccessChanged),
+      name: UIAccessibility.guidedAccessStatusDidChangeNotification,
       object: nil
     )
 
@@ -173,6 +209,85 @@ import CallKit
       print("☀️ iOS: המסך נפתח")
       securityChannel?.invokeMethod("onScreenOn", arguments: nil)
     }
+  }
+
+  // ========== Resign Active / Become Active ==========
+
+  @objc private func appWillResignActive() {
+    if isNavigationActive {
+      print("⚠️ iOS: האפליקציה יצאה ממצב פעיל (resignActive)")
+      securityChannel?.invokeMethod("onAppResignedActive", arguments: nil)
+    }
+  }
+
+  @objc private func appDidBecomeActive() {
+    if isNavigationActive {
+      print("✅ iOS: האפליקציה חזרה למצב פעיל (becameActive)")
+      securityChannel?.invokeMethod("onAppBecameActive", arguments: nil)
+    }
+  }
+
+  @objc private func guidedAccessChanged() {
+    if isNavigationActive && !isGuidedAccessEnabled() {
+      print("🚨 iOS: Guided Access בוטל במהלך ניווט")
+      securityChannel?.invokeMethod("onGuidedAccessExit", arguments: nil)
+    }
+  }
+
+  // ========== Anti-Tampering Checks ==========
+
+  /// בדיקה אם debugger מחובר — sysctl P_TRACED flag
+  private func isDebuggerAttached() -> Bool {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+    let result = sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0)
+    if result != 0 { return false }
+    return (info.kp_proc.p_flag & P_TRACED) != 0
+  }
+
+  /// בדיקת jailbreak — קיום קבצים חשודים בלבד (בטוח ל-App Store)
+  private func isJailbroken() -> Bool {
+    let suspiciousPaths = [
+      "/Applications/Cydia.app",
+      "/usr/sbin/sshd",
+      "/etc/apt",
+      "/private/var/lib/apt/",
+      "/var/lib/cydia",
+    ]
+    for path in suspiciousPaths {
+      if FileManager.default.fileExists(atPath: path) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /// בדיקת חריגת שעון מערכת — השוואת systemUptime delta מול Date delta
+  private var lastUptimeCheck: TimeInterval = 0
+  private var lastDateCheck: Date = Date()
+
+  private func hasSystemTimeAnomaly() -> Bool {
+    let currentUptime = ProcessInfo.processInfo.systemUptime
+    let currentDate = Date()
+
+    if lastUptimeCheck == 0 {
+      // בדיקה ראשונה — אתחול baseline
+      lastUptimeCheck = currentUptime
+      lastDateCheck = currentDate
+      return false
+    }
+
+    let uptimeDelta = currentUptime - lastUptimeCheck
+    let dateDelta = currentDate.timeIntervalSince(lastDateCheck)
+    let drift = abs(dateDelta - uptimeDelta)
+
+    // עדכון baseline
+    lastUptimeCheck = currentUptime
+    lastDateCheck = currentDate
+
+    // סף 30 שניות — מונע false positives מתיקוני NTP
+    return drift > 30
   }
 
   deinit {

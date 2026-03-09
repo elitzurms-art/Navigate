@@ -164,6 +164,15 @@ class SecurityManager {
 
     if (!isMonitoring) return;
 
+    // exitLockTask — אימות מצב אמיתי לפני רישום (false positives באנדרואיד)
+    if (type == ViolationType.exitLockTask) {
+      final stillLocked = await _deviceSecurity.isInLockTaskMode();
+      if (stillLocked) {
+        print('🔇 exitLockTask false positive — Lock Task still active');
+        return;
+      }
+    }
+
     // סינון לפי הגדרות — אם ההגדרה כבויה, לא מתעדים כלל
     if (_currentSettings != null) {
       if ((type == ViolationType.screenOff || type == ViolationType.screenOn) &&
@@ -196,7 +205,15 @@ class SecurityManager {
         break;
       case ViolationType.screenOff:
       case ViolationType.screenOn:
+      case ViolationType.appBecameActive: // informational only
         severity = ViolationSeverity.low;
+        break;
+      case ViolationType.appResignedActive:
+      case ViolationType.securityTamperingDetected:
+        severity = ViolationSeverity.critical;
+        break;
+      case ViolationType.foregroundIntegrityViolation:
+        severity = ViolationSeverity.high;
         break;
     }
 

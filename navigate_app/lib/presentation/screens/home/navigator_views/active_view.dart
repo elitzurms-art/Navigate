@@ -45,6 +45,9 @@ import '../../../../domain/entities/voice_message.dart';
 import '../../../../data/repositories/extension_request_repository.dart';
 import '../../../../domain/entities/extension_request.dart';
 import '../../../../domain/entities/navigation_settings.dart' show StarPhase, computeStarPhase;
+import '../../../../services/ios_navigation_security_service.dart';
+import '../../../../domain/entities/navigation_security_session.dart';
+import '../../security/guided_access_instructions_screen.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
 class ActiveView extends StatefulWidget {
@@ -91,6 +94,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _punchInProgress = false;     // הגנה מלחיצה כפולה
   bool _securityActive = false;
   bool _isDisqualified = false;
+  bool _selfFinishing = false; // הגנה מבאנר "הופסק ע"י מפקד" כשמנווט מסיים בעצמו
   String? _disqualificationReason;
   DateTime? _securityStartTime; // grace period — התעלמות מ-Lock Task exit מיד אחרי הפעלה
   List<domain_cp.Checkpoint> _routeCheckpoints = [];
@@ -164,6 +168,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _barburActive = false;
   NavigatorAlert? _activeBarburAlert;
   StreamSubscription<NavigatorAlert?>? _barburAlertListener;
+
+  // iOS Navigation Security
+  IosNavigationSecurityService? _iosSecurityService;
+  bool _guidedAccessConfirmed = false;
 
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
   StreamSubscription<DocumentSnapshot>? _trackDocListener;
@@ -267,6 +275,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopSecurity();
+    _iosSecurityService?.dispose(); // safety net
     unawaited(DeviceSecurityService().disableDND()); // safety net — ensure DND off even if _securityActive was false
     _stopTrackDocListener();
     _gpsCheckTimer?.cancel();
@@ -549,6 +558,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         print('🚨 ActiveView: Lock Task exit detected — re-enabling + disqualifying');
         await DeviceSecurityService().enableLockTask();
       }
+      // רישום אירוע ב-iOS session logger
+      _iosSecurityService?.logEvent(
+        SecurityEventType.navigationInterrupted,
+        context: {'violationType': type.code},
+      );
       _handleDisqualification(type);
     };
 
@@ -564,6 +578,17 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       if (success) _securityStartTime = DateTime.now();
     }
 
+    // iOS — הפעלת native monitoring + IosNavigationSecurityService
+    if (Platform.isIOS) {
+      await DeviceSecurityService().startNavigationMonitoring();
+      _iosSecurityService = IosNavigationSecurityService();
+      await _iosSecurityService!.startSession(
+        _nav.id,
+        widget.currentUser.uid,
+        _guidedAccessConfirmed,
+      );
+    }
+
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -577,6 +602,13 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   Future<void> _stopSecurity() async {
     if (!_securityActive) return;
     await _securityManager.stopNavigationSecurity(normalEnd: true);
+    // iOS — עצירת native monitoring + session
+    if (Platform.isIOS) {
+      await DeviceSecurityService().stopNavigationMonitoring();
+      await _iosSecurityService?.endSession();
+      _iosSecurityService?.dispose();
+      _iosSecurityService = null;
+    }
     _securityActive = false;
   }
 
@@ -651,6 +683,10 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       case ViolationType.appClosed:
       case ViolationType.appBackgrounded:
         return 'התנתקות משתמש בזמן ניווט';
+      case ViolationType.appResignedActive:
+        return 'יציאה מהאפליקציה בזמן ניווט';
+      case ViolationType.securityTamperingDetected:
+        return 'זיהוי חבלה במכשיר';
       default:
         return 'פריצת אבטחה בזמן ניווט';
     }
@@ -766,6 +802,19 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         _securityActive &&
         !_isDisqualified) {
       _checkLockTaskIntegrity();
+    }
+    // iOS session logging — רישום אירועי lifecycle
+    if (Platform.isIOS && _iosSecurityService != null) {
+      switch (state) {
+        case AppLifecycleState.inactive:
+          _iosSecurityService!.onResignedActive();
+        case AppLifecycleState.resumed:
+          _iosSecurityService!.onBecameActive();
+        case AppLifecycleState.paused:
+          _iosSecurityService!.logEvent(SecurityEventType.appEnteredBackground);
+        default:
+          break;
+      }
     }
   }
 
@@ -1220,7 +1269,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // שאר הלוגיקה רלוונטית רק במצב פעיל
       if (_personalStatus != NavigatorPersonalStatus.active) return;
 
-      if (!isActive) {
+      if (!isActive && !_selfFinishing) {
         // המפקד עצר את הניווט
         _performRemoteStop();
         return;
@@ -1615,7 +1664,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   /// בדיקת עצירה מרחוק + קריאת forcePositionSource. מחזיר true אם הניווט נעצר.
   Future<bool> _checkRemoteStop() async {
-    if (_track == null || _personalStatus != NavigatorPersonalStatus.active) return false;
+    if (_track == null || _personalStatus != NavigatorPersonalStatus.active || _selfFinishing) return false;
 
     try {
       final doc = await FirebaseFirestore.instance
@@ -1910,7 +1959,27 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _isStarting = true;
     setState(() => _isLoading = true);
     try {
-      // 0. בדיקת נציג קבוצתי (צמד/חוליה — לא מאבטח)
+      // 0a. iOS security gate — Guided Access check + deterrence
+      if (Platform.isIOS) {
+        final gaEnabled = await DeviceSecurityService().isGuidedAccessEnabled();
+        if (!gaEnabled) {
+          // ניתוב למסך הנחיות Guided Access
+          final confirmed = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(builder: (_) => const GuidedAccessInstructionsScreen()),
+          );
+          if (confirmed != true) {
+            _isStarting = false;
+            setState(() => _isLoading = false);
+            return; // המשתמש ביטל
+          }
+          _guidedAccessConfirmed = true; // אישור עצמי (self-report)
+        } else {
+          _guidedAccessConfirmed = true; // GA מזוהה
+        }
+      }
+
+      // 0b. בדיקת נציג קבוצתי (צמד/חוליה — לא מאבטח)
       final route = _nav.routes[widget.currentUser.uid];
       final groupId = route?.groupId;
       final composition = _nav.forceComposition;
@@ -2077,6 +2146,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
     if (confirmed != true || _track == null) return;
 
+    _selfFinishing = true;
     setState(() => _isLoading = true);
     try {
       // עצירת GPS tracking + שמירה סופית
@@ -3188,6 +3258,21 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     final hasPtt = _overrideWalkieTalkieEnabled ?? widget.navigation.communicationSettings.walkieTalkieEnabled;
     return Column(
           children: [
+            // iOS security overlay banner
+            if (Platform.isIOS && _iosSecurityService?.showSecurityOverlay == true)
+              Container(
+                color: Colors.orange.shade100,
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.shield, size: 16, color: Colors.orange.shade800),
+                    const SizedBox(width: 6),
+                    Text('ניווט פעיל — Guided Access מופעל',
+                      style: TextStyle(fontSize: 12, color: Colors.orange.shade800)),
+                  ],
+                ),
+              ),
             // Health check alarm banner
             if (_healthCheckService != null && _healthCheckService!.isAlarming)
               Container(

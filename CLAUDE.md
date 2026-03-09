@@ -52,12 +52,6 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;  // Firebase+app Us
 
 The app UI is entirely in Hebrew (RTL). Screen names, comments, and documentation are in Hebrew. Firebase project: `navigate-native`.
 
-## הגות דיבור
-
-**חשוב:**
-
-Claude חייב לדבר בעברית רגילה — סדר מילים רגיל ואותיות רגילות.
-
 ## Version Constraints
 
 - `connectivity_plus` v5.0.2 returns single `ConnectivityResult`, NOT `List`

@@ -53,6 +53,9 @@ class _SystemCheckViewState extends State<SystemCheckView> {
   // DND (נא לא להפריע) — Android בלבד
   bool _hasDNDPermission = false;
 
+  // Guided Access — iOS בלבד
+  bool _guidedAccessEnabled = false;
+
   Timer? _periodicTimer;
   int _checkCount = 0; // סופר בדיקות — דיווח ל-Firestore כל 5 בדיקות (15 שניות)
   Map<String, dynamic>? _lastStatusData; // מטמון לזיהוי שינויים — חוסך כתיבות Firestore
@@ -220,6 +223,14 @@ class _SystemCheckViewState extends State<SystemCheckView> {
       _hasDNDPermission = true; // iOS — לא רלוונטי
     }
 
+    // בדיקת Guided Access (iOS בלבד)
+    if (Platform.isIOS) {
+      try {
+        _guidedAccessEnabled = await _deviceSecurityService.isGuidedAccessEnabled();
+        if (mounted) setState(() {});
+      } catch (_) {}
+    }
+
     // דיווח סטטוס ל-Firestore כדי שהמפקד יראה
     _reportStatusToFirestore();
 
@@ -263,6 +274,13 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         } catch (_) {}
       }
 
+      // עדכון Guided Access (iOS)
+      if (Platform.isIOS) {
+        try {
+          _guidedAccessEnabled = await _deviceSecurityService.isGuidedAccessEnabled();
+        } catch (_) {}
+      }
+
       if (mounted) setState(() {});
 
       // דיווח ל-Firestore כל 5 בדיקות (~15 שניות) כדי לא להעמיס
@@ -290,6 +308,7 @@ class _SystemCheckViewState extends State<SystemCheckView> {
         'hasMicrophonePermission': _permissions['microphone']?.isGranted ?? false,
         'hasPhonePermission': _permissions['phone']?.isGranted ?? false,
         'hasDNDPermission': _hasDNDPermission,
+        if (Platform.isIOS) 'guidedAccessEnabled': _guidedAccessEnabled,
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
       };
@@ -518,6 +537,15 @@ class _SystemCheckViewState extends State<SystemCheckView> {
                   value: routeApproved ? 'אושר' : 'לא אושר',
                   color: routeApproved ? Colors.green : Colors.red,
                 ),
+
+                // Guided Access (iOS בלבד)
+                if (Platform.isIOS)
+                  _checkCard(
+                    icon: _guidedAccessEnabled ? Icons.lock : Icons.lock_open,
+                    title: 'Guided Access',
+                    value: _guidedAccessEnabled ? 'מופעל' : 'לא מופעל',
+                    color: _guidedAccessEnabled ? Colors.green : Colors.orange,
+                  ),
 
                 const SizedBox(height: 16),
 
