@@ -1378,6 +1378,13 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           navigation: _currentNavigation!,
           currentUser: _currentUser!,
           onNavigationUpdated: _onNavigationUpdated,
+          onRevealOverrideChanged: (revealEnabled) {
+            if (mounted) {
+              setState(() {
+                _perNavigatorRevealEnabled = revealEnabled;
+              });
+            }
+          },
           onMapPermissionsChanged: (allowOpenMap, showSelfLocation, showRouteOnMap) {
             if (mounted) {
               setState(() {

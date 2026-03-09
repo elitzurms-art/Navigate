@@ -52,6 +52,7 @@ class ActiveView extends StatefulWidget {
   final User currentUser;
   final ValueChanged<domain.Navigation> onNavigationUpdated;
   final void Function(bool allowOpenMap, bool showSelfLocation, bool showRouteOnMap)? onMapPermissionsChanged;
+  final ValueChanged<bool?>? onRevealOverrideChanged;
 
   const ActiveView({
     super.key,
@@ -59,6 +60,7 @@ class ActiveView extends StatefulWidget {
     required this.currentUser,
     required this.onNavigationUpdated,
     this.onMapPermissionsChanged,
+    this.onRevealOverrideChanged,
   });
 
   @override
@@ -1253,6 +1255,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         widget.onMapPermissionsChanged?.call(
           _overrideAllowOpenMap, _overrideShowSelfLocation, _overrideShowRouteOnMap,
         );
+      }
+
+      // קריאת דריסת חשיפת אשכולות
+      if (data.containsKey('overrideRevealEnabled')) {
+        final newReveal = data['overrideRevealEnabled'] as bool?;
+        widget.onRevealOverrideChanged?.call(newReveal);
       }
 
       // קריאת דריסת דקירת מיקום ידני

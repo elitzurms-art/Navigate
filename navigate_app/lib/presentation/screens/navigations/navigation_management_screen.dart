@@ -4810,7 +4810,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                     : 'לפי ברירת מחדל',
                             style: const TextStyle(fontSize: 11),
                           ),
-                          value: _navigatorOverrideRevealEnabled[navigatorId] ?? false,
+                          value: _navigatorOverrideRevealEnabled[navigatorId] ??
+                                 _currentNavigation!.clusterSettings.isRevealCurrentlyOpen,
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           onChanged: (v) {
