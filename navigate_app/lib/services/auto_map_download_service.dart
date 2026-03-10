@@ -38,6 +38,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
   AutoMapDownloadService._internal();
 
   final _triggeredNavIds = <String>{};
+  final _completedBoundaryIds = <String>{};
   final _activeDownloads = <String, StreamSubscription>{};
 
   /// סטטוס הורדה לכל ניווט
@@ -82,6 +83,10 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
   /// האם המשתמש אישר הורדה
   bool isApproved(String navId) => _approvedNavIds.contains(navId);
+
+  /// האם הגבול כבר הורד בהצלחה (בניווט אחר עם אותו גבול)
+  bool isBoundaryDownloaded(String? boundaryId) =>
+      boundaryId != null && _completedBoundaryIds.contains(boundaryId);
 
   /// אחוז אחרון שדווח ל-notification (throttling)
   int _lastNotifiedPercent = -1;
@@ -210,6 +215,15 @@ class AutoMapDownloadService with WidgetsBindingObserver {
     if (boundaryId == null || boundaryId.isEmpty) {
       print('DEBUG AutoMapDownload: no boundary for nav ${navigation.id}');
       return AutoDownloadResult.noBoundary;
+    }
+
+    // גבול כבר הורד בניווט אחר — סימון ניווט זה כמושלם ללא הורדה חוזרת
+    if (_completedBoundaryIds.contains(boundaryId)) {
+      _triggeredNavIds.add(navigation.id);
+      _downloadStatus[navigation.id] = MapDownloadStatus.completed;
+      _downloadProgress[navigation.id] = 1.0;
+      print('DEBUG AutoMapDownload: boundary $boundaryId already downloaded — skipping nav ${navigation.id}');
+      return AutoDownloadResult.alreadyDone;
     }
 
     _ensureLifecycleObserver();
@@ -387,6 +401,8 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
       // הושלם באמת — כל רמות הזום סיימו
       _triggeredNavIds.add(navigation.id);
+      final bId = navigation.boundaryLayerId;
+      if (bId != null) _completedBoundaryIds.add(bId);
       _downloadStatus[navigation.id] = MapDownloadStatus.completed;
       _downloadProgress[navigation.id] = 1.0;
       _navigationCache.remove(navigation.id);
@@ -394,6 +410,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       print('DEBUG AutoMapDownload: all downloads complete for nav ${navigation.id}');
       onStatusMessage?.call('הורדת מפות אופליין הושלמה');
       await _notificationService.showCompleted();
+      Future.delayed(const Duration(seconds: 5), () => _notificationService.dismiss());
       await _releaseForegroundService();
       return AutoDownloadResult.started;
     } catch (e) {

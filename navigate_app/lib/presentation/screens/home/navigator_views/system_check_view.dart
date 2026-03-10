@@ -73,6 +73,8 @@ class _SystemCheckViewState extends State<SystemCheckView> {
     final navId = widget.navigation.id;
     final promptKey = '${navId}_systemcheck';
 
+    // דילוג אם הגבול כבר הורד בניווט אחר
+    if (service.isBoundaryDownloaded(widget.navigation.boundaryLayerId)) return;
     // דילוג אם כבר הוצג, או שההורדה בכל סטטוס חוץ מ-notStarted/failed
     final status = service.getStatus(navId);
     if (service.hasBeenPrompted(promptKey)) return;

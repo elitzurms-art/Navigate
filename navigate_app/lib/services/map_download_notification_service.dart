@@ -71,16 +71,19 @@ class MapDownloadNotificationService {
     );
   }
 
-  /// הצגת הודעת סיום הצלחה
+  /// הצגת הודעת סיום הצלחה — נשארת 15 שניות ואז נעלמת אוטומטית
   Future<void> showCompleted() async {
     if (!_initialized) return;
+
+    // קודם מבטלים את הארתה הישנה (ongoing) כדי שההחלפה תעבוד
+    await _plugin.cancel(_notificationId);
 
     const androidDetails = AndroidNotificationDetails(
       _channelId,
       _channelName,
       channelDescription: _channelDescription,
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
+      importance: Importance.high,
+      priority: Priority.high,
       ongoing: false,
       autoCancel: true,
       playSound: false,
@@ -90,10 +93,13 @@ class MapDownloadNotificationService {
 
     await _plugin.show(
       _notificationId,
-      'הורדת מפות הושלמה',
+      'הורדת מפות הושלמה ✓',
       'מפות אופליין מוכנות לשימוש',
       details,
     );
+
+    // ביטול אוטומטי אחרי 15 שניות
+    Future.delayed(const Duration(seconds: 15), () => dismiss());
   }
 
   /// הצגת הודעת כישלון
