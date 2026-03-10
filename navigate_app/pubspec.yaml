@@ -87,6 +87,7 @@ dev_dependencies:
   flutter_lints: ^3.0.1
   build_runner: ^2.4.8
   drift_dev: ^2.14.1
+  mocktail: ^1.0.3
 
 flutter:
   uses-material-design: true
