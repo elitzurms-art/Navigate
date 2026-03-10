@@ -1545,7 +1545,10 @@ class _ApprovalScreenState extends State<ApprovalScreen>
   Marker _buildPunchMarker(CheckpointPunch punch, int punchIndex) {
     Color color;
     IconData icon;
-    if (punch.isApproved) {
+    if (punch.isSuperseded) {
+      color = Colors.grey;
+      icon = Icons.flag_outlined;
+    } else if (punch.isApproved) {
       color = Colors.green;
       icon = Icons.check_circle;
     } else if (punch.isRejected) {

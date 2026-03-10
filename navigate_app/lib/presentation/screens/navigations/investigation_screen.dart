@@ -457,7 +457,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
           ? actualDistKm / (totalDuration.inSeconds / 3600.0)
           : 0.0;
 
-      final activePunches = punches.where((p) => p.isActive).toList();
+      final activePunches = punches.where((p) => !p.isDeleted).toList();
 
       final verifiedCount = score != null
           ? score.checkpointScores.values.where((cs) => cs.approved).length

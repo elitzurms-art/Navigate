@@ -641,7 +641,10 @@ class _ReviewViewState extends State<ReviewView> {
                         final (i, p) = e;
                         Color color;
                         IconData icon;
-                        if (p.isApproved) {
+                        if (p.isSuperseded) {
+                          color = Colors.grey;
+                          icon = Icons.flag_outlined;
+                        } else if (p.isApproved) {
                           color = Colors.green;
                           icon = Icons.check_circle;
                         } else if (p.isRejected) {
