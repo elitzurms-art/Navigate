@@ -560,6 +560,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
             positionSource: data['positionSource'] as String? ?? 'gps',
             positionUpdatedAt: posTime,
             gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
+            mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
             hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
             hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
             hasDNDPermission: data['hasDNDPermission'] as bool? ?? false,

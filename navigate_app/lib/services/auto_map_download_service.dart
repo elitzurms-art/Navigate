@@ -263,6 +263,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
           minZoom: z,
           maxZoom: z,
         );
+        if (count == 0) continue; // דילוג על רמות זום ריקות
         zoomParts.add((z, count));
         totalTiles += count;
       }
@@ -304,6 +305,9 @@ class AutoMapDownloadService with WidgetsBindingObserver {
             )
             .listen(
           (progress) {
+            // דילוג על אירועים אחרי שה-completer כבר נסגר (zoom הסתיים)
+            if (completer.isCompleted) return;
+
             lastPercent = progress.percentageProgress;
             // עדכון התקדמות כוללת
             final currentTiles = completedTiles +
@@ -322,16 +326,26 @@ class AutoMapDownloadService with WidgetsBindingObserver {
               print(
                   'DEBUG AutoMapDownload: $label ${progress.percentageProgress.toStringAsFixed(0)}%');
             }
+
+            // השלמה — completer נסגר כאן כי FMTC לא תמיד שולח onDone אחרי isComplete
+            if (progress.isComplete) {
+              completedTiles += tileCount;
+              print('DEBUG AutoMapDownload: $label done (isComplete)');
+              completer.complete();
+            }
           },
           onDone: () {
-            if (lastPercent >= 99.0) {
-              completedTiles += tileCount;
-              print('DEBUG AutoMapDownload: $label done');
-            } else {
-              print('DEBUG AutoMapDownload: $label stream ended at ${lastPercent.toStringAsFixed(0)}% — interrupted');
-              wasInterrupted = true;
+            // fallback — אם isComplete לא נשלח, נסתמך על lastPercent
+            if (!completer.isCompleted) {
+              if (lastPercent >= 99.0) {
+                completedTiles += tileCount;
+                print('DEBUG AutoMapDownload: $label done (onDone fallback)');
+              } else {
+                print('DEBUG AutoMapDownload: $label stream ended at ${lastPercent.toStringAsFixed(0)}% — interrupted');
+                wasInterrupted = true;
+              }
+              completer.complete();
             }
-            if (!completer.isCompleted) completer.complete();
           },
           onError: (e) {
             print('DEBUG AutoMapDownload: $label error: $e');
@@ -342,6 +356,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
 
         _activeDownloads[navigation.id] = sub;
         await completer.future;
+        await sub.cancel(); // ביטול subscription כדי שאירועים מאוחרים לא ידרסו את ההתראה
         _activeCompleters.remove(navigation.id);
 
         // בדיקה אם ה-epoch השתנה (ביטול ידני)
@@ -378,7 +393,7 @@ class AutoMapDownloadService with WidgetsBindingObserver {
       _downloadEpoch.remove(navigation.id);
       print('DEBUG AutoMapDownload: all downloads complete for nav ${navigation.id}');
       onStatusMessage?.call('הורדת מפות אופליין הושלמה');
-      _notificationService.showCompleted();
+      await _notificationService.showCompleted();
       await _releaseForegroundService();
       return AutoDownloadResult.started;
     } catch (e) {

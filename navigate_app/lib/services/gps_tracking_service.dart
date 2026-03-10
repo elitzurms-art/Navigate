@@ -62,7 +62,7 @@ class GPSTrackingService {
   static const double _recoveryAccuracyThreshold = 35.0;
   static const int _requiredBadFixes = 3;
   static const int _requiredGoodFixes = 2;
-  static const Duration _manualCooldownDuration = Duration(minutes: 5);
+  static const Duration _manualCooldownDuration = Duration(minutes: 1);
 
   bool get isManualCooldownActive =>
       _manualCooldownEnd != null && DateTime.now().isBefore(_manualCooldownEnd!);
@@ -501,6 +501,9 @@ class GPSTrackingService {
     if (!_isStationary) return false;
     if (_trackPoints.isEmpty) return false;
     if (_stepsSinceLastRecord > 0) return false;
+
+    // PDR not yet reporting — can't confirm stationary, allow GPS through
+    if (_lastStepTime == null) return false;
 
     // Stationary + no steps → ALL GPS is jitter, reject unconditionally
     return true;
@@ -1262,11 +1265,16 @@ class GPSTrackingService {
     // 3. Reset PDR anchor
     _gpsService.setPdrAnchor(lat, lng);
 
-    // 4. Start 5-minute GPS cooldown
+    // 4. Start 1-minute GPS cooldown
     _manualCooldownEnd = DateTime.now().add(_manualCooldownDuration);
     print('JAMMING: manual position set — GPS cooldown until $_manualCooldownEnd');
 
-    // 5. Reset step state
+    // 5. Activate PDR gap-fill during cooldown (continuous tracking from new anchor)
+    if (!_isGapFilling) {
+      _enterGapFillMode();
+    }
+
+    // 6. Reset step state
     _stepsSinceLastRecord = 0;
     _lastStepTime = null;
   }

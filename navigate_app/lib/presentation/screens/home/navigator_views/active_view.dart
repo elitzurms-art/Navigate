@@ -96,6 +96,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _securityActive = false;
   bool _isDisqualified = false;
   bool _selfFinishing = false; // הגנה מבאנר "הופסק ע"י מפקד" כשמנווט מסיים בעצמו
+  bool _remoteStopInProgress = false; // הגנה מהפעלה כפולה של _performRemoteStop
   String? _disqualificationReason;
   DateTime? _securityStartTime; // grace period — התעלמות מ-Lock Task exit מיד אחרי הפעלה
   List<domain_cp.Checkpoint> _routeCheckpoints = [];
@@ -1733,6 +1734,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   }
 
   Future<void> _performRemoteStop() async {
+    if (_remoteStopInProgress) return;
+    _remoteStopInProgress = true;
+
     // עצירת GPS tracking + foreground service
     _trackSaveTimer?.cancel();
     _trackSaveTimer = null;

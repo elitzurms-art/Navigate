@@ -838,7 +838,7 @@ class _LearningViewState extends State<LearningView>
                         .toList(),
                   ),
                 // ציר רפרנס (כחול בהיר) — מוסתר במצב אשכולות ובמצב צנחנים
-                if (_showRoutes && refPoints.length > 1 && !(_currentNavigation.usesClusters && _clusterMap.isNotEmpty) && !_isParachute)
+                if (_showRoutes && refPoints.length > 1 && !_currentNavigation.usesClusters && !_isParachute)
                   PolylineLayer(polylines: [
                     Polyline(
                       points: refPoints,
@@ -878,7 +878,7 @@ class _LearningViewState extends State<LearningView>
                 if (_measurePoints.isNotEmpty) _measurePoints.removeLast();
               }),
               onFullscreen: () => _openFullscreenMap(
-                refPoints: refPoints,
+                refPoints: _currentNavigation.usesClusters ? [] : refPoints,
                 plannedPathPoints: plannedPathPoints,
                 hasPlannedPath: hasPlannedPath,
                 markers: markers,
