@@ -20,10 +20,14 @@ import '../onboarding/pending_approvals_screen.dart';
 import '../admin/lost_users_screen.dart';
 import '../navigations/solo_quiz_screen.dart';
 import '../quiz/quiz_report_screen.dart';
+import '../terrain/terrain_analysis_screen.dart';
+import '../../../services/terrain/terrain_analysis_service.dart' show terrainIsSupported;
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/boundary_repository.dart';
 import '../../../domain/entities/user.dart';
+import '../../../domain/entities/boundary.dart';
 
 /// מסך ראשי עם מפה
 class HomeScreen extends StatefulWidget {
@@ -97,6 +101,93 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
       ),
+    );
+  }
+
+  /// פתיחת מסך ניתוח שטח — דיאלוג בחירת גבול גזרה
+  void _openTerrainAnalysis() async {
+    // טעינת גבולות גזרה מ-DB
+    List<Boundary> boundaries;
+    try {
+      boundaries = await BoundaryRepository().getAll();
+    } catch (_) {
+      boundaries = [];
+    }
+
+    if (!mounted) return;
+
+    if (boundaries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('לא נמצאו גבולות גזרה — צור אזור עם גבול גזרה תחילה'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    Boundary? selectedBoundary = boundaries.first;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('בחירת גבול גזרה לניתוח'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('בחר גבול גזרה לביצוע ניתוח שטח:'),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<Boundary>(
+                    value: selectedBoundary,
+                    decoration: const InputDecoration(
+                      labelText: 'גבול גזרה',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.map_outlined),
+                    ),
+                    isExpanded: true,
+                    items: boundaries.map((b) {
+                      return DropdownMenuItem(
+                        value: b,
+                        child: Text(
+                          b.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setDialogState(() => selectedBoundary = v),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('ביטול'),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.terrain),
+                  label: const Text('פתח'),
+                  onPressed: selectedBoundary != null
+                      ? () {
+                          Navigator.pop(ctx);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TerrainAnalysisScreen(
+                                boundary: selectedBoundary!,
+                              ),
+                            ),
+                          );
+                        }
+                      : null,
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -186,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentHat?.type == HatType.commander ||
                 _currentHat == null)
               ListTile(
-                leading: const Icon(Icons.navigation),
+                leading: const Icon(Icons.navigation, color: Colors.blue),
                 title: const Text('ניווטים'),
                 onTap: () {
                   Navigator.pop(context);
@@ -202,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentHat == null)
               ListTile(
                 leading: const Icon(Icons.map),
-                title: const Text('אזורים'),
+                title: const Text('שכבות'),
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.push(
@@ -211,11 +302,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-            // אישור מנווטים / ניהול חברים — מפקד/מנהל/מפתח
-            if (_currentHat?.type == HatType.admin ||
-                _currentHat?.type == HatType.commander ||
-                _userRole == 'developer' ||
-                _userRole == 'unit_admin')
+            // אישור מנווטים / ניהול חברים — מפקד/מנהל (לא מפתח — אצלו בתת-תפריט)
+            if (_userRole != 'developer' &&
+                (_currentHat?.type == HatType.admin ||
+                 _currentHat?.type == HatType.commander ||
+                 _userRole == 'unit_admin'))
               ListTile(
                 leading: Icon(
                   _userRole == 'unit_admin' ? Icons.people : Icons.person_add_alt_1,
@@ -267,6 +358,89 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
+            // ניהול משתמשים ויחידות — מפתח (תת-תפריט)
+            if (_userRole == 'developer')
+              ExpansionTile(
+                leading: const Icon(Icons.admin_panel_settings, color: Colors.purple),
+                title: const Text('ניהול משתמשים ויחידות'),
+                children: [
+                  ListTile(
+                    contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                    leading: const Icon(Icons.person_add_alt_1, color: Colors.orange),
+                    title: const Text('אישור מנווטים'),
+                    trailing: FutureBuilder<int>(
+                      future: _getPendingCount(),
+                      builder: (context, snapshot) {
+                        final count = snapshot.data ?? 0;
+                        if (count == 0) return const SizedBox.shrink();
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                        );
+                      },
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const PendingApprovalsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                    leading: const Icon(Icons.military_tech, color: Colors.purple),
+                    title: const Text('יחידות'),
+                    subtitle: const Text('צפה גם ביחידות משנה', style: TextStyle(fontSize: 11)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const UnitsListScreen()),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                    leading: const Icon(Icons.person_off, color: Colors.red),
+                    title: const Text('משתמשים אבודים'),
+                    trailing: FutureBuilder<int>(
+                      future: _getLostUsersCount(),
+                      builder: (context, snapshot) {
+                        final count = snapshot.data ?? 0;
+                        if (count == 0) return const SizedBox.shrink();
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                        );
+                      },
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const LostUsersScreen()),
+                      );
+                    },
+                  ),
+                ],
+              ),
             // ניהול צ'קליסטים — מנהלי יחידות ומפתחים
             if (_userRole == 'unit_admin' || _userRole == 'developer' || _userRole == 'admin')
               ListTile(
@@ -286,42 +460,67 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
-            // מבחן מפקדים — רק כשיש ניווט עם מבחן מפקדים מופעל, או שהמשתמש כבר עבר
-            if ((_commanderQuizNavigation != null || _commanderQuizPassed == true) &&
+            // מבחנים — מפקדים/מנהלים (תת-תפריט)
+            if (_userRole != 'developer' &&
                 (_currentHat?.type == HatType.admin ||
                  _currentHat?.type == HatType.commander ||
-                 _currentHat == null))
-              ListTile(
-                leading: Icon(
-                  Icons.quiz,
-                  color: _commanderQuizPassed == true ? Colors.green : Colors.purple,
-                ),
-                title: Text(_commanderQuizPassed == true
-                    ? 'מבחן מפקדים — בוצע בהצלחה'
-                    : 'מבחן מפקדים'),
-                enabled: _commanderQuizPassed != true,
-                onTap: () async {
-                  Navigator.pop(context);
-                  final nav = _commanderQuizNavigation;
-                  if (nav == null || _currentUser == null) return;
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => SoloQuizScreen(
-                        navigation: nav,
-                        currentUser: _currentUser!,
-                        quizType: 'commander',
+                 _userRole == 'unit_admin'))
+              ExpansionTile(
+                leading: const Icon(Icons.quiz, color: Colors.purple),
+                title: const Text('מבחנים'),
+                children: [
+                  if ((_commanderQuizNavigation != null || _commanderQuizPassed == true) &&
+                      (_currentHat?.type == HatType.admin ||
+                       _currentHat?.type == HatType.commander ||
+                       _currentHat == null))
+                    ListTile(
+                      contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                      leading: Icon(
+                        Icons.quiz,
+                        color: _commanderQuizPassed == true ? Colors.green : Colors.purple,
                       ),
+                      title: Text(_commanderQuizPassed == true
+                          ? 'מבחן מפקדים — בוצע בהצלחה'
+                          : 'מבחן מפקדים'),
+                      enabled: _commanderQuizPassed != true,
+                      onTap: () async {
+                        Navigator.pop(context);
+                        final nav = _commanderQuizNavigation;
+                        if (nav == null || _currentUser == null) return;
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SoloQuizScreen(
+                              navigation: nav,
+                              currentUser: _currentUser!,
+                              quizType: 'commander',
+                            ),
+                          ),
+                        );
+                        _loadUserInfo();
+                      },
                     ),
-                  );
-                  _loadUserInfo();
-                },
+                  ListTile(
+                    contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                    leading: const Icon(Icons.assessment, color: Colors.blue),
+                    title: const Text('דוח מבחנים'),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final user = _currentUser;
+                      if (user?.unitId != null && user!.unitId!.isNotEmpty && mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => QuizReportScreen(unitId: user.unitId!),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ],
               ),
-            // דוח מבחנים — מפקדים/מנהלים
-            if (_currentHat?.type == HatType.admin ||
-                _currentHat?.type == HatType.commander ||
-                _userRole == 'developer' ||
-                _userRole == 'unit_admin')
+            // דוח מבחנים — מפתח בלבד (standalone)
+            if (_userRole == 'developer')
               ListTile(
                 leading: const Icon(Icons.assessment, color: Colors.blue),
                 title: const Text('דוח מבחנים'),
@@ -338,48 +537,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 },
               ),
-            // יחידות — מפתח בלבד
-            if (_userRole == 'developer')
+            // ניתוח שטח — מפתח ומנהל יחידה
+            if (terrainIsSupported && (_userRole == 'developer' || _userRole == 'unit_admin' || _userRole == 'admin'))
               ListTile(
-                leading: const Icon(Icons.military_tech, color: Colors.purple),
-                title: const Text('יחידות'),
-                subtitle: const Text('צפה גם ביחידות משנה', style: TextStyle(fontSize: 11)),
+                leading: const Icon(Icons.terrain, color: Colors.teal),
+                title: const Text('ניתוח שטח'),
                 onTap: () {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const UnitsListScreen()),
-                  );
-                },
-              ),
-            if (_userRole == 'developer')
-              ListTile(
-                leading: const Icon(Icons.person_off, color: Colors.red),
-                title: const Text('משתמשים אבודים'),
-                trailing: FutureBuilder<int>(
-                  future: _getLostUsersCount(),
-                  builder: (context, snapshot) {
-                    final count = snapshot.data ?? 0;
-                    if (count == 0) return const SizedBox.shrink();
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '$count',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    );
-                  },
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LostUsersScreen()),
-                  );
+                  _openTerrainAnalysis();
                 },
               ),
             const Divider(),
