@@ -761,7 +761,11 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       );
     }
 
-    return Table(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 32),
+        child: Table(
       border: TableBorder.all(color: Colors.grey[300]!),
       columnWidths: const {
         0: FlexColumnWidth(2),
@@ -781,7 +785,7 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
             ),
             Padding(
               padding: EdgeInsets.all(8),
-              child: Text('נקודות', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text('נק\'', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             Padding(
               padding: EdgeInsets.all(8),
@@ -887,6 +891,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
           );
         }),
       ],
+    ),
+      ),
     );
   }
 

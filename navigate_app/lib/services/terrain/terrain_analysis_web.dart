@@ -41,6 +41,7 @@ class TerrainAnalysisService {
   int _activeSrcTileLat = 0;
   int _activeSrcTileLng = 0;
   LatLngBounds? _activeBounds;
+  TerrainFeaturesResult? _cachedFeatures;
   Uint8List? _boundaryMask; // 1=inside polygon, 0=outside
 
   // Public getters
@@ -174,6 +175,7 @@ class TerrainAnalysisService {
     if (!await loadDemTile(tileLat, tileLng)) return false;
 
     _activeBoundary = boundary;
+    _cachedFeatures = null;
     _activeSrcTileLat = tileLat;
     _activeSrcTileLng = tileLng;
 
@@ -468,12 +470,14 @@ class TerrainAnalysisService {
       }
     }
 
-    return TerrainFeaturesResult(
+    final result = TerrainFeaturesResult(
       featureGrid: featureGrid,
       rows: _activeRows,
       cols: _activeCols,
       bounds: _activeBounds!,
     );
+    _cachedFeatures = result;
+    return result;
   }
 
   /// חישוב קו ראייה — Perimeter Ray-Cast (Pure Dart)
@@ -1114,6 +1118,9 @@ class TerrainAnalysisService {
 
     final n = _activeRows * _activeCols;
 
+    // Use cached features for deepChannel detection
+    final features = _cachedFeatures ?? await classifyFeatures();
+
     // Build vulnerability grid: type at each cell (0=none)
     final vulnGrid = Uint8List(n);
     for (int r = 1; r < _activeRows - 1; r++) {
@@ -1139,6 +1146,19 @@ class TerrainAnalysisService {
             }
           }
           if (isPit) vulnGrid[i] = 2; // pit
+        }
+
+        // steepSlope: 30 <= slope < cliffThreshold
+        if (vulnGrid[i] == 0 && slope >= 30.0 && slope < cliffThreshold) {
+          vulnGrid[i] = 4; // steepSlope
+        }
+
+        // deepChannel: valley(4)/channel(5) feature + slope >= 15
+        if (vulnGrid[i] == 0 && features != null) {
+          final feat = features.featureGrid[i];
+          if ((feat == 4 || feat == 5) && slope >= 15.0) {
+            vulnGrid[i] = 3; // deepChannel
+          }
         }
       }
     }
@@ -1187,7 +1207,19 @@ class TerrainAnalysisService {
       for (int i = 0; i < n; i++) {
         if (labels[i] == label) cells.add(i);
       }
-      if (cells.length < minClusterCells) continue;
+      // steepSlope needs higher threshold (many cells match)
+      final effectiveMinCells = (labelType[label] == 4) ? 12 : minClusterCells;
+      if (cells.length < effectiveMinCells) continue;
+
+      // Compute slope statistics for the zone
+      double slopeSum = 0;
+      double slopeMax = 0;
+      for (final ci in cells) {
+        final s = slopeResult.slopeGrid[ci];
+        slopeSum += s;
+        if (s > slopeMax) slopeMax = s;
+      }
+      final avgSlope = cells.isNotEmpty ? slopeSum / cells.length : 0.0;
 
       // Collect LatLng points from cell positions
       final points = <LatLng>[];
@@ -1211,10 +1243,116 @@ class TerrainAnalysisService {
         type: vulnType,
         severity: 0.5 + 0.5 * (cells.length / 100).clamp(0.0, 1.0),
         cellCount: cells.length,
+        avgSlope: avgSlope,
+        maxSlope: slopeMax,
       ));
     }
 
     return zones;
+  }
+
+  /// Compute combined viewshed for multiple enemies — reusable
+  Future<Uint8List?> computeCombinedViewshed(
+    List<LatLng> enemies, {
+    double enemyHeight = 1.7,
+  }) async {
+    if (_activeDem == null || enemies.isEmpty) return null;
+
+    Uint8List? combined;
+    for (final enemy in enemies) {
+      final vs = await computeViewshed(enemy, height: enemyHeight);
+      if (vs == null) continue;
+      if (combined == null) {
+        combined = Uint8List.fromList(vs.visibleGrid);
+      } else {
+        for (int i = 0; i < combined.length; i++) {
+          if (vs.visibleGrid[i] == 1) combined[i] = 1;
+        }
+      }
+    }
+    return combined;
+  }
+
+  /// Check if a point is visible in a pre-computed combined viewshed
+  bool isPointVisibleToEnemies(LatLng point, Uint8List combinedViewshed) {
+    if (_activeDem == null) return false;
+    final (r, c) = _latLngToSubGrid(point);
+    final idx = r * _activeCols + c;
+    if (idx < 0 || idx >= combinedViewshed.length) return false;
+    return combinedViewshed[idx] == 1;
+  }
+
+  /// Compute multi-waypoint hidden path
+  Future<MultiWaypointHiddenPath?> computeMultiWaypointHiddenPath(
+    List<LatLng> waypoints,
+    List<LatLng> enemies, {
+    double enemyHeight = 1.7,
+    double exposureWeight = 100.0,
+  }) async {
+    if (waypoints.length < 2 || enemies.isEmpty) return null;
+
+    // Compute combined viewshed once
+    final combinedViewshed = await computeCombinedViewshed(enemies, enemyHeight: enemyHeight);
+    if (combinedViewshed == null) return null;
+
+    final segments = <HiddenPathSegment>[];
+    double totalDist = 0;
+    double totalExposed = 0;
+    double totalHidden = 0;
+
+    for (int w = 0; w < waypoints.length - 1; w++) {
+      final path = await computeHiddenPath(
+        waypoints[w],
+        waypoints[w + 1],
+        enemies,
+        enemyHeight: enemyHeight,
+        exposureWeight: exposureWeight,
+      );
+      if (path == null) return null;
+
+      // Build visibility mask and compute exposure/hidden meters
+      final mask = Uint8List(path.points.length);
+      double segExposed = 0;
+      double segHidden = 0;
+
+      for (int i = 0; i < path.points.length; i++) {
+        final visible = isPointVisibleToEnemies(path.points[i], combinedViewshed);
+        mask[i] = visible ? 1 : 0;
+
+        if (i > 0) {
+          final d = const Distance().as(LengthUnit.Meter, path.points[i - 1], path.points[i]);
+          // Use previous point's visibility for the segment
+          if (mask[i - 1] == 1) {
+            segExposed += d;
+          } else {
+            segHidden += d;
+          }
+        }
+      }
+
+      final segDist = path.totalDistanceMeters;
+      segments.add(HiddenPathSegment(
+        points: path.points,
+        distanceMeters: segDist,
+        exposurePercent: segDist > 0 ? (segExposed / segDist * 100) : 0,
+        exposureMeters: segExposed,
+        hiddenMeters: segHidden,
+        visibilityMask: mask,
+      ));
+
+      totalDist += segDist;
+      totalExposed += segExposed;
+      totalHidden += segHidden;
+    }
+
+    return MultiWaypointHiddenPath(
+      segments: segments,
+      waypoints: waypoints,
+      totalDistanceMeters: totalDist,
+      totalExposurePercent: totalDist > 0 ? (totalExposed / totalDist * 100) : 0,
+      totalExposureMeters: totalExposed,
+      totalHiddenMeters: totalHidden,
+    );
   }
 
   /// Convex hull — Graham scan

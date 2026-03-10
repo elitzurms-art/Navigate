@@ -351,11 +351,53 @@ class VulnerabilityZone {
   final VulnerabilityType type;
   final double severity;
   final int cellCount;
+  final double avgSlope;
+  final double maxSlope;
 
   const VulnerabilityZone({
     required this.polygon,
     required this.type,
     required this.severity,
     required this.cellCount,
+    this.avgSlope = 0.0,
+    this.maxSlope = 0.0,
+  });
+}
+
+/// קטע בין שתי נקודות ציון עוקבות במסלול נסתר
+class HiddenPathSegment {
+  final List<LatLng> points;
+  final double distanceMeters;
+  final double exposurePercent;
+  final double exposureMeters;
+  final double hiddenMeters;
+  final Uint8List visibilityMask; // 1=exposed, 0=hidden (per point)
+
+  const HiddenPathSegment({
+    required this.points,
+    required this.distanceMeters,
+    required this.exposurePercent,
+    required this.exposureMeters,
+    required this.hiddenMeters,
+    required this.visibilityMask,
+  });
+}
+
+/// מסלול נסתר מלא עם נקודות ציון מרובות
+class MultiWaypointHiddenPath {
+  final List<HiddenPathSegment> segments;
+  final List<LatLng> waypoints;
+  final double totalDistanceMeters;
+  final double totalExposurePercent;
+  final double totalExposureMeters;
+  final double totalHiddenMeters;
+
+  const MultiWaypointHiddenPath({
+    required this.segments,
+    required this.waypoints,
+    required this.totalDistanceMeters,
+    required this.totalExposurePercent,
+    required this.totalExposureMeters,
+    required this.totalHiddenMeters,
   });
 }

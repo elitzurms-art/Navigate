@@ -121,4 +121,18 @@ class TerrainAnalysisService {
     double pitThreshold = 20.0,
     int minClusterCells = 5,
   }) async => [];
+
+  Future<Uint8List?> computeCombinedViewshed(
+    List<LatLng> enemies, {
+    double enemyHeight = 1.7,
+  }) async => null;
+
+  bool isPointVisibleToEnemies(LatLng point, Uint8List combinedViewshed) => false;
+
+  Future<MultiWaypointHiddenPath?> computeMultiWaypointHiddenPath(
+    List<LatLng> waypoints,
+    List<LatLng> enemies, {
+    double enemyHeight = 1.7,
+    double exposureWeight = 100.0,
+  }) async => null;
 }

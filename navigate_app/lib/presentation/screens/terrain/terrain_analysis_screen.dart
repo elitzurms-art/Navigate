@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -6,9 +7,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/map_config.dart';
+import '../../../core/utils/file_export_helper.dart';
 import '../../../domain/entities/boundary.dart';
+import '../../../services/route_export_service.dart' show ExportFormat;
 import '../../../services/terrain/terrain_analysis_service.dart';
 import '../../../services/terrain/terrain_models.dart';
+import '../../widgets/export_format_picker.dart';
 import '../../widgets/map_controls.dart';
 import '../../widgets/terrain/features_layer.dart';
 import '../../widgets/terrain/slope_layer.dart';
@@ -34,7 +38,12 @@ enum _InteractionMode {
   selectPathStart,
   selectPathEnd,
   addEnemies,
+  addEnemiesFirst,
+  addPathWaypoints,
 }
+
+/// מצב סדר נקודות ציון
+enum WaypointOrdering { prominence, typeBalanced }
 
 class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   final TerrainAnalysisService _service = TerrainAnalysisService();
@@ -50,6 +59,8 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   TerrainFeaturesResult? _features;
   ViewshedResult? _viewshed;
   HiddenPath? _hiddenPath;
+  MultiWaypointHiddenPath? _multiHiddenPath;
+  Uint8List? _combinedEnemyViewshed;
   List<SmartWaypoint> _allSmartWaypoints = [];
   List<VulnerabilityPoint> _vulnerabilities = [];
   List<VulnerabilityZone> _vulnerabilityZones = [];
@@ -74,6 +85,7 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   int _waypointDisplayCount = 100;
   Map<SmartWaypointType, int> _waypointTypeCounts = {};
   bool _showTypePanel = false;
+  WaypointOrdering _waypointOrdering = WaypointOrdering.prominence;
 
   // --- אינטראקציה ---
   _InteractionMode _interactionMode = _InteractionMode.none;
@@ -81,6 +93,7 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   LatLng? _pathStart;
   LatLng? _pathEnd;
   List<LatLng> _enemyPositions = [];
+  List<LatLng> _pathWaypoints = [];
 
   // --- מדידה ---
   bool _measureMode = false;
@@ -187,12 +200,15 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   }
 
   void _toggleHiddenPath() {
-    if (_hiddenPath != null) {
+    if (_hiddenPath != null || _multiHiddenPath != null) {
       setState(() {
         _hiddenPath = null;
+        _multiHiddenPath = null;
+        _combinedEnemyViewshed = null;
         _showHiddenPath = false;
         _pathStart = null;
         _pathEnd = null;
+        _pathWaypoints = [];
         _enemyPositions = [];
         _interactionMode = _InteractionMode.none;
       });
@@ -200,9 +216,12 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
       setState(() {
         _pathStart = null;
         _pathEnd = null;
+        _pathWaypoints = [];
         _enemyPositions = [];
-        _interactionMode = _InteractionMode.selectPathStart;
-        _statusMessage = 'בחר נקודת התחלה על המפה';
+        _combinedEnemyViewshed = null;
+        _multiHiddenPath = null;
+        _interactionMode = _InteractionMode.addEnemiesFirst;
+        _statusMessage = 'בחר מיקומי אויב על המפה (עד 10)';
       });
     }
   }
@@ -286,28 +305,45 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   }
 
   Future<void> _computeHiddenPath() async {
-    if (_pathStart == null || _pathEnd == null || _enemyPositions.isEmpty) {
-      return;
-    }
+    if (_pathWaypoints.length < 2 || _enemyPositions.isEmpty) return;
     setState(() {
       _loading = true;
       _statusMessage = 'מחשב מסלול נסתר...';
     });
-    final result = await _service.computeHiddenPath(
-      _pathStart!,
-      _pathEnd!,
+    final result = await _service.computeMultiWaypointHiddenPath(
+      _pathWaypoints,
       _enemyPositions,
     );
     setState(() {
       _loading = false;
-      _hiddenPath = result;
+      _multiHiddenPath = result;
       _showHiddenPath = result != null;
       _statusMessage = result != null
           ? 'מסלול נסתר: '
               '${result.totalDistanceMeters.toStringAsFixed(0)}מ\', '
-              'חשיפה: ${result.exposurePercent.toStringAsFixed(1)}%'
+              'חשיפה: ${result.totalExposurePercent.toStringAsFixed(1)}%'
           : 'שגיאה בחישוב מסלול נסתר';
       _interactionMode = _InteractionMode.none;
+    });
+  }
+
+  Future<void> _computeCombinedViewshed() async {
+    if (_enemyPositions.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _statusMessage = 'מחשב שדה ראייה משולב...';
+    });
+    final result = await _service.computeCombinedViewshed(_enemyPositions);
+    setState(() {
+      _loading = false;
+      _combinedEnemyViewshed = result;
+      if (result != null) {
+        _interactionMode = _InteractionMode.addPathWaypoints;
+        _statusMessage = 'בחר נקודות מסלול (לפחות 2)';
+      } else {
+        _statusMessage = 'שגיאה בחישוב שדה ראייה';
+        _interactionMode = _InteractionMode.none;
+      }
     });
   }
 
@@ -327,7 +363,9 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
       _allSmartWaypoints = result;
       _showWaypoints = result.isNotEmpty;
       _waypointDisplayCount = result.length.clamp(1, 100);
-      _redistributeWaypoints(_waypointDisplayCount);
+      if (_waypointOrdering == WaypointOrdering.typeBalanced) {
+        _redistributeWaypoints(_waypointDisplayCount);
+      }
       _statusMessage = result.isNotEmpty
           ? 'נמצאו ${result.length} נקודות ציון — הזז את הסליידר לסינון'
           : 'לא נמצאו נקודות ציון';
@@ -378,9 +416,13 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
     _waypointDisplayCount = total;
   }
 
-  /// נקודות ציון מוצגות — מסוננות לפי חלוקת סוגים
+  /// נקודות ציון מוצגות — לפי בולטות או חלוקת סוגים
   List<SmartWaypoint> get _displayedWaypoints {
     if (_allSmartWaypoints.isEmpty) return [];
+    if (_waypointOrdering == WaypointOrdering.prominence) {
+      return _allSmartWaypoints.take(_waypointDisplayCount).toList();
+    }
+    // typeBalanced mode
     final result = <SmartWaypoint>[];
     final byType = <SmartWaypointType, List<SmartWaypoint>>{};
     for (final wp in _allSmartWaypoints) {
@@ -441,11 +483,31 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
             _statusMessage =
                 'בחר מיקום אויב (${_enemyPositions.length}/10)';
           });
-          // אם הגענו ל-10, מחשבים אוטומטית
           if (_enemyPositions.length >= 10) {
             _computeHiddenPath();
           }
         }
+        break;
+
+      case _InteractionMode.addEnemiesFirst:
+        if (_enemyPositions.length < 10) {
+          setState(() {
+            _enemyPositions.add(point);
+            _statusMessage =
+                'בחר מיקומי אויב (${_enemyPositions.length}/10)';
+          });
+          if (_enemyPositions.length >= 10) {
+            _finishEnemySelectionFirst();
+          }
+        }
+        break;
+
+      case _InteractionMode.addPathWaypoints:
+        setState(() {
+          _pathWaypoints.add(point);
+          _statusMessage =
+              'נקודות מסלול: ${_pathWaypoints.length}';
+        });
         break;
     }
   }
@@ -453,6 +515,20 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   /// סיום בחירת אויבים ידנית — ניתן ללחוץ "סיים" כשיש לפחות אויב אחד
   void _finishEnemySelection() {
     if (_enemyPositions.isNotEmpty) {
+      _computeHiddenPath();
+    }
+  }
+
+  /// סיום בחירת אויבים — מצב enemies-first → חישוב viewshed משולב
+  void _finishEnemySelectionFirst() {
+    if (_enemyPositions.isNotEmpty) {
+      _computeCombinedViewshed();
+    }
+  }
+
+  /// סיום בחירת נקודות מסלול → חישוב מסלול נסתר
+  void _finishPathWaypoints() {
+    if (_pathWaypoints.length >= 2) {
       _computeHiddenPath();
     }
   }
@@ -514,9 +590,10 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
             // סליידר נקודות ציון — מוצג רק כשיש תוצאות
             if (_showWaypoints && _allSmartWaypoints.isNotEmpty)
               _buildWaypointSlider(),
-            // פאנל חלוקה לפי סוג
+            // פאנל חלוקה לפי סוג — רק במצב typeBalanced
             if (_showWaypoints &&
                 _allSmartWaypoints.isNotEmpty &&
+                _waypointOrdering == WaypointOrdering.typeBalanced &&
                 _showTypePanel)
               _buildTypeDistributionPanel(),
             Expanded(child: _buildMapStack()),
@@ -555,7 +632,7 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
                       _viewshed != null,
                       _toggleViewshed),
                   _computeChip(Icons.route, 'מסלול נסתר',
-                      _hiddenPath != null, _toggleHiddenPath),
+                      _multiHiddenPath != null, _toggleHiddenPath),
                   _computeChip(Icons.flag, 'נק\' ציון',
                       _allSmartWaypoints.isNotEmpty, _toggleWaypoints),
                   _computeChip(
@@ -568,6 +645,13 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
               ),
             ),
           ),
+          // ייצוא מסלול נסתר
+          if (_multiHiddenPath != null)
+            IconButton(
+              icon: const Icon(Icons.file_download, size: 20),
+              tooltip: 'ייצוא מסלול',
+              onPressed: _exportHiddenPath,
+            ),
           // ביטול אינטראקציה
           if (isInteracting)
             IconButton(
@@ -642,6 +726,7 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
 
   /// סליידר בחירת כמות נקודות ציון + toggle פאנל סוגים
   Widget _buildWaypointSlider() {
+    final isProminence = _waypointOrdering == WaypointOrdering.prominence;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       color: Colors.teal.shade50,
@@ -655,30 +740,51 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
           ),
           Expanded(
             child: Slider(
-              value: _waypointDisplayCount.toDouble(),
+              value: _waypointDisplayCount.clamp(1, _allSmartWaypoints.length).toDouble(),
               min: 1,
-              max: _allSmartWaypoints.length.clamp(1, 1000).toDouble(),
-              divisions:
-                  (_allSmartWaypoints.length.clamp(1, 1000) - 1).clamp(1, 999),
+              max: max(1, _allSmartWaypoints.length).toDouble(),
+              divisions: max(1, _allSmartWaypoints.length - 1),
               onChanged: (v) {
                 setState(() {
-                  _redistributeWaypoints(v.round());
+                  _waypointDisplayCount = v.round();
+                  if (_waypointOrdering == WaypointOrdering.typeBalanced) {
+                    _redistributeWaypoints(v.round());
+                  }
                 });
               },
             ),
           ),
-          const Text('קיצוניות ',
-              style: TextStyle(fontSize: 10, color: Colors.grey)),
           const SizedBox(width: 4),
           InkWell(
-            onTap: () => setState(() => _showTypePanel = !_showTypePanel),
+            onTap: () {
+              setState(() {
+                if (isProminence) {
+                  _waypointOrdering = WaypointOrdering.typeBalanced;
+                  _redistributeWaypoints(_waypointDisplayCount);
+                  _showTypePanel = true;
+                } else {
+                  _waypointOrdering = WaypointOrdering.prominence;
+                  _showTypePanel = false;
+                }
+              });
+            },
             borderRadius: BorderRadius.circular(4),
             child: Padding(
               padding: const EdgeInsets.all(4),
-              child: Icon(
-                _showTypePanel ? Icons.expand_less : Icons.tune,
-                size: 18,
-                color: Colors.teal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isProminence ? Icons.sort : Icons.tune,
+                    size: 16,
+                    color: Colors.teal,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    isProminence ? 'לפי בולטות' : 'לפי סוג',
+                    style: const TextStyle(fontSize: 10, color: Colors.teal),
+                  ),
+                ],
               ),
             ),
           ),
@@ -829,15 +935,9 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
                     onPointTap: _onVulnerabilityTap,
                   ),
 
-                if (_showHiddenPath && _hiddenPath != null)
+                if (_showHiddenPath && _multiHiddenPath != null)
                   PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: _hiddenPath!.points,
-                        color: Colors.cyan,
-                        strokeWidth: 4.0,
-                      ),
-                    ],
+                    polylines: _buildVisibilityPolylines(_multiHiddenPath!),
                   ),
 
                 // סמני אינטראקציה
@@ -952,7 +1052,7 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
           onVisibilityChanged: (v) =>
               setState(() => _showVulnerability = v),
         ),
-      if (_hiddenPath != null)
+      if (_multiHiddenPath != null)
         MapLayerConfig(
           id: 'hiddenPath',
           label: 'מסלול נסתר',
@@ -1012,6 +1112,29 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
           ),
           child:
               const Icon(Icons.gps_fixed, color: Colors.yellow, size: 20),
+        ),
+      ));
+    }
+    // סמני נקודות מסלול
+    for (final wp in _pathWaypoints) {
+      final isVisible = _combinedEnemyViewshed != null
+          ? _service.isPointVisibleToEnemies(wp, _combinedEnemyViewshed!)
+          : false;
+      markers.add(Marker(
+        point: wp,
+        width: 30,
+        height: 30,
+        child: Container(
+          decoration: BoxDecoration(
+            color: isVisible ? Colors.red.shade400 : Colors.green.shade600,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: Icon(
+            isVisible ? Icons.warning : Icons.check,
+            color: Colors.white,
+            size: 16,
+          ),
         ),
       ));
     }
@@ -1177,6 +1300,44 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
           );
         }
         break;
+      case _InteractionMode.addEnemiesFirst:
+        text = 'בחר מיקומי אויב (${_enemyPositions.length}/10)';
+        if (_enemyPositions.isNotEmpty) {
+          trailing = TextButton(
+            onPressed: _finishEnemySelectionFirst,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.white.withValues(alpha: 0.2),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'סיים בחירת אויבים',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          );
+        }
+        break;
+      case _InteractionMode.addPathWaypoints:
+        text = 'בחר נקודות מסלול (${_pathWaypoints.length})';
+        if (_pathWaypoints.length >= 2) {
+          trailing = TextButton(
+            onPressed: _finishPathWaypoints,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: Colors.white.withValues(alpha: 0.2),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'סיים וחשב מסלול',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          );
+        }
+        break;
       case _InteractionMode.none:
         text = '';
         break;
@@ -1207,5 +1368,205 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
         ),
       ),
     );
+  }
+
+  // =====================================================================
+  // מסלול נסתר — פוליליינים צבעוניים לפי נראות
+  // =====================================================================
+
+  List<Polyline> _buildVisibilityPolylines(MultiWaypointHiddenPath path) {
+    final polylines = <Polyline>[];
+    for (final segment in path.segments) {
+      if (segment.points.length < 2) continue;
+      int runStart = 0;
+      for (int i = 1; i <= segment.points.length; i++) {
+        final prevVis = segment.visibilityMask[runStart] == 1;
+        final curVis = i < segment.points.length
+            ? segment.visibilityMask[i] == 1
+            : !prevVis; // force flush
+        if (i == segment.points.length || curVis != prevVis) {
+          polylines.add(Polyline(
+            points: segment.points.sublist(runStart, min(i + 1, segment.points.length)),
+            color: prevVis ? Colors.red : Colors.green,
+            strokeWidth: 4.0,
+          ));
+          runStart = i;
+        }
+      }
+    }
+    return polylines;
+  }
+
+  // =====================================================================
+  // ייצוא מסלול נסתר
+  // =====================================================================
+
+  Future<void> _exportHiddenPath() async {
+    if (_multiHiddenPath == null) return;
+
+    final format = await showModalBottomSheet<ExportFormat>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const ExportFormatPicker(),
+    );
+    if (format == null) return;
+
+    final path = _multiHiddenPath!;
+    String content;
+    String ext;
+
+    switch (format) {
+      case ExportFormat.gpx:
+        content = _buildGpx(path);
+        ext = 'gpx';
+        break;
+      case ExportFormat.kml:
+        content = _buildKml(path);
+        ext = 'kml';
+        break;
+      case ExportFormat.geojson:
+        content = _buildGeoJson(path);
+        ext = 'geojson';
+        break;
+      case ExportFormat.csv:
+        content = _buildCsv(path);
+        ext = 'csv';
+        break;
+    }
+
+    final bytes = Uint8List.fromList(utf8.encode(content));
+    final fileName = 'hidden_path_${DateTime.now().millisecondsSinceEpoch}.$ext';
+
+    final saved = await saveFileWithBytes(
+      dialogTitle: 'ייצוא מסלול נסתר',
+      fileName: fileName,
+      bytes: bytes,
+      allowedExtensions: [ext],
+    );
+
+    if (saved != null && mounted) {
+      setState(() => _statusMessage = 'מסלול יוצא בהצלחה');
+    }
+  }
+
+  String _buildGpx(MultiWaypointHiddenPath path) {
+    final sb = StringBuffer();
+    sb.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+    sb.writeln('<gpx version="1.1" creator="Navigate">');
+
+    // Waypoints
+    for (int i = 0; i < path.waypoints.length; i++) {
+      final wp = path.waypoints[i];
+      sb.writeln('  <wpt lat="${wp.latitude}" lon="${wp.longitude}">');
+      sb.writeln('    <name>waypoint_${i + 1}</name>');
+      sb.writeln('  </wpt>');
+    }
+
+    // Track
+    sb.writeln('  <trk>');
+    sb.writeln('    <name>hidden_path</name>');
+    for (int i = 0; i < path.segments.length; i++) {
+      sb.writeln('    <trkseg>');
+      for (final p in path.segments[i].points) {
+        sb.writeln('      <trkpt lat="${p.latitude}" lon="${p.longitude}" />');
+      }
+      sb.writeln('    </trkseg>');
+    }
+    sb.writeln('  </trk>');
+    sb.writeln('</gpx>');
+    return sb.toString();
+  }
+
+  String _buildKml(MultiWaypointHiddenPath path) {
+    final sb = StringBuffer();
+    sb.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+    sb.writeln('<kml xmlns="http://www.opengis.net/kml/2.2">');
+    sb.writeln('<Document>');
+    sb.writeln('  <name>hidden_path</name>');
+
+    // Waypoints
+    for (int i = 0; i < path.waypoints.length; i++) {
+      final wp = path.waypoints[i];
+      sb.writeln('  <Placemark>');
+      sb.writeln('    <name>waypoint_${i + 1}</name>');
+      sb.writeln('    <Point><coordinates>${wp.longitude},${wp.latitude},0</coordinates></Point>');
+      sb.writeln('  </Placemark>');
+    }
+
+    // Path
+    for (int i = 0; i < path.segments.length; i++) {
+      sb.writeln('  <Placemark>');
+      sb.writeln('    <name>segment_${i + 1}</name>');
+      sb.writeln('    <LineString><coordinates>');
+      for (final p in path.segments[i].points) {
+        sb.write('${p.longitude},${p.latitude},0 ');
+      }
+      sb.writeln('</coordinates></LineString>');
+      sb.writeln('  </Placemark>');
+    }
+
+    sb.writeln('</Document>');
+    sb.writeln('</kml>');
+    return sb.toString();
+  }
+
+  String _buildGeoJson(MultiWaypointHiddenPath path) {
+    final features = <Map<String, dynamic>>[];
+
+    // Waypoint features
+    for (int i = 0; i < path.waypoints.length; i++) {
+      final wp = path.waypoints[i];
+      features.add({
+        'type': 'Feature',
+        'properties': {
+          'name': 'waypoint_${i + 1}',
+          'waypoint_index': i,
+        },
+        'geometry': {
+          'type': 'Point',
+          'coordinates': [wp.longitude, wp.latitude],
+        },
+      });
+    }
+
+    // Segment features
+    for (int i = 0; i < path.segments.length; i++) {
+      final segment = path.segments[i];
+      features.add({
+        'type': 'Feature',
+        'properties': {
+          'name': 'segment_${i + 1}',
+          'segment_index': i,
+          'exposure_percent': segment.exposurePercent,
+          'exposure_meters': segment.exposureMeters,
+          'hidden_meters': segment.hiddenMeters,
+          'distance_meters': segment.distanceMeters,
+        },
+        'geometry': {
+          'type': 'LineString',
+          'coordinates':
+              segment.points.map((p) => [p.longitude, p.latitude]).toList(),
+        },
+      });
+    }
+
+    return const JsonEncoder.withIndent('  ').convert({
+      'type': 'FeatureCollection',
+      'features': features,
+    });
+  }
+
+  String _buildCsv(MultiWaypointHiddenPath path) {
+    final sb = StringBuffer();
+    sb.writeln('lat,lng,segment,exposed');
+    for (int i = 0; i < path.segments.length; i++) {
+      final segment = path.segments[i];
+      for (int j = 0; j < segment.points.length; j++) {
+        final p = segment.points[j];
+        final exposed = segment.visibilityMask[j] == 1 ? 1 : 0;
+        sb.writeln('${p.latitude},${p.longitude},${i + 1},$exposed');
+      }
+    }
+    return sb.toString();
   }
 }
