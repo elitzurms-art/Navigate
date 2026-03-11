@@ -120,6 +120,7 @@ void main() {
           checkpointsPerNavigator: 3,
           minRouteLength: 1,
           maxRouteLength: 100,
+          navigatorIds: ['u1'],
         ),
         throwsA(
           isA<Exception>().having(
@@ -156,6 +157,7 @@ void main() {
           checkpointsPerNavigator: 3,
           minRouteLength: 1,
           maxRouteLength: 100,
+          navigatorIds: [],
         ),
         throwsA(
           isA<Exception>().having(
@@ -184,6 +186,7 @@ void main() {
           checkpointsPerNavigator: 5,
           minRouteLength: 1,
           maxRouteLength: 100,
+          navigatorIds: ['u1'],
         ),
         throwsA(
           isA<Exception>().having(
@@ -210,6 +213,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['p1', 'p2'],
       );
 
       // Should produce routes keyed by the selected participant IDs
@@ -247,6 +251,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['u1', 'u2'],
       );
 
       // Only sf1 users should get routes
@@ -285,6 +290,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       // Non-fixed users: u1, u2, u3 (fixed cmd1 excluded)
@@ -314,6 +320,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.routes.length, equals(3));
@@ -338,6 +345,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       for (final route in result.routes.values) {
@@ -361,6 +369,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.1,
         maxRouteLength: 200,
+        navigatorIds: ['u1', 'u2'],
       );
 
       for (final route in result.routes.values) {
@@ -383,6 +392,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.status, equals('success'));
@@ -407,6 +417,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 1,
         maxRouteLength: 100,
+        navigatorIds: ['u1', 'u2'],
         onProgress: (current, total) {
           progressValues.add(current);
         },
@@ -443,6 +454,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.routes.length, equals(3));
@@ -466,6 +478,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       // Collect all checkpoint IDs across all routes
@@ -506,6 +519,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       for (final route in result.routes.values) {
@@ -530,6 +544,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       for (final route in result.routes.values) {
@@ -556,6 +571,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       // Checkpoint IDs assigned to navigators should not include start/end
@@ -585,6 +601,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.status, equals('success'));
@@ -609,6 +626,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 0.002,
+        navigatorIds: ['u1', 'u2'],
       );
 
       expect(result.status, equals('needs_approval'));
@@ -633,6 +651,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: minRoute,
         maxRouteLength: maxRoute,
+        navigatorIds: ['u1', 'u2'],
       );
 
       final expandOption = result.approvalOptions
@@ -659,6 +678,7 @@ void main() {
         checkpointsPerNavigator: perNavigator,
         minRouteLength: 0.001,
         maxRouteLength: 0.002,
+        navigatorIds: ['u1', 'u2'],
       );
 
       final reduceOption = result.approvalOptions
@@ -683,6 +703,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 0.002,
+        navigatorIds: ['u1', 'u2'],
       );
 
       final acceptOption = result.approvalOptions
@@ -714,6 +735,7 @@ void main() {
         minRouteLength: 0.001,
         maxRouteLength: 500,
         scoringCriterion: 'fairness',
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.routes.length, equals(3));
@@ -739,6 +761,7 @@ void main() {
         minRouteLength: 0.001,
         maxRouteLength: 500,
         scoringCriterion: 'midpoint',
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.routes.length, equals(3));
@@ -764,6 +787,7 @@ void main() {
         minRouteLength: 0.001,
         maxRouteLength: 500,
         scoringCriterion: 'uniqueness',
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       expect(result.routes.length, equals(3));
@@ -794,6 +818,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       for (final route in result.routes.values) {
@@ -821,6 +846,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       for (final route in result.routes.values) {
@@ -846,6 +872,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       for (final route in result.routes.values) {
@@ -868,6 +895,7 @@ void main() {
         checkpointsPerNavigator: 4,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1'],
       );
 
       expect(result.routes.length, equals(1));
@@ -890,6 +918,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2'],
       );
 
       expect(result.routes.length, equals(2));
@@ -933,6 +962,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['a1', 'a2', 'b1', 'b2'],
       );
 
       // a1, a2, b1, b2 (4 non-fixed users)
@@ -957,6 +987,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 500,
+        navigatorIds: ['u1', 'u2', 'u3'],
       );
 
       // With enough checkpoints, the algorithm should prefer unique distribution
@@ -987,6 +1018,7 @@ void main() {
         checkpointsPerNavigator: 3,
         minRouteLength: 0.001,
         maxRouteLength: 0.002,
+        navigatorIds: ['u1', 'u2'],
       );
 
       // With such a tight range, routes should be too_long

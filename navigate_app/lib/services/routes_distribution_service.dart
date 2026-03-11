@@ -131,6 +131,10 @@ class _InternalDistribution {
 
 /// שירות לחלוקה אוטומטית של צירים — אלגוריתם Monte Carlo
 class RoutesDistributionService {
+  RoutesDistributionService({UserRepository? userRepository})
+      : _injectedUserRepository = userRepository;
+
+  final UserRepository? _injectedUserRepository;
 
   /// שיבוץ אוטומטי של מנווטים לקבוצות
   /// מנווטים שכבר משובצים ב-manualGroups נשארים; שאר המנווטים מתחלקים בין הקבוצות.
@@ -217,12 +221,13 @@ class RoutesDistributionService {
     ForceComposition? forceComposition,
     List<SafetyPoint> safetyPoints = const [],
     void Function(int current, int total)? onProgress,
+    List<String>? navigatorIds,
   }) async {
     final composition = forceComposition ?? const ForceComposition();
 
     // --- שלב 1: הכנה ---
     // מציאת משתתפים
-    List<String> navigators = await _findNavigators(navigation, tree);
+    List<String> navigators = navigatorIds ?? await _findNavigators(navigation, tree);
 
     if (navigators.isEmpty) {
       throw Exception('לא נמצאו משתתפים - יש לבחור תתי-מסגרות עם משתמשים');
@@ -904,7 +909,9 @@ class RoutesDistributionService {
     );
   }
 
-  final UserRepository _userRepository = UserRepository();
+  UserRepository? _lazyUserRepository;
+  UserRepository get _userRepository =>
+      _injectedUserRepository ?? (_lazyUserRepository ??= UserRepository());
 
   /// מציאת משתתפים — מנווטים בלבד (ללא מפקדים/מנהלים)
   Future<List<String>> _findNavigators(domain.Navigation navigation, NavigationTree tree) async {

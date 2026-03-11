@@ -199,6 +199,58 @@ class PolygonOperations {
     return result;
   }
 
+  /// מציאת 2 הקודקודים הקרובים ביותר מ-polyA לפוליגון polyB.
+  /// לכל קודקוד ב-polyA מחשב מרחק מינימלי לקודקודי/צלעות polyB,
+  /// ומחזיר את 2 הקרובים ביותר (ממוינים מהקרוב לרחוק).
+  static List<Coordinate> findTwoClosestPoints(
+    List<Coordinate> polyA,
+    List<Coordinate> polyB,
+  ) {
+    if (polyA.isEmpty || polyB.isEmpty) {
+      throw ArgumentError('הפוליגונים חייבים להכיל לפחות נקודה אחת');
+    }
+    if (polyA.length < 2) return List.from(polyA);
+
+    // לכל קודקוד ב-polyA — מרחק מינימלי ל-polyB
+    final distances = <({Coordinate point, double dist})>[];
+
+    for (final pa in polyA) {
+      double minDist = double.infinity;
+
+      // מרחק לקודקודי B
+      for (final pb in polyB) {
+        final d = _haversineDistance(pa, pb);
+        if (d < minDist) minDist = d;
+      }
+
+      // מרחק להטלות על צלעות B
+      for (int i = 0; i < polyB.length; i++) {
+        final j = (i + 1) % polyB.length;
+        final projected = _projectPointOnSegment(pa, polyB[i], polyB[j]);
+        final d = _haversineDistance(pa, projected);
+        if (d < minDist) minDist = d;
+      }
+
+      distances.add((point: pa, dist: minDist));
+    }
+
+    // מיון לפי מרחק עולה
+    distances.sort((a, b) => a.dist.compareTo(b.dist));
+
+    // החזרת 2 הקרובים ביותר
+    return distances.take(2).map((e) => e.point).toList();
+  }
+
+  /// יצירת פוליגון מורחב מ-4 נקודות פינה (מרובע).
+  /// מקבל את 4 הפינות ומרחיב ב-buffer לחפיפה אמינה.
+  static List<Coordinate> createPolygonFromPoints(
+    List<Coordinate> points,
+    double widthMeters,
+  ) {
+    if (points.length < 3) return points;
+    return bufferPolygon(points, widthMeters);
+  }
+
   /// מרחק במטרים בין שתי קואורדינטות (Haversine)
   static double distanceBetween(Coordinate a, Coordinate b) =>
       _haversineDistance(a, b);

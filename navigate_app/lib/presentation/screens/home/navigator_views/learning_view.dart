@@ -17,14 +17,14 @@ import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/area_repository.dart';
-import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/user_repository.dart';
 import '../../../../data/repositories/unit_repository.dart';
 import '../../../../domain/entities/safety_point.dart';
-import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/nav_layer.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
@@ -56,14 +56,14 @@ class _LearningViewState extends State<LearningView>
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavigationRepository _navigationRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final MapController _mapController = MapController();
 
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
   List<SafetyPoint> _safetyPoints = [];
-  List<Boundary> _boundaries = [];
+  List<NavBoundary> _navBoundaries = [];
 
   bool _showGG = true;
   bool _showNZ = true;
@@ -445,12 +445,7 @@ class _LearningViewState extends State<LearningView>
       if (area != null && mounted) setState(() => _areaName = area.name);
     } catch (_) {}
 
-    try {
-      if (nav.boundaryLayerId != null) {
-        final boundary = await BoundaryRepository().getById(nav.boundaryLayerId!);
-        if (boundary != null && mounted) setState(() => _boundaryName = boundary.name);
-      }
-    } catch (_) {}
+    // boundary name will be set from _navBoundaries after _loadMapLayers completes
 
     try {
       if (nav.selectedUnitId != null) {
@@ -464,11 +459,14 @@ class _LearningViewState extends State<LearningView>
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
-      final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
-          _boundaries = boundaries;
+          _navBoundaries = navBoundaries;
+          if (navBoundaries.isNotEmpty) {
+            _boundaryName = navBoundaries.first.name;
+          }
         });
       }
     } catch (_) {}
@@ -643,8 +641,8 @@ class _LearningViewState extends State<LearningView>
 
     final allPointsForBounds = [...refPoints, ...plannedPathPoints];
     // עדיפות לגבול גזרה אם קיים, אחרת נקודות ציון/ציר
-    final boundaryPoints = _boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty
-        ? _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.coordinates.isNotEmpty
+        ? _navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
         : <LatLng>[];
     final boundsPoints = boundaryPoints.isNotEmpty
         ? boundaryPoints
@@ -803,9 +801,9 @@ class _LearningViewState extends State<LearningView>
               ),
               layers: [
                 // ג"ג
-                if (_showGG && _boundaries.isNotEmpty)
+                if (_showGG && _navBoundaries.isNotEmpty)
                   PolygonLayer(
-                    polygons: _boundaries.map((b) => Polygon(
+                    polygons: _navBoundaries.map((b) => Polygon(
                       points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
                       color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
                       borderColor: Colors.black.withValues(alpha: _ggOpacity),
@@ -913,7 +911,7 @@ class _LearningViewState extends State<LearningView>
           hasPlannedPath: hasPlannedPath,
           markers: markers,
           bounds: bounds,
-          boundaries: _boundaries,
+          boundaries: _navBoundaries,
           safetyPoints: _safetyPoints,
           defaultMap: widget.navigation.displaySettings.defaultMap,
         ),
@@ -2358,7 +2356,7 @@ class _FullscreenRouteMap extends StatefulWidget {
   final bool hasPlannedPath;
   final List<Marker> markers;
   final LatLngBounds bounds;
-  final List<Boundary> boundaries;
+  final List<NavBoundary> boundaries;
   final List<SafetyPoint> safetyPoints;
   final String? defaultMap;
 

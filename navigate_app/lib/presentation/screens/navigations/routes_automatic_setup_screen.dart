@@ -12,9 +12,8 @@ import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../domain/entities/navigation_tree.dart';
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/safety_point.dart';
-import '../../../data/repositories/boundary_repository.dart';
 import '../../../services/routes_distribution_service.dart';
 import '../../../services/navigation_layer_copy_service.dart';
 import 'checkpoint_map_picker_screen.dart';
@@ -43,7 +42,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
   List<Checkpoint> _checkpoints = [];
   List<SafetyPoint> _safetyPoints = [];
   NavigationTree? _tree;
-  Boundary? _boundary;
+  NavBoundary? _boundary;
   bool _isLoading = false;
 
   // הגדרות
@@ -200,10 +199,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       // טעינת רשימת מנווטים
       final navigatorsList = await _loadNavigatorsList(tree);
 
-      // טעינת גבול גזרה (לשימוש במפת בחירת נקודות)
-      Boundary? boundary;
-      if (widget.navigation.boundaryLayerId != null) {
-        boundary = await BoundaryRepository().getById(widget.navigation.boundaryLayerId!);
+      // טעינת גבול ניווט (לשימוש במפת בחירת נקודות)
+      NavBoundary? boundary;
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
+      if (navBoundaries.isNotEmpty) {
+        boundary = navBoundaries.first;
       }
 
       // טעינת נת"בים לסינון בחלוקה אוטומטית

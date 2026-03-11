@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/nav_layer.dart';
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/safety_point.dart';
 import '../../../widgets/map_with_selector.dart';
@@ -9,7 +9,7 @@ import '../../../widgets/map_with_selector.dart';
 class StarLearningMapWidget extends StatefulWidget {
   final Checkpoint? centralPoint;
   final Checkpoint? targetPoint;
-  final List<Boundary> boundaries;
+  final List<NavBoundary> boundaries;
   final List<SafetyPoint> safetyPoints;
   final LatLng? fallbackCenter;
   final int completedPoints;
@@ -102,12 +102,12 @@ class _StarLearningMapWidgetState extends State<StarLearningMapWidget> {
             showTypeSelector: false,
             layers: [
               // Boundary polygons
-              PolygonLayer(polygons: widget.boundaries.map((b) => Polygon(
-                points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
+              PolygonLayer(polygons: widget.boundaries.expand((b) => b.allPolygons.map((poly) => Polygon(
+                points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
                 color: Colors.black.withOpacity(0.1),
                 borderColor: Colors.black.withOpacity(0.7),
                 borderStrokeWidth: b.strokeWidth,
-              )).toList()),
+              ))).toList()),
               // Safety point markers
               MarkerLayer(markers: _pointSafety.map((sp) => Marker(
                 point: LatLng(sp.coordinates!.lat, sp.coordinates!.lng),

@@ -4,9 +4,8 @@ import 'package:latlong2/latlong.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/user.dart';
-import '../../../data/repositories/boundary_repository.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
@@ -42,7 +41,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
 
   // Data
   List<Checkpoint> _checkpoints = [];
-  Boundary? _boundary;
+  NavBoundary? _boundary;
   List<String> _navigatorIds = [];
   Map<String, User> _usersCache = {};
 
@@ -186,10 +185,11 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         }
       }
 
-      // טעינת גבול גזרה (לשימוש במפת בחירת נקודות)
-      Boundary? boundary;
-      if (widget.navigation.boundaryLayerId != null) {
-        boundary = await BoundaryRepository().getById(widget.navigation.boundaryLayerId!);
+      // טעינת גבול ניווט (לשימוש במפת בחירת נקודות)
+      NavBoundary? boundary;
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
+      if (navBoundaries.isNotEmpty) {
+        boundary = navBoundaries.first;
       }
 
       setState(() {

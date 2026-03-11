@@ -5,9 +5,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
-import '../../../data/repositories/boundary_repository.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../core/constants/app_constants.dart';
@@ -57,14 +57,14 @@ class TrainingModeScreen extends StatefulWidget {
 
 class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTickerProviderStateMixin {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final MapController _mapController = MapController();
 
   late TabController _tabController;
   List<Checkpoint> _checkpoints = [];
-  Boundary? _boundary;
+  NavBoundary? _boundary;
   List<SafetyPoint> _safetyPoints = [];
   Map<String, bool> _selectedNavigators = {};
   // _routeApprovals הוסר — סטטוס נגזר מ-approvalStatus ב-AssignedRoute
@@ -325,9 +325,10 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
 
-      Boundary? boundary;
-      if (widget.navigation.boundaryLayerId != null) {
-        boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
+      NavBoundary? boundary;
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
+      if (boundaries.isNotEmpty) {
+        boundary = boundaries.first;
       }
 
       // טעינת שמות מנווטים
@@ -2502,7 +2503,7 @@ class _RouteViewScreen extends StatefulWidget {
   final List<Checkpoint> routeCheckpoints;
   final Checkpoint? startCheckpoint;
   final Checkpoint? endCheckpoint;
-  final Boundary? boundary;
+  final NavBoundary? boundary;
   final List<SafetyPoint> safetyPoints;
   final String? defaultMap;
 

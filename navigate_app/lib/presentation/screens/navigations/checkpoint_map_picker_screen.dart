@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../domain/entities/checkpoint.dart';
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../widgets/map_with_selector.dart';
 
 /// מסך בחירת נקודת ציון מתוך מפה
 /// מחזיר את ה-ID של הנקודה שנבחרה (או null אם בוטל)
 class CheckpointMapPickerScreen extends StatefulWidget {
   final List<Checkpoint> checkpoints;
-  final Boundary? boundary;
+  final NavBoundary? boundary;
   final Set<String> excludeIds;
 
   const CheckpointMapPickerScreen({
@@ -33,7 +33,7 @@ class _CheckpointMapPickerScreenState
 
     // boundary points
     if (widget.boundary != null) {
-      for (final c in widget.boundary!.coordinates) {
+      for (final c in widget.boundary!.allCoordinates) {
         points.add(c.toLatLng());
       }
     }
@@ -119,18 +119,15 @@ class _CheckpointMapPickerScreenState
 
   List<Polygon> _buildBoundaryPolygon() {
     if (widget.boundary == null) return [];
-    final points = widget.boundary!.coordinates
-        .map((c) => c.toLatLng())
+    return widget.boundary!.allPolygons
+        .where((poly) => poly.isNotEmpty)
+        .map((poly) => Polygon(
+              points: poly.map((c) => c.toLatLng()).toList(),
+              color: Colors.black.withValues(alpha: 0.08),
+              borderColor: Colors.black,
+              borderStrokeWidth: widget.boundary!.strokeWidth,
+            ))
         .toList();
-    if (points.isEmpty) return [];
-    return [
-      Polygon(
-        points: points,
-        color: Colors.black.withValues(alpha: 0.08),
-        borderColor: Colors.black,
-        borderStrokeWidth: 2,
-      ),
-    ];
   }
 
   @override

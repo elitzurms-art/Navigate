@@ -4,10 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
-import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/safety_point.dart';
@@ -42,7 +42,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   final MapController _mapController = MapController();
   final GpsService _gpsService = GpsService();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
 
   LatLng? _currentPosition;
@@ -51,7 +51,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   final List<LatLng> _measurePoints = [];
 
   List<SafetyPoint> _safetyPoints = [];
-  List<Boundary> _boundaries = [];
+  List<nav.NavBoundary> _navBoundaries = [];
   List<Checkpoint> _checkpoints = [];
 
   bool _showGG = true;
@@ -89,7 +89,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
-      final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       // טעינת נקודות ציון — סינון לנקודות שמוקצות למנווט הנוכחי
       final allCheckpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
@@ -112,12 +112,12 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
-          _boundaries = boundaries;
+          _navBoundaries = navBoundaries;
           _checkpoints = checkpoints;
         });
         // התמקד בגבול גזרה אם קיים
-        if (boundaries.isNotEmpty && boundaries.first.coordinates.isNotEmpty) {
-          final points = boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        if (navBoundaries.isNotEmpty && navBoundaries.first.coordinates.isNotEmpty) {
+          final points = navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
           try {
             _mapController.fitCamera(CameraFit.bounds(
               bounds: LatLngBounds.fromPoints(points),
@@ -441,9 +441,9 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
             ),
             layers: [
               // ג"ג
-              if (_showGG && _boundaries.isNotEmpty)
+              if (_showGG && _navBoundaries.isNotEmpty)
                 PolygonLayer(
-                  polygons: _boundaries.map((b) => Polygon(
+                  polygons: _navBoundaries.map((b) => Polygon(
                     points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
                     color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
                     borderColor: Colors.black.withValues(alpha: _ggOpacity),

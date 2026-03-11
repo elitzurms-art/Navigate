@@ -6,14 +6,13 @@ import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../domain/entities/checkpoint.dart' as domain_cp;
-import '../../../../domain/entities/boundary.dart' as domain_boundary;
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/navigation_score.dart';
 import '../../../../domain/entities/coordinate.dart';
 import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
-import '../../../../data/repositories/boundary_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/checkpoint_punch_repository.dart';
@@ -58,7 +57,7 @@ class ReviewView extends StatefulWidget {
 
 class _ReviewViewState extends State<ReviewView> {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
@@ -72,7 +71,7 @@ class _ReviewViewState extends State<ReviewView> {
 
   List<domain_cp.Checkpoint> _checkpoints = [];
   List<domain_sp.SafetyPoint> _safetyPoints = [];
-  List<domain_boundary.Boundary> _boundaries = [];
+  List<nav.NavBoundary> _navBoundaries = [];
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = [];
   List<TrackPoint> _trackPoints = [];
@@ -132,7 +131,7 @@ class _ReviewViewState extends State<ReviewView> {
       final areaId = widget.navigation.areaId;
       _checkpoints = await _checkpointRepo.getByArea(areaId);
       _safetyPoints = await _safetyPointRepo.getByArea(areaId);
-      _boundaries = await _boundaryRepo.getByArea(areaId);
+      _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       // סינון נקודות לציר הזה
       if (route != null && route.checkpointIds.isNotEmpty) {
@@ -306,10 +305,10 @@ class _ReviewViewState extends State<ReviewView> {
   void _centerMap() {
     if (!mounted) return;
     try {
-      if (_boundaries.isNotEmpty) {
-        final boundary = _boundaries.first;
-        if (boundary.coordinates.isNotEmpty) {
-          final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+      if (_navBoundaries.isNotEmpty) {
+        final boundary = _navBoundaries.first;
+        if (boundary.allCoordinates.isNotEmpty) {
+          final points = boundary.allCoordinates.map((c) => LatLng(c.lat, c.lng)).toList();
           _mapController.fitCamera(CameraFit.bounds(
             bounds: LatLngBounds.fromPoints(points),
             padding: const EdgeInsets.all(30),
@@ -483,21 +482,22 @@ class _ReviewViewState extends State<ReviewView> {
                 ),
                 layers: [
                   // גבול גזרה
-                  if (_showGG && _boundaries.isNotEmpty)
+                  if (_showGG && _navBoundaries.isNotEmpty)
                     PolygonLayer(
-                      polygons: _boundaries
-                          .where((b) => b.coordinates.isNotEmpty)
-                          .map((b) => Polygon(
-                                points: b.coordinates
-                                    .map((c) => LatLng(c.lat, c.lng))
-                                    .toList(),
-                                color: _kBoundaryColor
-                                    .withValues(alpha: 0.1 * _ggOpacity),
-                                borderColor: _kBoundaryColor
-                                    .withValues(alpha: _ggOpacity),
-                                borderStrokeWidth: 2.0,
-                                isFilled: true,
-                              ))
+                      polygons: _navBoundaries
+                          .expand((b) => b.allPolygons
+                              .where((poly) => poly.isNotEmpty)
+                              .map((poly) => Polygon(
+                                    points: poly
+                                        .map((c) => LatLng(c.lat, c.lng))
+                                        .toList(),
+                                    color: _kBoundaryColor
+                                        .withValues(alpha: 0.1 * _ggOpacity),
+                                    borderColor: _kBoundaryColor
+                                        .withValues(alpha: _ggOpacity),
+                                    borderStrokeWidth: 2.0,
+                                    isFilled: true,
+                                  )))
                           .toList(),
                     ),
 
@@ -1037,7 +1037,7 @@ class _ReviewViewState extends State<ReviewView> {
             center: center,
             checkpoints: _checkpoints,
             safetyPoints: _safetyPoints,
-            boundaries: _boundaries,
+            boundaries: _navBoundaries,
             plannedRoute: _plannedRoute,
             actualRoute: _actualRoute,
             trackPoints: _trackPoints,
@@ -1059,7 +1059,7 @@ class _FullscreenReviewMap extends StatefulWidget {
   final LatLng center;
   final List<domain_cp.Checkpoint> checkpoints;
   final List<domain_sp.SafetyPoint> safetyPoints;
-  final List<domain_boundary.Boundary> boundaries;
+  final List<nav.NavBoundary> boundaries;
   final List<LatLng> plannedRoute;
   final List<LatLng> actualRoute;
   final List<TrackPoint> trackPoints;
@@ -1143,18 +1143,19 @@ class _FullscreenReviewMapState extends State<_FullscreenReviewMap> {
               if (_showGG && widget.boundaries.isNotEmpty)
                 PolygonLayer(
                   polygons: widget.boundaries
-                      .where((b) => b.coordinates.isNotEmpty)
-                      .map((b) => Polygon(
-                            points: b.coordinates
-                                .map((c) => LatLng(c.lat, c.lng))
-                                .toList(),
-                            color: _kBoundaryColor
-                                .withValues(alpha: 0.1 * _ggOpacity),
-                            borderColor: _kBoundaryColor
-                                .withValues(alpha: _ggOpacity),
-                            borderStrokeWidth: 2.0,
-                            isFilled: true,
-                          ))
+                      .expand((b) => b.allPolygons
+                          .where((poly) => poly.isNotEmpty)
+                          .map((poly) => Polygon(
+                                points: poly
+                                    .map((c) => LatLng(c.lat, c.lng))
+                                    .toList(),
+                                color: _kBoundaryColor
+                                    .withValues(alpha: 0.1 * _ggOpacity),
+                                borderColor: _kBoundaryColor
+                                    .withValues(alpha: _ggOpacity),
+                                borderStrokeWidth: 2.0,
+                                isFilled: true,
+                              )))
                       .toList(),
                 ),
 

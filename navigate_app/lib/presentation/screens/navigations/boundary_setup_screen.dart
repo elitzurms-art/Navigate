@@ -830,15 +830,17 @@ class _BoundarySetupScreenState extends State<BoundarySetupScreen> {
         }
       }
 
-      // יצירת מסדרון — רוחב = max(distance * 1.2, 50)
-      final closest =
-          PolygonOperations.findClosestPoints(working[bestI], working[bestJ]);
+      // מציאת 2 נקודות קרובות מכל פוליגון — מסדרון רחב יותר
+      final aPoints =
+          PolygonOperations.findTwoClosestPoints(working[bestI], working[bestJ]);
+      final bPoints =
+          PolygonOperations.findTwoClosestPoints(working[bestJ], working[bestI]);
+
+      // בניית מרובע מ-4 הנקודות + buffer להרחבה
+      final quad = [aPoints[0], bPoints[0], bPoints[1], aPoints[1]];
       final corridorWidth = bestDist * 1.2 < 50 ? 50.0 : bestDist * 1.2;
-      final corridor = PolygonOperations.createCorridor(
-        closest.a,
-        closest.b,
-        corridorWidth,
-      );
+      final corridor =
+          PolygonOperations.createPolygonFromPoints(quad, corridorWidth);
 
       // ניסיון union של הזוג + מסדרון
       final merged = PolygonOperations.unionPolygons([
@@ -958,7 +960,7 @@ class _BoundarySetupScreenState extends State<BoundarySetupScreen> {
       case NavBoundaryCreationMode.cloneEdit:
         return _buildCloneEditMode();
       case NavBoundaryCreationMode.legacy:
-        return const Center(child: Text('מצב לא נתמך'));
+        return const Center(child: Text('בחר אחת מן האפשרויות'));
     }
   }
 

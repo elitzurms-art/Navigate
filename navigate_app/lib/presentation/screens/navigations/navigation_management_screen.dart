@@ -11,11 +11,11 @@ import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/checkpoint_punch.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/coordinate.dart';
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/navigator_personal_status.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/checkpoint_punch_repository.dart';
-import '../../../data/repositories/boundary_repository.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
@@ -59,7 +59,7 @@ class NavigationManagementScreen extends StatefulWidget {
 class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     with SingleTickerProviderStateMixin {
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final NavigatorAlertRepository _alertRepo = NavigatorAlertRepository();
@@ -92,7 +92,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Timer? _cancelAutoRetryTimer;
 
   List<Checkpoint> _checkpoints = [];
-  Boundary? _boundary;
+  List<NavBoundary> _boundaries = [];
   bool _isLoading = false;
   bool _alreadyClosed = false;
 
@@ -241,23 +241,22 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     try {
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
 
-      Boundary? boundary;
-      if (widget.navigation.boundaryLayerId != null) {
-        boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
-      }
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       setState(() {
         _checkpoints = checkpoints;
-        _boundary = boundary;
+        _boundaries = boundaries;
         _isLoading = false;
       });
 
-      if (boundary != null && boundary.coordinates.isNotEmpty) {
-        final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
-        _mapController.fitCamera(CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(30),
-        ));
+      if (boundaries.isNotEmpty) {
+        final points = boundaries.expand((b) => b.allCoordinates).map((c) => LatLng(c.lat, c.lng)).toList();
+        if (points.isNotEmpty) {
+          _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(30),
+          ));
+        }
       }
 
     } catch (e) {
@@ -2820,18 +2819,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
             layers: [
               // גבול ג"ג
-              if (_showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+              if (_showGG && _boundaries.isNotEmpty)
                 PolygonLayer(
-                  polygons: [
+                  polygons: _boundaries.expand((b) => b.allPolygons.map((poly) =>
                     Polygon(
-                      points: _boundary!.coordinates
-                          .map((coord) => LatLng(coord.lat, coord.lng))
-                          .toList(),
+                      points: poly.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
                       color: Colors.black.withOpacity(0.2 * _ggOpacity),
                       borderColor: Colors.black,
-                      borderStrokeWidth: 2,
+                      borderStrokeWidth: b.strokeWidth,
                     ),
-                  ],
+                  )).toList(),
                 ),
 
               // נקודות ציון — עם סימון התחלה/סיום/ביניים
@@ -3302,18 +3299,16 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     return [
       // גבול ג"ג
-      if (showGG && _boundary != null && _boundary!.coordinates.isNotEmpty)
+      if (showGG && _boundaries.isNotEmpty)
         PolygonLayer(
-          polygons: [
+          polygons: _boundaries.expand((b) => b.allPolygons.map((poly) =>
             Polygon(
-              points: _boundary!.coordinates
-                  .map((coord) => LatLng(coord.lat, coord.lng))
-                  .toList(),
+              points: poly.map((coord) => LatLng(coord.lat, coord.lng)).toList(),
               color: Colors.black.withOpacity(0.2 * ggOp),
               borderColor: Colors.black,
-              borderStrokeWidth: 2,
+              borderStrokeWidth: b.strokeWidth,
             ),
-          ],
+          )).toList(),
         ),
 
       // נקודות ציון

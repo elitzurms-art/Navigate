@@ -7,9 +7,9 @@ import 'package:battery_plus/battery_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../services/device_security_service.dart';
 import '../../../domain/entities/navigation.dart' as domain;
-import '../../../domain/entities/boundary.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/user.dart' as domain_user;
-import '../../../data/repositories/boundary_repository.dart';
+import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../core/constants/app_constants.dart';
@@ -44,7 +44,7 @@ class SystemCheckScreen extends StatefulWidget {
 }
 
 class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTickerProviderStateMixin {
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
   final UserRepository _userRepo = UserRepository();
   final MapController _mapController = MapController();
@@ -52,7 +52,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   final Battery _battery = Battery();
 
   late TabController _tabController;
-  Boundary? _boundary;
+  NavBoundary? _boundary;
   bool _isLoading = false;
 
   // הגדרות סוללה (אחוזים)
@@ -370,9 +370,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      Boundary? boundary;
-      if (widget.navigation.boundaryLayerId != null) {
-        boundary = await _boundaryRepo.getById(widget.navigation.boundaryLayerId!);
+      NavBoundary? boundary;
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
+      if (boundaries.isNotEmpty) {
+        boundary = boundaries.first;
       }
 
       setState(() {

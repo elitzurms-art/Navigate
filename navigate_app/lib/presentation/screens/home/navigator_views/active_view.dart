@@ -31,9 +31,9 @@ import '../../../../services/background_location_service.dart';
 import '../../../../domain/entities/security_violation.dart';
 import '../../../widgets/unlock_dialog.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
-import '../../../../domain/entities/boundary.dart' as domain_boundary;
+import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import 'star_learning_map_widget.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -78,7 +78,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
 
   NavigatorPersonalStatus _personalStatus = NavigatorPersonalStatus.waiting;
@@ -198,7 +198,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   Duration _serverTimeOffset = Duration.zero;
   Timer? _starTicker;
   List<domain_sp.SafetyPoint> _starMapSafetyPoints = [];
-  List<domain_boundary.Boundary> _starMapBoundaries = [];
+  List<nav.NavBoundary> _starMapBoundaries = [];
   bool _starMapLayersLoaded = false;
 
   DateTime get _adjustedNow => DateTime.now().add(_serverTimeOffset);
@@ -479,22 +479,23 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Future<void> _computeBoundaryCenter() async {
     try {
-      final boundaryLayerId = _nav.boundaryLayerId;
-      if (boundaryLayerId == null || boundaryLayerId.isEmpty) return;
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(_nav.id);
+      if (navBoundaries.isEmpty) return;
 
-      final boundary = await _boundaryRepo.getById(boundaryLayerId);
-      if (boundary == null || boundary.coordinates.isEmpty) return;
+      final boundary = navBoundaries.first;
+      final coords = boundary.allCoordinates;
+      if (coords.isEmpty) return;
 
       // Compute centroid of boundary polygon
       double latSum = 0;
       double lngSum = 0;
-      for (final coord in boundary.coordinates) {
+      for (final coord in coords) {
         latSum += coord.lat;
         lngSum += coord.lng;
       }
       _boundaryCenter = LatLng(
-        latSum / boundary.coordinates.length,
-        lngSum / boundary.coordinates.length,
+        latSum / coords.length,
+        lngSum / coords.length,
       );
       print('DEBUG ActiveView: boundary center = ${_boundaryCenter!.latitude}, ${_boundaryCenter!.longitude}');
     } catch (e) {
@@ -1533,7 +1534,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Future<void> _loadStarMapLayers() async {
     try {
-      final boundaries = await _boundaryRepo.getByArea(_nav.areaId);
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(_nav.id);
       final safetyPoints = await _safetyPointRepo.getByArea(_nav.areaId);
       if (mounted) {
         setState(() {

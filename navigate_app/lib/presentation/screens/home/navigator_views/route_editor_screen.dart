@@ -6,12 +6,12 @@ import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/coordinate.dart';
-import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../domain/entities/safety_point.dart';
-import '../../../../domain/entities/boundary.dart';
+import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
@@ -43,7 +43,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   final NavigationRepository _navigationRepo = NavigationRepository();
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   late List<LatLng> _waypoints;
   bool _isSaving = false;
   bool _wasApproved = false;
@@ -62,8 +62,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   final List<LatLng> _measurePoints = [];
 
   List<SafetyPoint> _safetyPoints = [];
-  List<Boundary> _boundaries = [];
-  Boundary? _navigationBoundary;
+  List<nav.NavBoundary> _navBoundaries = [];
+  nav.NavBoundary? _navigationBoundary;
 
   bool _showGG = true;
   bool _showNZ = true;
@@ -97,19 +97,15 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   Future<void> _loadMapLayers() async {
     try {
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
-      final boundaries = await _boundaryRepo.getByArea(widget.navigation.areaId);
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
-      // טעינת הג"ג הספציפי של הניווט
-      Boundary? navBoundary;
-      final boundaryId = widget.navigation.boundaryLayerId;
-      if (boundaryId != null && boundaryId.isNotEmpty) {
-        navBoundary = await _boundaryRepo.getById(boundaryId);
-      }
+      // הג"ג הספציפי של הניווט — הראשון ברשימה
+      final navBoundary = navBoundaries.isNotEmpty ? navBoundaries.first : null;
 
       if (mounted) {
         setState(() {
           _safetyPoints = safetyPoints;
-          _boundaries = boundaries;
+          _navBoundaries = navBoundaries;
           _navigationBoundary = navBoundary;
         });
       }
@@ -521,8 +517,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         .toList();
     final allPoints = [...cpPoints, ..._waypoints];
     // עדיפות לגבול גזרה אם קיים
-    final boundaryPoints = _boundaries.isNotEmpty && _boundaries.first.coordinates.isNotEmpty
-        ? _boundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.coordinates.isNotEmpty
+        ? _navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
         : <LatLng>[];
     final boundsPoints = boundaryPoints.isNotEmpty
         ? boundaryPoints
@@ -895,9 +891,9 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                   ),
                   layers: [
                     // ג"ג
-                    if (_showGG && _boundaries.isNotEmpty)
+                    if (_showGG && _navBoundaries.isNotEmpty)
                       PolygonLayer(
-                        polygons: _boundaries.map((b) => Polygon(
+                        polygons: _navBoundaries.map((b) => Polygon(
                           points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
                           color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
                           borderColor: Colors.black.withValues(alpha: _ggOpacity),

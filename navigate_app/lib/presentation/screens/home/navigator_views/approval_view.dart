@@ -6,13 +6,12 @@ import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../domain/entities/checkpoint.dart' as domain_cp;
-import '../../../../domain/entities/boundary.dart' as domain_boundary;
 import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/coordinate.dart';
 import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
-import '../../../../data/repositories/boundary_repository.dart';
+import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/checkpoint_punch_repository.dart';
@@ -57,7 +56,7 @@ class _ApprovalViewState extends State<ApprovalView> {
   VoiceService? _voiceService;
 
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
-  final BoundaryRepository _boundaryRepo = BoundaryRepository();
+  final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
@@ -72,7 +71,7 @@ class _ApprovalViewState extends State<ApprovalView> {
 
   List<domain_cp.Checkpoint> _checkpoints = [];
   List<domain_sp.SafetyPoint> _safetyPoints = [];
-  List<domain_boundary.Boundary> _boundaries = [];
+  List<nav.NavBoundary> _navBoundaries = [];
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = [];
   List<TrackPoint> _trackPoints = [];
@@ -111,7 +110,7 @@ class _ApprovalViewState extends State<ApprovalView> {
       final areaId = widget.navigation.areaId;
       _checkpoints = await _checkpointRepo.getByArea(areaId);
       _safetyPoints = await _safetyPointRepo.getByArea(areaId);
-      _boundaries = await _boundaryRepo.getByArea(areaId);
+      _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       // סינון נקודות לציר הזה
       if (route != null && route.checkpointIds.isNotEmpty) {
@@ -273,8 +272,8 @@ class _ApprovalViewState extends State<ApprovalView> {
   void _centerMap() {
     if (!mounted) return;
     try {
-      if (_boundaries.isNotEmpty) {
-        final boundary = _boundaries.first;
+      if (_navBoundaries.isNotEmpty) {
+        final boundary = _navBoundaries.first;
         if (boundary.coordinates.isNotEmpty) {
           final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
           _mapController.fitCamera(CameraFit.bounds(
@@ -421,9 +420,9 @@ class _ApprovalViewState extends State<ApprovalView> {
                 ),
                 layers: [
               // גבול גזרה
-              if (_boundaries.isNotEmpty)
+              if (_navBoundaries.isNotEmpty)
                 PolygonLayer(
-                  polygons: _boundaries
+                  polygons: _navBoundaries
                       .where((b) => b.coordinates.isNotEmpty)
                       .map((b) => Polygon(
                             points: b.coordinates
@@ -638,9 +637,9 @@ class _ApprovalViewState extends State<ApprovalView> {
                     final fsSwapIds = <String>{if (fsRoles.swapId != null) fsRoles.swapId!};
                     fsEndIds.removeAll(fsSwapIds);
                     return [
-                      if (visibility['boundary'] == true && _boundaries.isNotEmpty)
+                      if (visibility['boundary'] == true && _navBoundaries.isNotEmpty)
                         PolygonLayer(
-                          polygons: _boundaries
+                          polygons: _navBoundaries
                               .where((b) => b.coordinates.isNotEmpty)
                               .map((b) => Polygon(
                                     points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),

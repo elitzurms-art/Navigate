@@ -5,6 +5,7 @@ import '../../../domain/entities/navigation.dart' as domain;
 import '../../../domain/entities/checkpoint.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../domain/entities/user.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
@@ -36,6 +37,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
   // Data
   List<Checkpoint> _checkpoints = [];
+  List<NavBoundary> _navBoundaries = [];
   List<String> _navigatorIds = [];
   Map<String, User> _usersCache = {};
 
@@ -77,6 +79,9 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
           widget.navigation.id,
         );
       }
+
+      // טעינת גבול ניווט
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       List<Checkpoint> checkpoints;
       if (navCheckpoints.isEmpty) {
@@ -154,6 +159,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
 
       setState(() {
         _checkpoints = checkpoints;
+        _navBoundaries = navBoundaries;
         _navigatorIds = navigatorIds;
         _usersCache = usersCache;
         _navigatorCheckpoints = navigatorCheckpoints;
@@ -569,12 +575,27 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
   }
 
   LatLngBounds? _getMapBounds() {
-    final allCoords = _checkpoints
-        .where((c) => c.coordinates != null)
-        .map((c) => c.coordinates!.toLatLng())
-        .toList();
+    final allCoords = <LatLng>[
+      ..._checkpoints
+          .where((c) => c.coordinates != null)
+          .map((c) => c.coordinates!.toLatLng()),
+      ..._navBoundaries.expand((b) => b.allCoordinates.map((c) => c.toLatLng())),
+    ];
     if (allCoords.isEmpty) return null;
     return LatLngBounds.fromPoints(allCoords);
+  }
+
+  List<Polygon> _buildBoundaryPolygons() {
+    return _navBoundaries
+        .expand((b) => b.allPolygons
+            .where((poly) => poly.isNotEmpty)
+            .map((poly) => Polygon(
+                  points: poly.map((c) => c.toLatLng()).toList(),
+                  color: Colors.black.withValues(alpha: 0.08),
+                  borderColor: Colors.black,
+                  borderStrokeWidth: b.strokeWidth,
+                )))
+        .toList();
   }
 
   // ===================== SAVE =====================
@@ -1049,6 +1070,8 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                   ),
                 ),
                 layers: [
+                  if (_navBoundaries.isNotEmpty)
+                    PolygonLayer(polygons: _buildBoundaryPolygons()),
                   PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
                   MarkerLayer(markers: _buildMarkers(navigatorId: navigatorId)),
                 ],
@@ -1070,10 +1093,13 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
                           initialCenter: camera.center,
                           initialZoom: camera.zoom,
                           layerConfigs: [
+                            MapLayerConfig(id: 'boundary', label: 'ג"ג', color: Colors.black, visible: true, onVisibilityChanged: (_) {}),
                             MapLayerConfig(id: 'routes', label: 'צירים', color: Colors.orange, visible: true, onVisibilityChanged: (_) {}),
                             MapLayerConfig(id: 'checkpoints', label: 'נקודות ציון', color: Colors.blue, visible: true, onVisibilityChanged: (_) {}),
                           ],
                           layerBuilder: (visibility, opacity) => [
+                            if (visibility['boundary'] == true && _navBoundaries.isNotEmpty)
+                              PolygonLayer(polygons: _buildBoundaryPolygons()),
                             if (visibility['routes'] == true)
                               PolylineLayer(polylines: _buildPolylines(selectedNavigatorId: navigatorId)),
                             if (visibility['checkpoints'] == true)
