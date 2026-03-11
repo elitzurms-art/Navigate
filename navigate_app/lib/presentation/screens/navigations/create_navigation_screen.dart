@@ -66,7 +66,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   double _distanceMax = 8.0;
   String _navigationType = 'regular'; // regular, clusters, star, reverse, parachute, developing
   Area? _selectedArea;
-  String? _selectedBoundaryId;
+  List<String> _selectedBoundaryIds = [];
   domain_unit.Unit? _selectedUnit;
   NavigationTree? _selectedTree;
 
@@ -251,11 +251,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       final boundaries = await _boundaryRepository.getByArea(areaId);
       setState(() {
         _boundaries = boundaries;
-        // רק אפס אם הגבול הנוכחי לא ברשימה החדשה
-        if (_selectedBoundaryId != null &&
-            !boundaries.any((b) => b.id == _selectedBoundaryId)) {
-          _selectedBoundaryId = null;
-        }
+        // הסר גבולות שלא קיימים יותר ברשימה החדשה
+        _selectedBoundaryIds = _selectedBoundaryIds
+            .where((id) => boundaries.any((b) => b.id == id))
+            .toList();
       });
     } catch (e) {
       if (mounted) {
@@ -514,9 +513,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     // טעינת גבולות האזור
     await _loadBoundaries(nav.areaId);
 
-    // בחירת הגבול
-    if (nav.boundaryLayerId != null) {
-      _selectedBoundaryId = nav.boundaryLayerId;
+    // בחירת הגבולות
+    if (nav.boundaryLayerIds.isNotEmpty) {
+      _selectedBoundaryIds = List<String>.from(nav.boundaryLayerIds);
+    } else if (nav.boundaryLayerId != null) {
+      _selectedBoundaryIds = [nav.boundaryLayerId!];
     }
 
     // חיפוש העץ הנבחר
@@ -760,32 +761,55 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
             ),
             const SizedBox(height: 16),
 
-            // גבול גזרה
-            const Text('גבול גזרה', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _boundaries.any((b) => b.id == _selectedBoundaryId)
-                  ? _selectedBoundaryId
-                  : null,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'בחר גבול גזרה',
-              ),
-              items: _boundaries.map((boundary) {
-                return DropdownMenuItem(
-                  value: boundary.id,
-                  child: Text(boundary.name),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() => _selectedBoundaryId = value);
-                _onSettingChanged();
-              },
-              validator: (value) => value == null ? 'נא לבחור גבול גזרה' : null,
+            // גבולות גזרה (מרובים)
+            Text(
+              'גבולות גזרה${_selectedBoundaryIds.isNotEmpty ? ' (${_selectedBoundaryIds.length})' : ''}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 8),
+            if (_boundaries.isEmpty)
+              const Text('אין גבולות זמינים לאזור זה', style: TextStyle(color: Colors.grey))
+            else
+              FormField<List<String>>(
+                initialValue: _selectedBoundaryIds,
+                validator: (value) => value == null || value.isEmpty ? 'נא לבחור לפחות גבול גזרה אחד' : null,
+                builder: (FormFieldState<List<String>> field) {
+                  return InputDecorator(
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      errorText: field.errorText,
+                    ),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: _boundaries.map((boundary) {
+                        final isSelected = _selectedBoundaryIds.contains(boundary.id);
+                        return FilterChip(
+                          label: Text(boundary.name),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedBoundaryIds.add(boundary.id);
+                              } else {
+                                _selectedBoundaryIds.remove(boundary.id);
+                              }
+                            });
+                            field.didChange(_selectedBoundaryIds);
+                            _onSettingChanged();
+                          },
+                          selectedColor: Colors.blue[100],
+                          checkmarkColor: Colors.blue[800],
+                        );
+                      }).toList(),
+                    ),
+                  );
+                },
+              ),
 
             // הודעה על העתקת שכבות ניווטיות
-            if (_selectedBoundaryId != null) ...[
+            if (_selectedBoundaryIds.isNotEmpty) ...[
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -808,7 +832,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                             children: [
                               Text(
                                 widget.navigation == null
-                                    ? 'בעת יצירת הניווט, יועתקו כל השכבות בתוך הגבול הנבחר'
+                                    ? 'בעת יצירת הניווט, יועתקו כל השכבות בתוך ${_selectedBoundaryIds.length > 1 ? 'הגבולות הנבחרים' : 'הגבול הנבחר'}'
                                     : 'שכבות ניווטיות הועתקו - ניתנות לעריכה בשלב הכנה',
                                 style: TextStyle(
                                   fontSize: 12,
@@ -2025,7 +2049,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   Future<void> _reloadNavigationLayers() async {
     final navigation = widget.navigation;
-    if (navigation == null || _selectedBoundaryId == null || _selectedArea == null) return;
+    if (navigation == null || _selectedBoundaryIds.isEmpty || _selectedArea == null) return;
 
     // דיאלוג אזהרה לפני ביצוע
     final confirmed = await showDialog<bool>(
@@ -2062,7 +2086,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       final currentUser = await _authService.getCurrentUser();
       final copyResult = await _layerCopyService.copyLayersForNavigation(
         navigationId: navigation.id,
-        boundaryId: _selectedBoundaryId!,
+        boundaryIds: _selectedBoundaryIds,
         areaId: _selectedArea!.id,
         createdBy: currentUser?.uid ?? navigation.createdBy,
       );
@@ -2113,7 +2137,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     if (silent) {
       if (widget.navigation == null) return;
       if (_nameController.text.isEmpty || _selectedArea == null ||
-          _selectedBoundaryId == null || _selectedUnit == null ||
+          _selectedBoundaryIds.isEmpty || _selectedUnit == null ||
           _selectedTree == null) return;
     } else {
       if (!_formKey.currentState!.validate()) return;
@@ -2186,12 +2210,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         healthCheckIntervalMinutes: _healthCheckIntervalMinutes,
       );
 
-      // חישוב מיקום פתיחת מפה - במרכז הגבול אם קיים
+      // חישוב מיקום פתיחת מפה - במרכז הגבול הראשון אם קיים
       double? openingLat;
       double? openingLng;
-      if (_selectedBoundaryId != null) {
+      if (_selectedBoundaryIds.isNotEmpty) {
         final boundary = _boundaries.firstWhere(
-          (b) => b.id == _selectedBoundaryId,
+          (b) => b.id == _selectedBoundaryIds.first,
           orElse: () => _boundaries.first,
         );
         if (boundary.coordinates.isNotEmpty) {
@@ -2218,8 +2242,8 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       if (_selectedArea == null) {
         throw Exception('נא לבחור אזור');
       }
-      if (_selectedBoundaryId == null) {
-        throw Exception('נא לבחור גבול גזרה');
+      if (_selectedBoundaryIds.isEmpty) {
+        throw Exception('נא לבחור לפחות גבול גזרה אחד');
       }
       if (_selectedUnit == null) {
         throw Exception('נא לבחור מסגרת מנווטת');
@@ -2242,7 +2266,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         selectedParticipantIds: _selectedParticipantIds.toList(),
         layerNzId: '', // TODO: צריך לטעון מהאזור
         layerNbId: '', // TODO: צריך לטעון מהאזור
-        layerGgId: _selectedBoundaryId ?? '',
+        layerGgId: _selectedBoundaryIds.isNotEmpty ? _selectedBoundaryIds.first : '',
         layerBaId: null,
         distributionMethod: _distributionMethod,
         navigationType: _navigationType,
@@ -2252,7 +2276,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         startPoint: null,
         endPoint: null,
         waypointSettings: const WaypointSettings(), // ברירת מחדל: ללא נקודות ביניים
-        boundaryLayerId: _selectedBoundaryId,
+        boundaryLayerIds: _selectedBoundaryIds,
         safetyTime: null,
         distributeNow: _distributeNow,
         learningSettings: learningSettings,
@@ -2300,10 +2324,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         await _navigationRepository.create(navigation);
 
         // העתקת שכבות לניווט - רק בעת יצירת ניווט חדש עם גבול גזרה
-        if (_selectedBoundaryId != null && _selectedArea != null) {
+        if (_selectedBoundaryIds.isNotEmpty && _selectedArea != null) {
           final copyResult = await _layerCopyService.copyLayersForNavigation(
             navigationId: navigation.id,
-            boundaryId: _selectedBoundaryId!,
+            boundaryIds: _selectedBoundaryIds,
             areaId: _selectedArea!.id,
             createdBy: currentUser.uid,
           );

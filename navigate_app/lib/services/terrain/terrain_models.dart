@@ -115,8 +115,7 @@ enum SmartWaypointType {
   domeCenter, // מרכז כיפה
   hiddenDome, // כיפה סמויה
   streamSplit, // פיצול נחלים
-  ridgePoint, // נקודת רכס
-  spurTip, // קצה שלוחה
+  shoulder, // כתף
   valleyJunction, // צומת ואדיות
   saddlePoint, // אוכף
   localPeak, // פסגה מקומית
@@ -131,10 +130,8 @@ extension SmartWaypointTypeExt on SmartWaypointType {
         return 'כיפה סמויה';
       case SmartWaypointType.streamSplit:
         return 'פיצול נחלים';
-      case SmartWaypointType.ridgePoint:
-        return 'נקודת רכס';
-      case SmartWaypointType.spurTip:
-        return 'קצה שלוחה';
+      case SmartWaypointType.shoulder:
+        return 'כתף';
       case SmartWaypointType.valleyJunction:
         return 'צומת ואדיות';
       case SmartWaypointType.saddlePoint:
@@ -152,9 +149,7 @@ extension SmartWaypointTypeExt on SmartWaypointType {
         return Colors.brown.shade400;
       case SmartWaypointType.streamSplit:
         return Colors.blue.shade600;
-      case SmartWaypointType.ridgePoint:
-        return Colors.orange.shade800;
-      case SmartWaypointType.spurTip:
+      case SmartWaypointType.shoulder:
         return Colors.orange.shade400;
       case SmartWaypointType.valleyJunction:
         return Colors.blue.shade800;
@@ -173,9 +168,7 @@ extension SmartWaypointTypeExt on SmartWaypointType {
         return Icons.visibility_off;
       case SmartWaypointType.streamSplit:
         return Icons.call_split;
-      case SmartWaypointType.ridgePoint:
-        return Icons.trending_up;
-      case SmartWaypointType.spurTip:
+      case SmartWaypointType.shoulder:
         return Icons.arrow_forward;
       case SmartWaypointType.valleyJunction:
         return Icons.merge_type;

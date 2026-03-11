@@ -770,9 +770,8 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
       columnWidths: const {
         0: FlexColumnWidth(2),
         1: FlexColumnWidth(1),
-        2: FlexColumnWidth(1),
-        3: FlexColumnWidth(1.2),
-        4: FlexColumnWidth(1),
+        2: FlexColumnWidth(1.5),
+        3: FlexColumnWidth(1),
       },
       children: [
         // כותרות
@@ -790,10 +789,6 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
             Padding(
               padding: EdgeInsets.all(8),
               child: Text('אורך (ק"מ)', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            Padding(
-              padding: EdgeInsets.all(8),
-              child: Text('↑↓', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             Padding(
               padding: EdgeInsets.all(8),
@@ -873,15 +868,6 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                       ),
                   ],
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(8),
-                child: _routeElevations.containsKey(navigatorId)
-                    ? Text(
-                        '↑${_routeElevations[navigatorId]!.$1} ↓${_routeElevations[navigatorId]!.$2}',
-                        style: const TextStyle(fontSize: 11),
-                      )
-                    : const Text('-', style: TextStyle(color: Colors.grey, fontSize: 11)),
               ),
               Padding(
                 padding: const EdgeInsets.all(8),

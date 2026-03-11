@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/map_config.dart';
 import '../../../core/utils/file_export_helper.dart';
@@ -99,6 +100,9 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
   bool _measureMode = false;
   final List<LatLng> _measurePoints = [];
 
+  // --- רגישות תורפה ---
+  int _vulnerabilitySensitivity = 3; // 1-5
+
   // --- מידע נקודה (נקודת ציון / תורפה) ---
   String? _pointInfo;
 
@@ -115,6 +119,13 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
         () => _statusMessage = 'שגיאה: terrain_engine.dll לא נמצא',
       );
       return;
+    }
+    // Load saved DEM offset calibration
+    final prefs = await SharedPreferences.getInstance();
+    final latOff = prefs.getDouble('dem_lat_offset');
+    final lngOff = prefs.getDouble('dem_lng_offset');
+    if (latOff != null && lngOff != null) {
+      _service.setDemOffset(latOff, lngOff);
     }
     await _loadDem();
   }
@@ -372,15 +383,28 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
     });
   }
 
+  /// מיפוי רמת רגישות → (cliffThreshold, pitThreshold, minClusterCells)
+  (double, double, int) _vulnParams(int level) {
+    switch (level) {
+      case 1: return (55.0, 30.0, 15);
+      case 2: return (50.0, 25.0, 10);
+      case 3: return (45.0, 20.0, 5);
+      case 4: return (38.0, 15.0, 4);
+      case 5: return (30.0, 10.0, 3);
+      default: return (45.0, 20.0, 5);
+    }
+  }
+
   Future<void> _detectVulnerabilities() async {
     setState(() {
       _loading = true;
       _statusMessage = 'מזהה נקודות תורפה...';
     });
+    final (cliff, pit, cells) = _vulnParams(_vulnerabilitySensitivity);
     // חישוב נקודות ואזורי תורפה במקביל
     final results = await Future.wait([
-      _service.detectVulnerabilities(),
-      _service.detectVulnerabilityZones(),
+      _service.detectVulnerabilities(cliffThreshold: cliff, pitThreshold: pit),
+      _service.detectVulnerabilityZones(cliffThreshold: cliff, pitThreshold: pit, minClusterCells: cells),
     ]);
     final points = results[0] as List<VulnerabilityPoint>;
     final zones = results[1] as List<VulnerabilityZone>;
@@ -560,6 +584,12 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
         appBar: AppBar(
           title: Text('ניתוח שטח — ${widget.boundary.name}'),
           actions: [
+            if (_demLoaded)
+              IconButton(
+                icon: const Icon(Icons.gps_fixed, size: 20),
+                tooltip: 'כיול היסט DEM',
+                onPressed: _showDemCalibrationSheet,
+              ),
             if (_statusMessage.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -596,6 +626,10 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
                 _waypointOrdering == WaypointOrdering.typeBalanced &&
                 _showTypePanel)
               _buildTypeDistributionPanel(),
+            // סליידר רגישות תורפה — מוצג רק כשיש תוצאות תורפה
+            if (_showVulnerability &&
+                (_vulnerabilities.isNotEmpty || _vulnerabilityZones.isNotEmpty))
+              _buildVulnerabilitySensitivitySlider(),
             Expanded(child: _buildMapStack()),
           ],
         ),
@@ -859,6 +893,164 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
         }).toList(),
       ),
     );
+  }
+
+  /// סליידר רגישות תורפה
+  Widget _buildVulnerabilitySensitivitySlider() {
+    const labels = ['מקל', '', 'רגיל', '', 'מחמיר'];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      color: Colors.orange.shade50,
+      child: Row(
+        children: [
+          Icon(Icons.warning, size: 16, color: Colors.orange.shade800),
+          const SizedBox(width: 8),
+          Text(
+            'רגישות תורפה',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.orange.shade900),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            labels[_vulnerabilitySensitivity - 1],
+            style: TextStyle(fontSize: 10, color: Colors.orange.shade700),
+          ),
+          Expanded(
+            child: SliderTheme(
+              data: SliderThemeData(
+                activeTrackColor: Colors.orange.shade700,
+                thumbColor: Colors.orange.shade800,
+                inactiveTrackColor: Colors.orange.shade200,
+              ),
+              child: Slider(
+                value: _vulnerabilitySensitivity.toDouble(),
+                min: 1,
+                max: 5,
+                divisions: 4,
+                onChanged: (v) {
+                  setState(() => _vulnerabilitySensitivity = v.round());
+                },
+                onChangeEnd: (_) => _detectVulnerabilities(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// כיול היסט DEM — bottom sheet
+  void _showDemCalibrationSheet() {
+    final (curLat, curLng) = _service.demOffset;
+    double latOff = curLat;
+    double lngOff = curLng;
+    // ~3m per nudge: 0.000027° lat ≈ 3m, 0.000035° lng ≈ 3m at 32°N
+    const nudgeLat = 0.000027;
+    const nudgeLng = 0.000035;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'כיול היסט DEM',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'הזז ~3 מטר בכל לחיצה',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                    const SizedBox(height: 16),
+                    // Directional nudge buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _nudgeButton('N', Icons.arrow_upward, () {
+                          setSheetState(() => latOff += nudgeLat);
+                          _applyDemOffset(latOff, lngOff);
+                        }),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _nudgeButton('W', Icons.arrow_back, () {
+                          setSheetState(() => lngOff -= nudgeLng);
+                          _applyDemOffset(latOff, lngOff);
+                        }),
+                        const SizedBox(width: 48),
+                        _nudgeButton('E', Icons.arrow_forward, () {
+                          setSheetState(() => lngOff += nudgeLng);
+                          _applyDemOffset(latOff, lngOff);
+                        }),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _nudgeButton('S', Icons.arrow_downward, () {
+                          setSheetState(() => latOff -= nudgeLat);
+                          _applyDemOffset(latOff, lngOff);
+                        }),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'lat: ${(latOff * 111320).toStringAsFixed(1)}m  '
+                      'lng: ${(lngOff * 111320 * cos(32 * pi / 180)).toStringAsFixed(1)}m',
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () {
+                        setSheetState(() {
+                          latOff = 0.00008;
+                          lngOff = -0.00015;
+                        });
+                        _applyDemOffset(latOff, lngOff);
+                      },
+                      icon: const Icon(Icons.restart_alt, size: 16),
+                      label: const Text('איפוס לברירת מחדל', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _nudgeButton(String label, IconData icon, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          shape: const CircleBorder(),
+          padding: const EdgeInsets.all(12),
+          backgroundColor: Colors.blue.shade50,
+        ),
+        child: Icon(icon, size: 20, color: Colors.blue.shade700),
+      ),
+    );
+  }
+
+  Future<void> _applyDemOffset(double lat, double lng) async {
+    _service.setDemOffset(lat, lng);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('dem_lat_offset', lat);
+    await prefs.setDouble('dem_lng_offset', lng);
+    setState(() {}); // refresh map layers with new bounds
   }
 
   /// המפה + כל השכבות הצפות

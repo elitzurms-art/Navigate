@@ -91,6 +91,12 @@ dev_dependencies:
   build_runner: ^2.4.8
   drift_dev: ^2.14.1
   mocktail: ^1.0.3
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
 
 flutter:
   uses-material-design: true

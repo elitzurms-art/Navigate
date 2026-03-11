@@ -5,6 +5,8 @@ import '../../../domain/entities/user.dart' as app_user;
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
+import '../../../data/repositories/checkpoint_repository.dart';
+import '../../../domain/entities/nav_layer.dart';
 import '../../../services/checkpoint_excel_service.dart';
 import 'routes_verification_screen.dart';
 
@@ -32,6 +34,9 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
   List<String> _validationWarnings = [];
   ExcelImportResult? _importResult;
   List<app_user.User> _participants = [];
+  List<NavCheckpoint> _navCheckpoints = [];
+  List<NavBoundary> _navBoundaries = [];
+  Map<String, String?> _checkpointBoundaryMap = {};
   bool _loadingParticipants = true;
 
   @override
@@ -52,8 +57,40 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
       }
       // סינון לפי תפקיד — רק מנווטים מקבלים צירים (לא מפקדים/מנהלים)
       users = users.where((u) => u.role == 'navigator').toList();
+      // טעינת נקודות ציון ניווטיות (לפי גבול הגזרה שנבחר)
+      final checkpoints = await _navLayerRepo
+          .getCheckpointsByNavigation(widget.navigation.id);
+
+      // טעינת גבולות גזרה ניווטיים
+      final navBoundaries = await _navLayerRepo
+          .getBoundariesByNavigation(widget.navigation.id);
+
+      // בניית מיפוי NavCheckpoint.id → NavBoundary.id (רק כשיש 2+ גבולות)
+      final cpBoundaryMap = <String, String?>{};
+      if (navBoundaries.length >= 2) {
+        final globalCheckpoints =
+            await CheckpointRepository().getByArea(widget.navigation.areaId);
+        final globalCpBoundary = <String, String?>{};
+        for (final gcp in globalCheckpoints) {
+          globalCpBoundary[gcp.id] = gcp.boundaryId;
+        }
+        final navBoundaryBySource = <String, String>{};
+        for (final nb in navBoundaries) {
+          navBoundaryBySource[nb.sourceId] = nb.id;
+        }
+        for (final navCp in checkpoints) {
+          final globalBoundaryId = globalCpBoundary[navCp.sourceId];
+          if (globalBoundaryId != null) {
+            cpBoundaryMap[navCp.id] = navBoundaryBySource[globalBoundaryId];
+          }
+        }
+      }
+
       setState(() {
         _participants = users;
+        _navCheckpoints = checkpoints;
+        _navBoundaries = navBoundaries;
+        _checkpointBoundaryMap = cpBoundaryMap;
         _loadingParticipants = false;
       });
     } catch (e) {
@@ -102,6 +139,9 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
       final path = await CheckpointExcelService.exportTemplate(
         navigation: widget.navigation,
         participants: _participants,
+        checkpoints: _navCheckpoints,
+        boundaries: _navBoundaries,
+        checkpointToBoundaryMap: _checkpointBoundaryMap,
       );
 
       if (mounted) {
@@ -142,6 +182,7 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
         filePath: _selectedFilePath!,
         navigation: widget.navigation,
         participants: _participants,
+        checkpoints: _navCheckpoints,
       );
 
       setState(() {
@@ -164,13 +205,7 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
     setState(() => _isImporting = true);
 
     try {
-      // שמירת נקודות הציון שנוצרו ב-DB
-      if (_importResult!.createdCheckpoints.isNotEmpty) {
-        await _navLayerRepo
-            .addCheckpointsBatch(_importResult!.createdCheckpoints);
-      }
-
-      // עדכון הניווט עם הצירים
+      // עדכון הניווט עם הצירים (נקודות קיימות — ללא יצירת חדשות)
       final updatedNavigation = widget.navigation.copyWith(
         routes: _importResult!.routes,
         startPoint: _importResult!.startPointId,
@@ -308,9 +343,10 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
             const SizedBox(height: 12),
             const Text(
               '1. הורד את תבנית קובץ ה-Excel\n'
-              '2. מלא נ.צ. בפורמט UTM — 12 ספרות בעמודה אחת, או 6+6 בשתי עמודות\n'
-              '3. בגיליון "כללי" — מלא נקודת התחלה (חובה), סיום וביניים\n'
-              '4. שמור את הקובץ והעלה אותו כאן',
+              '2. בגיליון "רשימת נקודות" — צפה במספרים הסידוריים של הנקודות\n'
+              '3. בגיליון "נקודות מנווטים" — הזן מספר סידורי לכל נקודה\n'
+              '4. בגיליון "כללי" — הזן מספר סידורי של נקודת התחלה (חובה), סיום וביניים\n'
+              '5. שמור את הקובץ והעלה אותו כאן',
               style: TextStyle(fontSize: 14),
             ),
           ],
@@ -539,7 +575,7 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'פורמט נ.צ. נתמך',
+              'פורמט הזנה',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.grey[700],
@@ -547,10 +583,9 @@ class _RoutesManualUploadScreenState extends State<RoutesManualUploadScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '\u2713 12 ספרות UTM בעמודה אחת (למשל: 123456789012)\n'
-              '\u2713 6 ספרות מזרח + 6 ספרות צפון בשתי עמודות\n'
-              '\u2713 תאים ריקים = נקודה לא מוגדרת (דילוג)\n'
-              '\u2713 אזור UTM: 36 (ישראל)',
+              '\u2713 הזן מספר סידורי של הנקודה (לפי גיליון "רשימת נקודות")\n'
+              '\u2713 תאים ריקים = דילוג\n'
+              '\u2713 ${_navCheckpoints.length} נקודות זמינות בגבול הגזרה',
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey[700],

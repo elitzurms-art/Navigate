@@ -799,6 +799,7 @@ class SyncManager {
   Future<void> _reconcileDeletedRecords() async {
     final collectionsToReconcile = {
       // users לא כלול — מחיקת משתמשים מטופלת ע"י soft-delete (deletedAt) ב-_upsertUser() בזמן pull sync
+      AppConstants.areasCollection: () async => (await _db.select(_db.areas).get()).map((a) => a.id).toList(),
       AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
       AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
       AppConstants.navigationsCollection: () async => (await (_db.select(_db.navigations)..where((n) => n.deletedAt.isNull())).get()).map((n) => n.id).toList(),
@@ -1168,6 +1169,11 @@ class SyncManager {
           }
           break;
         case AppConstants.areasCollection:
+          // Cascade: מחיקת כל שכבות האזור לפני מחיקת האזור עצמו
+          await (_db.delete(_db.checkpoints)..where((t) => t.areaId.equals(documentId))).go();
+          await (_db.delete(_db.safetyPoints)..where((t) => t.areaId.equals(documentId))).go();
+          await (_db.delete(_db.boundaries)..where((t) => t.areaId.equals(documentId))).go();
+          await (_db.delete(_db.clusters)..where((t) => t.areaId.equals(documentId))).go();
           await (_db.delete(_db.areas)..where((t) => t.id.equals(documentId))).go();
           break;
         case AppConstants.unitsCollection:
@@ -1452,6 +1458,12 @@ class SyncManager {
         navigationType: Value(data['navigationType'] as String?),
         executionOrder: Value(data['executionOrder'] as String?),
         boundaryLayerId: Value(data['boundaryLayerId'] as String?),
+        boundaryLayerIdsJson: Value(
+          data['boundaryLayerIds'] is List
+              ? jsonEncode(data['boundaryLayerIds'])
+              : (data['boundaryLayerId'] is String
+                  ? jsonEncode([data['boundaryLayerId']])
+                  : null)),
         routeLengthJson: Value(data['routeLengthJson'] as String? ??
             (data['routeLengthKm'] != null ? jsonEncode(data['routeLengthKm']) : null)),
         startPoint: Value(data['startPoint'] as String?),

@@ -452,6 +452,19 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
             _currentNavigation = nav;
             _state = statusToScreenState(nav.status);
           });
+
+          // סגירת חלונות/מפות פתוחים אחרי מעבר סטטוס —
+          // מתוזמן ל-postFrame כדי למנוע race condition עם setState/rebuild.
+          if (previousStatus != null && previousStatus != nav.status) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              final myRoute = ModalRoute.of(context);
+              if (myRoute != null) {
+                Navigator.of(context).popUntil((route) => route == myRoute);
+              }
+            });
+          }
+
           _loadNavigatorScore();
 
           // ניווט הפוך — הצגת דיאלוג חשיפה במעבר ל-waiting

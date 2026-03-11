@@ -163,7 +163,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
       if (navCheckpoints.isEmpty) {
         await _layerCopyService.copyLayersForNavigation(
           navigationId: widget.navigation.id,
-          boundaryId: widget.navigation.boundaryLayerId ?? '',
+          boundaryIds: widget.navigation.boundaryLayerIds,
           areaId: widget.navigation.areaId,
           createdBy: '',
         );

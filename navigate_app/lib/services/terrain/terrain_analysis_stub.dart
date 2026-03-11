@@ -21,6 +21,9 @@ class TerrainAnalysisService {
 
   bool get isAvailable => false;
 
+  void setDemOffset(double latOffset, double lngOffset) {}
+  (double, double) get demOffset => (0.00008, -0.00015);
+
   Uint8List? get boundaryMask => null;
   int get activeRows => 0;
   int get activeCols => 0;

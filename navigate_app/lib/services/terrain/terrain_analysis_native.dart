@@ -61,6 +61,29 @@ class TerrainAnalysisService {
   int get activeCols => _activeCols;
   LatLngBounds? get activeBounds => _activeBounds;
 
+  // תיקון היסט אופקי של SRTM — הזזה שיטתית (CE90 ~10-20m)
+  double _demLatOffset = 0.00008; // ~9m צפונה
+  double _demLngOffset = -0.00015; // ~13m מערבה
+
+  /// עדכון היסט DEM — לכיול ידני
+  void setDemOffset(double latOffset, double lngOffset) {
+    _demLatOffset = latOffset;
+    _demLngOffset = lngOffset;
+    if (_activeDem != null) _recomputeActiveBounds();
+  }
+
+  (double, double) get demOffset => (_demLatOffset, _demLngOffset);
+
+  /// חישוב מחדש של גבולות תת-הרשת עם היסט נוכחי
+  void _recomputeActiveBounds() {
+    final step = 1.0 / (_activeSrcGridSize - 1);
+    final north = (_activeSrcTileLat + 1.0) - _activeMinRow * step + _demLatOffset;
+    final south = (_activeSrcTileLat + 1.0) - (_activeMinRow + _activeRows - 1) * step + _demLatOffset;
+    final west = _activeSrcTileLng.toDouble() + _activeMinCol * step + _demLngOffset;
+    final east = _activeSrcTileLng.toDouble() + (_activeMinCol + _activeCols - 1) * step + _demLngOffset;
+    _activeBounds = LatLngBounds(LatLng(south, west), LatLng(north, east));
+  }
+
   // קבועי SRTM
   static const int srtm1GridSize = 3601;
   static const int srtm1FileSize = srtm1GridSize * srtm1GridSize * 2;
@@ -277,12 +300,12 @@ class TerrainAnalysisService {
       }
     }
 
-    // Compute sub-grid geographic bounds
+    // Compute sub-grid geographic bounds (with DEM alignment offset)
     final step = 1.0 / (gridSize - 1);
-    final north = (tileLat + 1.0) - minRow * step;
-    final south = (tileLat + 1.0) - (minRow + _activeRows - 1) * step;
-    final west = tileLng.toDouble() + minCol * step;
-    final east = tileLng.toDouble() + (minCol + _activeCols - 1) * step;
+    final north = (tileLat + 1.0) - minRow * step + _demLatOffset;
+    final south = (tileLat + 1.0) - (minRow + _activeRows - 1) * step + _demLatOffset;
+    final west = tileLng.toDouble() + minCol * step + _demLngOffset;
+    final east = tileLng.toDouble() + (minCol + _activeCols - 1) * step + _demLngOffset;
     _activeBounds = LatLngBounds(LatLng(south, west), LatLng(north, east));
 
     // Create polygon mask using ray-casting
@@ -321,15 +344,18 @@ class TerrainAnalysisService {
   LatLng _subGridToLatLng(int row, int col) {
     final step = 1.0 / (_activeSrcGridSize - 1);
     return LatLng(
-      (_activeSrcTileLat + 1.0) - (_activeMinRow + row) * step,
-      _activeSrcTileLng.toDouble() + (_activeMinCol + col) * step,
+      (_activeSrcTileLat + 1.0) - (_activeMinRow + row) * step + _demLatOffset,
+      _activeSrcTileLng.toDouble() + (_activeMinCol + col) * step + _demLngOffset,
     );
   }
 
   (int row, int col) _latLngToSubGrid(LatLng pos) {
     final step = 1.0 / (_activeSrcGridSize - 1);
-    final fullRow = ((_activeSrcTileLat + 1.0 - pos.latitude) / step).round();
-    final fullCol = ((pos.longitude - _activeSrcTileLng.toDouble()) / step).round();
+    // הסרת ההיסט כדי לחזור לקואורדינטות DEM מקוריות
+    final rawLat = pos.latitude - _demLatOffset;
+    final rawLng = pos.longitude - _demLngOffset;
+    final fullRow = ((_activeSrcTileLat + 1.0 - rawLat) / step).round();
+    final fullCol = ((rawLng - _activeSrcTileLng.toDouble()) / step).round();
     return (
       (fullRow - _activeMinRow).clamp(0, _activeRows - 1),
       (fullCol - _activeMinCol).clamp(0, _activeCols - 1),
@@ -547,14 +573,32 @@ class TerrainAnalysisService {
     );
     if (result == null) return [];
 
+    // מיפוי סוגי C++ לסוגי Dart
+    // C++ enum (1-based): 1=dome, 2=hiddenDome, 3=streamSplit,
+    //   4=ridge(→saddle), 5=spur(→shoulder), 6=valleyJunction, 7=saddle, 8=localPeak
+    const cppTypeMap = <int, SmartWaypointType>{
+      1: SmartWaypointType.domeCenter,
+      2: SmartWaypointType.hiddenDome,
+      3: SmartWaypointType.streamSplit,
+      4: SmartWaypointType.saddlePoint,    // ridge → אוכף
+      5: SmartWaypointType.shoulder,        // spur → כתף
+      6: SmartWaypointType.valleyJunction,
+      7: SmartWaypointType.saddlePoint,
+      8: SmartWaypointType.localPeak,
+    };
+
     // המרת תוצאות לאובייקטי SmartWaypoint
     final waypoints = <SmartWaypoint>[];
     for (int i = 0; i < result.count; i++) {
       final pos = _subGridToLatLng(result.rows[i], result.cols[i]);
       final typeIndex = result.types[i];
-      // enum ב-C++ מתחיל מ-1
-      if (typeIndex < 1 || typeIndex > SmartWaypointType.values.length) {
-        continue;
+      var type = cppTypeMap[typeIndex];
+      if (type == null) continue;
+
+      // Filter saddle candidates with topological check
+      if (type == SmartWaypointType.saddlePoint) {
+        final (r, c) = _latLngToSubGrid(pos);
+        if (!_isTopologicalSaddle(r, c, _activeDem!, _activeRows, _activeCols)) continue;
       }
 
       // Filter by boundary mask
@@ -565,13 +609,13 @@ class TerrainAnalysisService {
 
       waypoints.add(SmartWaypoint(
         position: pos,
-        type: SmartWaypointType.values[typeIndex - 1],
+        type: type,
         prominence: result.prominence[i],
         elevation: _activeDem![result.rows[i] * _activeCols + result.cols[i]],
       ));
     }
 
-    return waypoints;
+    return _applyWaypointSpacing(waypoints);
   }
 
   /// זיהוי נקודות תורפה — מצוקים, בורות, מדרונות תלולים
@@ -676,15 +720,17 @@ class TerrainAnalysisService {
           if (isPit) vulnGrid[i] = 2; // pit
         }
 
-        // steepSlope: 30 <= slope < cliffThreshold
-        if (vulnGrid[i] == 0 && slope >= 30.0 && slope < cliffThreshold) {
+        // steepSlope: derived threshold <= slope < cliffThreshold
+        final steepSlopeThreshold = cliffThreshold * 0.67;
+        if (vulnGrid[i] == 0 && slope >= steepSlopeThreshold && slope < cliffThreshold) {
           vulnGrid[i] = 4; // steepSlope
         }
 
-        // deepChannel: valley(4)/channel(5) feature + slope >= 15
+        // deepChannel: valley(4)/channel(5) feature + slope >= derived threshold
+        final deepChannelSlope = cliffThreshold * 0.33;
         if (vulnGrid[i] == 0 && features != null) {
           final feat = features.featureGrid[i];
-          if ((feat == 4 || feat == 5) && slope >= 15.0) {
+          if ((feat == 4 || feat == 5) && slope >= deepChannelSlope) {
             vulnGrid[i] = 3; // deepChannel
           }
         }
@@ -880,6 +926,74 @@ class TerrainAnalysisService {
       totalExposureMeters: totalExposed,
       totalHiddenMeters: totalHidden,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: topological saddle detection
+  // ---------------------------------------------------------------------------
+
+  /// בדיקת אוכף טופולוגי — עלייה ב-2 כיוונים נגדיים וירידה ב-2 אחרים
+  bool _isTopologicalSaddle(int r, int c, Int16List dem, int rows, int cols) {
+    final center = dem[r * cols + c].toDouble();
+    if (center == -32768) return false;
+    const dr = [-1, -1, 0, 1, 1, 1, 0, -1];
+    const dc = [0, 1, 1, 1, 0, -1, -1, -1];
+
+    int signChanges = 0, lastSign = 0, firstSign = 0;
+    for (int d = 0; d < 8; d++) {
+      final nr = r + dr[d], nc = c + dc[d];
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return false;
+      final val = dem[nr * cols + nc].toDouble();
+      if (val == -32768) return false;
+      final sign = val > center ? 1 : (val < center ? -1 : 0);
+      if (sign == 0) continue;
+      if (firstSign == 0) firstSign = sign;
+      if (lastSign != 0 && sign != lastSign) signChanges++;
+      lastSign = sign;
+    }
+    if (lastSign != 0 && firstSign != 0 && lastSign != firstSign) signChanges++;
+    return signChanges == 4;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: waypoint spacing — minimum distance between junctions/saddles
+  // ---------------------------------------------------------------------------
+
+  /// סינון ריווח — מרחק מינימלי בין צמתים/אוכפים
+  List<SmartWaypoint> _applyWaypointSpacing(List<SmartWaypoint> waypoints) {
+    final junctions = <SmartWaypoint>[];
+    final saddles = <SmartWaypoint>[];
+    final others = <SmartWaypoint>[];
+    for (final w in waypoints) {
+      if (w.type == SmartWaypointType.valleyJunction) {
+        junctions.add(w);
+      } else if (w.type == SmartWaypointType.saddlePoint) {
+        saddles.add(w);
+      } else {
+        others.add(w);
+      }
+    }
+
+    // Sort by prominence descending (major confluences first)
+    junctions.sort((a, b) => b.prominence.compareTo(a.prominence));
+    saddles.sort((a, b) => b.prominence.compareTo(a.prominence));
+
+    // Greedy 70m spacing for junctions
+    final acceptedJ = _greedySpacing(junctions, 70.0);
+    // Greedy 50m spacing for saddles
+    final acceptedS = _greedySpacing(saddles, 50.0);
+
+    return [...others, ...acceptedJ, ...acceptedS];
+  }
+
+  List<SmartWaypoint> _greedySpacing(List<SmartWaypoint> sorted, double minMeters) {
+    final accepted = <SmartWaypoint>[];
+    for (final wp in sorted) {
+      bool tooClose = accepted.any((a) =>
+          const Distance().as(LengthUnit.Meter, wp.position, a.position) < minMeters);
+      if (!tooClose) accepted.add(wp);
+    }
+    return accepted;
   }
 
   /// Convex hull — Graham scan

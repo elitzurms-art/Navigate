@@ -69,6 +69,24 @@ class NavLayerRepository {
     }
   }
 
+  /// קבלת נקודות ציון לפי גבול גזרה
+  Future<List<domain.NavCheckpoint>> getCheckpointsByBoundary(
+    String navigationId,
+    String boundaryId,
+  ) async {
+    try {
+      final rows = await (_db.select(_db.navCheckpoints)
+            ..where((t) =>
+                t.navigationId.equals(navigationId) &
+                t.boundaryId.equals(boundaryId))
+            ..orderBy([(t) => OrderingTerm(expression: t.sequenceNumber)]))
+          .get();
+      return rows.map((r) => _checkpointToDomain(r)).toList();
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   /// הוספת נקודת ציון ניווטית (נקודה או פוליגון)
   Future<void> addCheckpoint(domain.NavCheckpoint checkpoint) async {
     try {
@@ -82,6 +100,7 @@ class NavLayerRepository {
               description: checkpoint.description,
               type: checkpoint.type,
               color: checkpoint.color,
+              boundaryId: Value(checkpoint.boundaryId),
               geometryType: Value(checkpoint.geometryType),
               lat: checkpoint.coordinates?.lat ?? 0.0,
               lng: checkpoint.coordinates?.lng ?? 0.0,
@@ -122,6 +141,7 @@ class NavLayerRepository {
           description: Value(checkpoint.description),
           type: Value(checkpoint.type),
           color: Value(checkpoint.color),
+          boundaryId: Value(checkpoint.boundaryId),
           geometryType: Value(checkpoint.geometryType),
           lat: Value(checkpoint.coordinates?.lat ?? 0.0),
           lng: Value(checkpoint.coordinates?.lng ?? 0.0),
@@ -184,6 +204,7 @@ class NavLayerRepository {
               description: checkpoint.description,
               type: checkpoint.type,
               color: checkpoint.color,
+              boundaryId: Value(checkpoint.boundaryId),
               geometryType: Value(checkpoint.geometryType),
               lat: checkpoint.coordinates?.lat ?? 0.0,
               lng: checkpoint.coordinates?.lng ?? 0.0,
@@ -351,6 +372,11 @@ class NavLayerRepository {
           coordinatesJson: Value(coordinatesJson),
           color: Value(boundary.color),
           strokeWidth: Value(boundary.strokeWidth),
+          sourceBoundaryIdsJson: Value(
+            boundary.sourceBoundaryIds.isNotEmpty
+                ? jsonEncode(boundary.sourceBoundaryIds)
+                : null,
+          ),
           updatedAt: Value(boundary.updatedAt),
         ),
       );
@@ -384,6 +410,11 @@ class NavLayerRepository {
               coordinatesJson: coordinatesJson,
               color: boundary.color,
               strokeWidth: boundary.strokeWidth,
+              sourceBoundaryIdsJson: Value(
+                boundary.sourceBoundaryIds.isNotEmpty
+                    ? jsonEncode(boundary.sourceBoundaryIds)
+                    : null,
+              ),
               createdBy: boundary.createdBy,
               createdAt: boundary.createdAt,
               updatedAt: boundary.updatedAt,
@@ -552,6 +583,7 @@ class NavLayerRepository {
               .toList()
           : null,
       sequenceNumber: row.sequenceNumber,
+      boundaryId: row.boundaryId,
       labels: row.labelsJson.isNotEmpty
           ? List<String>.from(jsonDecode(row.labelsJson) as List)
           : [],
@@ -606,6 +638,9 @@ class NavLayerRepository {
       coordinates: coordinatesList,
       color: row.color,
       strokeWidth: row.strokeWidth,
+      sourceBoundaryIds: row.sourceBoundaryIdsJson != null
+          ? List<String>.from(jsonDecode(row.sourceBoundaryIdsJson!) as List)
+          : [row.sourceId],
       createdBy: row.createdBy,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -754,6 +789,7 @@ class NavLayerRepository {
             description: checkpoint.description,
             type: checkpoint.type,
             color: checkpoint.color,
+            boundaryId: Value(checkpoint.boundaryId),
             geometryType: Value(checkpoint.geometryType),
             lat: checkpoint.coordinates?.lat ?? 0.0,
             lng: checkpoint.coordinates?.lng ?? 0.0,
@@ -831,6 +867,11 @@ class NavLayerRepository {
             coordinatesJson: coordinatesJson,
             color: boundary.color,
             strokeWidth: boundary.strokeWidth,
+            sourceBoundaryIdsJson: Value(
+              boundary.sourceBoundaryIds.isNotEmpty
+                  ? jsonEncode(boundary.sourceBoundaryIds)
+                  : null,
+            ),
             createdBy: boundary.createdBy,
             createdAt: boundary.createdAt,
             updatedAt: boundary.updatedAt,

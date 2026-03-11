@@ -96,6 +96,9 @@ class NavigationRepository {
               navigationType: Value(navigation.navigationType),
               executionOrder: Value(navigation.executionOrder),
               boundaryLayerId: Value(navigation.boundaryLayerId),
+              boundaryLayerIdsJson: Value(navigation.boundaryLayerIds.isNotEmpty
+                  ? jsonEncode(navigation.boundaryLayerIds)
+                  : null),
               routeLengthJson: Value(navigation.routeLengthKm != null
                   ? jsonEncode(navigation.routeLengthKm!.toMap())
                   : null),
@@ -195,6 +198,9 @@ class NavigationRepository {
           navigationType: Value(navigation.navigationType),
           executionOrder: Value(navigation.executionOrder),
           boundaryLayerId: Value(navigation.boundaryLayerId),
+          boundaryLayerIdsJson: Value(navigation.boundaryLayerIds.isNotEmpty
+              ? jsonEncode(navigation.boundaryLayerIds)
+              : null),
           routeLengthJson: Value(navigation.routeLengthKm != null
               ? jsonEncode(navigation.routeLengthKm!.toMap())
               : null),
@@ -403,7 +409,9 @@ class NavigationRepository {
       distributionMethod: data.distributionMethod,
       navigationType: data.navigationType,
       executionOrder: data.executionOrder,
-      boundaryLayerId: data.boundaryLayerId,
+      boundaryLayerIds: data.boundaryLayerIdsJson != null
+          ? List<String>.from(jsonDecode(data.boundaryLayerIdsJson!) as List)
+          : (data.boundaryLayerId != null ? [data.boundaryLayerId!] : const []),
       routeLengthKm: data.routeLengthJson != null
           ? domain.RouteLengthRange.fromMap(
               jsonDecode(data.routeLengthJson!) as Map<String, dynamic>,
@@ -945,6 +953,9 @@ class NavigationRepository {
           navigationType: Value(nav.navigationType),
           executionOrder: Value(nav.executionOrder),
           boundaryLayerId: Value(nav.boundaryLayerId),
+          boundaryLayerIdsJson: Value(nav.boundaryLayerIds.isNotEmpty
+              ? jsonEncode(nav.boundaryLayerIds)
+              : null),
           routeLengthJson: Value(nav.routeLengthKm != null
               ? jsonEncode(nav.routeLengthKm!.toMap())
               : null),

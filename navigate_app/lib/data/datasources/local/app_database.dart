@@ -185,6 +185,7 @@ class Navigations extends Table {
   TextColumn get navigationType => text().nullable()();
   TextColumn get executionOrder => text().nullable()();
   TextColumn get boundaryLayerId => text().nullable()();
+  TextColumn get boundaryLayerIdsJson => text().nullable()(); // JSON של רשימת גבולות גזרה
   TextColumn get routeLengthJson => text().nullable()(); // JSON של טווח מרחק
   TextColumn get startPoint => text().nullable()(); // נקודת התחלה משותפת
   TextColumn get endPoint => text().nullable()(); // נקודת סיום משותפת
@@ -277,6 +278,7 @@ class NavCheckpoints extends Table {
   TextColumn get utm => text()();
   TextColumn get coordinatesJson => text().nullable()(); // לפוליגון בלבד
   IntColumn get sequenceNumber => integer()();
+  TextColumn get boundaryId => text().nullable()(); // מזהה גבול הגזרה המקורי
   TextColumn get labelsJson => text().withDefault(const Constant('[]'))();
   TextColumn get createdBy => text()();
   DateTimeColumn get createdAt => dateTime()();
@@ -320,6 +322,7 @@ class NavBoundaries extends Table {
   TextColumn get coordinatesJson => text()();
   TextColumn get color => text()();
   RealColumn get strokeWidth => real()();
+  TextColumn get sourceBoundaryIdsJson => text().nullable()(); // JSON של מזהי גבולות מקוריים
   TextColumn get createdBy => text()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -423,7 +426,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 42;
+  int get schemaVersion => 43;
 
   @override
   MigrationStrategy get migration {
@@ -715,6 +718,12 @@ class AppDatabase extends _$AppDatabase {
           } catch (e) {
             print('⚠️ idx_cp_no_boundary_seq index creation skipped (duplicate data): $e');
           }
+        }
+        if (from <= 42 && to >= 43) {
+          // Multi-boundary navigation support
+          await safeAddColumn(navCheckpoints, navCheckpoints.boundaryId);
+          await safeAddColumn(navBoundaries, navBoundaries.sourceBoundaryIdsJson);
+          await safeAddColumn(navigations, navigations.boundaryLayerIdsJson);
         }
       },
     );

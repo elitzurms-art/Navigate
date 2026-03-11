@@ -17,6 +17,7 @@ class NavCheckpoint extends Equatable {
   final Coordinate? coordinates; // לנקודה בלבד
   final List<Coordinate>? polygonCoordinates; // לפוליגון בלבד
   final int sequenceNumber;
+  final String? boundaryId; // מזהה גבול הגזרה המקורי שהנקודה שייכת אליו
   final List<String> labels;
   final String createdBy;
   final DateTime createdAt;
@@ -35,6 +36,7 @@ class NavCheckpoint extends Equatable {
     this.coordinates,
     this.polygonCoordinates,
     required this.sequenceNumber,
+    this.boundaryId,
     this.labels = const [],
     required this.createdBy,
     required this.createdAt,
@@ -43,6 +45,9 @@ class NavCheckpoint extends Equatable {
 
   /// האם זו נקודת פוליגון
   bool get isPolygon => geometryType == 'polygon';
+
+  /// מזהה תצוגה: שילוב גבול + מספר סידורי
+  String get displayId => boundaryId != null ? '$boundaryId-$sequenceNumber' : '$sequenceNumber';
 
   NavCheckpoint copyWith({
     String? id,
@@ -57,6 +62,8 @@ class NavCheckpoint extends Equatable {
     Coordinate? coordinates,
     List<Coordinate>? polygonCoordinates,
     int? sequenceNumber,
+    String? boundaryId,
+    bool clearBoundaryId = false,
     List<String>? labels,
     String? createdBy,
     DateTime? createdAt,
@@ -75,6 +82,7 @@ class NavCheckpoint extends Equatable {
       coordinates: coordinates ?? this.coordinates,
       polygonCoordinates: polygonCoordinates ?? this.polygonCoordinates,
       sequenceNumber: sequenceNumber ?? this.sequenceNumber,
+      boundaryId: clearBoundaryId ? null : (boundaryId ?? this.boundaryId),
       labels: labels ?? this.labels,
       createdBy: createdBy ?? this.createdBy,
       createdAt: createdAt ?? this.createdAt,
@@ -97,6 +105,7 @@ class NavCheckpoint extends Equatable {
       if (polygonCoordinates != null)
         'polygonCoordinates': polygonCoordinates!.map((c) => c.toMap()).toList(),
       'sequenceNumber': sequenceNumber,
+      if (boundaryId != null) 'boundaryId': boundaryId,
       'labels': labels,
       'createdBy': createdBy,
       'createdAt': createdAt.toIso8601String(),
@@ -125,6 +134,7 @@ class NavCheckpoint extends Equatable {
               .toList()
           : null,
       sequenceNumber: map['sequenceNumber'] as int,
+      boundaryId: map['boundaryId'] as String?,
       labels: map['labels'] != null ? List<String>.from(map['labels'] as List) : [],
       createdBy: map['createdBy'] as String,
       createdAt: DateTime.parse(map['createdAt'] as String),
@@ -136,7 +146,7 @@ class NavCheckpoint extends Equatable {
   List<Object?> get props => [
         id, navigationId, sourceId, areaId, name, description,
         type, color, geometryType, coordinates, polygonCoordinates,
-        sequenceNumber, labels, createdBy, createdAt, updatedAt,
+        sequenceNumber, boundaryId, labels, createdBy, createdAt, updatedAt,
       ];
 }
 
@@ -272,6 +282,7 @@ class NavBoundary extends Equatable {
   final List<Coordinate> coordinates;
   final String color;
   final double strokeWidth;
+  final List<String> sourceBoundaryIds; // רשימת מזהי גבולות מקוריים שגבול זה מכסה
   final String createdBy;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -286,6 +297,7 @@ class NavBoundary extends Equatable {
     required this.coordinates,
     this.color = 'black',
     this.strokeWidth = 3.0,
+    this.sourceBoundaryIds = const [],
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
@@ -301,6 +313,7 @@ class NavBoundary extends Equatable {
     List<Coordinate>? coordinates,
     String? color,
     double? strokeWidth,
+    List<String>? sourceBoundaryIds,
     String? createdBy,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -315,6 +328,7 @@ class NavBoundary extends Equatable {
       coordinates: coordinates ?? this.coordinates,
       color: color ?? this.color,
       strokeWidth: strokeWidth ?? this.strokeWidth,
+      sourceBoundaryIds: sourceBoundaryIds ?? this.sourceBoundaryIds,
       createdBy: createdBy ?? this.createdBy,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -332,6 +346,7 @@ class NavBoundary extends Equatable {
       'coordinates': coordinates.map((c) => c.toMap()).toList(),
       'color': color,
       'strokeWidth': strokeWidth,
+      if (sourceBoundaryIds.isNotEmpty) 'sourceBoundaryIds': sourceBoundaryIds,
       'createdBy': createdBy,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -339,10 +354,11 @@ class NavBoundary extends Equatable {
   }
 
   factory NavBoundary.fromMap(Map<String, dynamic> map) {
+    final sourceId = map['sourceId'] as String;
     return NavBoundary(
       id: map['id'] as String,
       navigationId: map['navigationId'] as String,
-      sourceId: map['sourceId'] as String,
+      sourceId: sourceId,
       areaId: map['areaId'] as String,
       name: map['name'] as String,
       description: map['description'] as String? ?? '',
@@ -351,6 +367,9 @@ class NavBoundary extends Equatable {
           .toList(),
       color: map['color'] as String? ?? 'black',
       strokeWidth: (map['strokeWidth'] as num?)?.toDouble() ?? 3.0,
+      sourceBoundaryIds: map['sourceBoundaryIds'] != null
+          ? List<String>.from(map['sourceBoundaryIds'] as List)
+          : [sourceId], // backward compat: default to [sourceId]
       createdBy: map['createdBy'] as String,
       createdAt: DateTime.parse(map['createdAt'] as String),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
@@ -360,7 +379,7 @@ class NavBoundary extends Equatable {
   @override
   List<Object?> get props => [
         id, navigationId, sourceId, areaId, name, description,
-        coordinates, color, strokeWidth, createdBy, createdAt, updatedAt,
+        coordinates, color, strokeWidth, sourceBoundaryIds, createdBy, createdAt, updatedAt,
       ];
 }
 

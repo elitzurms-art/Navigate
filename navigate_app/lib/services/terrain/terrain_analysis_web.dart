@@ -50,6 +50,30 @@ class TerrainAnalysisService {
   int get activeCols => _activeCols;
   LatLngBounds? get activeBounds => _activeBounds;
 
+  /// היסט SRTM — תיקון אופקי של DEM עם אריחי המפה
+  /// lat: חיוב = צפונה (מעלות). lng: חיוב = מזרחה (מעלות)
+  double _demLatOffset = 0.00008; // ~9m north
+  double _demLngOffset = -0.00015; // ~13m west
+
+  /// עדכון היסט DEM — לכיול ידני
+  void setDemOffset(double latOffset, double lngOffset) {
+    _demLatOffset = latOffset;
+    _demLngOffset = lngOffset;
+    if (_activeDem != null) _recomputeActiveBounds();
+  }
+
+  (double, double) get demOffset => (_demLatOffset, _demLngOffset);
+
+  /// חישוב מחדש של גבולות תת-הרשת עם היסט נוכחי
+  void _recomputeActiveBounds() {
+    final step = 1.0 / (_activeSrcGridSize - 1);
+    final north = (_activeSrcTileLat + 1.0) - _activeMinRow * step + _demLatOffset;
+    final south = (_activeSrcTileLat + 1.0) - (_activeMinRow + _activeRows - 1) * step + _demLatOffset;
+    final west = _activeSrcTileLng.toDouble() + _activeMinCol * step + _demLngOffset;
+    final east = _activeSrcTileLng.toDouble() + (_activeMinCol + _activeCols - 1) * step + _demLngOffset;
+    _activeBounds = LatLngBounds(LatLng(south, west), LatLng(north, east));
+  }
+
   // קבועי SRTM
   static const int srtm1GridSize = 3601;
   static const int srtm1FileSize = srtm1GridSize * srtm1GridSize * 2;
@@ -214,12 +238,12 @@ class TerrainAnalysisService {
       }
     }
 
-    // Compute sub-grid geographic bounds
+    // Compute sub-grid geographic bounds (with DEM alignment offset)
     final step = 1.0 / (gridSize - 1);
-    final north = (tileLat + 1.0) - minRow * step;
-    final south = (tileLat + 1.0) - (minRow + _activeRows - 1) * step;
-    final west = tileLng.toDouble() + minCol * step;
-    final east = tileLng.toDouble() + (minCol + _activeCols - 1) * step;
+    final north = (tileLat + 1.0) - minRow * step + _demLatOffset;
+    final south = (tileLat + 1.0) - (minRow + _activeRows - 1) * step + _demLatOffset;
+    final west = tileLng.toDouble() + minCol * step + _demLngOffset;
+    final east = tileLng.toDouble() + (minCol + _activeCols - 1) * step + _demLngOffset;
     _activeBounds = LatLngBounds(LatLng(south, west), LatLng(north, east));
 
     // Create polygon mask using ray-casting
@@ -258,15 +282,18 @@ class TerrainAnalysisService {
   LatLng _subGridToLatLng(int row, int col) {
     final step = 1.0 / (_activeSrcGridSize - 1);
     return LatLng(
-      (_activeSrcTileLat + 1.0) - (_activeMinRow + row) * step,
-      _activeSrcTileLng.toDouble() + (_activeMinCol + col) * step,
+      (_activeSrcTileLat + 1.0) - (_activeMinRow + row) * step + _demLatOffset,
+      _activeSrcTileLng.toDouble() + (_activeMinCol + col) * step + _demLngOffset,
     );
   }
 
   (int row, int col) _latLngToSubGrid(LatLng pos) {
     final step = 1.0 / (_activeSrcGridSize - 1);
-    final fullRow = ((_activeSrcTileLat + 1.0 - pos.latitude) / step).round();
-    final fullCol = ((pos.longitude - _activeSrcTileLng.toDouble()) / step).round();
+    // Remove offset to get raw grid coordinates
+    final lat = pos.latitude - _demLatOffset;
+    final lng = pos.longitude - _demLngOffset;
+    final fullRow = ((_activeSrcTileLat + 1.0 - lat) / step).round();
+    final fullCol = ((lng - _activeSrcTileLng.toDouble()) / step).round();
     return (
       (fullRow - _activeMinRow).clamp(0, _activeRows - 1),
       (fullCol - _activeMinCol).clamp(0, _activeCols - 1),
@@ -824,19 +851,9 @@ class TerrainAnalysisService {
     final cols = _activeCols;
     final dem = _activeDem!;
     final featureGrid = features.featureGrid;
-    final slopeGrid = slopeAspect.slopeGrid;
 
     // Count feature cluster sizes using connected components
     final clusterSizes = _computeFeatureClusterSizes(featureGrid, rows, cols);
-
-    // Compute viewshed from center for hidden dome detection
-    // (lightweight: use center of grid as a rough "observer" to classify domes)
-    Uint8List? viewshedGrid;
-    final centerRow = rows ~/ 2;
-    final centerCol = cols ~/ 2;
-    final centerPos = _subGridToLatLng(centerRow, centerCol);
-    final vs = await computeViewshed(centerPos, height: 1.7, maxDistKm: 10.0);
-    viewshedGrid = vs?.visibleGrid;
 
     final waypoints = <SmartWaypoint>[];
 
@@ -878,31 +895,56 @@ class TerrainAnalysisService {
         // Determine waypoint type based on feature
         SmartWaypointType? type;
         switch (feature) {
-          case 1: // dome
-            if (viewshedGrid != null && viewshedGrid[idx] == 0) {
-              type = SmartWaypointType.hiddenDome; // dome with low visibility
-            } else {
-              type = SmartWaypointType.domeCenter;
+          case 1: // dome — classify via 8-directional line-of-sight
+            type = _classifyDomeVisibility(r, c);
+            break;
+          case 2: // ridge — only mark as saddle if topological saddle
+            if (_isTopologicalSaddle(r, c, dem, rows, cols)) {
+              type = SmartWaypointType.saddlePoint;
             }
             break;
-          case 2: // ridge
-            type = SmartWaypointType.ridgePoint;
+          case 3: // spur → כתף
+            type = SmartWaypointType.shoulder;
             break;
-          case 3: // spur
-            type = SmartWaypointType.spurTip;
+          case 4: // valley — only mark as junction if streams actually converge
+            {
+              // Count distinct arms of valley/channel neighbors (circular ring)
+              const offsets = [(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1),(-1,-1)];
+              final ring = <bool>[];
+              for (final (dr, dc) in offsets) {
+                final nr = r + dr;
+                final nc = c + dc;
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                  final nf = featureGrid[nr * cols + nc];
+                  ring.add(nf == 4 || nf == 5); // valley or channel
+                } else {
+                  ring.add(false);
+                }
+              }
+              // Count distinct contiguous groups of true (arms)
+              int arms = 0;
+              for (int i = 0; i < 8; i++) {
+                if (ring[i] && !ring[(i + 7) % 8]) arms++;
+              }
+              // A confluence has 3+ arms (two incoming + one outgoing)
+              if (arms >= 3) {
+                type = SmartWaypointType.valleyJunction;
+              }
+            }
             break;
-          case 4: // valley
-            type = SmartWaypointType.valleyJunction;
-            break;
-          case 5: // channel — check for stream split (multiple channel neighbors diverging)
+          case 5: // channel — stream split
             type = SmartWaypointType.streamSplit;
             break;
-          case 6: // saddle
-            type = SmartWaypointType.saddlePoint;
+          case 6: // TPI saddle — verify topologically
+            if (_isTopologicalSaddle(r, c, dem, rows, cols)) {
+              type = SmartWaypointType.saddlePoint;
+            }
             break;
           default:
             continue;
         }
+
+        if (type == null) continue;
 
         // Filter by boundary mask
         if (_boundaryMask != null && _boundaryMask![idx] == 0) continue;
@@ -933,7 +975,7 @@ class TerrainAnalysisService {
       }
     }
 
-    return waypoints;
+    return _applyWaypointSpacing(waypoints);
   }
 
   /// Check if cell (r,c) is a local extremum within its feature class
@@ -1148,15 +1190,17 @@ class TerrainAnalysisService {
           if (isPit) vulnGrid[i] = 2; // pit
         }
 
-        // steepSlope: 30 <= slope < cliffThreshold
-        if (vulnGrid[i] == 0 && slope >= 30.0 && slope < cliffThreshold) {
+        // steepSlope: derived threshold <= slope < cliffThreshold
+        final steepSlopeThreshold = cliffThreshold * 0.67;
+        if (vulnGrid[i] == 0 && slope >= steepSlopeThreshold && slope < cliffThreshold) {
           vulnGrid[i] = 4; // steepSlope
         }
 
-        // deepChannel: valley(4)/channel(5) feature + slope >= 15
+        // deepChannel: valley(4)/channel(5) feature + slope >= derived threshold
+        final deepChannelSlope = cliffThreshold * 0.33;
         if (vulnGrid[i] == 0 && features != null) {
           final feat = features.featureGrid[i];
-          if ((feat == 4 || feat == 5) && slope >= 15.0) {
+          if ((feat == 4 || feat == 5) && slope >= deepChannelSlope) {
             vulnGrid[i] = 3; // deepChannel
           }
         }
@@ -1353,6 +1397,143 @@ class TerrainAnalysisService {
       totalExposureMeters: totalExposed,
       totalHiddenMeters: totalHidden,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: topological saddle detection
+  // ---------------------------------------------------------------------------
+
+  /// בדיקת אוכף טופולוגי — עלייה ב-2 כיוונים נגדיים וירידה ב-2 אחרים
+  bool _isTopologicalSaddle(int r, int c, Int16List dem, int rows, int cols) {
+    final center = dem[r * cols + c].toDouble();
+    if (center == -32768) return false;
+    const dr = [-1, -1, 0, 1, 1, 1, 0, -1];
+    const dc = [0, 1, 1, 1, 0, -1, -1, -1];
+
+    int signChanges = 0, lastSign = 0, firstSign = 0;
+    for (int d = 0; d < 8; d++) {
+      final nr = r + dr[d], nc = c + dc[d];
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return false;
+      final val = dem[nr * cols + nc].toDouble();
+      if (val == -32768) return false;
+      final sign = val > center ? 1 : (val < center ? -1 : 0);
+      if (sign == 0) continue;
+      if (firstSign == 0) firstSign = sign;
+      if (lastSign != 0 && sign != lastSign) signChanges++;
+      lastSign = sign;
+    }
+    if (lastSign != 0 && firstSign != 0 && lastSign != firstSign) signChanges++;
+    return signChanges == 4;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: 8-directional line-of-sight for dome visibility classification
+  // ---------------------------------------------------------------------------
+
+  /// סיווג כיפה — בדיקת נראות מ-8 כיוונים. אם נראית מ-≤2 כיוונים → כיפה סמויה
+  SmartWaypointType _classifyDomeVisibility(int r, int c) {
+    final dem = _activeDem!;
+    final rows = _activeRows, cols = _activeCols;
+    final center = dem[r * cols + c].toDouble();
+    if (center == -32768) return SmartWaypointType.domeCenter;
+
+    final cellNS = cellSizeNS(_activeSrcGridSize);
+    final centerLat = (_activeBounds!.north + _activeBounds!.south) / 2;
+    final cellEW = cellSizeEW(centerLat, _activeSrcGridSize);
+    final checkDist = (500.0 / cellNS).round().clamp(1, min(rows, cols) ~/ 4);
+
+    const dirR = [-1, -1, 0, 1, 1, 1, 0, -1];
+    const dirC = [0, 1, 1, 1, 0, -1, -1, -1];
+
+    int visibleFrom = 0, totalChecked = 0;
+
+    for (int d = 0; d < 8; d++) {
+      // Find lowest point in this direction within checkDist cells
+      double lowest = 32767;
+      int lowR = r, lowC = c;
+      for (int step = 1; step <= checkDist; step++) {
+        final rr = r + dirR[d] * step;
+        final cc = c + dirC[d] * step;
+        if (rr < 0 || rr >= rows || cc < 0 || cc >= cols) break;
+        final val = dem[rr * cols + cc].toDouble();
+        if (val != -32768 && val < lowest) {
+          lowest = val;
+          lowR = rr;
+          lowC = cc;
+        }
+      }
+      if (lowest >= 32767) continue;
+      totalChecked++;
+
+      // Cast line-of-sight from lowest point to dome
+      final steps = max((r - lowR).abs(), (c - lowC).abs());
+      if (steps == 0) continue;
+      double maxAngle = -1e30;
+      for (int i = 1; i < steps; i++) {
+        final cr = lowR + ((r - lowR) * i / steps).round();
+        final cc2 = lowC + ((c - lowC) * i / steps).round();
+        if (cr < 0 || cr >= rows || cc2 < 0 || cc2 >= cols) break;
+        final val = dem[cr * cols + cc2].toDouble();
+        if (val == -32768) continue;
+        final dR = (cr - lowR) * cellNS;
+        final dC = (cc2 - lowC) * cellEW;
+        final dist = sqrt(dR * dR + dC * dC);
+        if (dist < 0.001) continue;
+        final angle = (val - lowest) / dist;
+        if (angle > maxAngle) maxAngle = angle;
+      }
+      final totalDR = (r - lowR) * cellNS;
+      final totalDC = (c - lowC) * cellEW;
+      final totalDist = sqrt(totalDR * totalDR + totalDC * totalDC);
+      if (totalDist < 0.001) continue;
+      if ((center - lowest) / totalDist >= maxAngle) visibleFrom++;
+    }
+
+    // Hidden = visible from ≤2 of 8 directions
+    return (totalChecked >= 4 && visibleFrom <= 2)
+        ? SmartWaypointType.hiddenDome
+        : SmartWaypointType.domeCenter;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: waypoint spacing — minimum distance between junctions/saddles
+  // ---------------------------------------------------------------------------
+
+  /// סינון ריווח — מרחק מינימלי בין צמתים/אוכפים
+  List<SmartWaypoint> _applyWaypointSpacing(List<SmartWaypoint> waypoints) {
+    final junctions = <SmartWaypoint>[];
+    final saddles = <SmartWaypoint>[];
+    final others = <SmartWaypoint>[];
+    for (final w in waypoints) {
+      if (w.type == SmartWaypointType.valleyJunction) {
+        junctions.add(w);
+      } else if (w.type == SmartWaypointType.saddlePoint) {
+        saddles.add(w);
+      } else {
+        others.add(w);
+      }
+    }
+
+    // Sort by prominence descending (major confluences first)
+    junctions.sort((a, b) => b.prominence.compareTo(a.prominence));
+    saddles.sort((a, b) => b.prominence.compareTo(a.prominence));
+
+    // Greedy 70m spacing for junctions
+    final acceptedJ = _greedySpacing(junctions, 70.0);
+    // Greedy 50m spacing for saddles
+    final acceptedS = _greedySpacing(saddles, 50.0);
+
+    return [...others, ...acceptedJ, ...acceptedS];
+  }
+
+  List<SmartWaypoint> _greedySpacing(List<SmartWaypoint> sorted, double minMeters) {
+    final accepted = <SmartWaypoint>[];
+    for (final wp in sorted) {
+      bool tooClose = accepted.any((a) =>
+          const Distance().as(LengthUnit.Meter, wp.position, a.position) < minMeters);
+      if (!tooClose) accepted.add(wp);
+    }
+    return accepted;
   }
 
   /// Convex hull — Graham scan

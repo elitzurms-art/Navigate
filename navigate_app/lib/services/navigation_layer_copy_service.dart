@@ -67,21 +67,21 @@ class NavigationLayerCopyService {
         _clusterRepo = clusterRepo ?? ClusterRepository(),
         _navLayerRepo = navLayerRepo ?? NavLayerRepository();
 
-  /// העתקת כל השכבות בתוך גבול GG נבחר לניווט ספציפי
+  /// העתקת כל השכבות בתוך גבולות GG נבחרים לניווט ספציפי (תמיכה בגבולות מרובים)
   ///
   /// [navigationId] - מזהה הניווט
-  /// [boundaryId] - מזהה הגבול הנבחר (GG)
+  /// [boundaryIds] - מזהי הגבולות הנבחרים (GG)
   /// [areaId] - מזהה האזור
   /// [createdBy] - מזהה המשתמש שיוצר
   Future<LayerCopyResult> copyLayersForNavigation({
     required String navigationId,
-    required String boundaryId,
+    required List<String> boundaryIds,
     required String areaId,
     required String createdBy,
   }) async {
     try {
       print('DEBUG: Starting layer copy for navigation $navigationId, '
-          'boundary $boundaryId, area $areaId');
+          'boundaries $boundaryIds, area $areaId');
 
       // בדיקה אם כבר הועתקו שכבות
       final alreadyHasLayers =
@@ -91,102 +91,130 @@ class NavigationLayerCopyService {
         return const LayerCopyResult(error: 'שכבות כבר הועתקו לניווט זה');
       }
 
-      // 1. טעינת הגבול הנבחר
-      final boundary = await _boundaryRepo.getById(boundaryId);
-      if (boundary == null) {
-        return const LayerCopyResult(error: 'גבול גזרה לא נמצא');
-      }
-
-      final boundaryPolygon = boundary.coordinates;
-      if (boundaryPolygon.length < 3) {
-        return const LayerCopyResult(error: 'גבול גזרה חייב להכיל לפחות 3 נקודות');
-      }
-
       final now = DateTime.now();
+      int totalCheckpoints = 0;
+      int totalSafetyPoints = 0;
+      int totalBoundaries = 0;
+      int totalClusters = 0;
 
-      // 2. העתקת הגבול עצמו
-      final navBoundary = _copyBoundary(
-        boundary: boundary,
-        navigationId: navigationId,
-        now: now,
-        createdBy: createdBy,
-      );
-      await _navLayerRepo.addBoundary(navBoundary);
-      print('DEBUG: Copied GG boundary: ${boundary.name}');
-
-      // 3. העתקת נקודות ציון (NZ) בתוך הגבול
-      // סינון: נקודות point לפי מיקום, נקודות polygon לפי חפיפת פוליגונים
+      // טעינת כל הנקודות והשכבות של האזור פעם אחת
       final allCheckpoints = await _checkpointRepo.getByArea(areaId);
-      final filteredCheckpoints = _filterCheckpointsInBoundary(
-        checkpoints: allCheckpoints,
-        boundaryPolygon: boundaryPolygon,
-      );
+      final allSafetyPoints = await _safetyPointRepo.getByArea(areaId);
+      final allClusters = await _clusterRepo.getByArea(areaId);
 
-      final navCheckpoints = filteredCheckpoints
-          .map((cp) => _copyCheckpoint(
+      // סט למעקב אחרי נקודות שכבר הועתקו (למניעת כפילויות בין גבולות חופפים)
+      // שימוש ב-sourceId כמפתח — אם נקודה נמצאת בשני גבולות, מועתקת פעם אחת עם הגבול הראשון
+      final copiedCheckpointSourceIds = <String>{};
+      final copiedSafetyPointSourceIds = <String>{};
+      final copiedClusterSourceIds = <String>{};
+
+      for (final boundaryId in boundaryIds) {
+        // 1. טעינת הגבול
+        final boundary = await _boundaryRepo.getById(boundaryId);
+        if (boundary == null) {
+          print('DEBUG: Boundary $boundaryId not found, skipping');
+          continue;
+        }
+
+        final boundaryPolygon = boundary.coordinates;
+        if (boundaryPolygon.length < 3) {
+          print('DEBUG: Boundary ${boundary.name} has < 3 points, skipping');
+          continue;
+        }
+
+        // 2. העתקת הגבול עצמו
+        final navBoundary = _copyBoundary(
+          boundary: boundary,
+          navigationId: navigationId,
+          now: now,
+          createdBy: createdBy,
+          sourceBoundaryIds: [boundaryId],
+        );
+        await _navLayerRepo.addBoundary(navBoundary);
+        totalBoundaries++;
+        print('DEBUG: Copied GG boundary: ${boundary.name}');
+
+        // 3. העתקת נקודות ציון (NZ) בתוך הגבול
+        final filteredCheckpoints = _filterCheckpointsInBoundary(
+          checkpoints: allCheckpoints,
+          boundaryPolygon: boundaryPolygon,
+        );
+
+        final navCheckpoints = filteredCheckpoints
+            .where((cp) => !copiedCheckpointSourceIds.contains(cp.id))
+            .map((cp) {
+              copiedCheckpointSourceIds.add(cp.id);
+              return _copyCheckpoint(
                 checkpoint: cp,
                 navigationId: navigationId,
                 now: now,
                 createdBy: createdBy,
-              ))
-          .toList();
+                boundaryId: boundaryId,
+              );
+            })
+            .toList();
 
-      if (navCheckpoints.isNotEmpty) {
-        await _navLayerRepo.addCheckpointsBatch(navCheckpoints);
-      }
-      print('DEBUG: Copied ${navCheckpoints.length}/${allCheckpoints.length} '
-          'NZ checkpoints inside boundary');
+        if (navCheckpoints.isNotEmpty) {
+          await _navLayerRepo.addCheckpointsBatch(navCheckpoints);
+        }
+        totalCheckpoints += navCheckpoints.length;
+        print('DEBUG: Copied ${navCheckpoints.length} NZ checkpoints inside boundary ${boundary.name}');
 
-      // 4. העתקת נקודות תורפה בטיחותיות (NB) בתוך הגבול
-      final allSafetyPoints = await _safetyPointRepo.getByArea(areaId);
-      final filteredSafetyPoints = _filterSafetyPointsInBoundary(
-        safetyPoints: allSafetyPoints,
-        boundaryPolygon: boundaryPolygon,
-      );
+        // 4. העתקת נקודות תורפה בטיחותיות (NB) בתוך הגבול
+        final filteredSafetyPoints = _filterSafetyPointsInBoundary(
+          safetyPoints: allSafetyPoints,
+          boundaryPolygon: boundaryPolygon,
+        );
 
-      final navSafetyPoints = filteredSafetyPoints
-          .map((sp) => _copySafetyPoint(
+        final navSafetyPoints = filteredSafetyPoints
+            .where((sp) => !copiedSafetyPointSourceIds.contains(sp.id))
+            .map((sp) {
+              copiedSafetyPointSourceIds.add(sp.id);
+              return _copySafetyPoint(
                 safetyPoint: sp,
                 navigationId: navigationId,
                 now: now,
                 createdBy: createdBy,
-              ))
-          .toList();
+              );
+            })
+            .toList();
 
-      if (navSafetyPoints.isNotEmpty) {
-        await _navLayerRepo.addSafetyPointsBatch(navSafetyPoints);
-      }
-      print('DEBUG: Copied ${navSafetyPoints.length}/${allSafetyPoints.length} '
-          'NB safety points inside boundary');
+        if (navSafetyPoints.isNotEmpty) {
+          await _navLayerRepo.addSafetyPointsBatch(navSafetyPoints);
+        }
+        totalSafetyPoints += navSafetyPoints.length;
 
-      // 5. העתקת ביצי איזור (BA) שחותכות את הגבול
-      final allClusters = await _clusterRepo.getByArea(areaId);
-      final filteredClusters = GeometryUtils.filterPolygonsIntersecting(
-        polygons: allClusters,
-        getCoordinates: (cluster) => cluster.coordinates,
-        boundary: boundaryPolygon,
-      );
+        // 5. העתקת ביצי איזור (BA) שחותכות את הגבול
+        final filteredClusters = GeometryUtils.filterPolygonsIntersecting(
+          polygons: allClusters,
+          getCoordinates: (cluster) => cluster.coordinates,
+          boundary: boundaryPolygon,
+        );
 
-      final navClusters = filteredClusters
-          .map((cl) => _copyCluster(
+        final navClusters = filteredClusters
+            .where((cl) => !copiedClusterSourceIds.contains(cl.id))
+            .map((cl) {
+              copiedClusterSourceIds.add(cl.id);
+              return _copyCluster(
                 cluster: cl,
                 navigationId: navigationId,
                 now: now,
                 createdBy: createdBy,
-              ))
-          .toList();
+              );
+            })
+            .toList();
 
-      if (navClusters.isNotEmpty) {
-        await _navLayerRepo.addClustersBatch(navClusters);
+        if (navClusters.isNotEmpty) {
+          await _navLayerRepo.addClustersBatch(navClusters);
+        }
+        totalClusters += navClusters.length;
       }
-      print('DEBUG: Copied ${navClusters.length}/${allClusters.length} '
-          'BA clusters intersecting boundary');
 
       final result = LayerCopyResult(
-        checkpointsCopied: navCheckpoints.length,
-        safetyPointsCopied: navSafetyPoints.length,
-        boundariesCopied: 1, // הגבול עצמו
-        clustersCopied: navClusters.length,
+        checkpointsCopied: totalCheckpoints,
+        safetyPointsCopied: totalSafetyPoints,
+        boundariesCopied: totalBoundaries,
+        clustersCopied: totalClusters,
       );
 
       print('DEBUG: Layer copy complete: $result');
@@ -195,6 +223,21 @@ class NavigationLayerCopyService {
       print('DEBUG: Error copying layers: $e');
       return LayerCopyResult(error: 'שגיאה בהעתקת שכבות: $e');
     }
+  }
+
+  /// תאימות אחורה — העתקת שכבות עם גבול יחיד
+  Future<LayerCopyResult> copyLayersForNavigationSingle({
+    required String navigationId,
+    required String boundaryId,
+    required String areaId,
+    required String createdBy,
+  }) {
+    return copyLayersForNavigation(
+      navigationId: navigationId,
+      boundaryIds: [boundaryId],
+      areaId: areaId,
+      createdBy: createdBy,
+    );
   }
 
   /// סינון נקודות ציון שבתוך הגבול
@@ -254,6 +297,7 @@ class NavigationLayerCopyService {
     required String navigationId,
     required DateTime now,
     required String createdBy,
+    List<String> sourceBoundaryIds = const [],
   }) {
     return NavBoundary(
       id: _generateNavLayerId(navigationId, boundary.id),
@@ -265,6 +309,7 @@ class NavigationLayerCopyService {
       coordinates: List.from(boundary.coordinates),
       color: boundary.color,
       strokeWidth: boundary.strokeWidth,
+      sourceBoundaryIds: sourceBoundaryIds.isNotEmpty ? sourceBoundaryIds : [boundary.id],
       createdBy: createdBy,
       createdAt: now,
       updatedAt: now,
@@ -277,6 +322,7 @@ class NavigationLayerCopyService {
     required String navigationId,
     required DateTime now,
     required String createdBy,
+    String? boundaryId,
   }) {
     return NavCheckpoint(
       id: _generateNavLayerId(navigationId, checkpoint.id),
@@ -293,6 +339,7 @@ class NavigationLayerCopyService {
           ? List.from(checkpoint.polygonCoordinates!)
           : null,
       sequenceNumber: checkpoint.sequenceNumber,
+      boundaryId: boundaryId,
       labels: List.from(checkpoint.labels),
       createdBy: createdBy,
       createdAt: now,
