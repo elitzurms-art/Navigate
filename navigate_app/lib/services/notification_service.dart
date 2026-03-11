@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -17,21 +18,25 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   const initSettings = InitializationSettings(android: androidSettings);
   await plugin.initialize(initSettings);
 
-  const androidDetails = AndroidNotificationDetails(
-    'status_change_channel',
-    'מעבר סטטוס ניווט',
-    channelDescription: 'התראות על שינוי סטטוס ניווט',
-    importance: Importance.high,
-    priority: Priority.high,
+  final androidDetails = AndroidNotificationDetails(
+    'status_change_alert_v2',
+    'התראת מעבר סטטוס ניווט',
+    channelDescription: 'התראות חזקות על שינוי סטטוס ניווט',
+    importance: Importance.max,
+    priority: Priority.max,
     playSound: true,
+    sound: const RawResourceAndroidNotificationSound('alert_beep'),
     enableVibration: true,
+    vibrationPattern: Int64List.fromList([0, 500, 200, 500, 200, 500]),
+    fullScreenIntent: true,
+    category: AndroidNotificationCategory.alarm,
   );
 
   await plugin.show(
     9002,
     message.data['title'] ?? '',
     message.data['body'] ?? '',
-    const NotificationDetails(android: androidDetails),
+    NotificationDetails(android: androidDetails),
   );
 }
 
@@ -94,6 +99,14 @@ class NotificationService {
 
     _userId = userId;
     _initialized = true;
+
+    // מחיקת ערוץ ישן (ברירת מחדל צליל) — Android channels לא ניתנים לעדכון
+    if (Platform.isAndroid) {
+      final plugin = FlutterLocalNotificationsPlugin();
+      final androidPlugin = plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.deleteNotificationChannel('status_change_channel');
+    }
 
     await _requestPermission();
     await _getAndSaveToken();

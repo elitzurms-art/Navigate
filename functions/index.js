@@ -840,9 +840,6 @@ exports.onNavigationStatusChange = onDocumentWritten(
         return;
       }
 
-      // DATA-ONLY message — no notification payload
-      // Foreground: Firestore listener handles alert (sound+vibration)
-      // Background/terminated: background handler shows local notification
       const message = {
         data: {
           type: 'statusChange',
@@ -851,8 +848,25 @@ exports.onNavigationStatusChange = onDocumentWritten(
           navigationId: event.params.navId,
           newStatus: after.status,
         },
-        android: { priority: "high" },
-        apns: { payload: { aps: { 'content-available': 1 } }, headers: { 'apns-priority': '10' } },
+        android: {
+          priority: "high",
+          notification: {
+            channelId: 'status_change_alert_v2',
+            sound: 'alert_beep',
+            title: titles[after.status],
+            body: after.name || '',
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              'content-available': 1,
+              alert: { title: titles[after.status], body: after.name || '' },
+              sound: 'alert_beep.wav',
+            },
+          },
+          headers: { 'apns-priority': '10' },
+        },
         tokens: tokens,
       };
 

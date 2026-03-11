@@ -80,6 +80,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   // התראת מעבר סטטוס (learning, system_check, active)
   AudioPlayer? _statusPlayer;
+  Timer? _statusBeepTimer;
 
   // שידור חירום
   AudioPlayer? _emergencyPlayer;
@@ -104,6 +105,17 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     super.initState();
     _loadState();
     _statusPlayer = AudioPlayer();
+    _statusPlayer!.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        usageType: AndroidUsageType.alarm,
+        contentType: AndroidContentType.sonification,
+        audioFocus: AndroidAudioFocus.gainTransient,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.duckOthers},
+      ),
+    ));
     _initEmergencyAlarm();
     // האזנה לשינויים מ-SyncManager (כשניווט חדש מגיע מ-Firestore) — עם debounce
     _syncSubscription = _syncManager.onDataChanged.listen((collection) {
@@ -429,6 +441,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _emergencySubscription?.cancel();
     _emergencyFirestoreListener?.cancel();
     _emergencyPlayer?.dispose();
+    _statusBeepTimer?.cancel();
     _statusPlayer?.dispose();
     _vibrationTimer?.cancel();
     super.dispose();
@@ -436,11 +449,23 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
   /// השמעת צליל + רטט במעבר סטטוס (learning, system_check, active)
   void _playStatusAlert() {
+    // ביטול סדרה קודמת אם עדיין רצה (מניעת התנגשות בין שני אירועי סטטוס)
+    _statusBeepTimer?.cancel();
+    _playBeepSequence(3);
+  }
+
+  void _playBeepSequence(int remaining) {
+    if (remaining <= 0 || !mounted) return;
     _statusPlayer?.play(AssetSource('sounds/alert_beep.wav'));
-    HapticFeedback.mediumImpact();
-    Future.delayed(const Duration(milliseconds: 120), () {
-      HapticFeedback.mediumImpact();
+    HapticFeedback.heavyImpact();
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) HapticFeedback.heavyImpact();
     });
+    if (remaining > 1) {
+      _statusBeepTimer = Timer(const Duration(milliseconds: 1200), () {
+        if (mounted) _playBeepSequence(remaining - 1);
+      });
+    }
   }
 
   /// התחלת האזנה בזמן אמת למסמך ניווט ב-Firestore
