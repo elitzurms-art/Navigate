@@ -798,6 +798,74 @@ exports.onEmergencyBroadcast = onDocumentCreated(
   }
 );
 
+// =========================================================================
+// onNavigationStatusChange — Push to navigators on status transitions
+// (learning, system_check, active)
+// =========================================================================
+exports.onNavigationStatusChange = onDocumentWritten(
+  "navigations/{navId}",
+  async (event) => {
+    const before = event.data.before?.data();
+    const after = event.data.after?.data();
+    if (!before || !after) return;
+    if (before.status === after.status) return;
+
+    const titles = {
+      learning: 'הלמידה התחילה',
+      system_check: 'בדיקת מערכת',
+      active: 'הניווט התחיל',
+    };
+    if (!titles[after.status]) return;
+
+    const participantIds = after.selectedParticipantIds || [];
+    if (participantIds.length === 0) return;
+
+    try {
+      // Fetch FCM tokens from users collection
+      const tokens = [];
+      for (let i = 0; i < participantIds.length; i += 30) {
+        const batch = participantIds.slice(i, i + 30);
+        const refs = batch.map((id) => db.collection("users").doc(id));
+        const docs = await db.getAll(...refs);
+        for (const doc of docs) {
+          if (doc.exists) {
+            const token = doc.data().fcmToken;
+            if (token) tokens.push(token);
+          }
+        }
+      }
+
+      if (tokens.length === 0) {
+        console.log(`No FCM tokens for status change ${after.status}`);
+        return;
+      }
+
+      // DATA-ONLY message — no notification payload
+      // Foreground: Firestore listener handles alert (sound+vibration)
+      // Background/terminated: background handler shows local notification
+      const message = {
+        data: {
+          type: 'statusChange',
+          title: titles[after.status],
+          body: after.name || '',
+          navigationId: event.params.navId,
+          newStatus: after.status,
+        },
+        android: { priority: "high" },
+        apns: { payload: { aps: { 'content-available': 1 } }, headers: { 'apns-priority': '10' } },
+        tokens: tokens,
+      };
+
+      const response = await messaging.sendEachForMulticast(message);
+      console.log(
+        `Status change push (${after.status}): ${response.successCount}/${tokens.length} sent`
+      );
+    } catch (error) {
+      console.error("Error sending status change push:", error);
+    }
+  }
+);
+
 /**
  * Scheduled: ניקוי הודעות קוליות ישנות (מעל 7 ימים)
  *
@@ -1040,6 +1108,296 @@ exports.httpVerifyEmailCode = onRequest(
       res.json({ result: { success: true } });
     } catch (error) {
       console.error("httpVerifyEmailCode error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// =========================================================================
+// Account Deletion — httpLookupUserForDeletion
+// Public endpoint: checks if a user exists and returns masked contact info
+// =========================================================================
+exports.httpLookupUserForDeletion = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
+
+    const { personalNumber, includePhone } = req.body;
+
+    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
+      res.status(400).json({ error: "invalid_personal_number" });
+      return;
+    }
+
+    try {
+      const userDoc = await db.collection("users").doc(personalNumber).get();
+
+      if (!userDoc.exists) {
+        res.json({ exists: false });
+        return;
+      }
+
+      const userData = userDoc.data();
+      const email = userData.email || "";
+      const phone = userData.phoneNumber || "";
+
+      // Mask email: m***@gmail.com
+      let maskedEmail = "";
+      if (email) {
+        const [local, domain] = email.split("@");
+        if (local && domain) {
+          maskedEmail = local[0] + "***@" + domain;
+        }
+      }
+
+      // Mask phone: 050***1234
+      let maskedPhone = "";
+      if (phone) {
+        const digits = phone.replace(/\D/g, "");
+        if (digits.length >= 7) {
+          maskedPhone = digits.slice(0, 3) + "***" + digits.slice(-4);
+        }
+      }
+
+      const result = { exists: true, maskedEmail, maskedPhone };
+
+      // Include full phone in E.164 format for Firebase Phone Auth signIn
+      if (includePhone && phone) {
+        const cleaned = phone.replace(/[\s\-()]/g, "");
+        if (cleaned.startsWith("0")) {
+          result.phone = "+972" + cleaned.substring(1);
+        } else if (cleaned.startsWith("+")) {
+          result.phone = cleaned;
+        } else {
+          result.phone = "+972" + cleaned;
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error("httpLookupUserForDeletion error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// =========================================================================
+// Account Deletion — httpSendDeletionCode
+// Sends a 6-digit email verification code for account deletion (desktop)
+// =========================================================================
+exports.httpSendDeletionCode = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
+
+    const { personalNumber } = req.body;
+
+    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
+      res.status(400).json({ error: "invalid_personal_number" });
+      return;
+    }
+
+    try {
+      const userDoc = await db.collection("users").doc(personalNumber).get();
+
+      if (!userDoc.exists) {
+        res.status(404).json({ error: "user_not_found" });
+        return;
+      }
+
+      const userData = userDoc.data();
+      const email = userData.email;
+
+      if (!email) {
+        res.status(400).json({ error: "no_email" });
+        return;
+      }
+
+      // Generate 6-digit code
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      // Store in deletion_codes (separate from email_codes)
+      await db.collection("deletion_codes").doc(personalNumber).set({
+        code,
+        email: email.toLowerCase(),
+        expiresAt,
+        attempts: 0,
+        createdAt: new Date(),
+      });
+
+      // Send email
+      const emailSent = await sendVerificationEmail(email, code);
+
+      console.log(`Deletion code for ${personalNumber}: sent=${emailSent}`);
+      res.json(emailSent ? { success: true } : { success: true, code });
+    } catch (error) {
+      console.error("httpSendDeletionCode error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// =========================================================================
+// Account Deletion — httpDeleteAccount
+// Verifies code/token and deletes all user data
+// Two paths: email (code) or phone (idToken)
+// =========================================================================
+exports.httpDeleteAccount = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
+
+    const { personalNumber, code, idToken } = req.body;
+
+    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
+      res.status(400).json({ error: "invalid_personal_number" });
+      return;
+    }
+
+    try {
+      // Read user data before deletion (for logging + phone verification)
+      const userDoc = await db.collection("users").doc(personalNumber).get();
+      if (!userDoc.exists) {
+        res.status(404).json({ error: "user_not_found" });
+        return;
+      }
+      const userData = userDoc.data();
+
+      let verificationMethod = "";
+
+      // ── Phone path: verify idToken ──
+      if (idToken) {
+        verificationMethod = "phone";
+        let decoded;
+        try {
+          decoded = await auth.verifyIdToken(idToken);
+        } catch (e) {
+          res.status(401).json({ error: "invalid_token" });
+          return;
+        }
+
+        // Verify that the phone number in the token matches the user's phone
+        const tokenPhone = decoded.phone_number || "";
+        const userPhone = userData.phoneNumber || "";
+
+        if (!tokenPhone || !userPhone) {
+          res.status(400).json({ error: "phone_mismatch" });
+          return;
+        }
+
+        // Normalize: strip spaces/dashes, compare last 9 digits
+        const normalizePhone = (p) => p.replace(/[\s\-\(\)]/g, "").slice(-9);
+        if (normalizePhone(tokenPhone) !== normalizePhone(userPhone)) {
+          res.status(400).json({ error: "phone_mismatch" });
+          return;
+        }
+      }
+      // ── Email path: verify code ──
+      else if (code) {
+        verificationMethod = "email";
+        const codeRef = db.collection("deletion_codes").doc(personalNumber);
+        const codeDoc = await codeRef.get();
+
+        if (!codeDoc.exists) {
+          res.status(400).json({ error: "code_expired" });
+          return;
+        }
+
+        const codeData = codeDoc.data();
+
+        if (codeData.expiresAt.toDate() < new Date()) {
+          await codeRef.delete();
+          res.status(400).json({ error: "code_expired" });
+          return;
+        }
+
+        if (codeData.attempts >= 5) {
+          await codeRef.delete();
+          res.status(400).json({ error: "max_attempts_exceeded" });
+          return;
+        }
+
+        if (codeData.code !== code) {
+          await codeRef.update({ attempts: codeData.attempts + 1 });
+          res.status(400).json({ error: "invalid_code" });
+          return;
+        }
+
+        // Code valid — delete it
+        await codeRef.delete();
+      } else {
+        res.status(400).json({ error: "code or idToken is required" });
+        return;
+      }
+
+      // ── Verification passed — delete user data ──
+      console.log(`Account deletion verified for ${personalNumber} via ${verificationMethod}`);
+
+      // Prepare masked info for deletion log
+      const email = userData.email || "";
+      const phone = userData.phoneNumber || "";
+      let maskedEmail = "";
+      if (email) {
+        const [local, domain] = email.split("@");
+        if (local && domain) maskedEmail = local[0] + "***@" + domain;
+      }
+      let maskedPhone = "";
+      if (phone) {
+        const digits = phone.replace(/\D/g, "");
+        if (digits.length >= 7) maskedPhone = digits.slice(0, 3) + "***" + digits.slice(-4);
+      }
+
+      // 1. Delete users/{personalNumber}
+      await db.collection("users").doc(personalNumber).delete();
+
+      // 2. Delete email_lookup/{email} if exists
+      if (email) {
+        const emailLookupDoc = await db.collection("email_lookup").doc(email.toLowerCase()).get();
+        if (emailLookupDoc.exists) {
+          await db.collection("email_lookup").doc(email.toLowerCase()).delete();
+        }
+      }
+
+      // 3. Delete commander_tokens/{personalNumber}
+      const cmdTokenDoc = await db.collection("commander_tokens").doc(personalNumber).get();
+      if (cmdTokenDoc.exists) {
+        await db.collection("commander_tokens").doc(personalNumber).delete();
+      }
+
+      // 4. Delete auth_mapping docs (query appUid == personalNumber)
+      const authMappingSnap = await db.collection("auth_mapping")
+        .where("appUid", "==", personalNumber)
+        .get();
+      if (!authMappingSnap.empty) {
+        const batch = db.batch();
+        for (const doc of authMappingSnap.docs) {
+          batch.delete(doc.ref);
+        }
+        await batch.commit();
+      }
+
+      // 5. Write deletion_log (masked info only)
+      await db.collection("deletion_log").doc(personalNumber).set({
+        deletedAt: new Date(),
+        method: verificationMethod,
+        maskedEmail: maskedEmail || null,
+        maskedPhone: maskedPhone || null,
+      });
+
+      console.log(`Account ${personalNumber} deleted successfully`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("httpDeleteAccount error:", error);
       res.status(500).json({ error: error.message });
     }
   }

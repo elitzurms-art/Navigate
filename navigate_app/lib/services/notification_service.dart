@@ -2,7 +2,38 @@ import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../data/repositories/user_repository.dart';
+
+/// Top-level background handler — required by firebase_messaging
+/// Shows local notification for status change messages when app is in background/terminated
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  final type = message.data['type'];
+  if (type != 'statusChange') return;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidSettings);
+  await plugin.initialize(initSettings);
+
+  const androidDetails = AndroidNotificationDetails(
+    'status_change_channel',
+    'מעבר סטטוס ניווט',
+    channelDescription: 'התראות על שינוי סטטוס ניווט',
+    importance: Importance.high,
+    priority: Priority.high,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  await plugin.show(
+    9002,
+    message.data['title'] ?? '',
+    message.data['body'] ?? '',
+    const NotificationDetails(android: androidDetails),
+  );
+}
 
 /// שירות התראות push — singleton
 /// מנהל FCM token, הרשאות, והאזנה להודעות
@@ -66,6 +97,9 @@ class NotificationService {
 
     await _requestPermission();
     await _getAndSaveToken();
+
+    // Background message handler (must be top-level function)
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
     // האזנה לרענון token
     _messaging.onTokenRefresh.listen(_onTokenRefresh);

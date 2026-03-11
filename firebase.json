@@ -5,5 +5,9 @@
   "firestore": {
     "rules": "navigate_app/firestore.rules",
     "indexes": "navigate_app/firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "navigate_app/public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
   }
 }

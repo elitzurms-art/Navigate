@@ -225,6 +225,169 @@ class NavigationLayerCopyService {
     }
   }
 
+  /// העתקת שכבות עם גבול מותאם אישית (מצבים 1-3 של BoundarySetupScreen)
+  ///
+  /// [boundaryCoordinates] — הפוליגון הראשי (ממוזג/מצויר/משוכפל)
+  /// [multiPolygonCoordinates] — רשימת פוליגונים (ל-MultiPolygon)
+  /// [geometryType] — 'polygon' או 'multipolygon'
+  /// [sourceBoundaryIds] — מזהי גבולות מקור (ריק אם ציור ידני)
+  /// [creationMode] — מצב היצירה
+  Future<LayerCopyResult> copyLayersWithCustomBoundary({
+    required String navigationId,
+    required List<Coordinate> boundaryCoordinates,
+    List<List<Coordinate>>? multiPolygonCoordinates,
+    required String geometryType,
+    required List<String> sourceBoundaryIds,
+    required NavBoundaryCreationMode creationMode,
+    required String areaId,
+    required String createdBy,
+    String? boundaryName,
+  }) async {
+    try {
+      print('DEBUG: Starting custom boundary layer copy for navigation $navigationId, '
+          'mode: $creationMode, geometryType: $geometryType');
+
+      // בדיקה אם כבר הועתקו שכבות
+      final alreadyHasLayers =
+          await _navLayerRepo.hasLayersForNavigation(navigationId);
+      if (alreadyHasLayers) {
+        print('DEBUG: Navigation $navigationId already has copied layers, skipping');
+        return const LayerCopyResult(error: 'שכבות כבר הועתקו לניווט זה');
+      }
+
+      final now = DateTime.now();
+
+      // 1. יצירת NavBoundary אחד עם הגבול המותאם
+      final navBoundary = NavBoundary(
+        id: 'nav_${navigationId}_boundary',
+        navigationId: navigationId,
+        sourceId: sourceBoundaryIds.isNotEmpty ? sourceBoundaryIds.first : 'custom',
+        areaId: areaId,
+        name: boundaryName ?? 'גבול ניווט',
+        description: '',
+        coordinates: boundaryCoordinates,
+        sourceBoundaryIds: sourceBoundaryIds,
+        creationMode: creationMode,
+        geometryType: geometryType,
+        multiPolygonCoordinates: multiPolygonCoordinates,
+        createdBy: createdBy,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await _navLayerRepo.addBoundary(navBoundary);
+      print('DEBUG: Created custom NavBoundary (mode: $creationMode, type: $geometryType)');
+
+      // 2. קביעת פוליגונים לסינון
+      final filterPolygons = geometryType == 'multipolygon' && multiPolygonCoordinates != null
+          ? multiPolygonCoordinates
+          : [boundaryCoordinates];
+
+      // 3. טעינת כל הנקודות והשכבות של האזור
+      final allCheckpoints = await _checkpointRepo.getByArea(areaId);
+      final allSafetyPoints = await _safetyPointRepo.getByArea(areaId);
+      final allClusters = await _clusterRepo.getByArea(areaId);
+
+      // 4. סינון והעתקה עם dedup
+      final copiedCheckpointSourceIds = <String>{};
+      final copiedSafetyPointSourceIds = <String>{};
+      final copiedClusterSourceIds = <String>{};
+
+      int totalCheckpoints = 0;
+      int totalSafetyPoints = 0;
+      int totalClusters = 0;
+
+      for (final polygon in filterPolygons) {
+        if (polygon.length < 3) continue;
+
+        // נקודות ציון (NZ)
+        final filteredCheckpoints = _filterCheckpointsInBoundary(
+          checkpoints: allCheckpoints,
+          boundaryPolygon: polygon,
+        );
+
+        final navCheckpoints = filteredCheckpoints
+            .where((cp) => !copiedCheckpointSourceIds.contains(cp.id))
+            .map((cp) {
+              copiedCheckpointSourceIds.add(cp.id);
+              return _copyCheckpoint(
+                checkpoint: cp,
+                navigationId: navigationId,
+                now: now,
+                createdBy: createdBy,
+              );
+            })
+            .toList();
+
+        if (navCheckpoints.isNotEmpty) {
+          await _navLayerRepo.addCheckpointsBatch(navCheckpoints);
+        }
+        totalCheckpoints += navCheckpoints.length;
+
+        // נקודות בטיחות (NB)
+        final filteredSafetyPoints = _filterSafetyPointsInBoundary(
+          safetyPoints: allSafetyPoints,
+          boundaryPolygon: polygon,
+        );
+
+        final navSafetyPoints = filteredSafetyPoints
+            .where((sp) => !copiedSafetyPointSourceIds.contains(sp.id))
+            .map((sp) {
+              copiedSafetyPointSourceIds.add(sp.id);
+              return _copySafetyPoint(
+                safetyPoint: sp,
+                navigationId: navigationId,
+                now: now,
+                createdBy: createdBy,
+              );
+            })
+            .toList();
+
+        if (navSafetyPoints.isNotEmpty) {
+          await _navLayerRepo.addSafetyPointsBatch(navSafetyPoints);
+        }
+        totalSafetyPoints += navSafetyPoints.length;
+
+        // ביצי איזור (BA)
+        final filteredClusters = GeometryUtils.filterPolygonsIntersecting(
+          polygons: allClusters,
+          getCoordinates: (cluster) => cluster.coordinates,
+          boundary: polygon,
+        );
+
+        final navClusters = filteredClusters
+            .where((cl) => !copiedClusterSourceIds.contains(cl.id))
+            .map((cl) {
+              copiedClusterSourceIds.add(cl.id);
+              return _copyCluster(
+                cluster: cl,
+                navigationId: navigationId,
+                now: now,
+                createdBy: createdBy,
+              );
+            })
+            .toList();
+
+        if (navClusters.isNotEmpty) {
+          await _navLayerRepo.addClustersBatch(navClusters);
+        }
+        totalClusters += navClusters.length;
+      }
+
+      final result = LayerCopyResult(
+        checkpointsCopied: totalCheckpoints,
+        safetyPointsCopied: totalSafetyPoints,
+        boundariesCopied: 1,
+        clustersCopied: totalClusters,
+      );
+
+      print('DEBUG: Custom boundary layer copy complete: $result');
+      return result;
+    } catch (e) {
+      print('DEBUG: Error copying layers with custom boundary: $e');
+      return LayerCopyResult(error: 'שגיאה בהעתקת שכבות: $e');
+    }
+  }
+
   /// תאימות אחורה — העתקת שכבות עם גבול יחיד
   Future<LayerCopyResult> copyLayersForNavigationSingle({
     required String navigationId,

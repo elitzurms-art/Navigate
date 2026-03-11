@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navigate - מחיקת חשבון</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      background: #f5f7fa;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+    .container {
+      max-width: 480px;
+      width: 100%;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+      padding: 32px 24px;
+      margin-top: 16px;
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .logo h1 {
+      font-size: 28px;
+      color: #1976D2;
+      font-weight: 700;
+    }
+    .logo p {
+      color: #666;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+    .info-box {
+      background: #fff3e0;
+      border: 1px solid #ffe0b2;
+      border-radius: 10px;
+      padding: 16px;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .info-box h3 {
+      color: #e65100;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+    .info-box ul {
+      padding-right: 20px;
+      color: #555;
+    }
+    .warning {
+      background: #fce4ec;
+      border: 1px solid #f8bbd0;
+      color: #c62828;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      margin-top: 12px;
+    }
+
+    /* Steps */
+    .step { display: none; }
+    .step.active { display: block; }
+    .step-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #1a1a2e;
+    }
+
+    /* Inputs */
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: #444;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 18px;
+      letter-spacing: 4px;
+      text-align: center;
+      direction: ltr;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus {
+      border-color: #1976D2;
+    }
+    input[type="text"].error {
+      border-color: #e53935;
+    }
+
+    /* OTP inputs */
+    .otp-container {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      direction: ltr;
+      margin: 16px 0;
+    }
+    .otp-input {
+      width: 48px;
+      height: 56px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 24px;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .otp-input:focus {
+      border-color: #1976D2;
+    }
+
+    /* Buttons */
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      margin-top: 12px;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: #1976D2;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #1565C0;
+    }
+    .btn-danger {
+      background: #e53935;
+      color: #fff;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: #c62828;
+    }
+    .btn-link {
+      background: none;
+      color: #1976D2;
+      font-size: 14px;
+      padding: 8px;
+      margin-top: 8px;
+    }
+    .btn-link:disabled {
+      color: #999;
+    }
+
+    /* Error / Status */
+    .error-msg {
+      color: #e53935;
+      font-size: 13px;
+      margin-top: 8px;
+      min-height: 20px;
+    }
+    .method-info {
+      background: #e3f2fd;
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+      font-size: 14px;
+      color: #1565C0;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+    .timer {
+      text-align: center;
+      font-size: 13px;
+      color: #888;
+      margin-top: 8px;
+    }
+    .timer strong {
+      color: #1976D2;
+      font-size: 16px;
+    }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-left: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Success */
+    .success-icon {
+      text-align: center;
+      font-size: 64px;
+      margin: 24px 0 16px;
+    }
+    .success-text {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 600;
+      color: #2e7d32;
+      margin-bottom: 8px;
+    }
+    .success-sub {
+      text-align: center;
+      font-size: 14px;
+      color: #666;
+    }
+
+    /* Contact support */
+    .contact-support {
+      text-align: center;
+      padding: 24px;
+    }
+    .contact-support p {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="logo">
+    <h1>Navigate</h1>
+    <p>מחיקת חשבון</p>
+  </div>
+
+  <div class="info-box">
+    <h3>מה יימחק?</h3>
+    <ul>
+      <li>פרטים אישיים</li>
+      <li>היסטוריית ניווטים</li>
+      <li>נתוני מיקום</li>
+      <li>הודעות קוליות</li>
+    </ul>
+    <div class="warning">המחיקה סופית ובלתי הפיכה</div>
+  </div>
+
+  <!-- Step 1: Personal Number -->
+  <div id="step1" class="step active">
+    <div class="step-title">שלב 1 — מספר אישי</div>
+    <label for="personalNumber">הזן מספר אישי (7 ספרות)</label>
+    <input type="text" id="personalNumber" maxlength="7" inputmode="numeric" autocomplete="off" placeholder="1234567">
+    <div id="step1Error" class="error-msg"></div>
+    <button id="step1Btn" class="btn btn-primary" onclick="lookupUser()">המשך</button>
+  </div>
+
+  <!-- Step 2: Verification method + send code -->
+  <div id="step2" class="step">
+    <div class="step-title">שלב 2 — אימות זהות</div>
+    <div id="methodInfo" class="method-info"></div>
+    <div id="step2Error" class="error-msg"></div>
+    <button id="step2Btn" class="btn btn-primary" onclick="sendCode()">שלח קוד אימות</button>
+    <!-- Contact support fallback -->
+    <div id="contactSupport" class="contact-support" style="display:none;">
+      <p>לא נמצאה דרך אימות זמינה.<br>פנה לתמיכה לצורך מחיקת החשבון.</p>
+    </div>
+  </div>
+
+  <!-- Step 3: Enter code + delete -->
+  <div id="step3" class="step">
+    <div class="step-title">שלב 3 — הזנת קוד אימות</div>
+    <div class="otp-container" id="otpContainer">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric" autocomplete="one-time-code">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric">
+      <input type="text" class="otp-input" maxlength="1" inputmode="numeric">
+    </div>
+    <div id="timerDisplay" class="timer"></div>
+    <div id="step3Error" class="error-msg"></div>
+    <button id="step3Btn" class="btn btn-danger" onclick="verifyAndDelete()">אמת ומחק חשבון</button>
+    <button id="resendBtn" class="btn btn-link" onclick="sendCode()" disabled>שלח שוב</button>
+  </div>
+
+  <!-- Step 4: Success -->
+  <div id="step4" class="step">
+    <div class="success-icon">&#10003;</div>
+    <div class="success-text">החשבון נמחק בהצלחה</div>
+    <div class="success-sub">כל הנתונים הקשורים לחשבון נמחקו מהמערכת.</div>
+  </div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+
+<script>
+  // Firebase config
+  firebase.initializeApp({
+    apiKey: "AIzaSyC6km10YFC1Hbz_E2bpOIgQijcMINPMwIk",
+    authDomain: "navigate-native.firebaseapp.com",
+    projectId: "navigate-native",
+    appId: "1:319417384412:web:5fb2cddcc768ee6bd12319"
+  });
+
+  const CF_BASE = "https://us-central1-navigate-native.cloudfunctions.net";
+
+  // State
+  let personalNumber = "";
+  let maskedEmail = "";
+  let maskedPhone = "";
+  let verificationMethod = ""; // "phone" or "email"
+  let confirmationResult = null; // Firebase Phone Auth result
+  let timerInterval = null;
+  let resendTimeout = null;
+  let codeExpiresAt = null;
+
+  // ─── Platform detection ───
+  function isMobileDevice() {
+    const ua = navigator.userAgent || "";
+    const mobileUA = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    const touchPoints = navigator.maxTouchPoints > 0;
+    // Require at least 2 of 3 signals for mobile
+    const signals = [mobileUA, coarsePointer, touchPoints].filter(Boolean).length;
+    return signals >= 2;
+  }
+
+  // ─── Helpers ───
+  function showStep(n) {
+    document.querySelectorAll(".step").forEach(s => s.classList.remove("active"));
+    document.getElementById("step" + n).classList.add("active");
+  }
+
+  function setLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (loading) {
+      btn.disabled = true;
+      btn._origText = btn.textContent;
+      btn.innerHTML = '<span class="spinner"></span>';
+    } else {
+      btn.disabled = false;
+      btn.textContent = btn._origText || btn.textContent;
+    }
+  }
+
+  function setError(id, msg) {
+    document.getElementById(id).textContent = msg || "";
+  }
+
+  // ─── Step 1: Lookup User ───
+  async function lookupUser() {
+    const input = document.getElementById("personalNumber");
+    const val = input.value.trim();
+
+    setError("step1Error", "");
+    input.classList.remove("error");
+
+    if (!/^\d{7}$/.test(val)) {
+      input.classList.add("error");
+      setError("step1Error", "יש להזין מספר אישי בן 7 ספרות בלבד");
+      return;
+    }
+
+    setLoading("step1Btn", true);
+
+    try {
+      const resp = await fetch(CF_BASE + "/httpLookupUserForDeletion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personalNumber: val })
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok || !data.exists) {
+        setError("step1Error", "לא נמצא חשבון עם מספר אישי זה");
+        setLoading("step1Btn", false);
+        return;
+      }
+
+      personalNumber = val;
+      maskedEmail = data.maskedEmail || "";
+      maskedPhone = data.maskedPhone || "";
+
+      // Determine verification method
+      const mobile = isMobileDevice();
+      if (mobile && maskedPhone) {
+        verificationMethod = "phone";
+      } else if (mobile && !maskedPhone && maskedEmail) {
+        verificationMethod = "email"; // fallback
+      } else if (!mobile && maskedEmail) {
+        verificationMethod = "email";
+      } else if (!mobile && !maskedEmail) {
+        verificationMethod = ""; // contact support
+      } else {
+        verificationMethod = maskedEmail ? "email" : "";
+      }
+
+      // Show step 2
+      const methodInfoEl = document.getElementById("methodInfo");
+      const step2Btn = document.getElementById("step2Btn");
+      const contactEl = document.getElementById("contactSupport");
+
+      if (verificationMethod === "phone") {
+        methodInfoEl.innerHTML = "קוד אימות יישלח ל-<strong dir=\"ltr\">" + maskedPhone + "</strong>";
+        step2Btn.style.display = "";
+        contactEl.style.display = "none";
+      } else if (verificationMethod === "email") {
+        methodInfoEl.innerHTML = "קוד אימות יישלח ל-<strong dir=\"ltr\">" + maskedEmail + "</strong>";
+        step2Btn.style.display = "";
+        contactEl.style.display = "none";
+      } else {
+        methodInfoEl.innerHTML = "";
+        step2Btn.style.display = "none";
+        contactEl.style.display = "";
+      }
+
+      showStep(2);
+    } catch (err) {
+      setError("step1Error", "שגיאה בתקשורת עם השרת");
+    }
+
+    setLoading("step1Btn", false);
+  }
+
+  // ─── Step 2: Send Code ───
+  async function sendCode() {
+    setError("step2Error", "");
+    setError("step3Error", "");
+    setLoading("step2Btn", true);
+
+    try {
+      if (verificationMethod === "phone") {
+        await sendPhoneCode();
+      } else {
+        await sendEmailCode();
+      }
+
+      showStep(3);
+      startTimer();
+      startResendCooldown();
+      focusFirstOtp();
+    } catch (err) {
+      setError("step2Error", err.message || "שגיאה בשליחת קוד אימות");
+    }
+
+    setLoading("step2Btn", false);
+  }
+
+  async function sendPhoneCode() {
+    // Setup invisible reCAPTCHA
+    if (!window.recaptchaVerifier) {
+      window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier("step2Btn", {
+        size: "invisible",
+        callback: function() {}
+      });
+    }
+
+    // Need the real phone from the CF (we only have masked) — the CF returns fullPhone for signIn
+    const resp = await fetch(CF_BASE + "/httpLookupUserForDeletion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personalNumber: personalNumber, includePhone: true })
+    });
+    const data = await resp.json();
+
+    if (!data.phone) {
+      throw new Error("לא נמצא מספר טלפון");
+    }
+
+    confirmationResult = await firebase.auth().signInWithPhoneNumber(
+      data.phone,
+      window.recaptchaVerifier
+    );
+  }
+
+  async function sendEmailCode() {
+    const resp = await fetch(CF_BASE + "/httpSendDeletionCode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personalNumber: personalNumber })
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || "שגיאה בשליחת קוד");
+    }
+  }
+
+  // ─── Timer ───
+  function startTimer() {
+    clearInterval(timerInterval);
+    codeExpiresAt = Date.now() + 10 * 60 * 1000;
+    updateTimer();
+    timerInterval = setInterval(updateTimer, 1000);
+  }
+
+  function updateTimer() {
+    const remaining = Math.max(0, codeExpiresAt - Date.now());
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    const display = document.getElementById("timerDisplay");
+    if (remaining <= 0) {
+      display.innerHTML = "הקוד פג תוקף";
+      clearInterval(timerInterval);
+      return;
+    }
+    display.innerHTML = 'הקוד תקף ל-<strong>' + mins + ':' + String(secs).padStart(2, '0') + '</strong>';
+  }
+
+  function startResendCooldown() {
+    const btn = document.getElementById("resendBtn");
+    btn.disabled = true;
+    let seconds = 60;
+    btn.textContent = "שלח שוב (" + seconds + ")";
+    clearInterval(resendTimeout);
+    resendTimeout = setInterval(() => {
+      seconds--;
+      if (seconds <= 0) {
+        clearInterval(resendTimeout);
+        btn.disabled = false;
+        btn.textContent = "שלח שוב";
+      } else {
+        btn.textContent = "שלח שוב (" + seconds + ")";
+      }
+    }, 1000);
+  }
+
+  // ─── OTP Input Handling ───
+  function focusFirstOtp() {
+    const inputs = document.querySelectorAll(".otp-input");
+    inputs[0].value = "";
+    inputs[0].focus();
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const inputs = document.querySelectorAll(".otp-input");
+    inputs.forEach((input, i) => {
+      input.addEventListener("input", (e) => {
+        const val = e.target.value.replace(/\D/g, "");
+        e.target.value = val.slice(0, 1);
+        if (val && i < inputs.length - 1) {
+          inputs[i + 1].focus();
+        }
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace" && !e.target.value && i > 0) {
+          inputs[i - 1].focus();
+        }
+      });
+      input.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const pasted = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 6);
+        for (let j = 0; j < pasted.length && j < inputs.length; j++) {
+          inputs[j].value = pasted[j];
+        }
+        const nextIdx = Math.min(pasted.length, inputs.length - 1);
+        inputs[nextIdx].focus();
+      });
+    });
+
+    // Personal number — digits only
+    const pnInput = document.getElementById("personalNumber");
+    pnInput.addEventListener("input", () => {
+      pnInput.value = pnInput.value.replace(/\D/g, "").slice(0, 7);
+    });
+    pnInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") lookupUser();
+    });
+  });
+
+  function getOtpCode() {
+    const inputs = document.querySelectorAll(".otp-input");
+    return Array.from(inputs).map(i => i.value).join("");
+  }
+
+  // ─── Step 3: Verify + Delete ───
+  async function verifyAndDelete() {
+    const code = getOtpCode();
+    setError("step3Error", "");
+
+    if (!/^\d{6}$/.test(code)) {
+      setError("step3Error", "יש להזין קוד בן 6 ספרות");
+      return;
+    }
+
+    setLoading("step3Btn", true);
+
+    try {
+      let body;
+
+      if (verificationMethod === "phone") {
+        // Verify phone code via Firebase Auth
+        const credential = await confirmationResult.confirm(code);
+        const idToken = await credential.user.getIdToken();
+        body = { personalNumber: personalNumber, idToken: idToken };
+      } else {
+        // Email: send code to CF for verification
+        body = { personalNumber: personalNumber, code: code };
+      }
+
+      const resp = await fetch(CF_BASE + "/httpDeleteAccount", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        const errorMap = {
+          "invalid_code": "הקוד שגוי",
+          "code_expired": "הקוד פג תוקף",
+          "max_attempts_exceeded": "חרגת ממספר הניסיונות — נסה שוב מאוחר יותר",
+          "user_not_found": "לא נמצא חשבון",
+          "phone_mismatch": "מספר הטלפון אינו תואם לחשבון"
+        };
+        throw new Error(errorMap[data.error] || data.error || "שגיאה במחיקת החשבון");
+      }
+
+      clearInterval(timerInterval);
+      clearInterval(resendTimeout);
+      showStep(4);
+    } catch (err) {
+      setError("step3Error", err.message || "שגיאה באימות הקוד");
+    }
+
+    setLoading("step3Btn", false);
+  }
+</script>
+
+</body>
+</html>

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../services/app_update_service.dart';
 import 'offline_maps_screen.dart';
 
 /// מסך הגדרות
@@ -10,6 +13,29 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      String version = info.version;
+
+      // הוספת מספר patch של Shorebird (אם רלוונטי)
+      final patchNumber = await AppUpdateService().getCurrentPatchNumber();
+      if (patchNumber != null) {
+        version += ' (patch $patchNumber)';
+      }
+
+      if (mounted) setState(() => _appVersion = version);
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -73,13 +99,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 context,
                 icon: Icons.info,
                 title: 'גרסה',
-                subtitle: '1.0.0',
+                subtitle: _appVersion,
               ),
               _buildSettingsItem(
                 context,
                 icon: Icons.description,
                 title: 'תנאי שימוש',
                 subtitle: '',
+              ),
+              _buildSettingsItem(
+                context,
+                icon: Icons.delete_forever,
+                title: 'מחיקת חשבון',
+                subtitle: '',
+                onTap: () {
+                  launchUrl(
+                    Uri.parse('https://navigate-native.web.app/delete-account.html'),
+                    mode: LaunchMode.externalApplication,
+                  );
+                },
               ),
             ],
           ),

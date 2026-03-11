@@ -377,6 +377,15 @@ class NavLayerRepository {
                 ? jsonEncode(boundary.sourceBoundaryIds)
                 : null,
           ),
+          creationMode: Value(boundary.creationMode.index),
+          geometryType: Value(boundary.geometryType),
+          multiPolygonCoordinatesJson: Value(
+            boundary.multiPolygonCoordinates != null
+                ? jsonEncode(boundary.multiPolygonCoordinates!
+                    .map((poly) => poly.map((c) => c.toMap()).toList())
+                    .toList())
+                : null,
+          ),
           updatedAt: Value(boundary.updatedAt),
         ),
       );
@@ -413,6 +422,15 @@ class NavLayerRepository {
               sourceBoundaryIdsJson: Value(
                 boundary.sourceBoundaryIds.isNotEmpty
                     ? jsonEncode(boundary.sourceBoundaryIds)
+                    : null,
+              ),
+              creationMode: Value(boundary.creationMode.index),
+              geometryType: Value(boundary.geometryType),
+              multiPolygonCoordinatesJson: Value(
+                boundary.multiPolygonCoordinates != null
+                    ? jsonEncode(boundary.multiPolygonCoordinates!
+                        .map((poly) => poly.map((c) => c.toMap()).toList())
+                        .toList())
                     : null,
               ),
               createdBy: boundary.createdBy,
@@ -528,6 +546,21 @@ class NavLayerRepository {
   /// מחיקת כל השכבות של ניווט ספציפי
   Future<void> deleteAllLayersForNavigation(String navigationId) async {
     try {
+      // שליפת IDs קיימים לפני מחיקה מקומית
+      final checkpoints = await (_db.select(_db.navCheckpoints)
+            ..where((t) => t.navigationId.equals(navigationId)))
+          .get();
+      final safetyPoints = await (_db.select(_db.navSafetyPoints)
+            ..where((t) => t.navigationId.equals(navigationId)))
+          .get();
+      final boundaries = await (_db.select(_db.navBoundaries)
+            ..where((t) => t.navigationId.equals(navigationId)))
+          .get();
+      final clusters = await (_db.select(_db.navClusters)
+            ..where((t) => t.navigationId.equals(navigationId)))
+          .get();
+
+      // מחיקה מקומית מ-Drift
       await (_db.delete(_db.navCheckpoints)
             ..where((t) => t.navigationId.equals(navigationId)))
           .go();
@@ -540,6 +573,40 @@ class NavLayerRepository {
       await (_db.delete(_db.navClusters)
             ..where((t) => t.navigationId.equals(navigationId)))
           .go();
+
+      // סנכרון מחיקה ל-Firestore
+      for (final cp in checkpoints) {
+        await _syncManager.queueOperation(
+          collection: AppConstants.navLayersNzPath(navigationId),
+          documentId: cp.id,
+          operation: 'hard_delete',
+          data: {'id': cp.id},
+        );
+      }
+      for (final sp in safetyPoints) {
+        await _syncManager.queueOperation(
+          collection: AppConstants.navLayersNbPath(navigationId),
+          documentId: sp.id,
+          operation: 'hard_delete',
+          data: {'id': sp.id},
+        );
+      }
+      for (final b in boundaries) {
+        await _syncManager.queueOperation(
+          collection: AppConstants.navLayersGgPath(navigationId),
+          documentId: b.id,
+          operation: 'hard_delete',
+          data: {'id': b.id},
+        );
+      }
+      for (final c in clusters) {
+        await _syncManager.queueOperation(
+          collection: AppConstants.navLayersBaPath(navigationId),
+          documentId: c.id,
+          operation: 'hard_delete',
+          data: {'id': c.id},
+        );
+      }
     } catch (e) {
       rethrow;
     }
@@ -628,6 +695,23 @@ class NavLayerRepository {
         .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
         .toList();
 
+    // creationMode: bounds check with fallback to legacy
+    final creationModeIndex = row.creationMode;
+    final creationMode = creationModeIndex >= 0 &&
+            creationModeIndex < domain.NavBoundaryCreationMode.values.length
+        ? domain.NavBoundaryCreationMode.values[creationModeIndex]
+        : domain.NavBoundaryCreationMode.legacy;
+
+    // multiPolygonCoordinates: decode JSON if present
+    List<List<Coordinate>>? multiPolygonCoordinates;
+    if (row.multiPolygonCoordinatesJson != null) {
+      multiPolygonCoordinates = (jsonDecode(row.multiPolygonCoordinatesJson!) as List)
+          .map((poly) => (poly as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList())
+          .toList();
+    }
+
     return domain.NavBoundary(
       id: row.id,
       navigationId: row.navigationId,
@@ -641,6 +725,9 @@ class NavLayerRepository {
       sourceBoundaryIds: row.sourceBoundaryIdsJson != null
           ? List<String>.from(jsonDecode(row.sourceBoundaryIdsJson!) as List)
           : [row.sourceId],
+      creationMode: creationMode,
+      geometryType: row.geometryType,
+      multiPolygonCoordinates: multiPolygonCoordinates,
       createdBy: row.createdBy,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -870,6 +957,15 @@ class NavLayerRepository {
             sourceBoundaryIdsJson: Value(
               boundary.sourceBoundaryIds.isNotEmpty
                   ? jsonEncode(boundary.sourceBoundaryIds)
+                  : null,
+            ),
+            creationMode: Value(boundary.creationMode.index),
+            geometryType: Value(boundary.geometryType),
+            multiPolygonCoordinatesJson: Value(
+              boundary.multiPolygonCoordinates != null
+                  ? jsonEncode(boundary.multiPolygonCoordinates!
+                      .map((poly) => poly.map((c) => c.toMap()).toList())
+                      .toList())
                   : null,
             ),
             createdBy: boundary.createdBy,

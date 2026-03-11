@@ -78,6 +78,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   // מבחן ניווט — בדיקת passed מ-Firestore
   bool? _quizPassed;
 
+  // התראת מעבר סטטוס (learning, system_check, active)
+  AudioPlayer? _statusPlayer;
+
   // שידור חירום
   AudioPlayer? _emergencyPlayer;
   StreamSubscription<RemoteMessage>? _emergencySubscription;
@@ -100,6 +103,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   void initState() {
     super.initState();
     _loadState();
+    _statusPlayer = AudioPlayer();
     _initEmergencyAlarm();
     // האזנה לשינויים מ-SyncManager (כשניווט חדש מגיע מ-Firestore) — עם debounce
     _syncSubscription = _syncManager.onDataChanged.listen((collection) {
@@ -425,8 +429,18 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _emergencySubscription?.cancel();
     _emergencyFirestoreListener?.cancel();
     _emergencyPlayer?.dispose();
+    _statusPlayer?.dispose();
     _vibrationTimer?.cancel();
     super.dispose();
+  }
+
+  /// השמעת צליל + רטט במעבר סטטוס (learning, system_check, active)
+  void _playStatusAlert() {
+    _statusPlayer?.play(AssetSource('sounds/alert_beep.wav'));
+    HapticFeedback.mediumImpact();
+    Future.delayed(const Duration(milliseconds: 120), () {
+      HapticFeedback.mediumImpact();
+    });
   }
 
   /// התחלת האזנה בזמן אמת למסמך ניווט ב-Firestore
@@ -456,6 +470,12 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           // סגירת חלונות/מפות פתוחים אחרי מעבר סטטוס —
           // מתוזמן ל-postFrame כדי למנוע race condition עם setState/rebuild.
           if (previousStatus != null && previousStatus != nav.status) {
+            // התראת צליל + רטט במעבר לסטטוסים קריטיים
+            const alertStatuses = ['learning', 'system_check', 'active'];
+            if (alertStatuses.contains(nav.status)) {
+              _playStatusAlert();
+            }
+
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               final myRoute = ModalRoute.of(context);

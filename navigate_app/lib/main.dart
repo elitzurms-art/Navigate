@@ -16,11 +16,14 @@ import 'services/tile_cache_service.dart';
 import 'core/map_config.dart';
 import 'data/repositories/navigation_tree_repository.dart';
 import 'data/repositories/user_repository.dart';
+import 'data/datasources/local/app_database.dart';
 import 'data/sync/sync_manager.dart';
 import 'services/notification_service.dart';
 import 'services/map_download_notification_service.dart';
 import 'services/background_location_service.dart';
 import 'services/device_security_service.dart';
+import 'services/app_update_service.dart';
+import 'presentation/widgets/app_update_dialog.dart';
 import 'domain/entities/hat_type.dart';
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/auth/register_screen.dart';
@@ -98,6 +101,13 @@ void main() async {
 
   // זריעת שאלות מבחן בדד (אם חסרות) — רק עבור developer/admin
   await _seedSoloQuizIfNeeded();
+
+  // ניקוי תור סנכרון תקוע בהפעלה (מניעת crash)
+  {
+    final db = AppDatabase();
+    final purged = await db.purgeAllUnsynced();
+    if (purged > 0) print('DEBUG: Purged $purged stuck sync items');
+  }
 
   // התחלת סנכרון עם Firebase
   final syncManager = SyncManager();
@@ -309,6 +319,7 @@ class NavigateApp extends StatefulWidget {
 class _NavigateAppState extends State<NavigateApp> {
   StreamSubscription<void>? _forceLogoutSub;
   bool _isShowingForceLogout = false;
+  bool _isShowingUpdateDialog = false;
 
   @override
   void initState() {
@@ -316,6 +327,60 @@ class _NavigateAppState extends State<NavigateApp> {
     _forceLogoutSub = AuthService().onForceLogout.listen((_) {
       _handleForceLogout();
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForAppUpdate();
+    });
+  }
+
+  Future<void> _checkForAppUpdate() async {
+    try {
+      // השהייה קצרה — UX טוב יותר, לא מציג dialog מיד
+      await Future.delayed(const Duration(seconds: 3));
+
+      final updateService = AppUpdateService();
+      await updateService.initialize();
+      final updateInfo = await updateService.checkForUpdate();
+
+      if (updateInfo.type != UpdateType.none && !_isShowingUpdateDialog) {
+        final navContext = NavigateApp.navigatorKey.currentContext;
+        if (navContext != null) {
+          _isShowingUpdateDialog = true;
+          await AppUpdateDialog.show(
+            navContext,
+            isForced: updateInfo.type == UpdateType.forced,
+            storeUrl: updateInfo.storeUrl,
+            title: updateInfo.title,
+            message: updateInfo.message,
+          );
+          _isShowingUpdateDialog = false;
+          // אם עדכון כפוי — לא ממשיכים לבדיקת OTA
+          if (updateInfo.type == UpdateType.forced) return;
+        }
+      }
+
+      // בדיקת עדכון OTA (Shorebird) — הורדה + הודעה להפעלה מחדש
+      final patchDownloaded = await updateService.checkAndDownloadPatch();
+      if (patchDownloaded) {
+        final navContext = NavigateApp.navigatorKey.currentContext;
+        if (navContext != null && mounted) {
+          ScaffoldMessenger.of(navContext).showSnackBar(
+            SnackBar(
+              content: const Text('עדכון הורד — יש להפעיל מחדש את האפליקציה'),
+              duration: const Duration(seconds: 8),
+              action: SnackBarAction(
+                label: 'הבנתי',
+                textColor: Colors.white,
+                onPressed: () {},
+              ),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      _isShowingUpdateDialog = false;
+      print('DEBUG: _checkForAppUpdate error: $e');
+    }
   }
 
   @override

@@ -484,6 +484,16 @@ class SyncManager {
 
       print('SyncManager: Processing ${pendingItems.length} pending sync items...');
 
+      // DEBUG: breakdown by collection+operation
+      final breakdown = <String, int>{};
+      for (final item in pendingItems) {
+        final key = '${item.collectionName}/${item.operation}';
+        breakdown[key] = (breakdown[key] ?? 0) + 1;
+      }
+      for (final entry in breakdown.entries) {
+        print('SyncManager:   ${entry.key}: ${entry.value}');
+      }
+
       for (final item in pendingItems) {
         // בדיקה שעדיין אונליין
         if (!_isOnline) {

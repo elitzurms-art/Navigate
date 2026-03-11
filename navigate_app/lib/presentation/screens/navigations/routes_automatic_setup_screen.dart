@@ -415,7 +415,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
     try {
       final distributionResult = await _distributionService.distributeAutomatically(
-        navigation: widget.navigation,
+        navigation: widget.navigation.copyWith(navigationType: _navigationType),
         tree: _tree!,
         checkpoints: _checkpoints,
         boundary: null,

@@ -323,6 +323,9 @@ class NavBoundaries extends Table {
   TextColumn get color => text()();
   RealColumn get strokeWidth => real()();
   TextColumn get sourceBoundaryIdsJson => text().nullable()(); // JSON של מזהי גבולות מקוריים
+  IntColumn get creationMode => integer().withDefault(const Constant(3))(); // NavBoundaryCreationMode.legacy = 3
+  TextColumn get geometryType => text().withDefault(const Constant('polygon'))(); // 'polygon' או 'multipolygon'
+  TextColumn get multiPolygonCoordinatesJson => text().nullable()(); // JSON של רשימת פוליגונים (ל-multipolygon)
   TextColumn get createdBy => text()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -426,7 +429,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 43;
+  int get schemaVersion => 44;
 
   @override
   MigrationStrategy get migration {
@@ -724,6 +727,12 @@ class AppDatabase extends _$AppDatabase {
           await safeAddColumn(navCheckpoints, navCheckpoints.boundaryId);
           await safeAddColumn(navBoundaries, navBoundaries.sourceBoundaryIdsJson);
           await safeAddColumn(navigations, navigations.boundaryLayerIdsJson);
+        }
+        if (from <= 43 && to >= 44) {
+          // Advanced boundary creation modes + MultiPolygon support
+          await safeAddColumn(navBoundaries, navBoundaries.creationMode);
+          await safeAddColumn(navBoundaries, navBoundaries.geometryType);
+          await safeAddColumn(navBoundaries, navBoundaries.multiPolygonCoordinatesJson);
         }
       },
     );

@@ -310,6 +310,74 @@ class GeometryUtils {
     return '$hours:${minutes.toString().padLeft(2, '0')} שעות';
   }
 
+  /// בדיקה מהירה: האם נקודה בתוך bounding box של פוליגון
+  static bool isPointInBoundingBox(Coordinate point, BoundingBox bbox) {
+    return point.lat >= bbox.minLat && point.lat <= bbox.maxLat &&
+        point.lng >= bbox.minLng && point.lng <= bbox.maxLng;
+  }
+
+  /// סינון נקודות בתוך פוליגון — עם bounding box pre-filter לביצועים
+  static List<T> filterPointsInPolygonOptimized<T>({
+    required List<T> points,
+    required Coordinate Function(T) getCoordinate,
+    required List<Coordinate> polygon,
+  }) {
+    if (polygon.isEmpty) return points;
+    if (polygon.length < 3) return [];
+
+    final bbox = getBoundingBox(polygon);
+    return points.where((point) {
+      final coord = getCoordinate(point);
+      if (!isPointInBoundingBox(coord, bbox)) return false;
+      return isPointInPolygon(coord, polygon);
+    }).toList();
+  }
+
+  /// סינון נקודות בתוך מספר פוליגונים (MultiPolygon) — עם bounding box pre-filter
+  static List<T> filterPointsInMultiPolygon<T>({
+    required List<T> points,
+    required Coordinate Function(T) getCoordinate,
+    required List<List<Coordinate>> polygons,
+  }) {
+    if (polygons.isEmpty) return points;
+
+    // חישוב bounding boxes מראש
+    final bboxes = polygons.map((p) => getBoundingBox(p)).toList();
+    final seen = <int>{};
+
+    return points.where((point) {
+      final coord = getCoordinate(point);
+      final pointHash = coord.hashCode;
+      if (seen.contains(pointHash)) return false;
+      for (int i = 0; i < polygons.length; i++) {
+        if (!isPointInBoundingBox(coord, bboxes[i])) continue;
+        if (isPointInPolygon(coord, polygons[i])) {
+          seen.add(pointHash);
+          return true;
+        }
+      }
+      return false;
+    }).toList();
+  }
+
+  /// חישוב נקודה חדשה בכיוון (bearing) ומרחק נתון (Haversine forward)
+  static Coordinate offsetPoint(Coordinate from, double bearingDeg, double distanceMeters) {
+    final lat1 = _toRadians(from.lat);
+    final lng1 = _toRadians(from.lng);
+    final brng = _toRadians(bearingDeg);
+    final d = distanceMeters / (_earthRadiusKm * 1000); // angular distance
+
+    final lat2 = asin(sin(lat1) * cos(d) + cos(lat1) * sin(d) * cos(brng));
+    final lng2 = lng1 + atan2(sin(brng) * sin(d) * cos(lat1),
+        cos(d) - sin(lat1) * sin(lat2));
+
+    return Coordinate(
+      lat: _toDegrees(lat2),
+      lng: _toDegrees(lng2),
+      utm: '',
+    );
+  }
+
   /// סינון פוליגונים שחותכים פוליגון נתון
   static List<T> filterPolygonsIntersecting<T>({
     required List<T> polygons,
@@ -376,6 +444,12 @@ class BoundingBox {
         lng: (minLng + maxLng) / 2,
         utm: '',
       );
+
+  /// האם נקודה בתוך ה-bounding box
+  bool containsPoint(Coordinate point) {
+    return point.lat >= minLat && point.lat <= maxLat &&
+        point.lng >= minLng && point.lng <= maxLng;
+  }
 
   /// רדיוס ה-bounding box בקירוב (במעלות)
   double get radius {

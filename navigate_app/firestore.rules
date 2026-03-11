@@ -125,6 +125,20 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // /deletion_codes/{docId} -- Account deletion OTP codes (server-only)
+    // =========================================================================
+    match /deletion_codes/{docId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // /deletion_log/{docId} -- Account deletion audit log (server-only)
+    // =========================================================================
+    match /deletion_log/{docId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
     // /mail/{docId} -- Firebase Trigger Email extension (server-only)
     // =========================================================================
     match /mail/{docId} {

@@ -1,6 +1,14 @@
 import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
 
+/// מצב יצירת גבול ניווט
+enum NavBoundaryCreationMode {
+  union,      // 0 — איחוד גבולות גזרה
+  manual,     // 1 — ציור ידני על המפה
+  cloneEdit,  // 2 — שכפול ועריכת גבול קיים
+  legacy,     // 3 — תאימות אחורה (גבולות ישנים)
+}
+
 /// נקודת ציון לניווט ספציפי (עותק מקומי לניווט)
 /// כל שכבות הניווט מאוחסנות עם sourceId שמצביע על המקור הגלובלי
 /// תומכת בשני סוגי גאומטריה: נקודה (point) ופוליגון (polygon)
@@ -283,6 +291,9 @@ class NavBoundary extends Equatable {
   final String color;
   final double strokeWidth;
   final List<String> sourceBoundaryIds; // רשימת מזהי גבולות מקוריים שגבול זה מכסה
+  final NavBoundaryCreationMode creationMode;
+  final String geometryType; // 'polygon' או 'multipolygon'
+  final List<List<Coordinate>>? multiPolygonCoordinates; // רק ל-multipolygon
   final String createdBy;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -298,10 +309,30 @@ class NavBoundary extends Equatable {
     this.color = 'black',
     this.strokeWidth = 3.0,
     this.sourceBoundaryIds = const [],
+    this.creationMode = NavBoundaryCreationMode.legacy,
+    this.geometryType = 'polygon',
+    this.multiPolygonCoordinates,
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
   });
+
+  /// כל הקואורדינטות — לפוליגון רגיל מחזיר coordinates,
+  /// ל-multipolygon מחזיר שטוח של כל הפוליגונים (לחישובי bounding box / center)
+  List<Coordinate> get allCoordinates {
+    if (geometryType == 'multipolygon' && multiPolygonCoordinates != null) {
+      return multiPolygonCoordinates!.expand((poly) => poly).toList();
+    }
+    return coordinates;
+  }
+
+  /// רשימת כל הפוליגונים — לסינון נקודות בתוך גבולות
+  List<List<Coordinate>> get allPolygons {
+    if (geometryType == 'multipolygon' && multiPolygonCoordinates != null) {
+      return multiPolygonCoordinates!;
+    }
+    return [coordinates];
+  }
 
   NavBoundary copyWith({
     String? id,
@@ -314,6 +345,10 @@ class NavBoundary extends Equatable {
     String? color,
     double? strokeWidth,
     List<String>? sourceBoundaryIds,
+    NavBoundaryCreationMode? creationMode,
+    String? geometryType,
+    List<List<Coordinate>>? multiPolygonCoordinates,
+    bool clearMultiPolygon = false,
     String? createdBy,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -329,6 +364,9 @@ class NavBoundary extends Equatable {
       color: color ?? this.color,
       strokeWidth: strokeWidth ?? this.strokeWidth,
       sourceBoundaryIds: sourceBoundaryIds ?? this.sourceBoundaryIds,
+      creationMode: creationMode ?? this.creationMode,
+      geometryType: geometryType ?? this.geometryType,
+      multiPolygonCoordinates: clearMultiPolygon ? null : (multiPolygonCoordinates ?? this.multiPolygonCoordinates),
       createdBy: createdBy ?? this.createdBy,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -347,6 +385,12 @@ class NavBoundary extends Equatable {
       'color': color,
       'strokeWidth': strokeWidth,
       if (sourceBoundaryIds.isNotEmpty) 'sourceBoundaryIds': sourceBoundaryIds,
+      'creationMode': creationMode.index,
+      'geometryType': geometryType,
+      if (multiPolygonCoordinates != null)
+        'multiPolygonCoordinates': multiPolygonCoordinates!
+            .map((poly) => poly.map((c) => c.toMap()).toList())
+            .toList(),
       'createdBy': createdBy,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -355,6 +399,16 @@ class NavBoundary extends Equatable {
 
   factory NavBoundary.fromMap(Map<String, dynamic> map) {
     final sourceId = map['sourceId'] as String;
+
+    // creationMode: backward compat — missing → legacy
+    NavBoundaryCreationMode mode = NavBoundaryCreationMode.legacy;
+    if (map['creationMode'] != null) {
+      final modeVal = map['creationMode'];
+      if (modeVal is int && modeVal >= 0 && modeVal < NavBoundaryCreationMode.values.length) {
+        mode = NavBoundaryCreationMode.values[modeVal];
+      }
+    }
+
     return NavBoundary(
       id: map['id'] as String,
       navigationId: map['navigationId'] as String,
@@ -370,6 +424,15 @@ class NavBoundary extends Equatable {
       sourceBoundaryIds: map['sourceBoundaryIds'] != null
           ? List<String>.from(map['sourceBoundaryIds'] as List)
           : [sourceId], // backward compat: default to [sourceId]
+      creationMode: mode,
+      geometryType: map['geometryType'] as String? ?? 'polygon',
+      multiPolygonCoordinates: map['multiPolygonCoordinates'] != null
+          ? (map['multiPolygonCoordinates'] as List)
+              .map((poly) => (poly as List)
+                  .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+                  .toList())
+              .toList()
+          : null,
       createdBy: map['createdBy'] as String,
       createdAt: DateTime.parse(map['createdAt'] as String),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
@@ -379,7 +442,9 @@ class NavBoundary extends Equatable {
   @override
   List<Object?> get props => [
         id, navigationId, sourceId, areaId, name, description,
-        coordinates, color, strokeWidth, sourceBoundaryIds, createdBy, createdAt, updatedAt,
+        coordinates, color, strokeWidth, sourceBoundaryIds,
+        creationMode, geometryType, multiPolygonCoordinates,
+        createdBy, createdAt, updatedAt,
       ];
 }
 
