@@ -180,6 +180,12 @@ class NavigationAlerts extends Equatable {
   final bool healthCheckEnabled;
   final int healthCheckIntervalMinutes; // דקות (30-600, קפיצות 30)
 
+  // עוצמות צליל התראה — keys = AlertType.code, values = 0.0 (מושתק) – 1.0 (מקסימום)
+  final Map<String, double>? alertSoundVolumes;
+
+  /// עוצמת צליל עבור סוג התראה — 1.0 אם לא הוגדר
+  double volumeForAlert(String alertTypeCode) => alertSoundVolumes?[alertTypeCode] ?? 1.0;
+
   const NavigationAlerts({
     required this.enabled,
     this.speedAlertEnabled = false,
@@ -201,6 +207,7 @@ class NavigationAlerts extends Equatable {
     this.noReceptionMinTime,
     this.healthCheckEnabled = true,
     this.healthCheckIntervalMinutes = 60,
+    this.alertSoundVolumes,
   });
 
   NavigationAlerts copyWith({
@@ -224,6 +231,7 @@ class NavigationAlerts extends Equatable {
     int? noReceptionMinTime,
     bool? healthCheckEnabled,
     int? healthCheckIntervalMinutes,
+    Map<String, double>? alertSoundVolumes,
   }) {
     return NavigationAlerts(
       enabled: enabled ?? this.enabled,
@@ -247,6 +255,7 @@ class NavigationAlerts extends Equatable {
       noReceptionMinTime: noReceptionMinTime ?? this.noReceptionMinTime,
       healthCheckEnabled: healthCheckEnabled ?? this.healthCheckEnabled,
       healthCheckIntervalMinutes: healthCheckIntervalMinutes ?? this.healthCheckIntervalMinutes,
+      alertSoundVolumes: alertSoundVolumes ?? this.alertSoundVolumes,
     );
   }
 
@@ -272,6 +281,7 @@ class NavigationAlerts extends Equatable {
       if (noReceptionMinTime != null) 'noReceptionMinTime': noReceptionMinTime,
       'healthCheckEnabled': healthCheckEnabled,
       'healthCheckIntervalMinutes': healthCheckIntervalMinutes,
+      if (alertSoundVolumes != null) 'alertSoundVolumes': alertSoundVolumes,
     };
   }
 
@@ -298,6 +308,13 @@ class NavigationAlerts extends Equatable {
       noReceptionMinTime: map['noReceptionMinTime'] as int?,
       healthCheckEnabled: map['healthCheckEnabled'] as bool? ?? true,
       healthCheckIntervalMinutes: map['healthCheckIntervalMinutes'] as int? ?? 60,
+      alertSoundVolumes: map['alertSoundVolumes'] is Map
+          ? Map<String, double>.from(
+              (map['alertSoundVolumes'] as Map).map(
+                (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+              ),
+            )
+          : null,
     );
   }
 
@@ -323,6 +340,7 @@ class NavigationAlerts extends Equatable {
         noReceptionMinTime,
         healthCheckEnabled,
         healthCheckIntervalMinutes,
+        alertSoundVolumes,
       ];
 }
 

@@ -257,6 +257,7 @@ class NavigationTracks extends Table {
   DateTimeColumn get starNavigatingEndTime => dateTime().nullable()();
   BoolColumn get starReturnedToCenter => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideRevealEnabled => boolean().nullable()(); // nullable: null=nav default, true=force open, false=force closed
+  TextColumn get overrideAlertSoundVolumesJson => text().nullable()(); // JSON עוצמות צליל פר-מנווט
 
   @override
   Set<Column> get primaryKey => {id};
@@ -429,7 +430,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 44;
+  int get schemaVersion => 45;
 
   @override
   MigrationStrategy get migration {
@@ -734,6 +735,10 @@ class AppDatabase extends _$AppDatabase {
           await safeAddColumn(navBoundaries, navBoundaries.geometryType);
           await safeAddColumn(navBoundaries, navBoundaries.multiPolygonCoordinatesJson);
         }
+        if (from <= 44 && to >= 45) {
+          // Commander alert sound volumes — per-navigator override
+          await safeAddColumn(navigationTracks, navigationTracks.overrideAlertSoundVolumesJson);
+        }
       },
     );
   }
@@ -761,6 +766,17 @@ class AppDatabase extends _$AppDatabase {
         .write(SyncQueueCompanion(
       synced: const Value(true),
       syncedAt: Value(DateTime.now()),
+    ));
+  }
+
+  /// סימון מספר רשומות כמסונכרנות בבת אחת
+  Future<void> markBatchAsSynced(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final now = DateTime.now();
+    await (update(syncQueue)..where((tbl) => tbl.id.isIn(ids)))
+        .write(SyncQueueCompanion(
+      synced: const Value(true),
+      syncedAt: Value(now),
     ));
   }
 

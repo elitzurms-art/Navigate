@@ -83,6 +83,9 @@ class NavigationTrackRepository {
             : null,
         starReturnedToCenter: data['starReturnedToCenter'] as bool? ?? false,
         overrideRevealEnabled: data['overrideRevealEnabled'] as bool?,
+        overrideAlertSoundVolumesJson: data['overrideAlertSoundVolumes'] is Map
+            ? jsonEncode(data['overrideAlertSoundVolumes'])
+            : data['overrideAlertSoundVolumesJson'] as String?,
       );
     }).toList();
   }
@@ -365,6 +368,21 @@ class NavigationTrackRepository {
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
           .update({'overrideRevealEnabled': enabled});
+    } catch (_) {}
+  }
+
+  /// עדכון דריסת עוצמות צליל התראה פר-מנווט (Drift + Firestore)
+  Future<void> updateAlertSoundVolumesOverride(String trackId, {required Map<String, double>? volumes}) async {
+    final json = volumes != null ? jsonEncode(volumes) : null;
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideAlertSoundVolumesJson: Value(json),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'overrideAlertSoundVolumes': volumes});
     } catch (_) {}
   }
 

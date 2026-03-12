@@ -117,12 +117,16 @@ class TerrainAnalysisService {
   Future<List<VulnerabilityPoint>> detectVulnerabilities({
     double cliffThreshold = 45.0,
     double pitThreshold = 20.0,
+    double minDepth = 2.0,
+    int pitWindowRadius = 2,
   }) async => [];
 
   Future<List<VulnerabilityZone>> detectVulnerabilityZones({
     double cliffThreshold = 45.0,
     double pitThreshold = 20.0,
     int minClusterCells = 5,
+    double minAreaSquareMeters = 3000.0,
+    double crossTypeThreshold = 20.0,
   }) async => [];
 
   Future<Uint8List?> computeCombinedViewshed(

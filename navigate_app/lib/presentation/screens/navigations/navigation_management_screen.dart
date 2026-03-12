@@ -38,6 +38,8 @@ import '../../widgets/map_controls.dart';
 import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../services/alert_sound_service.dart';
+import '../../widgets/alert_volume_control.dart';
 import '../../../core/utils/permission_utils.dart';
 
 /// מצב הצגת נקודות ציון
@@ -134,6 +136,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Map<String, bool?> _navigatorOverrideRevealEnabled = {};
   final Map<String, int?> _navigatorGpsIntervalOverride = {};
   final Map<String, List<String>?> _navigatorPositionSourcesOverride = {};
+  // דריסות עוצמות צליל פר-מנווט: navigatorId -> { alertTypeCode -> volume }
+  final Map<String, Map<String, double>> _navigatorAlertSoundVolumes = {};
 
   // Voice (PTT)
   VoiceService? _voiceService;
@@ -487,20 +491,18 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _publishCommanderLocation() async {
     if (_selfPosition == null || _currentUser == null) return;
-    try {
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('commander_status')
-          .doc(_currentUser!.uid)
-          .set({
-        'userId': _currentUser!.uid,
-        'name': _currentUser!.fullName,
-        'latitude': _selfPosition!.latitude,
-        'longitude': _selfPosition!.longitude,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (_) {}
+    unawaited(FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('commander_status')
+        .doc(_currentUser!.uid)
+        .set({
+      'userId': _currentUser!.uid,
+      'name': _currentUser!.fullName,
+      'latitude': _selfPosition!.latitude,
+      'longitude': _selfPosition!.longitude,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true)).catchError((_) {}));
   }
 
   void _updateCommanderLocations(QuerySnapshot snapshot) {
@@ -655,9 +657,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             entry.value.hasActiveAlert = alertedNavigators.contains(entry.key);
           }
         });
-        // ויברציה כשמגיעה התראה חדשה
+        // ויברציה + צליל כשמגיעה התראה חדשה
         if (newAlerts.isNotEmpty) {
           HapticFeedback.heavyImpact();
+          final alertsWithVolumes = newAlerts.map((a) =>
+            MapEntry(a.type, _resolveAlertVolume(a.navigatorId, a.type.code))
+          ).toList();
+          AlertSoundService().playAlerts(alertsWithVolumes);
         }
         // חלון קופץ להתראות חירום, תקינות, וברבור חדשות
         for (final alert in newAlerts) {
@@ -1245,6 +1251,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           final sources = data['overrideEnabledPositionSources'];
           _navigatorPositionSourcesOverride[navigatorId] = sources is List ? sources.cast<String>() : null;
         }
+        if (data.containsKey('overrideAlertSoundVolumes') && data['overrideAlertSoundVolumes'] is Map) {
+          _navigatorAlertSoundVolumes[navigatorId] = Map<String, double>.from(
+            (data['overrideAlertSoundVolumes'] as Map).map(
+              (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+            ),
+          );
+        }
 
         // זמן התחלה אישי של המנווט
         final startedAtRaw = data['startedAt'];
@@ -1602,26 +1615,37 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             .where('navigatorUserId', isEqualTo: navigatorId)
             .get();
 
+        final batch = FirebaseFirestore.instance.batch();
+        final endedDocIds = <String>[];
         for (final doc in allTracks.docs) {
           final trackData = doc.data();
           if (trackData['endedAt'] == null) {
-            // track ללא endedAt — מסמן כמסיים
-            await doc.reference.update({
+            batch.update(doc.reference, {
               'isActive': false,
               'endedAt': now.toIso8601String(),
             });
-            try { await _trackRepo.endNavigation(doc.id); } catch (_) {}
+            endedDocIds.add(doc.id);
+          }
+        }
+        if (endedDocIds.isNotEmpty) {
+          unawaited(batch.commit().catchError((_) {}));
+          for (final docId in endedDocIds) {
+            try { await _trackRepo.endNavigation(docId); } catch (_) {}
           }
         }
       } else {
+        // עדכון Firestore ב-batch אחד
+        final batch = FirebaseFirestore.instance.batch();
         for (final doc in snapshot.docs) {
-          // עדכון Firestore: isActive=false + endedAt
-          await doc.reference.update({
+          batch.update(doc.reference, {
             'isActive': false,
             'endedAt': now.toIso8601String(),
           });
+        }
+        unawaited(batch.commit().catchError((_) {}));
 
-          // עדכון מקומי ב-Drift
+        // עדכון מקומי ב-Drift
+        for (final doc in snapshot.docs) {
           try {
             await _trackRepo.endNavigation(doc.id);
           } catch (_) {
@@ -1685,13 +1709,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       // מחיקת דקירות מ-SharedPreferences + Firestore
       await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
 
-      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט)
-      try {
-        await FirebaseFirestore.instance
-            .collection('navigations')
-            .doc(widget.navigation.id)
-            .update({'updatedAt': FieldValue.serverTimestamp()});
-      } catch (_) {}
+      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט) — non-blocking
+      unawaited(FirebaseFirestore.instance
+          .collection('navigations')
+          .doc(widget.navigation.id)
+          .update({'updatedAt': FieldValue.serverTimestamp()}).catchError((_) {}));
 
       // עדכון UI מקומי
       if (mounted) {
@@ -1772,11 +1794,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
       final trackDoc = snapshot.docs.first;
 
-      // עדכון Firestore — isActive=true, endedAt=null
-      await trackDoc.reference.update({
+      // עדכון Firestore — isActive=true, endedAt=null (non-blocking)
+      unawaited(trackDoc.reference.update({
         'isActive': true,
         'endedAt': null,
-      });
+      }).catchError((_) {}));
 
       // עדכון Drift מקומי
       await _trackRepo.resumeNavigation(trackDoc.id);
@@ -1844,13 +1866,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       // מחיקת דקירות מ-SharedPreferences + Firestore
       await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
 
-      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט)
-      try {
-        await FirebaseFirestore.instance
-            .collection('navigations')
-            .doc(widget.navigation.id)
-            .update({'updatedAt': FieldValue.serverTimestamp()});
-      } catch (_) {}
+      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט) — non-blocking
+      unawaited(FirebaseFirestore.instance
+          .collection('navigations')
+          .doc(widget.navigation.id)
+          .update({'updatedAt': FieldValue.serverTimestamp()}).catchError((_) {}));
 
       // עדכון UI מקומי
       if (mounted) {
@@ -2138,18 +2158,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
       final now = DateTime.now();
 
-      // עצירת כל track פעיל
-      for (final doc in snapshot.docs) {
-        await doc.reference.update({
-          'isActive': false,
-          'endedAt': now.toIso8601String(),
-        });
+      // עצירת כל track פעיל — batch Firestore update
+      if (snapshot.docs.isNotEmpty) {
+        final batch = FirebaseFirestore.instance.batch();
+        for (final doc in snapshot.docs) {
+          batch.update(doc.reference, {
+            'isActive': false,
+            'endedAt': now.toIso8601String(),
+          });
+        }
+        unawaited(batch.commit().catchError((_) {}));
 
         // עדכון מקומי ב-Drift
-        try {
-          await _trackRepo.endNavigation(doc.id);
-        } catch (_) {
-          // ייתכן שה-track לא קיים מקומית אצל המפקד
+        for (final doc in snapshot.docs) {
+          try {
+            await _trackRepo.endNavigation(doc.id);
+          } catch (_) {
+            // ייתכן שה-track לא קיים מקומית אצל המפקד
+          }
         }
       }
 
@@ -4719,20 +4745,86 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       const Text('התראות', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 4),
                       ...(_navigatorAlertOverrides[navigatorId]?.entries ?? <MapEntry<AlertType, bool>>[]).map((entry) {
-                        return SwitchListTile(
-                          title: Text(
-                            '${entry.key.emoji} ${entry.key.displayName}',
-                            style: const TextStyle(fontSize: 13),
+                        final navVolumes = _navigatorAlertSoundVolumes[navigatorId] ?? {};
+                        return Row(
+                          children: [
+                            AlertVolumeControl(
+                              volume: navVolumes[entry.key.code] ?? (_currentNavigation?.alerts.volumeForAlert(entry.key.code) ?? 1.0),
+                              onVolumeChanged: (v) {
+                                setState(() {
+                                  _navigatorAlertSoundVolumes.putIfAbsent(navigatorId, () => {});
+                                  if (v == (_currentNavigation?.alerts.volumeForAlert(entry.key.code) ?? 1.0)) {
+                                    _navigatorAlertSoundVolumes[navigatorId]!.remove(entry.key.code);
+                                  } else {
+                                    _navigatorAlertSoundVolumes[navigatorId]![entry.key.code] = v;
+                                  }
+                                  final trackId = _navigatorTrackIds[navigatorId];
+                                  if (trackId != null) {
+                                    final vols = _navigatorAlertSoundVolumes[navigatorId];
+                                    NavigationTrackRepository().updateAlertSoundVolumesOverride(
+                                      trackId,
+                                      volumes: vols != null && vols.isNotEmpty ? vols : null,
+                                    );
+                                  }
+                                });
+                                setSheetState(() {});
+                              },
+                            ),
+                            Expanded(child: SwitchListTile(
+                              title: Text(
+                                '${entry.key.emoji} ${entry.key.displayName}',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              value: entry.value,
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (v) {
+                                setState(() {
+                                  _navigatorAlertOverrides[navigatorId]![entry.key] = v;
+                                });
+                                setSheetState(() {});
+                              },
+                            )),
+                          ],
+                        );
+                      }),
+                      // עוצמות צליל לקטגוריות נוספות (ברבור, חירום, הארכה)
+                      ...[
+                        MapEntry(AlertType.extensionRequest, '📋 בקשות הארכה'),
+                        MapEntry(AlertType.barbur, '⚠️ ברבור'),
+                        MapEntry(AlertType.emergency, '🚨 חירום'),
+                      ].map((e) {
+                        final navVolumes = _navigatorAlertSoundVolumes[navigatorId] ?? {};
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              AlertVolumeControl(
+                                volume: navVolumes[e.key.code] ?? (_currentNavigation?.alerts.volumeForAlert(e.key.code) ?? 1.0),
+                                onVolumeChanged: (v) {
+                                  setState(() {
+                                    _navigatorAlertSoundVolumes.putIfAbsent(navigatorId, () => {});
+                                    if (v == (_currentNavigation?.alerts.volumeForAlert(e.key.code) ?? 1.0)) {
+                                      _navigatorAlertSoundVolumes[navigatorId]!.remove(e.key.code);
+                                    } else {
+                                      _navigatorAlertSoundVolumes[navigatorId]![e.key.code] = v;
+                                    }
+                                    final trackId = _navigatorTrackIds[navigatorId];
+                                    if (trackId != null) {
+                                      final vols = _navigatorAlertSoundVolumes[navigatorId];
+                                      NavigationTrackRepository().updateAlertSoundVolumesOverride(
+                                        trackId,
+                                        volumes: vols != null && vols.isNotEmpty ? vols : null,
+                                      );
+                                    }
+                                  });
+                                  setSheetState(() {});
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              Text(e.value, style: const TextStyle(fontSize: 13)),
+                            ],
                           ),
-                          value: entry.value,
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          onChanged: (v) {
-                            setState(() {
-                              _navigatorAlertOverrides[navigatorId]![entry.key] = v;
-                            });
-                            setSheetState(() {});
-                          },
                         );
                       }),
 
@@ -5255,6 +5347,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             AlertType.noReception: alerts.noReceptionAlertEnabled,
             AlertType.healthCheckExpired: alerts.healthCheckEnabled,
           };
+          break;
+        case 'alertSoundVolumes':
+          _navigatorAlertSoundVolumes.remove(navigatorId);
+          await _trackRepo.updateAlertSoundVolumesOverride(
+            trackId,
+            volumes: null,
+          );
           break;
       }
     }
@@ -6078,12 +6177,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         return Colors.blue;
       case AlertType.securityBreach:
         return Colors.red;
+      case AlertType.extensionRequest:
+        return Colors.blue;
     }
   }
 
   // ===========================================================================
   // Extension Requests — בקשות הארכה
   // ===========================================================================
+
+  /// פענוח עוצמת צליל: דריסה פר-מנווט → ברירת מחדל ניווט → 1.0
+  double _resolveAlertVolume(String navigatorId, String alertTypeCode) {
+    final perNav = _navigatorAlertSoundVolumes[navigatorId];
+    if (perNav != null && perNav.containsKey(alertTypeCode)) {
+      return perNav[alertTypeCode]!;
+    }
+    return _currentNavigation?.alerts.volumeForAlert(alertTypeCode) ?? 1.0;
+  }
 
   void _startExtensionRequestListener() {
     if (!widget.navigation.timeCalculationSettings.allowExtensionRequests) return;
@@ -6097,6 +6207,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         if (req.status == ExtensionRequestStatus.pending &&
             !_shownExtensionPopups.contains(req.id)) {
           _shownExtensionPopups.add(req.id);
+          final vol = _resolveAlertVolume(req.navigatorId, AlertType.extensionRequest.code);
+          AlertSoundService().playAlert(AlertType.extensionRequest, vol);
           _showExtensionPopup(req);
         }
       }
@@ -6115,10 +6227,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .listen((snap) {
       if (!mounted || _alreadyClosed) return;
 
-      // Detect external status change — another admin finished/changed the navigation
+      // Detect external status change — another admin finished the navigation
+      // Only close if status moved to a "finished" state (review/approval),
+      // not for pre-active statuses (preparation/learning/system_check) which
+      // can appear from stale Firestore cache before sync pushes the new status.
       final status = snap.data()?['status'] as String?;
-      const activeStatuses = {'active', 'waiting'};
-      if (status != null && !activeStatuses.contains(status)) {
+      const finishedStatuses = {'review', 'approval'};
+      if (status != null && finishedStatuses.contains(status)) {
         _alreadyClosed = true;
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -7185,7 +7300,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
       title: 'התראות',
       icon: Icons.notifications_outlined,
       children: [
-        // טוגלים עם סלידרים
+        // טוגלים עם סלידרים + פקדי עוצמה
         _alertToggleWithSlider(
           label: 'מהירות',
           enabled: alerts.speedAlertEnabled,
@@ -7194,6 +7309,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת מהירות',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.speed.code),
           sliderLabel: 'מהירות מקסימלית',
           sliderSuffix: ' קמ"ש',
           value: (alerts.maxSpeed ?? 30).toDouble(),
@@ -7215,6 +7331,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת ללא תנועה',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.noMovement.code),
           sliderLabel: 'דקות ללא תנועה',
           sliderSuffix: ' דק\'',
           value: (alerts.noMovementMinutes ?? 10).toDouble(),
@@ -7236,6 +7353,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת חריגה מג"ג',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.boundary.code),
           sliderLabel: 'טווח התראה',
           sliderSuffix: ' מ\'',
           value: (alerts.ggAlertRange ?? 50).toDouble(),
@@ -7257,6 +7375,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת סטייה מציר',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.routeDeviation.code),
           sliderLabel: 'טווח סטייה',
           sliderSuffix: ' מ\'',
           value: (alerts.routesAlertRange ?? 50).toDouble(),
@@ -7278,6 +7397,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת נ"ב',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.safetyPoint.code),
           sliderLabel: 'טווח נ"ב',
           sliderSuffix: ' מ\'',
           value: (alerts.nbAlertRange ?? 50).toDouble(),
@@ -7299,6 +7419,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת קרבה בין מנווטים',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.proximity.code),
           sliderLabel: 'מרחק קרבה',
           sliderSuffix: ' מ\'',
           value: (alerts.proximityDistance ?? 20).toDouble(),
@@ -7335,6 +7456,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת סוללה',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.battery.code),
           sliderLabel: 'סף סוללה',
           sliderSuffix: '%',
           value: (alerts.batteryPercentage ?? 20).toDouble(),
@@ -7356,6 +7478,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'התראת היעדר קליטה',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.noReception.code),
           sliderLabel: 'זמן ללא קליטה',
           sliderSuffix: ' שנ\'',
           value: (alerts.noReceptionMinTime ?? 60).toDouble(),
@@ -7377,6 +7500,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             'דיווח תקינות',
             'alertToggle',
           ),
+          volumeControl: _buildAlertVolumeControl(AlertType.healthCheckExpired.code),
           sliderLabel: 'תדירות בדיקה',
           sliderSuffix: ' דק\'',
           value: alerts.healthCheckIntervalMinutes.toDouble(),
@@ -7390,6 +7514,11 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
           ),
           showSlider: alerts.healthCheckEnabled,
         ),
+        // קטגוריות צליל נוספות
+        const Divider(),
+        _buildCategorySoundRow(label: '📋 בקשות הארכה', alertCode: AlertType.extensionRequest.code),
+        _buildCategorySoundRow(label: '⚠️ ברבור', alertCode: AlertType.barbur.code),
+        _buildCategorySoundRow(label: '🚨 חירום מנווט', alertCode: AlertType.emergency.code),
       ],
     );
   }
@@ -7809,11 +7938,17 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
     required ValueChanged<double> onSliderChanged,
     required bool showSlider,
     Widget? extraSlider,
+    Widget? volumeControl,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _toggleTile(label: label, value: enabled, onChanged: onToggle),
+        Row(
+          children: [
+            if (volumeControl != null) volumeControl,
+            Expanded(child: _toggleTile(label: label, value: enabled, onChanged: onToggle)),
+          ],
+        ),
         if (showSlider)
           _sliderRow(
             label: sliderLabel,
@@ -7826,6 +7961,59 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
           ),
         if (extraSlider != null) extraSlider,
       ],
+    );
+  }
+
+  Widget _buildAlertVolumeControl(String alertCode) {
+    final volumes = _nav.alerts.alertSoundVolumes ?? {};
+    return AlertVolumeControl(
+      volume: volumes[alertCode] ?? 1.0,
+      onVolumeChanged: (v) {
+        final updated = Map<String, double>.from(volumes);
+        if (v == 1.0) {
+          updated.remove(alertCode);
+        } else {
+          updated[alertCode] = v;
+        }
+        _applySetting(
+          _nav.copyWith(alerts: _nav.alerts.copyWith(
+            alertSoundVolumes: updated.isEmpty ? null : updated,
+          )),
+          'עוצמת צליל',
+          'alertSoundVolumes',
+        );
+      },
+    );
+  }
+
+  Widget _buildCategorySoundRow({required String label, required String alertCode}) {
+    final volumes = _nav.alerts.alertSoundVolumes ?? {};
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Row(
+        children: [
+          AlertVolumeControl(
+            volume: volumes[alertCode] ?? 1.0,
+            onVolumeChanged: (v) {
+              final updated = Map<String, double>.from(volumes);
+              if (v == 1.0) {
+                updated.remove(alertCode);
+              } else {
+                updated[alertCode] = v;
+              }
+              _applySetting(
+                _nav.copyWith(alerts: _nav.alerts.copyWith(
+                  alertSoundVolumes: updated.isEmpty ? null : updated,
+                )),
+                'עוצמת צליל',
+                'alertSoundVolumes',
+              );
+            },
+          ),
+          const SizedBox(width: 4),
+          Text(label, style: const TextStyle(fontSize: 13)),
+        ],
+      ),
     );
   }
 }

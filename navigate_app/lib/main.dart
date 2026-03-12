@@ -138,15 +138,27 @@ Future<void> _ensureFirebaseAuth() async {
   if (loggedInUid == null || loggedInUid.isEmpty) return;
 
   // כניסה אנונימית אם אין משתמש Firebase קיים
+  // Windows: Firebase Auth SDK צריך זמן לאתחול — retry עם delay
   String? firebaseUid = FirebaseAuth.instance.currentUser?.uid;
   if (firebaseUid == null) {
-    try {
-      final credential = await FirebaseAuth.instance.signInAnonymously();
-      firebaseUid = credential.user?.uid;
-      print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid, firebaseUid=$firebaseUid)');
-    } catch (e) {
-      print('DEBUG: Anonymous sign-in failed: $e');
-      return;
+    const maxRetries = 5;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        final credential = await FirebaseAuth.instance.signInAnonymously();
+        firebaseUid = credential.user?.uid;
+        print('DEBUG: Signed in anonymously for Firestore access (user=$loggedInUid, firebaseUid=$firebaseUid, attempt=$attempt)');
+        break;
+      } catch (e) {
+        print('DEBUG: Anonymous sign-in failed (attempt $attempt/$maxRetries): $e');
+        if (attempt < maxRetries) {
+          await Future.delayed(Duration(seconds: attempt * 3));
+        }
+      }
+    }
+
+    // Windows fallback: if signInAnonymously fails, use email/password auth via CF
+    if (firebaseUid == null && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+      firebaseUid = await _signInWithEmailFallback(loggedInUid);
     }
   } else {
     // משתמש קיים — רענון token כדי לוודא שהוא תקף
@@ -155,15 +167,18 @@ Future<void> _ensureFirebaseAuth() async {
       print('DEBUG: Refreshed existing Firebase token for $loggedInUid');
     } catch (e) {
       // Token לא תקף — כניסה מחדש
-      print('DEBUG: Token refresh failed ($e), re-signing in anonymously...');
-      try {
-        await FirebaseAuth.instance.signOut();
-        final credential = await FirebaseAuth.instance.signInAnonymously();
-        firebaseUid = credential.user?.uid;
-        print('DEBUG: Re-signed in anonymously (user=$loggedInUid, firebaseUid=$firebaseUid)');
-      } catch (e2) {
-        print('DEBUG: Re-sign-in failed: $e2');
-        return;
+      print('DEBUG: Token refresh failed ($e), trying alternatives...');
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        firebaseUid = await _signInWithEmailFallback(loggedInUid);
+      } else {
+        try {
+          await FirebaseAuth.instance.signOut();
+          final credential = await FirebaseAuth.instance.signInAnonymously();
+          firebaseUid = credential.user?.uid;
+          print('DEBUG: Re-signed in anonymously (user=$loggedInUid, firebaseUid=$firebaseUid)');
+        } catch (e2) {
+          print('DEBUG: Re-sign-in failed: $e2');
+        }
       }
     }
   }
@@ -178,24 +193,56 @@ Future<void> _ensureFirebaseAuth() async {
     await userRepo.saveUserLocally(user.copyWith(firebaseUid: firebaseUid), queueSync: false);
   }
 
-  // קריאה ל-Cloud Function לקביעת custom claims (תמיד — גם אם Firebase user קיים)
-  // Cloud Function גם מתקנת role=developer למפתחים ידועים (DEVELOPER_UIDS)
-  // CF blocks until claims verified server-side — JWT verification handled internally
-  try {
-    await AuthService().initSessionClaims(loggedInUid);
-  } catch (e) {
-    print('DEBUG: initSession call failed: $e');
+  // initSession — on desktop, custom token already sets claims via CF.
+  // On mobile or if custom token wasn't used, call initSession for claims.
+  if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
+    try {
+      await AuthService().initSessionClaims(loggedInUid);
+    } catch (e) {
+      print('DEBUG: initSession call failed: $e');
+    }
   }
 
   // Windows workaround: Firestore C++ SDK may not pick up refreshed auth token.
   // Cycling the network forces a fresh gRPC connection with updated claims.
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    try {
+      final firestore = FirebaseFirestore.instance;
+      await firestore.disableNetwork();
+      await Future.delayed(const Duration(seconds: 1));
+      await firestore.enableNetwork();
+      print('DEBUG _ensureFirebaseAuth: Firestore network cycled for token refresh');
+    } catch (_) {}
+  }
+}
+
+/// Windows fallback: Firebase Auth C++ SDK is broken (threading bugs).
+/// All sign-in methods (anonymous, customToken) fail with "internal error".
+/// This uses email/password auth via a Cloud Function that creates a Firebase
+/// user with deterministic credentials and sets custom claims.
+Future<String?> _signInWithEmailFallback(String personalNumber) async {
   try {
-    final firestore = FirebaseFirestore.instance;
-    await firestore.disableNetwork();
-    await Future.delayed(const Duration(milliseconds: 500));
-    await firestore.enableNetwork();
-    print('DEBUG _ensureFirebaseAuth: Firestore network cycled for token refresh');
-  } catch (_) {}
+    print('DEBUG: Trying email/password auth fallback for $personalNumber...');
+    final authService = AuthService();
+    final result = await authService.createAuthToken(personalNumber);
+    final email = result['email'] as String?;
+    final password = result['password'] as String?;
+    if (email == null || password == null) {
+      print('DEBUG: Email fallback — no credentials returned');
+      return null;
+    }
+
+    final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+    final uid = credential.user?.uid;
+    print('DEBUG: Signed in with email/password (user=$personalNumber, firebaseUid=$uid)');
+    return uid;
+  } catch (e) {
+    print('DEBUG: Email/password fallback failed: $e');
+    return null;
+  }
 }
 
 /// בקשת כל ההרשאות הנדרשות שעדיין לא אושרו

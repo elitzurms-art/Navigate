@@ -257,32 +257,30 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     final uid = widget.currentUser?.uid;
     if (uid == null) return;
 
-    try {
-      final docRef = FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('system_status')
-          .doc(uid);
+    final docRef = FirebaseFirestore.instance
+        .collection(AppConstants.navigationsCollection)
+        .doc(widget.navigation.id)
+        .collection('system_status')
+        .doc(uid);
 
-      await docRef.set({
-        'navigatorId': uid,
-        'isConnected': _currentPosition != null,
-        'batteryLevel': _batteryLevel,
-        'hasGPS': _hasGpsPermission && _hasLocationService,
-        'hasBackgroundLocation': _hasBackgroundLocationPermission,
-        'gpsAccuracy': _gpsAccuracy,
-        'receptionLevel': _estimateReceptionLevel(),
-        'latitude': _currentPosition?.latitude,
-        'longitude': _currentPosition?.longitude,
-        'positionSource': _gpsService.lastPositionSource.name,
-        'hasMicrophonePermission': _permissionStatuses['microphone']?.isGranted ?? false,
-        'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
-        'hasDNDPermission': _hasDNDPermission,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (e) {
+    unawaited(docRef.set({
+      'navigatorId': uid,
+      'isConnected': _currentPosition != null,
+      'batteryLevel': _batteryLevel,
+      'hasGPS': _hasGpsPermission && _hasLocationService,
+      'hasBackgroundLocation': _hasBackgroundLocationPermission,
+      'gpsAccuracy': _gpsAccuracy,
+      'receptionLevel': _estimateReceptionLevel(),
+      'latitude': _currentPosition?.latitude,
+      'longitude': _currentPosition?.longitude,
+      'positionSource': _gpsService.lastPositionSource.name,
+      'hasMicrophonePermission': _permissionStatuses['microphone']?.isGranted ?? false,
+      'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
+      'hasDNDPermission': _hasDNDPermission,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true)).catchError((e) {
       print('DEBUG SystemCheck: failed to report status: $e');
-    }
+    }));
   }
 
   /// הערכת רמת קליטה לפי דיוק GPS
@@ -831,18 +829,14 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       await _navRepo.update(updatedNav);
       _currentNavigation = updatedNav;
 
-      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
-      try {
-        await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(updatedNav.id)
-            .set({
-          'status': 'system_check',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      } catch (_) {
-        // best-effort — תור הסנכרון הוא ה-fallback
-      }
+      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים (non-blocking — תור הסנכרון הוא ה-fallback)
+      unawaited(FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(updatedNav.id)
+          .set({
+        'status': 'system_check',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true)).catchError((_) {}));
 
       if (mounted) {
         Navigator.pop(context); // סגירת עיגול טעינה
@@ -890,19 +884,25 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
     if (confirmed != true) return;
 
-    // Clean up system_status documents from Firestore
-    try {
-      final statusCollection = FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(_currentNavigation.id)
-          .collection('system_status');
-      final snapshot = await statusCollection.get();
-      for (final doc in snapshot.docs) {
-        await doc.reference.delete();
+    // Clean up system_status documents from Firestore (non-blocking batch)
+    unawaited(() async {
+      try {
+        final statusCollection = FirebaseFirestore.instance
+            .collection(AppConstants.navigationsCollection)
+            .doc(_currentNavigation.id)
+            .collection('system_status');
+        final snapshot = await statusCollection.get();
+        if (snapshot.docs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in snapshot.docs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        print('DEBUG SystemCheck: failed to clean up system_status: $e');
       }
-    } catch (e) {
-      print('DEBUG SystemCheck: failed to clean up system_status: $e');
-    }
+    }());
 
     final updatedNavigation = _currentNavigation.copyWith(
       status: 'preparation',

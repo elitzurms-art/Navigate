@@ -116,14 +116,21 @@ class NavigatorAlertRepository {
 
   /// מחיקת כל ההתראות לניווט (איפוס לפני התחלה מחדש)
   Future<void> deleteByNavigation(String navigationId) async {
-    try {
-      final snapshot = await _alertsCollection(navigationId).get();
-      for (final doc in snapshot.docs) {
-        await doc.reference.delete();
+    // מחיקה מ-Firestore (non-blocking — לא חוסם UI)
+    unawaited(() async {
+      try {
+        final snapshot = await _alertsCollection(navigationId).get();
+        if (snapshot.docs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in snapshot.docs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        print('DEBUG NavigatorAlertRepository: error deleting by navigation: $e');
       }
-    } catch (e) {
-      print('DEBUG NavigatorAlertRepository: error deleting by navigation: $e');
-    }
+    }());
   }
 
   /// קבלת התראות למנווט ספציפי (ללא healthReport)

@@ -659,18 +659,14 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         updatedAt: now,
       );
 
-      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים
-      try {
-        await FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(_currentNavigation.id)
-            .set({
-          'status': 'learning',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      } catch (_) {
-        // best-effort — תור הסנכרון הוא ה-fallback
-      }
+      // כתיבה ישירה ל-Firestore לנראות מיידית למנווטים (non-blocking — תור הסנכרון הוא ה-fallback)
+      unawaited(FirebaseFirestore.instance
+          .collection(AppConstants.navigationsCollection)
+          .doc(_currentNavigation.id)
+          .set({
+        'status': 'learning',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true)).catchError((_) {}));
 
       if (mounted) {
         Navigator.pop(context); // סגירת עיגול טעינה
@@ -740,38 +736,32 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     }
   }
 
-  Future<void> _deleteNavigation() async {
-    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('מחיקת ניווט'),
-        content: const Text('פעולה זו בלתי הפיכה!\nכל נתוני הניווט יימחקו לצמיתות.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('מחק'),
-          ),
-        ],
+  void _showCannotDeleteMessage() {
+    final status = _currentNavigation.status;
+    String reason;
+    switch (status) {
+      case 'learning':
+        reason = 'לא ניתן למחוק ניווט בשלב למידה';
+        break;
+      case 'system_check':
+        reason = 'לא ניתן למחוק ניווט בשלב בדיקת מערכות';
+        break;
+      case 'waiting':
+        reason = 'לא ניתן למחוק ניווט בשלב המתנה לאימון';
+        break;
+      case 'active':
+        reason = 'לא ניתן למחוק ניווט פעיל';
+        break;
+      default:
+        reason = 'לא ניתן למחוק ניווט במצב הנוכחי';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(reason),
+        backgroundColor: Colors.orange[700],
+        duration: const Duration(seconds: 2),
       ),
     );
-    if (confirmed != true) return;
-
-    try {
-      await _navRepo.delete(_currentNavigation.id);
-      if (mounted) Navigator.pop(context, 'deleted');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
   }
 
   @override
@@ -799,9 +789,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           actions: [
             if (widget.isCommander)
               IconButton(
-                icon: const Icon(Icons.delete_forever),
-                tooltip: 'מחיקת ניווט',
-                onPressed: _deleteNavigation,
+                icon: Icon(Icons.delete_forever, color: Colors.white.withOpacity(0.5)),
+                tooltip: 'לא ניתן למחוק ניווט במצב הנוכחי',
+                onPressed: _showCannotDeleteMessage,
               ),
           ],
           bottom: TabBar(

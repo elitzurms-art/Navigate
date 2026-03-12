@@ -164,7 +164,8 @@ enum AlertType {
   proximity('proximity', 'קרבת מנווטים', '👥'),
   battery('battery', 'סוללה נמוכה', '🔋'),
   noReception('no_reception', 'חוסר קליטה', '📵'),
-  securityBreach('security_breach', 'פריצת אבטחה', '🔓');
+  securityBreach('security_breach', 'פריצת אבטחה', '🔓'),
+  extensionRequest('extension_request', 'בקשת הארכה', '📋');
 
   final String code;
   final String displayName;
@@ -177,6 +178,24 @@ enum AlertType {
       (t) => t.code == code,
       orElse: () => AlertType.emergency,
     );
+  }
+}
+
+/// קטגוריית צליל התראה
+enum AlertSoundCategory { monitoring, request, emergency }
+
+/// מיפוי סוג התראה לקטגוריית צליל
+extension AlertTypeSound on AlertType {
+  AlertSoundCategory get soundCategory {
+    switch (this) {
+      case AlertType.extensionRequest:
+      case AlertType.barbur:
+        return AlertSoundCategory.request;
+      case AlertType.emergency:
+        return AlertSoundCategory.emergency;
+      default:
+        return AlertSoundCategory.monitoring;
+    }
   }
 }
 

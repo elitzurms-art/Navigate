@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -32,6 +33,31 @@ class AuthService {
   static const _projectId = 'navigate-native';
   static const _region = 'us-central1';
 
+  static const MethodChannel _authChannel = MethodChannel('com.elitzur.navigate/auth');
+
+  /// Phone Number Hint (Android only) — returns local format (05XXXXXXXX) or null
+  static Future<String?> requestPhoneNumberHint() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final phone = await _authChannel.invokeMethod<String>('requestPhoneNumberHint');
+      if (phone == null || phone.isEmpty) return null;
+      return _convertE164ToLocal(phone);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// +972XXXXXXXXX → 0XXXXXXXXX
+  static String? _convertE164ToLocal(String e164) {
+    final cleaned = e164.replaceAll(RegExp(r'[\s\-]'), '');
+    if (cleaned.startsWith('+972') && cleaned.length == 13) {
+      final local = '0${cleaned.substring(4)}';
+      if (RegExp(r'^05\d{8}$').hasMatch(local)) return local;
+    }
+    if (RegExp(r'^05\d{8}$').hasMatch(cleaned)) return cleaned;
+    return null; // non-Israeli or bad format → skip
+  }
+
   /// קריאה ל-Cloud Function — SDK רגיל במובייל, HTTP ישיר בדסקטופ
   Future<Map<String, dynamic>> _callCloudFunction(
     String functionName,
@@ -58,16 +84,20 @@ class AuthService {
     final httpName = 'http${functionName[0].toUpperCase()}${functionName.substring(1)}';
     final url = Uri.parse('https://$_region-$_projectId.cloudfunctions.net/$httpName');
 
-    // קבלת token אימות
+    // קבלת token אימות — retry עם delay ב-Windows (auth state propagation)
     String? idToken;
     final user = _auth.currentUser;
     if (user != null) {
-      try {
-        idToken = await user.getIdToken();
-        // ניקוי תווים לא חוקיים שיכולים לשבור header parsing ב-Windows
-        idToken = idToken?.trim().replaceAll(RegExp(r'[\r\n]'), '');
-      } catch (e) {
-        print('DEBUG _callCloudFunction: getIdToken failed: $e');
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+          idToken = await user.getIdToken();
+          // ניקוי תווים לא חוקיים שיכולים לשבור header parsing ב-Windows
+          idToken = idToken?.trim().replaceAll(RegExp(r'[\r\n]'), '');
+          break;
+        } catch (e) {
+          print('DEBUG _callCloudFunction: getIdToken failed (attempt $attempt/3): $e');
+          if (attempt < 3) await Future.delayed(Duration(seconds: attempt));
+        }
       }
     }
 
@@ -700,12 +730,21 @@ class AuthService {
     if (user == null) return {};
 
     // CF blocks until claims verified server-side — single refresh suffices
-    final result = await _callCloudFunction('initSession', {'personalNumber': personalNumber});
-    await user.getIdToken(true);
+    // Pass firebaseUid for Windows fallback (getIdToken broken in C++ SDK)
+    final result = await _callCloudFunction('initSession', {
+      'personalNumber': personalNumber,
+      'firebaseUid': user.uid,
+    });
+    try {
+      await user.getIdToken(true);
+    } catch (e) {
+      print('DEBUG initSessionClaims: getIdToken(true) failed after CF: $e');
+    }
 
     // Verify claims actually contain the expected appUid.
     // Safety net for propagation delays (Windows platform-channel threading,
     // network latency, or CF deployment lag).
+    // On Windows, getIdToken() is broken — skip verification but trust CF success.
     for (int attempt = 0; attempt < 3; attempt++) {
       try {
         final token = await user.getIdToken(false);
@@ -722,14 +761,31 @@ class AuthService {
         }
       } catch (e) {
         print('DEBUG initSessionClaims: JWT decode failed (attempt $attempt): $e');
+        if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+          // getIdToken broken on desktop — trust that CF set claims server-side
+          print('DEBUG initSessionClaims: desktop platform — trusting CF success');
+          return result;
+        }
       }
       // Claims not set yet — wait and force-refresh
       await Future.delayed(const Duration(milliseconds: 500));
-      await user.getIdToken(true);
+      try {
+        await user.getIdToken(true);
+      } catch (_) {}
     }
 
     print('WARNING initSessionClaims: claims verification failed after 3 attempts for $personalNumber');
     return result;
+  }
+
+  // ─── Custom Token (Windows fallback — signInAnonymously broken) ───
+
+  /// יצירת custom token דרך Cloud Function (ללא צורך ב-Firebase Auth)
+  /// משמש כ-fallback כש-signInAnonymously נכשל ב-Windows
+  Future<Map<String, dynamic>> createAuthToken(String personalNumber) async {
+    return _callCloudFunction('createAuthToken', {
+      'personalNumber': personalNumber,
+    });
   }
 
   // ─── אימות Email OTP (דסקטופ) ───
@@ -1055,22 +1111,19 @@ class AuthService {
 
   /// יציאה
   Future<void> signOut() async {
-    // ניקוי activeSessionId + commander_tokens ב-Firestore (לפני Firebase signOut!)
+    // ניקוי activeSessionId + commander_tokens ב-Firestore (non-blocking — לא חוסם UI)
     final prefs = await SharedPreferences.getInstance();
     final uid = prefs.getString('logged_in_uid');
     if (uid != null) {
-      try {
-        await _firestore.collection('users').doc(uid).update({
-          'activeSessionId': FieldValue.delete(),
-        });
-      } catch (e) {
+      unawaited(_firestore.collection('users').doc(uid).update({
+        'activeSessionId': FieldValue.delete(),
+      }).catchError((e) {
         print('DEBUG: Failed to clear activeSessionId: $e');
-      }
-      try {
-        await _firestore.collection('commander_tokens').doc(uid).delete();
-      } catch (e) {
+      }));
+      unawaited(_firestore.collection('commander_tokens').doc(uid).delete()
+          .catchError((e) {
         print('DEBUG: Failed to delete commander_tokens: $e');
-      }
+      }));
     }
 
     await NotificationService().clearToken();

@@ -86,6 +86,9 @@ dependencies:
   # Polygon operations (union, intersection, difference, xor)
   polybool: ^0.2.0
 
+  # Geospatial geometry (point-in-polygon, line intersections)
+  turf: ^0.0.10
+
   # Utils
   intl: '>=0.19.0 <1.0.0'
   uuid: ^4.3.3
@@ -106,6 +109,18 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background_color: "#ffffff"
+    theme_color: "#ffffff"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
   image_path: "assets/icon/app_icon.png"
 
 flutter:

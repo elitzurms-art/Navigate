@@ -17,17 +17,28 @@ import android.provider.Settings
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.NonNull
 import androidx.annotation.RequiresApi
-import io.flutter.embedding.android.FlutterActivity
+import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
+import com.google.android.gms.auth.api.identity.Identity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity: FlutterActivity() {
+class MainActivity: FlutterFragmentActivity() {
     private val CHANNEL = "com.elitzur.navigate/security"
     private var methodChannel: MethodChannel? = null
     private var devicePolicyManager: DevicePolicyManager? = null
     private var adminComponentName: ComponentName? = null
+
+    // Phone Number Hint (auth channel)
+    private val AUTH_CHANNEL = "com.elitzur.navigate/auth"
+    private var authMethodChannel: MethodChannel? = null
+    private var phoneHintResult: MethodChannel.Result? = null
+    private lateinit var phoneHintLauncher: ActivityResultLauncher<IntentSenderRequest>
 
     // מעקב מצב Lock Task לזיהוי יציאה
     private var wasInLockTaskMode = false
@@ -63,6 +74,15 @@ class MainActivity: FlutterActivity() {
         devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         adminComponentName = ComponentName(this, DeviceAdminReceiver::class.java)
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+        // Auth channel — Phone Number Hint
+        authMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUTH_CHANNEL)
+        authMethodChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "requestPhoneNumberHint" -> requestPhoneNumberHint(result)
+                else -> result.notImplemented()
+            }
+        }
 
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
@@ -127,6 +147,25 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Register ActivityResultLauncher BEFORE super.onCreate()
+        phoneHintLauncher = registerForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+            val pending = phoneHintResult
+            phoneHintResult = null
+            if (result.resultCode == RESULT_OK && result.data != null) {
+                try {
+                    val phone = Identity.getSignInClient(this)
+                        .getPhoneNumberFromIntent(result.data!!)
+                    pending?.success(phone)
+                } catch (e: Exception) {
+                    pending?.success(null)
+                }
+            } else {
+                pending?.success(null)
+            }
+        }
+
         super.onCreate(savedInstanceState)
 
         // רישום BroadcastReceiver לאירועי מסך
@@ -379,6 +418,55 @@ class MainActivity: FlutterActivity() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    // ========== Phone Number Hint ==========
+
+    private fun requestPhoneNumberHint(result: MethodChannel.Result) {
+        if (phoneHintResult != null) { result.success(null); return }
+        phoneHintResult = result
+        val request = GetPhoneNumberHintIntentRequest.builder().build()
+        Identity.getSignInClient(this)
+            .getPhoneNumberHintIntent(request)
+            .addOnSuccessListener { pendingIntent ->
+                try {
+                    phoneHintLauncher.launch(
+                        IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+                    )
+                } catch (e: Exception) {
+                    phoneHintResult = null
+                    result.success(getPhoneFromTelephony())
+                }
+            }
+            .addOnFailureListener {
+                phoneHintResult = null
+                result.success(getPhoneFromTelephony())
+            }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getPhoneFromTelephony(): String? {
+        return try {
+            val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                checkSelfPermission(android.Manifest.permission.READ_PHONE_NUMBERS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            if (!hasPermission) return null
+
+            val number = tm.line1Number
+            if (!number.isNullOrBlank()) return number
+
+            // Fallback: SubscriptionManager
+            val subMgr = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+            val subNumber = subMgr?.activeSubscriptionInfoList?.firstOrNull()?.number
+            if (!subNumber.isNullOrBlank()) return subNumber
+
+            null
+        } catch (e: Exception) {
+            null
         }
     }
 

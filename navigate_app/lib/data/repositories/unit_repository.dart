@@ -7,6 +7,7 @@ import '../../domain/entities/unit.dart' as domain;
 import '../../domain/entities/unit_checklist.dart';
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
+import 'navigation_repository.dart';
 import 'user_repository.dart';
 
 /// Repository for managing units (Drift + Firestore sync)
@@ -190,17 +191,17 @@ class UnitRepository {
             .get();
         for (final tree in trees) {
           treesToDelete.add(tree.id);
-          // Soft-delete navigations that use this tree (שימור היסטוריה)
+          // Hard-delete navigations that use this tree
           final navs = await (_db.select(_db.navigations)
                 ..where((t) => t.treeId.equals(tree.id)))
               .get();
           for (final nav in navs) {
-            await (_db.update(_db.navigations)..where((t) => t.id.equals(nav.id)))
-                .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
+            NavigationRepository.markAsRecentlyDeleted(nav.id);
+            await (_db.delete(_db.navigations)..where((t) => t.id.equals(nav.id))).go();
             await _syncManager.queueOperation(
               collection: AppConstants.navigationsCollection,
               documentId: nav.id,
-              operation: 'delete',
+              operation: 'hard_delete',
               data: {'id': nav.id},
               priority: SyncPriority.high,
             );

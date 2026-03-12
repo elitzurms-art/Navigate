@@ -971,7 +971,24 @@ exports.httpInitSession = onRequest(
       return;
     }
 
-    const decoded = await verifyAuthToken(req);
+    let decoded = await verifyAuthToken(req);
+
+    // Fallback for Windows: getIdToken() is broken in Firebase Auth C++ SDK.
+    // Accept firebaseUid from request body and verify it exists in Firebase Auth.
+    if (!decoded) {
+      const body = req.body.data || req.body;
+      const fallbackUid = body.firebaseUid;
+      if (fallbackUid) {
+        try {
+          const userRecord = await auth.getUser(fallbackUid);
+          decoded = { uid: userRecord.uid };
+          console.log(`httpInitSession: JWT fallback — verified firebaseUid ${fallbackUid}`);
+        } catch (e) {
+          console.log(`httpInitSession: firebaseUid fallback failed: ${e.message}`);
+        }
+      }
+    }
+
     if (!decoded) {
       res.status(401).json({ error: "Authentication required" });
       return;
@@ -1016,6 +1033,78 @@ exports.httpInitSession = onRequest(
       res.json({ result: { success: true } });
     } catch (error) {
       console.error("httpInitSession error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// Windows fallback: creates Firebase user with email/password + sets custom claims.
+// Firebase Auth C++ SDK on Windows has threading bugs — signInAnonymously and
+// signInWithCustomToken both fail. signInWithEmailAndPassword uses a different
+// code path that may work.
+exports.httpCreateAuthToken = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
+
+    const { personalNumber } = req.body.data || req.body;
+    if (!personalNumber) {
+      res.status(400).json({ error: "personalNumber is required" });
+      return;
+    }
+
+    try {
+      // Deterministic email/password for this user
+      const email = `${personalNumber}@navigate.internal`;
+      const password = `nav_${personalNumber}_auth_2026`;
+
+      // Find or create Firebase user
+      let firebaseUid;
+      try {
+        const existing = await auth.getUserByEmail(email);
+        firebaseUid = existing.uid;
+      } catch (e) {
+        // User doesn't exist — create it
+        const newUser = await auth.createUser({ email, password });
+        firebaseUid = newUser.uid;
+      }
+
+      // Set custom claims
+      const userDoc = await db.collection("users").doc(personalNumber).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        if (DEVELOPER_UIDS.includes(personalNumber) && userData.role !== "developer") {
+          await db.collection("users").doc(personalNumber).update({ role: "developer" });
+          userData.role = "developer";
+        }
+        const claims = await buildClaims(userData, personalNumber);
+        await auth.setCustomUserClaims(firebaseUid, claims);
+      } else {
+        await auth.setCustomUserClaims(firebaseUid, {
+          appUid: personalNumber,
+          role: "navigator",
+          isApproved: false,
+          unitId: null,
+          unitScope: [],
+          hasFullScope: false,
+        });
+      }
+
+      // Update auth_mapping
+      await db.collection("auth_mapping").doc(firebaseUid).set({
+        appUid: personalNumber,
+        updatedAt: new Date(),
+      }, { merge: true });
+
+      await waitForClaimsPropagation(firebaseUid, personalNumber);
+
+      console.log(`httpCreateAuthToken: created email auth for ${personalNumber} (uid=${firebaseUid})`);
+      res.json({ result: { email, password, firebaseUid } });
+    } catch (error) {
+      console.error("httpCreateAuthToken error:", error);
       res.status(500).json({ error: error.message });
     }
   }

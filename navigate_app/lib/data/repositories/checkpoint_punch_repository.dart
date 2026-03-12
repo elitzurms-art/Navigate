@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -168,13 +169,19 @@ class CheckpointPunchRepository {
       final json = filtered.map((p) => jsonEncode(p.toMap())).toList();
       await prefs.setStringList(_key, json);
 
-      // מחיקה מ-Firestore
-      try {
-        final snapshot = await _punchesCollection(navigationId).get();
-        for (final doc in snapshot.docs) {
-          await doc.reference.delete();
-        }
-      } catch (_) {}
+      // מחיקה מ-Firestore (non-blocking — לא חוסם UI)
+      unawaited(() async {
+        try {
+          final snapshot = await _punchesCollection(navigationId).get();
+          if (snapshot.docs.isNotEmpty) {
+            final batch = FirebaseFirestore.instance.batch();
+            for (final doc in snapshot.docs) {
+              batch.delete(doc.reference);
+            }
+            await batch.commit();
+          }
+        } catch (_) {}
+      }());
     } catch (e) {
       print('DEBUG CheckpointPunchRepo: error deleting by navigation: $e');
     }

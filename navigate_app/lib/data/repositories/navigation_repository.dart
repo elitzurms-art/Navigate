@@ -176,6 +176,7 @@ class NavigationRepository {
   /// עדכון ניווט
   Future<domain.Navigation> update(domain.Navigation navigation) async {
     try {
+      final _sw = Stopwatch()..start();
       // Safety: status-only changes should use updateStatusOnly() to avoid overwriting routes
       if (navigation.routes.isEmpty) {
         print('WARNING: NavigationRepository.update() called with empty routes for ${navigation.id}');
@@ -254,7 +255,7 @@ class NavigationRepository {
         ),
       );
 
-      print('DEBUG: Navigation updated locally');
+      print('DEBUG PERF: Navigation updated locally in ${_sw.elapsedMilliseconds}ms');
 
       // הוספה לתור סנכרון
       await _syncManager.queueOperation(
@@ -264,6 +265,7 @@ class NavigationRepository {
         data: navigation.toMap(),
         priority: SyncPriority.high,
       );
+      print('DEBUG PERF: queueOperation done in ${_sw.elapsedMilliseconds}ms');
 
       return navigation;
     } catch (e) {
@@ -328,31 +330,76 @@ class NavigationRepository {
     }
   }
 
-  /// מחיקת ניווט (soft-delete — סימון deletedAt)
+  /// מחיקת ניווט (hard-delete — מחיקה מלאה מ-Drift ומ-Firestore)
   Future<void> delete(String id) async {
     try {
-      print('DEBUG: Soft-deleting navigation: $id');
+      print('DEBUG: Hard-deleting navigation: $id');
 
       // סימון כנמחק לאחרונה — מונע שחזור ע"י Firestore listener
       markAsRecentlyDeleted(id);
 
-      // soft-delete מקומי — סימון deletedAt במקום מחיקת השורה
-      await (_db.update(_db.navigations)..where((n) => n.id.equals(id)))
-          .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
+      // מחיקה מקומית מלאה מ-Drift
+      await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
 
-      print('DEBUG: Navigation soft-deleted locally');
+      print('DEBUG: Navigation hard-deleted locally');
 
-      // הוספה לתור סנכרון — עדיפות גבוהה למחיקות
+      // מחיקת subcollections מ-Firestore (חובה לפני מחיקת המסמך הראשי)
+      await _deleteFirestoreSubcollections(id);
+
+      // מחיקת המסמך הראשי מ-Firestore — hard_delete
       await _syncManager.queueOperation(
         collection: AppConstants.navigationsCollection,
         documentId: id,
-        operation: 'delete',
+        operation: 'hard_delete',
         data: {'id': id},
         priority: SyncPriority.high,
       );
     } catch (e) {
       print('DEBUG: Error deleting navigation: $e');
       rethrow;
+    }
+  }
+
+  /// מחיקת כל ה-subcollections של ניווט מ-Firestore
+  Future<void> _deleteFirestoreSubcollections(String navigationId) async {
+    final subcollections = [
+      'nav_layers_nz',
+      'nav_layers_nb',
+      'nav_layers_gg',
+      'nav_layers_ba',
+      'routes',
+      'tracks',
+      'punches',
+      'alerts',
+      'violations',
+      'scores',
+      'extension_requests',
+      'emergency_broadcasts',
+    ];
+
+    final navRef = _firestore
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId);
+
+    for (final sub in subcollections) {
+      try {
+        final docs = await navRef.collection(sub).get();
+        if (docs.docs.isEmpty) continue;
+
+        // Firestore batch limit = 500
+        for (var i = 0; i < docs.docs.length; i += 500) {
+          final batch = _firestore.batch();
+          final chunk = docs.docs.skip(i).take(500);
+          for (final doc in chunk) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+        print('DEBUG: Deleted ${docs.docs.length} docs from $sub');
+      } catch (e) {
+        print('DEBUG: Error deleting subcollection $sub: $e');
+        // ממשיכים — לא נעצרים בגלל subcollection שנכשל
+      }
     }
   }
 
@@ -1126,14 +1173,13 @@ class NavigationRepository {
     }
   }
 
-  /// מחיקה מקומית של ניווט ללא סנכרון (soft-delete עבור Firestore listener)
+  /// מחיקה מקומית של ניווט ללא סנכרון (hard-delete עבור Firestore listener)
   Future<void> deleteLocalOnly(String id) async {
     try {
-      await (_db.update(_db.navigations)..where((n) => n.id.equals(id)))
-          .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
-      print('DEBUG: Soft-deleted local navigation from Firestore listener: $id');
+      await (_db.delete(_db.navigations)..where((n) => n.id.equals(id))).go();
+      print('DEBUG: Hard-deleted local navigation from Firestore listener: $id');
     } catch (e) {
-      print('DEBUG: Error soft-deleting local navigation: $e');
+      print('DEBUG: Error deleting local navigation: $e');
     }
   }
 

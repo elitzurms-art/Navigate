@@ -312,16 +312,59 @@ class SmartWaypoint {
   });
 }
 
+/// רמת חומרה — לתצוגה ב-UI
+enum SeverityLevel { low, medium, high }
+
+extension SeverityLevelExt on SeverityLevel {
+  String get hebrewLabel {
+    switch (this) {
+      case SeverityLevel.low:
+        return 'נמוכה';
+      case SeverityLevel.medium:
+        return 'בינונית';
+      case SeverityLevel.high:
+        return 'גבוהה';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case SeverityLevel.low:
+        return Colors.yellow.shade700;
+      case SeverityLevel.medium:
+        return Colors.orange.shade700;
+      case SeverityLevel.high:
+        return Colors.red.shade700;
+    }
+  }
+
+  static SeverityLevel fromValue(double severity) {
+    if (severity >= 0.66) return SeverityLevel.high;
+    if (severity >= 0.33) return SeverityLevel.medium;
+    return SeverityLevel.low;
+  }
+}
+
 /// נקודת תורפה
 class VulnerabilityPoint {
   final LatLng position;
   final VulnerabilityType type;
   final double severity;
+  final double slopeAtPoint;
+  final double curvature;
+  final double depth;
+  final double localRelief;
+  final double tri;
 
   const VulnerabilityPoint({
     required this.position,
     required this.type,
     required this.severity,
+    this.slopeAtPoint = 0.0,
+    this.curvature = 0.0,
+    this.depth = 0.0,
+    this.localRelief = 0.0,
+    this.tri = 0.0,
   });
 }
 
@@ -346,6 +389,11 @@ class VulnerabilityZone {
   final int cellCount;
   final double avgSlope;
   final double maxSlope;
+  final double areaSquareMeters;
+  final double minElevation;
+  final double maxElevation;
+  final double avgCurvature;
+  final double avgTri;
 
   const VulnerabilityZone({
     required this.polygon,
@@ -354,6 +402,11 @@ class VulnerabilityZone {
     required this.cellCount,
     this.avgSlope = 0.0,
     this.maxSlope = 0.0,
+    this.areaSquareMeters = 0.0,
+    this.minElevation = 0.0,
+    this.maxElevation = 0.0,
+    this.avgCurvature = 0.0,
+    this.avgTri = 0.0,
   });
 }
 

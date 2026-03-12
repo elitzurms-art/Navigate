@@ -1377,39 +1377,26 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     }
   }
 
-  Future<void> _deleteNavigation() async {
-    if (!PermissionUtils.checkManagementFlag(context, widget.isUnitAdmin)) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('מחיקת ניווט'),
-        content: const Text(
-            'פעולה זו בלתי הפיכה!\nכל נתוני הניווט יימחקו לצמיתות.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('ביטול'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('מחק'),
-          ),
-        ],
+  void _showCannotDeleteMessage() {
+    final status = _currentNavigation.status;
+    String reason;
+    switch (status) {
+      case 'approval':
+        reason = 'לא ניתן למחוק ניווט בשלב אישור';
+        break;
+      case 'review':
+        reason = 'לא ניתן למחוק ניווט בשלב תחקור';
+        break;
+      default:
+        reason = 'לא ניתן למחוק ניווט במצב הנוכחי';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(reason),
+        backgroundColor: Colors.orange[700],
+        duration: const Duration(seconds: 2),
       ),
     );
-    if (confirmed != true) return;
-
-    try {
-      await _navRepo.delete(_currentNavigation.id);
-      if (mounted) Navigator.pop(context, 'deleted');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('שגיאה: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
   }
 
   // ===========================================================================
@@ -1538,7 +1525,7 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   _saveFullNavigation();
                   break;
                 case 'delete_navigation':
-                  _deleteNavigation();
+                  _showCannotDeleteMessage();
                   break;
               }
             },
@@ -1563,13 +1550,13 @@ class _InvestigationScreenState extends State<InvestigationScreen>
                   ],
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'delete_navigation',
                 child: Row(
                   children: [
-                    Icon(Icons.delete_forever, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('מחיקת ניווט'),
+                    Icon(Icons.delete_forever, color: Colors.grey[400]),
+                    const SizedBox(width: 8),
+                    Text('מחיקת ניווט', style: TextStyle(color: Colors.grey[400])),
                   ],
                 ),
               ),

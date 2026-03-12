@@ -27,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   _LoginMode _loginMode = _LoginMode.phoneOrEmail;
   bool _showPersonalNumberOption = false;
+  bool _phoneHintAttempted = false;
   final List<DateTime> _navigateTapTimestamps = [];
   Timer? _hidePersonalNumberTimer;
 
@@ -37,6 +38,9 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _checkExistingSession();
+    if (!_isDesktop) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _requestPhoneHint());
+    }
   }
 
   @override
@@ -57,6 +61,20 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.of(context).pushReplacementNamed('/home');
       }
     }
+  }
+
+  Future<void> _requestPhoneHint() async {
+    if (_isDesktop || _phoneHintAttempted) return;
+    _phoneHintAttempted = true;
+    if (_loginMode != _LoginMode.phoneOrEmail) return;
+
+    final phone = await AuthService.requestPhoneNumberHint();
+    if (!mounted || phone == null) return;
+
+    _phoneController.text = phone;
+    await Future.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+    _handlePhoneLogin();
   }
 
   String? _validatePersonalNumber(String? value) {

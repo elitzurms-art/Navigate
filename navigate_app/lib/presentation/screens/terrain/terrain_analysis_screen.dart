@@ -383,15 +383,14 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
     });
   }
 
-  /// מיפוי רמת רגישות → (cliffThreshold, pitThreshold, minClusterCells)
-  (double, double, int) _vulnParams(int level) {
+  /// מיפוי רמת רגישות → פרמטרי זיהוי תורפה
+  ({double cliff, double pit, int cells, double minArea, double crossType, int pitWindow, double minDepth}) _vulnParams(int level) {
     switch (level) {
-      case 1: return (55.0, 30.0, 15);
-      case 2: return (50.0, 25.0, 10);
-      case 3: return (45.0, 20.0, 5);
-      case 4: return (38.0, 15.0, 4);
-      case 5: return (30.0, 10.0, 3);
-      default: return (45.0, 20.0, 5);
+      case 1: return (cliff: 55.0, pit: 30.0, cells: 15, minArea: 5000.0, crossType: 25.0, pitWindow: 1, minDepth: 4.0);
+      case 2: return (cliff: 50.0, pit: 25.0, cells: 10, minArea: 4000.0, crossType: 22.0, pitWindow: 2, minDepth: 3.0);
+      case 4: return (cliff: 38.0, pit: 15.0, cells: 4, minArea: 2000.0, crossType: 17.0, pitWindow: 2, minDepth: 1.5);
+      case 5: return (cliff: 30.0, pit: 10.0, cells: 3, minArea: 1000.0, crossType: 15.0, pitWindow: 3, minDepth: 1.0);
+      default: return (cliff: 45.0, pit: 20.0, cells: 5, minArea: 3000.0, crossType: 20.0, pitWindow: 2, minDepth: 2.0);
     }
   }
 
@@ -400,11 +399,22 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
       _loading = true;
       _statusMessage = 'מזהה נקודות תורפה...';
     });
-    final (cliff, pit, cells) = _vulnParams(_vulnerabilitySensitivity);
+    final params = _vulnParams(_vulnerabilitySensitivity);
     // חישוב נקודות ואזורי תורפה במקביל
     final results = await Future.wait([
-      _service.detectVulnerabilities(cliffThreshold: cliff, pitThreshold: pit),
-      _service.detectVulnerabilityZones(cliffThreshold: cliff, pitThreshold: pit, minClusterCells: cells),
+      _service.detectVulnerabilities(
+        cliffThreshold: params.cliff,
+        pitThreshold: params.pit,
+        minDepth: params.minDepth,
+        pitWindowRadius: params.pitWindow,
+      ),
+      _service.detectVulnerabilityZones(
+        cliffThreshold: params.cliff,
+        pitThreshold: params.pit,
+        minClusterCells: params.cells,
+        minAreaSquareMeters: params.minArea,
+        crossTypeThreshold: params.crossType,
+      ),
     ]);
     final points = results[0] as List<VulnerabilityPoint>;
     final zones = results[1] as List<VulnerabilityZone>;
@@ -471,6 +481,15 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
 
     switch (_interactionMode) {
       case _InteractionMode.none:
+        // Check zone polygons for tap
+        if (_showVulnerability && _vulnerabilityZones.isNotEmpty) {
+          for (final zone in _vulnerabilityZones) {
+            if (_isPointInZone(point, zone)) {
+              _onZoneTap(zone);
+              return;
+            }
+          }
+        }
         // ביטול הצגת מידע נקודה
         if (_pointInfo != null) setState(() => _pointInfo = null);
         break;
@@ -569,6 +588,50 @@ class _TerrainAnalysisScreenState extends State<TerrainAnalysisScreen> {
     setState(() {
       _pointInfo = '${vp.type.hebrewLabel}\n'
           'חומרה: ${(vp.severity * 100).toStringAsFixed(0)}%';
+    });
+  }
+
+  bool _isPointInZone(LatLng point, VulnerabilityZone zone) {
+    // Fast bbox rejection first
+    double minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+    for (final p in zone.polygon) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+    if (point.latitude < minLat || point.latitude > maxLat ||
+        point.longitude < minLng || point.longitude > maxLng) return false;
+    return _raycastPointInPolygon(point, zone.polygon);
+  }
+
+  bool _raycastPointInPolygon(LatLng point, List<LatLng> polygon) {
+    bool inside = false;
+    int j = polygon.length - 1;
+    for (int i = 0; i < polygon.length; i++) {
+      if ((polygon[i].latitude > point.latitude) != (polygon[j].latitude > point.latitude) &&
+          point.longitude < (polygon[j].longitude - polygon[i].longitude) *
+              (point.latitude - polygon[i].latitude) /
+              (polygon[j].latitude - polygon[i].latitude) + polygon[i].longitude) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    return inside;
+  }
+
+  String _buildZoneDescription(VulnerabilityZone zone) {
+    final severity = SeverityLevelExt.fromValue(zone.severity);
+    return '${zone.type.hebrewLabel}\n'
+      'חומרה: ${severity.hebrewLabel}\n'
+      'שטח: ${zone.areaSquareMeters.toStringAsFixed(0)} מ"ר\n'
+      'שיפוע ממוצע: ${zone.avgSlope.toStringAsFixed(1)}°\n'
+      'שיפוע מקסימלי: ${zone.maxSlope.toStringAsFixed(1)}°';
+  }
+
+  void _onZoneTap(VulnerabilityZone zone) {
+    setState(() {
+      _pointInfo = _buildZoneDescription(zone);
     });
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -31,6 +32,14 @@ class SyncPriority {
 
 /// מקסימום ניסיונות חוזרים
 const int _maxRetryCount = 10;
+
+/// פריט סנכרון מוכן לשליחה ב-batch
+class _PreparedSyncItem {
+  final SyncQueueData item;
+  final Map<String, dynamic> data;
+  final int version;
+  const _PreparedSyncItem({required this.item, required this.data, required this.version});
+}
 
 /// מנהל סנכרון מלא בין מסד נתונים מקומי ל-Firestore
 ///
@@ -311,13 +320,22 @@ class SyncManager {
             }
           });
         } else {
-          // Non-dev: defer pull to refreshUserContext() (called from completeLogin
-          // after initSessionClaims sets custom claims on the JWT).
-          // Complete the initial sync completer so UI doesn't block waiting.
-          print('SyncManager: Non-dev user — deferring pull until claims are set.');
-          if (!_initialSyncCompleter.isCompleted) {
-            _initialSyncCompleter.complete();
-          }
+          // Non-dev: try to pull anyway — on desktop, initSession may fail
+          // (Windows Firebase Auth getIdToken bug) but anonymous auth is enough
+          // for Firestore reads. Claims will be retried by _retryAuthOnReconnect.
+          print('SyncManager: Non-dev user — pulling with available auth (claims may be pending).');
+          pullAll().then((_) {
+            if (!_initialSyncCompleter.isCompleted) {
+              _initialSyncCompleter.complete();
+            }
+            processSyncQueue();
+            _startCollectionRealtimeListeners();
+          }).catchError((e) {
+            print('SyncManager: Initial pullAll failed for non-dev: $e');
+            if (!_initialSyncCompleter.isCompleted) {
+              _initialSyncCompleter.complete();
+            }
+          });
         }
       }).catchError((e) {
         print('SyncManager: _loadCurrentUserContext failed: $e');
@@ -392,22 +410,63 @@ class SyncManager {
       if (loggedInUid == null || loggedInUid.isEmpty) return;
 
       print('SyncManager: Retrying Firebase auth after reconnect...');
-      final credential = await _auth.signInAnonymously();
-      final firebaseUid = credential.user?.uid;
+      String? firebaseUid;
+
+      // Try signInAnonymously first
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+          final credential = await _auth.signInAnonymously();
+          firebaseUid = credential.user?.uid;
+          if (firebaseUid != null) break;
+        } catch (e) {
+          print('SyncManager: signInAnonymously attempt $attempt/3 failed: $e');
+          if (attempt < 3) await Future.delayed(Duration(seconds: attempt * 3));
+        }
+      }
+
+      // Desktop fallback: email/password auth from CF
+      if (firebaseUid == null && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+        try {
+          print('SyncManager: Trying email/password fallback...');
+          final authService = AuthService();
+          final result = await authService.createAuthToken(loggedInUid);
+          final email = result['email'] as String?;
+          final password = result['password'] as String?;
+          if (email != null && password != null) {
+            final credential = await _auth.signInWithEmailAndPassword(
+              email: email,
+              password: password,
+            );
+            firebaseUid = credential.user?.uid;
+            print('SyncManager: Signed in with email/password (firebaseUid=$firebaseUid)');
+          }
+        } catch (e) {
+          print('SyncManager: Email/password fallback failed: $e');
+        }
+      }
+
       if (firebaseUid == null) return;
 
-      print('SyncManager: Signed in anonymously (firebaseUid=$firebaseUid)');
+      print('SyncManager: Authenticated (firebaseUid=$firebaseUid)');
 
-      // initSession לקביעת custom claims
+      // initSession לקביעת custom claims (only on non-desktop or if signInAnonymously was used)
+      if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
+        try {
+          final authService = AuthService();
+          await authService.initSessionClaims(loggedInUid);
+          try { await _auth.currentUser?.getIdToken(true); } catch (_) {}
+          print('SyncManager: initSession succeeded after reconnect.');
+        } catch (e) {
+          print('SyncManager: initSession failed after reconnect: $e');
+        }
+      }
+
+      // Trigger full sync
       try {
-        final authService = AuthService();
-        await authService.initSessionClaims(loggedInUid);
-        await _auth.currentUser?.getIdToken(true);
-        print('SyncManager: initSession succeeded after reconnect — triggering full sync.');
         await pullAll();
         await processSyncQueue();
       } catch (e) {
-        print('SyncManager: initSession failed after reconnect: $e');
+        print('SyncManager: Post-auth sync failed: $e');
       }
     } catch (e) {
       print('SyncManager: Auth retry failed: $e');
@@ -460,6 +519,7 @@ class SyncManager {
   // ---------------------------------------------------------------------------
 
   /// עיבוד תור הסנכרון - שולח למתין ל-Firestore
+  /// משתמש ב-WriteBatch לקיבוץ פעולות (עד 400 פריטים per batch) כדי לצמצם RPCs
   Future<void> processSyncQueue() async {
     if (!_isOnline) {
       print('SyncManager: processSyncQueue skipped — offline');
@@ -494,25 +554,164 @@ class SyncManager {
         print('SyncManager:   ${entry.key}: ${entry.value}');
       }
 
-      for (final item in pendingItems) {
-        // בדיקה שעדיין אונליין
-        if (!_isOnline) {
-          print('SyncManager: Lost connectivity, stopping queue processing.');
-          break;
-        }
+      // שלב 1: סינון ועיבוד מקדים — בדיקות שלא דורשות Firestore
+      final batchableItems = <_PreparedSyncItem>[];
+      final individualItems = <SyncQueueData>[];
 
-        // בדיקת מספר ניסיונות חוזרים
+      for (final item in pendingItems) {
+        if (!_isOnline) break;
         if (item.retryCount >= _maxRetryCount) {
           print('SyncManager: Item ${item.id} exceeded max retries (${item.retryCount}). Skipping.');
           continue;
         }
 
-        await _processSingleItem(item);
+        // בדיקות כיוון סנכרון
+        if (item.operation == 'delete' &&
+            item.collectionName == AppConstants.areasCollection) {
+          await _db.markAsSynced(item.id);
+          continue;
+        }
+
+        final direction = _isAreaLayerPath(item.collectionName)
+            ? SyncDirection.bidirectional
+            : (_syncDirections[item.collectionName] ?? SyncDirection.bidirectional);
+
+        if (direction == SyncDirection.pullOnly) {
+          await _db.markAsSynced(item.id);
+          continue;
+        }
+
+        // פריטים שדורשים בדיקת קונפליקט — עיבוד בודד (צריכים read מ-Firestore)
+        if (item.operation == 'update' && direction == SyncDirection.bidirectional) {
+          individualItems.add(item);
+          continue;
+        }
+
+        // כל השאר (create, delete, hard_delete, push-only updates) — ניתנים לקיבוץ
+        final data = jsonDecode(item.dataJson) as Map<String, dynamic>;
+        if (item.collectionName == AppConstants.usersCollection &&
+            item.operation != 'delete') {
+          data.remove('role');
+          data.remove('isApproved');
+          data.remove('approvalStatus');
+        }
+        final pushVersion = (data['version'] as int?) ?? item.version;
+        batchableItems.add(_PreparedSyncItem(item: item, data: data, version: pushVersion));
+      }
+
+      // שלב 2: שליחת פריטים ב-WriteBatch (עד 400 per batch)
+      if (batchableItems.isNotEmpty) {
+        print('SyncManager: Batching ${batchableItems.length} items...');
+        await _processBatch(batchableItems);
+      }
+
+      // שלב 3: עיבוד בודד לפריטים שדורשים conflict check
+      if (individualItems.isNotEmpty) {
+        print('SyncManager: Processing ${individualItems.length} items individually (conflict check)...');
+        var processedCount = 0;
+        for (final item in individualItems) {
+          if (!_isOnline) {
+            print('SyncManager: Lost connectivity, stopping queue processing.');
+            break;
+          }
+          await _processSingleItem(item);
+          processedCount++;
+          // yield לאירועי UI כל 50 פריטים
+          if (processedCount % 50 == 0) {
+            await Future.delayed(Duration.zero);
+          }
+        }
       }
     } catch (e) {
       print('SyncManager: Error processing sync queue: $e');
     } finally {
       _isSyncing = false;
+    }
+  }
+
+  /// קיבוץ פריטים ל-WriteBatch ושליחה ל-Firestore
+  static const _batchSize = 400; // Firestore limit is 500, leave margin
+
+  Future<void> _processBatch(List<_PreparedSyncItem> items) async {
+    for (var i = 0; i < items.length; i += _batchSize) {
+      if (!_isOnline) {
+        print('SyncManager: Lost connectivity, stopping batch processing.');
+        break;
+      }
+
+      final chunk = items.sublist(i, (i + _batchSize).clamp(0, items.length));
+      try {
+        final batch = _firestore.batch();
+        final syncedIds = <int>[];
+        final phoneLookupItems = <_PreparedSyncItem>[];
+
+        for (final prepared in chunk) {
+          final ref = _firestore
+              .collection(prepared.item.collectionName)
+              .doc(prepared.item.recordId);
+
+          final enrichedData = Map<String, dynamic>.from(prepared.data);
+          enrichedData['version'] = prepared.version;
+          enrichedData['updatedAt'] = FieldValue.serverTimestamp();
+
+          switch (prepared.item.operation) {
+            case 'create':
+              batch.set(ref, enrichedData);
+              break;
+            case 'update':
+              batch.set(ref, enrichedData, SetOptions(merge: true));
+              break;
+            case 'delete':
+              batch.set(ref, {
+                'deletedAt': FieldValue.serverTimestamp(),
+                'updatedAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
+              break;
+            case 'hard_delete':
+              batch.delete(ref);
+              break;
+          }
+
+          syncedIds.add(prepared.item.id);
+          _serverVersionCache['${prepared.item.collectionName}/${prepared.item.recordId}'] = prepared.version;
+
+          if (prepared.item.collectionName == AppConstants.usersCollection &&
+              prepared.item.operation != 'delete') {
+            phoneLookupItems.add(prepared);
+          }
+        }
+
+        await batch.commit().timeout(const Duration(seconds: 30));
+
+        // סימון כל הפריטים כמסונכרנים
+        await _db.markBatchAsSynced(syncedIds);
+
+        // עדכון lastPushAt per collection
+        final collections = chunk.map((p) => p.item.collectionName).toSet();
+        final now = DateTime.now();
+        for (final col in collections) {
+          await _db.updateLastPushAt(col, now);
+        }
+
+        // phone_lookup updates (fire-and-forget)
+        for (final prepared in phoneLookupItems) {
+          unawaited(_updatePhoneLookup(prepared.data, prepared.item.recordId).catchError((_) {}));
+        }
+
+        print('SyncManager: Batch committed ${chunk.length} items successfully.');
+      } catch (e) {
+        // batch נכשל — fallback לעיבוד בודד
+        print('SyncManager: Batch commit failed ($e), falling back to individual processing...');
+        for (final prepared in chunk) {
+          if (!_isOnline) break;
+          await _processSingleItem(prepared.item);
+        }
+      }
+
+      // yield לאירועי UI בין batches
+      if (i + _batchSize < items.length) {
+        await Future.delayed(Duration.zero);
+      }
     }
   }
 
@@ -812,7 +1011,7 @@ class SyncManager {
       AppConstants.areasCollection: () async => (await _db.select(_db.areas).get()).map((a) => a.id).toList(),
       AppConstants.unitsCollection: () async => (await _db.select(_db.units).get()).map((u) => u.id).toList(),
       AppConstants.navigatorTreesCollection: () async => (await _db.select(_db.navigationTrees).get()).map((t) => t.id).toList(),
-      AppConstants.navigationsCollection: () async => (await (_db.select(_db.navigations)..where((n) => n.deletedAt.isNull())).get()).map((n) => n.id).toList(),
+      AppConstants.navigationsCollection: () async => (await _db.select(_db.navigations).get()).map((n) => n.id).toList(),
     };
 
     for (final entry in collectionsToReconcile.entries) {
@@ -1020,13 +1219,13 @@ class SyncManager {
       final serverData = rawData;
       serverData['id'] = doc.id;
 
-      // Soft-delete מהשרת מנצח תמיד — גם אם יש שינויים מקומיים ממתינים
+      // מחיקה מהשרת מנצחת תמיד — גם אם יש שינויים מקומיים ממתינים
       if (serverData['deletedAt'] != null) {
-        // Skip if already soft-deleted locally (prevents repeated processing every sync cycle)
+        // Skip if already deleted locally (not found in DB)
         if (collection == AppConstants.navigationsCollection) {
           final localNav = await (_db.select(_db.navigations)
             ..where((t) => t.id.equals(doc.id))).getSingleOrNull();
-          if (localNav?.deletedAt != null) continue;
+          if (localNav == null) continue;
         }
         await _deleteLocalRecord(collection, doc.id);
         // ביטול פריטים ממתינים כדי שלא ישחזרו את הרשומה
@@ -1194,9 +1393,8 @@ class SyncManager {
           break;
         case AppConstants.navigationsCollection:
           NavigationRepository.markAsRecentlyDeleted(documentId);
-          // soft-delete — סימון deletedAt במקום מחיקת השורה (שימור היסטוריה)
-          await (_db.update(_db.navigations)..where((t) => t.id.equals(documentId)))
-              .write(NavigationsCompanion(deletedAt: Value(DateTime.now())));
+          // hard-delete — מחיקה מלאה מהטבלה המקומית
+          await (_db.delete(_db.navigations)..where((t) => t.id.equals(documentId))).go();
           break;
         default:
           print('SyncManager: No local delete handler for collection $collection');

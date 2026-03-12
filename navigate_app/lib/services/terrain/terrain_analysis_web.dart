@@ -42,6 +42,8 @@ class TerrainAnalysisService {
   int _activeSrcTileLng = 0;
   LatLngBounds? _activeBounds;
   TerrainFeaturesResult? _cachedFeatures;
+  Float64List? _smoothedDem; // Gaussian σ=1 smoothed DEM for saddle detection
+  Int32List? _flowAccumulation; // D8 flow accumulation grid
   Uint8List? _boundaryMask; // 1=inside polygon, 0=outside
 
   // Public getters
@@ -200,6 +202,8 @@ class TerrainAnalysisService {
 
     _activeBoundary = boundary;
     _cachedFeatures = null;
+    _smoothedDem = null;
+    _flowAccumulation = null;
     _activeSrcTileLat = tileLat;
     _activeSrcTileLng = tileLng;
 
@@ -460,6 +464,57 @@ class TerrainAnalysisService {
       }
     }
 
+    // Step 3b: Medium TPI scales (7×7 and 13×13) using same prefix sum
+    final medSmallTPI = Float32List(n);
+    const halfWinMS = 3; // 7×7
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        final center = dem[idx].toDouble();
+        if (center == -32768) continue;
+        final r1 = max(0, r - halfWinMS);
+        final r2 = min(rows - 1, r + halfWinMS);
+        final c1 = max(0, c - halfWinMS);
+        final c2 = min(cols - 1, c + halfWinMS);
+        final sumVal = prefixSum[(r2 + 1) * (cols + 1) + (c2 + 1)] -
+            prefixSum[r1 * (cols + 1) + (c2 + 1)] -
+            prefixSum[(r2 + 1) * (cols + 1) + c1] +
+            prefixSum[r1 * (cols + 1) + c1];
+        final countVal = prefixCount[(r2 + 1) * (cols + 1) + (c2 + 1)] -
+            prefixCount[r1 * (cols + 1) + (c2 + 1)] -
+            prefixCount[(r2 + 1) * (cols + 1) + c1] +
+            prefixCount[r1 * (cols + 1) + c1];
+        if (countVal > 1) {
+          medSmallTPI[idx] = center - (sumVal - center) / (countVal - 1);
+        }
+      }
+    }
+
+    final medLargeTPI = Float32List(n);
+    const halfWinML = 6; // 13×13
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        final center = dem[idx].toDouble();
+        if (center == -32768) continue;
+        final r1 = max(0, r - halfWinML);
+        final r2 = min(rows - 1, r + halfWinML);
+        final c1 = max(0, c - halfWinML);
+        final c2 = min(cols - 1, c + halfWinML);
+        final sumVal = prefixSum[(r2 + 1) * (cols + 1) + (c2 + 1)] -
+            prefixSum[r1 * (cols + 1) + (c2 + 1)] -
+            prefixSum[(r2 + 1) * (cols + 1) + c1] +
+            prefixSum[r1 * (cols + 1) + c1];
+        final countVal = prefixCount[(r2 + 1) * (cols + 1) + (c2 + 1)] -
+            prefixCount[r1 * (cols + 1) + (c2 + 1)] -
+            prefixCount[(r2 + 1) * (cols + 1) + c1] +
+            prefixCount[r1 * (cols + 1) + c1];
+        if (countVal > 1) {
+          medLargeTPI[idx] = center - (sumVal - center) / (countVal - 1);
+        }
+      }
+    }
+
     // Step 4: Classification
     for (int r = 0; r < rows; r++) {
       for (int c = 0; c < cols; c++) {
@@ -493,6 +548,33 @@ class TerrainAnalysisService {
           }
         } else {
           featureGrid[idx] = 7; // slope (default)
+        }
+      }
+    }
+
+    // Step 5: Multi-scale enhancement — catch features missed by dual-scale
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        if (dem[idx] == -32768) continue;
+        final current = featureGrid[idx];
+        // Only upgrade slope/flat cells — never downgrade existing classification
+        if (current != 7 && current != 0) continue;
+        final mST = medSmallTPI[idx];
+        final mLT = medLargeTPI[idx];
+        final slope = slopeGrid[idx];
+        if (current == 7) {
+          // Slope: check if medium scales reveal saddle pattern
+          if (mLT.abs() <= 1 && mST.abs() > 0.5) {
+            featureGrid[idx] = 6; // saddle (medium-scale)
+          }
+        } else if (current == 0 && slope >= 2) {
+          // Near-flat with some slope: check medium-scale features
+          if (mLT < -1 && mST < -1) {
+            featureGrid[idx] = 4; // valley (broad, visible at medium scale)
+          } else if (mLT < -1 && mST.abs() <= 1) {
+            featureGrid[idx] = 5; // channel (broad)
+          }
         }
       }
     }
@@ -906,34 +988,105 @@ class TerrainAnalysisService {
           case 3: // spur → כתף
             type = SmartWaypointType.shoulder;
             break;
-          case 4: // valley — only mark as junction if streams actually converge
+          case 4: // valley — junction detection with variable-radius arms + flow accumulation
             {
-              // Count distinct arms of valley/channel neighbors (circular ring)
-              const offsets = [(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1),(-1,-1)];
-              final ring = <bool>[];
-              for (final (dr, dc) in offsets) {
-                final nr = r + dr;
-                final nc = c + dc;
-                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-                  final nf = featureGrid[nr * cols + nc];
-                  ring.add(nf == 4 || nf == 5); // valley or channel
-                } else {
-                  ring.add(false);
+              const directions = [(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1),(-1,-1)];
+
+              // Variable-radius arm counting (up to 3 cells out)
+              // Weighted: require ≥2 valley/channel cells per direction for a strong arm
+              final dirHasValley = <bool>[];
+              for (final (dr, dc) in directions) {
+                int valleyCells = 0;
+                for (int step = 1; step <= 3; step++) {
+                  final nr = r + dr * step;
+                  final nc = c + dc * step;
+                  if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                    final nf = featureGrid[nr * cols + nc];
+                    if (nf == 4 || nf == 5) valleyCells++;
+                  }
                 }
+                dirHasValley.add(valleyCells >= 2);
               }
-              // Count distinct contiguous groups of true (arms)
               int arms = 0;
               for (int i = 0; i < 8; i++) {
-                if (ring[i] && !ring[(i + 7) % 8]) arms++;
+                if (dirHasValley[i] && !dirHasValley[(i + 7) % 8]) arms++;
               }
-              // A confluence has 3+ arms (two incoming + one outgoing)
+
+              // Fallback: also check with immediate neighbors for narrow valleys
+              if (arms < 3) {
+                final ring = <bool>[];
+                for (final (dr, dc) in directions) {
+                  final nr = r + dr;
+                  final nc = c + dc;
+                  if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                    final nf = featureGrid[nr * cols + nc];
+                    ring.add(nf == 4 || nf == 5);
+                  } else {
+                    ring.add(false);
+                  }
+                }
+                int narrowArms = 0;
+                for (int i = 0; i < 8; i++) {
+                  if (ring[i] && !ring[(i + 7) % 8]) narrowArms++;
+                }
+                arms = max(arms, narrowArms);
+              }
+
+              // Flow accumulation enhancement: detect real confluences
+              final flowAcc = _getFlowAccumulation();
+              final cellFlow = flowAcc[idx];
+
               if (arms >= 3) {
                 type = SmartWaypointType.valleyJunction;
+              } else if (arms >= 2 && cellFlow > 50) {
+                // High flow accumulation confirms real stream confluence
+                type = SmartWaypointType.valleyJunction;
+              } else if (cellFlow > 30) {
+                // Check if multiple upstream neighbors have significant flow
+                // (confluence of streams even without clear TPI arms)
+                int upstreamHighFlow = 0;
+                for (final (dr, dc) in directions) {
+                  final nr = r + dr;
+                  final nc = c + dc;
+                  if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                    final nFlow = flowAcc[nr * cols + nc];
+                    if (nFlow > cellFlow * 0.2 && nFlow > 10) {
+                      upstreamHighFlow++;
+                    }
+                  }
+                }
+                if (upstreamHighFlow >= 2) {
+                  type = SmartWaypointType.valleyJunction;
+                }
               }
             }
             break;
-          case 5: // channel — stream split
-            type = SmartWaypointType.streamSplit;
+          case 5: // channel — stream split (enhanced with flow accumulation)
+            {
+              final flowAcc = _getFlowAccumulation();
+              final cellFlow = flowAcc[idx];
+              if (cellFlow > 20) {
+                // High flow confirms real stream channel
+                type = SmartWaypointType.streamSplit;
+              } else {
+                // Low flow: check if channel arms diverge (actual split)
+                const directions = [(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1),(-1,-1)];
+                int channelNeighbors = 0;
+                for (final (dr, dc) in directions) {
+                  for (int step = 1; step <= 2; step++) {
+                    final nr = r + dr * step;
+                    final nc = c + dc * step;
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                      final nf = featureGrid[nr * cols + nc];
+                      if (nf == 5) { channelNeighbors++; break; }
+                    }
+                  }
+                }
+                if (channelNeighbors >= 2) {
+                  type = SmartWaypointType.streamSplit;
+                }
+              }
+            }
             break;
           case 6: // TPI saddle — verify topologically
             if (_isTopologicalSaddle(r, c, dem, rows, cols)) {
@@ -1055,10 +1208,283 @@ class TerrainAnalysisService {
     return result;
   }
 
+  // ---------------------------------------------------------------------------
+  // Vulnerability analysis helpers
+  // ---------------------------------------------------------------------------
+
+  /// TRI (Terrain Ruggedness Index) — RMS of elevation differences to 8 neighbors
+  Float32List _computeTRI() {
+    final dem = _activeDem!;
+    final rows = _activeRows, cols = _activeCols;
+    final tri = Float32List(rows * cols);
+    const dr = [-1, -1, 0, 1, 1, 1, 0, -1];
+    const dc = [0, 1, 1, 1, 0, -1, -1, -1];
+    for (int r = 1; r < rows - 1; r++) {
+      for (int c = 1; c < cols - 1; c++) {
+        final idx = r * cols + c;
+        final center = dem[idx].toDouble();
+        if (center == -32768) continue;
+        double sumSq = 0;
+        int count = 0;
+        for (int d = 0; d < 8; d++) {
+          final val = dem[(r + dr[d]) * cols + (c + dc[d])].toDouble();
+          if (val == -32768) continue;
+          final diff = val - center;
+          sumSq += diff * diff;
+          count++;
+        }
+        tri[idx] = count > 0 ? sqrt(sumSq / count) : 0;
+      }
+    }
+    return tri;
+  }
+
+  /// Curvature grid (Laplacian) — uses Gaussian-smoothed DEM
+  Float32List _computeCurvatureGrid() {
+    final smoothed = _getSmoothedDem();
+    final rows = _activeRows, cols = _activeCols;
+    final cellNS = cellSizeNS(_activeSrcGridSize);
+    final centerLat = (_activeBounds!.north + _activeBounds!.south) / 2;
+    final cellEW = cellSizeEW(centerLat, _activeSrcGridSize);
+    final curvature = Float32List(rows * cols);
+    for (int r = 1; r < rows - 1; r++) {
+      for (int c = 1; c < cols - 1; c++) {
+        final idx = r * cols + c;
+        final center = smoothed[idx];
+        if (center == -32768) continue;
+        final up = smoothed[(r - 1) * cols + c];
+        final down = smoothed[(r + 1) * cols + c];
+        final left = smoothed[r * cols + (c - 1)];
+        final right = smoothed[r * cols + (c + 1)];
+        if (up == -32768 || down == -32768 || left == -32768 || right == -32768) continue;
+        // Laplacian: positive = concave (pit/channel), negative = convex (cliff edge)
+        curvature[idx] = ((up + down - 2 * center) / (cellNS * cellNS) +
+                           (left + right - 2 * center) / (cellEW * cellEW)).toDouble();
+      }
+    }
+    return curvature;
+  }
+
+  /// Local relief grid — max−min elevation within distance-based window
+  Float32List _computeLocalReliefGrid() {
+    final dem = _activeDem!;
+    final rows = _activeRows, cols = _activeCols;
+    const reliefRadiusMeters = 100.0;
+    final windowR = (reliefRadiusMeters / cellSizeNS(_activeSrcGridSize)).round().clamp(1, 5);
+    final relief = Float32List(rows * cols);
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        if (dem[idx] == -32768) continue;
+        double minE = 32767, maxE = -32768;
+        for (int dr = -windowR; dr <= windowR; dr++) {
+          for (int dc = -windowR; dc <= windowR; dc++) {
+            final nr = r + dr, nc = c + dc;
+            if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+            final val = dem[nr * cols + nc].toDouble();
+            if (val == -32768) continue;
+            if (val < minE) minE = val;
+            if (val > maxE) maxE = val;
+          }
+        }
+        relief[idx] = maxE > minE ? (maxE - minE).toDouble() : 0;
+      }
+    }
+    return relief;
+  }
+
+  /// Adaptive threshold — scales base threshold by local relief
+  double _adaptiveThreshold(double baseThreshold, double localRelief) {
+    final scale = 0.8 + 0.4 * log(localRelief / 50.0 + 1);
+    return baseThreshold * scale.clamp(0.5, 1.5);
+  }
+
+  /// Combined severity — multi-factor score per vulnerability type
+  double _computePointSeverity(VulnerabilityType type, {
+    required double slope,
+    required double curvature,
+    required double depth,
+    required double tri,
+    required double localRelief,
+  }) {
+    switch (type) {
+      case VulnerabilityType.cliff:
+        return (0.60 * (slope / 90.0).clamp(0.0, 1.0) +
+                0.20 * (curvature.abs() / 0.05).clamp(0.0, 1.0) +
+                0.15 * (tri / 30.0).clamp(0.0, 1.0) +
+                0.05 * (localRelief / 200.0).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+      case VulnerabilityType.pit:
+        return (0.20 * (slope / 45.0).clamp(0.0, 1.0) +
+                0.20 * (curvature.abs() / 0.05).clamp(0.0, 1.0) +
+                0.40 * (depth / 30.0).clamp(0.0, 1.0) +
+                0.10 * (tri / 30.0).clamp(0.0, 1.0) +
+                0.10 * (localRelief / 200.0).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+      case VulnerabilityType.deepChannel:
+        return (0.40 * (slope / 60.0).clamp(0.0, 1.0) +
+                0.30 * (curvature.abs() / 0.05).clamp(0.0, 1.0) +
+                0.20 * (tri / 30.0).clamp(0.0, 1.0) +
+                0.10 * (localRelief / 200.0).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+      case VulnerabilityType.steepSlope:
+        return (0.60 * (slope / 60.0).clamp(0.0, 1.0) +
+                0.10 * (curvature.abs() / 0.05).clamp(0.0, 1.0) +
+                0.20 * (tri / 30.0).clamp(0.0, 1.0) +
+                0.10 * (localRelief / 200.0).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    }
+  }
+
+  /// Marching squares contour — extracts concave boundary from cell set
+  List<LatLng> _marchingSquaresContour(Set<int> cellSet, int cols, int rows) {
+    // Build binary grid (padded by 1 on each side)
+    final w = cols + 2, h = rows + 2;
+    final grid = Uint8List(w * h);
+    for (final idx in cellSet) {
+      final r = idx ~/ cols, c = idx % cols;
+      grid[(r + 1) * w + (c + 1)] = 1;
+    }
+
+    // Find first boundary edge
+    int startR = -1, startC = -1;
+    outer:
+    for (int r = 0; r < h - 1; r++) {
+      for (int c = 0; c < w - 1; c++) {
+        // Top-left of 2x2 block
+        final tl = grid[r * w + c];
+        final tr = grid[r * w + c + 1];
+        final bl = grid[(r + 1) * w + c];
+        final br = grid[(r + 1) * w + c + 1];
+        final config = tl | (tr << 1) | (bl << 2) | (br << 3);
+        if (config != 0 && config != 15) {
+          startR = r;
+          startC = c;
+          break outer;
+        }
+      }
+    }
+    if (startR < 0) return [];
+
+    // Trace contour
+    final contourPoints = <(double, double)>[];
+    final visited = <int>{};
+    int cr = startR, cc = startC;
+    int prevDir = 0; // 0=right, 1=down, 2=left, 3=up
+
+    for (int step = 0; step < w * h * 2; step++) {
+      final key = cr * w + cc;
+      if (visited.contains(key) && step > 2 && cr == startR && cc == startC) break;
+      visited.add(key);
+
+      final tl = grid[cr * w + cc];
+      final tr = grid[cr * w + cc + 1];
+      final bl = grid[(cr + 1) * w + cc];
+      final br = grid[(cr + 1) * w + cc + 1];
+      final config = tl | (tr << 1) | (bl << 2) | (br << 3);
+
+      // Add midpoint of the boundary edge
+      // Map back to original grid coordinates (subtract 1 for padding)
+      final midR = cr + 0.5 - 1.0;
+      final midC = cc + 0.5 - 1.0;
+      contourPoints.add((midR, midC));
+
+      // Direction lookup for marching squares
+      int nextDir;
+      switch (config) {
+        case 1: nextDir = 3; break;  // TL only -> up
+        case 2: nextDir = 0; break;  // TR only -> right
+        case 3: nextDir = 0; break;  // TL+TR -> right
+        case 4: nextDir = 2; break;  // BL only -> left
+        case 5: nextDir = 3; break;  // TL+BL -> up
+        case 6:                       // TR+BL -> saddle
+          nextDir = (prevDir == 3) ? 2 : 0;
+          break;
+        case 7: nextDir = 0; break;  // TL+TR+BL -> right
+        case 8: nextDir = 1; break;  // BR only -> down
+        case 9:                       // TL+BR -> saddle
+          nextDir = (prevDir == 0) ? 3 : 1;
+          break;
+        case 10: nextDir = 1; break; // TR+BR -> down
+        case 11: nextDir = 1; break; // TL+TR+BR -> down
+        case 12: nextDir = 2; break; // BL+BR -> left
+        case 13: nextDir = 3; break; // TL+BL+BR -> up
+        case 14: nextDir = 2; break; // TR+BL+BR -> left
+        default: nextDir = prevDir; break;
+      }
+
+      switch (nextDir) {
+        case 0: cc++; break; // right
+        case 1: cr++; break; // down
+        case 2: cc--; break; // left
+        case 3: cr--; break; // up
+      }
+      prevDir = nextDir;
+
+      if (cc < 0 || cc >= w - 1 || cr < 0 || cr >= h - 1) break;
+    }
+
+    if (contourPoints.length < 3) return [];
+
+    // Convert grid row/col to LatLng
+    final result = <LatLng>[];
+    for (final (r, c) in contourPoints) {
+      final clampedR = r.clamp(0, _activeRows - 1);
+      final clampedC = c.clamp(0, _activeCols - 1);
+      result.add(_subGridToLatLng(clampedR.round(), clampedC.round()));
+    }
+
+    return _simplifyPolygon(result);
+  }
+
+  /// Douglas-Peucker polygon simplification
+  List<LatLng> _simplifyPolygon(List<LatLng> polygon, {double epsilon = 0.0001}) {
+    if (polygon.length <= 4) return polygon;
+
+    double maxDist = 0;
+    int maxIdx = 0;
+    final first = polygon.first;
+    final last = polygon.last;
+
+    for (int i = 1; i < polygon.length - 1; i++) {
+      final d = _perpendicularDistance(polygon[i], first, last);
+      if (d > maxDist) {
+        maxDist = d;
+        maxIdx = i;
+      }
+    }
+
+    if (maxDist > epsilon) {
+      final left = _simplifyPolygon(polygon.sublist(0, maxIdx + 1), epsilon: epsilon);
+      final right = _simplifyPolygon(polygon.sublist(maxIdx), epsilon: epsilon);
+      return [...left.sublist(0, left.length - 1), ...right];
+    } else {
+      return [first, last];
+    }
+  }
+
+  double _perpendicularDistance(LatLng point, LatLng lineStart, LatLng lineEnd) {
+    final dx = lineEnd.longitude - lineStart.longitude;
+    final dy = lineEnd.latitude - lineStart.latitude;
+    if (dx == 0 && dy == 0) {
+      return sqrt(pow(point.longitude - lineStart.longitude, 2) +
+                  pow(point.latitude - lineStart.latitude, 2));
+    }
+    final t = ((point.longitude - lineStart.longitude) * dx +
+               (point.latitude - lineStart.latitude) * dy) /
+              (dx * dx + dy * dy);
+    final closestLng = lineStart.longitude + t * dx;
+    final closestLat = lineStart.latitude + t * dy;
+    return sqrt(pow(point.longitude - closestLng, 2) +
+                pow(point.latitude - closestLat, 2));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vulnerability detection — points and zones
+  // ---------------------------------------------------------------------------
+
   /// זיהוי נקודות תורפה — מצוקים, בורות (Pure Dart)
   Future<List<VulnerabilityPoint>> detectVulnerabilities({
     double cliffThreshold = 45.0,
     double pitThreshold = 20.0,
+    double minDepth = 2.0,
+    int pitWindowRadius = 2,
   }) async {
     if (_activeDem == null) return [];
 
@@ -1069,10 +1495,14 @@ class TerrainAnalysisService {
     final cols = _activeCols;
     final dem = _activeDem!;
     final slopeGrid = slopeAspect.slopeGrid;
+    final triGrid = _computeTRI();
+    final curvatureGrid = _computeCurvatureGrid();
+    final reliefGrid = _computeLocalReliefGrid();
     final points = <VulnerabilityPoint>[];
 
-    for (int r = 1; r < rows - 1; r++) {
-      for (int c = 1; c < cols - 1; c++) {
+    final margin = pitWindowRadius + 1;
+    for (int r = margin; r < rows - margin; r++) {
+      for (int c = margin; c < cols - margin; c++) {
         final idx = r * cols + c;
         final elev = dem[idx].toDouble();
         if (elev == -32768) continue;
@@ -1081,43 +1511,83 @@ class TerrainAnalysisService {
         if (_boundaryMask != null && _boundaryMask![idx] == 0) continue;
 
         final slope = slopeGrid[idx];
+        final relief = reliefGrid[idx];
+        final curv = curvatureGrid[idx];
+        final tri = triGrid[idx];
+
+        // Adaptive cliff threshold based on local relief
+        final adaptedCliff = _adaptiveThreshold(cliffThreshold, relief.toDouble());
 
         // Cliff detection
-        if (slope >= cliffThreshold) {
-          final severity = (slope / 90.0).clamp(0.0, 1.0);
+        if (slope >= adaptedCliff) {
+          final severity = _computePointSeverity(VulnerabilityType.cliff,
+            slope: slope, curvature: curv, depth: 0, tri: tri, localRelief: relief);
           final pos = _subGridToLatLng(r, c);
           points.add(VulnerabilityPoint(
             position: pos,
             type: VulnerabilityType.cliff,
             severity: severity,
+            slopeAtPoint: slope,
+            curvature: curv,
+            localRelief: relief,
+            tri: tri,
           ));
           continue;
         }
 
-        // Pit detection: lower than all 8 neighbors AND slope >= pitThreshold
-        if (slope >= pitThreshold) {
-          bool isPit = true;
+        // Expanded pit detection with variable window size
+        final adaptedPit = _adaptiveThreshold(pitThreshold, relief.toDouble());
+        if (slope >= adaptedPit) {
+          // Inner ring (3x3): center must be lower than average of neighbors
+          double innerSum = 0;
+          int innerCount = 0;
+          bool innerLower = true;
           for (int dr = -1; dr <= 1; dr++) {
             for (int dc = -1; dc <= 1; dc++) {
               if (dr == 0 && dc == 0) continue;
               final nVal = dem[(r + dr) * cols + (c + dc)].toDouble();
-              if (nVal != -32768 && nVal < elev) {
-                isPit = false;
-                break;
+              if (nVal != -32768) {
+                innerSum += nVal;
+                innerCount++;
               }
             }
-            if (!isPit) break;
           }
-          if (isPit) {
-            // Prominence = abs(elevation - mean of 5×5 window)
+          if (innerCount > 0) {
+            innerLower = elev < (innerSum / innerCount);
+          }
+
+          if (innerLower && pitWindowRadius > 1) {
+            // Outer ring: average must be higher than inner average
+            double outerSum = 0;
+            int outerCount = 0;
+            for (int dr = -pitWindowRadius; dr <= pitWindowRadius; dr++) {
+              for (int dc = -pitWindowRadius; dc <= pitWindowRadius; dc++) {
+                if (dr.abs() <= 1 && dc.abs() <= 1) continue; // skip inner ring
+                final nr = r + dr, nc = c + dc;
+                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                final val = dem[nr * cols + nc].toDouble();
+                if (val != -32768) {
+                  outerSum += val;
+                  outerCount++;
+                }
+              }
+            }
+            if (outerCount > 0 && innerCount > 0) {
+              final outerAvg = outerSum / outerCount;
+              final innerAvg = innerSum / innerCount;
+              if (outerAvg <= innerAvg) innerLower = false;
+            }
+          }
+
+          if (innerLower) {
+            // Compute depth = difference from surrounding average
             double windowSum = 0;
             int windowCount = 0;
-            for (int dr = -2; dr <= 2; dr++) {
-              for (int dc = -2; dc <= 2; dc++) {
-                final nr = r + dr;
-                final nc = c + dc;
-                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+            for (int dr = -pitWindowRadius; dr <= pitWindowRadius; dr++) {
+              for (int dc = -pitWindowRadius; dc <= pitWindowRadius; dc++) {
                 if (dr == 0 && dc == 0) continue;
+                final nr = r + dr, nc = c + dc;
+                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
                 final val = dem[nr * cols + nc].toDouble();
                 if (val != -32768) {
                   windowSum += val;
@@ -1125,16 +1595,24 @@ class TerrainAnalysisService {
                 }
               }
             }
-            final prominence = windowCount > 0
-                ? (elev - windowSum / windowCount).abs()
-                : 0.0;
-            final severity = (prominence / 50.0).clamp(0.0, 1.0);
-            final pos = _subGridToLatLng(r, c);
-            points.add(VulnerabilityPoint(
-              position: pos,
-              type: VulnerabilityType.pit,
-              severity: severity,
-            ));
+            final depth = windowCount > 0 ? (windowSum / windowCount - elev) : 0.0;
+
+            // minDepth filter — reject SRTM noise
+            if (depth >= minDepth) {
+              final severity = _computePointSeverity(VulnerabilityType.pit,
+                slope: slope, curvature: curv, depth: depth, tri: tri, localRelief: relief);
+              final pos = _subGridToLatLng(r, c);
+              points.add(VulnerabilityPoint(
+                position: pos,
+                type: VulnerabilityType.pit,
+                severity: severity,
+                slopeAtPoint: slope,
+                curvature: curv,
+                depth: depth,
+                localRelief: relief,
+                tri: tri,
+              ));
+            }
           }
         }
       }
@@ -1145,7 +1623,7 @@ class TerrainAnalysisService {
 
   // ---------------------------------------------------------------------------
   // Vulnerability zone detection — connected component clustering (Pure Dart)
-  // Identical to native service — already pure Dart
+  // Enhanced with cross-type expansion, merge, buffer, marching squares contour
   // ---------------------------------------------------------------------------
 
   /// זיהוי אזורי תורפה — מקבץ נקודות תורפה סמוכות לפוליגונים
@@ -1153,24 +1631,37 @@ class TerrainAnalysisService {
     double cliffThreshold = 45.0,
     double pitThreshold = 20.0,
     int minClusterCells = 5,
+    double minAreaSquareMeters = 3000.0,
+    double crossTypeThreshold = 20.0,
   }) async {
     // First get the slope grid
     final slopeResult = await computeSlopeAspect();
     if (slopeResult == null || _activeDem == null) return [];
 
-    final n = _activeRows * _activeCols;
+    final rows = _activeRows;
+    final cols = _activeCols;
+    final n = rows * cols;
+    final dem = _activeDem!;
+    final cellNS = cellSizeNS(_activeSrcGridSize);
+    final centerLat = (_activeBounds!.north + _activeBounds!.south) / 2;
+    final cellEW = cellSizeEW(centerLat, _activeSrcGridSize);
+    final cellAreaM2 = cellNS * cellEW;
+
+    // Pre-compute auxiliary grids
+    final triGrid = _computeTRI();
+    final curvatureGrid = _computeCurvatureGrid();
 
     // Use cached features for deepChannel detection
     final features = _cachedFeatures ?? await classifyFeatures();
 
     // Build vulnerability grid: type at each cell (0=none)
     final vulnGrid = Uint8List(n);
-    for (int r = 1; r < _activeRows - 1; r++) {
-      for (int c = 1; c < _activeCols - 1; c++) {
-        final i = r * _activeCols + c;
+    for (int r = 1; r < rows - 1; r++) {
+      for (int c = 1; c < cols - 1; c++) {
+        final i = r * cols + c;
         if (_boundaryMask != null && _boundaryMask![i] == 0) continue;
         final slope = slopeResult.slopeGrid[i];
-        final elev = _activeDem![i];
+        final elev = dem[i];
         if (elev == -32768) continue;
 
         if (slope >= cliffThreshold) {
@@ -1181,8 +1672,8 @@ class TerrainAnalysisService {
           for (int dr = -1; dr <= 1; dr++) {
             for (int dc = -1; dc <= 1; dc++) {
               if (dr == 0 && dc == 0) continue;
-              final ni = (r + dr) * _activeCols + (c + dc);
-              if (_activeDem![ni] != -32768 && _activeDem![ni] < elev) {
+              final ni = (r + dr) * cols + (c + dc);
+              if (dem[ni] != -32768 && dem[ni] < elev) {
                 isPit = false;
               }
             }
@@ -1207,14 +1698,14 @@ class TerrainAnalysisService {
       }
     }
 
-    // Connected component labeling
+    // Phase 1: Connected component labeling (strict same-type BFS)
     final labels = Int32List(n);
     int nextLabel = 1;
-    final labelType = <int, int>{}; // label → vuln type
+    final labelType = <int, int>{}; // label -> vuln type
 
-    for (int r = 0; r < _activeRows; r++) {
-      for (int c = 0; c < _activeCols; c++) {
-        final i = r * _activeCols + c;
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final i = r * cols + c;
         if (vulnGrid[i] == 0 || labels[i] != 0) continue;
 
         // BFS flood fill
@@ -1224,15 +1715,15 @@ class TerrainAnalysisService {
         int head = 0;
         while (head < queue.length) {
           final ci = queue[head++];
-          final cr = ci ~/ _activeCols;
-          final cc = ci % _activeCols;
+          final cr = ci ~/ cols;
+          final cc = ci % cols;
           for (int dr = -1; dr <= 1; dr++) {
             for (int dc = -1; dc <= 1; dc++) {
               if (dr == 0 && dc == 0) continue;
               final nr = cr + dr;
               final nc = cc + dc;
-              if (nr < 0 || nr >= _activeRows || nc < 0 || nc >= _activeCols) continue;
-              final ni = nr * _activeCols + nc;
+              if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+              final ni = nr * cols + nc;
               if (labels[ni] == 0 && vulnGrid[ni] == vulnGrid[ci]) {
                 labels[ni] = nextLabel;
                 queue.add(ni);
@@ -1244,51 +1735,220 @@ class TerrainAnalysisService {
       }
     }
 
-    // For each label, collect boundary cells and create convex hull polygon
-    final zones = <VulnerabilityZone>[];
-    for (int label = 1; label < nextLabel; label++) {
-      final cells = <int>[];
-      for (int i = 0; i < n; i++) {
-        if (labels[i] == label) cells.add(i);
-      }
-      // steepSlope needs higher threshold (many cells match)
-      final effectiveMinCells = (labelType[label] == 4) ? 12 : minClusterCells;
-      if (cells.length < effectiveMinCells) continue;
+    // Phase 2: Cross-type boundary expansion
+    // Unlabeled cells with vulnGrid != 0 that are adjacent to a labeled zone
+    // and have slope >= crossTypeThreshold get absorbed
+    for (int r = 1; r < rows - 1; r++) {
+      for (int c = 1; c < cols - 1; c++) {
+        final i = r * cols + c;
+        if (labels[i] != 0 || vulnGrid[i] == 0) continue;
+        if (slopeResult.slopeGrid[i] < crossTypeThreshold) continue;
 
-      // Compute slope statistics for the zone
-      double slopeSum = 0;
-      double slopeMax = 0;
+        // Find largest adjacent labeled zone
+        int bestLabel = 0;
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            if (dr == 0 && dc == 0) continue;
+            final nr = r + dr, nc = c + dc;
+            if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+            final nl = labels[nr * cols + nc];
+            if (nl > 0) {
+              // Pick any neighbor label
+              if (bestLabel == 0 || nl != bestLabel) {
+                bestLabel = nl;
+              }
+            }
+          }
+        }
+        if (bestLabel > 0) {
+          labels[i] = bestLabel;
+        }
+      }
+    }
+
+    // Collect cells per label + compute slope stats for merge check
+    final labelCells = <int, List<int>>{};
+    final labelSlopeSum = <int, double>{};
+    for (int i = 0; i < n; i++) {
+      if (labels[i] > 0) {
+        labelCells.putIfAbsent(labels[i], () => []).add(i);
+        labelSlopeSum[labels[i]] = (labelSlopeSum[labels[i]] ?? 0) + slopeResult.slopeGrid[i];
+      }
+    }
+
+    // Merge adjacent same-type components with slope similarity check
+    final labelAvgSlope = <int, double>{};
+    for (final entry in labelCells.entries) {
+      labelAvgSlope[entry.key] = labelSlopeSum[entry.key]! / entry.value.length;
+    }
+
+    // Build bounding boxes per label for fast proximity check
+    final labelMinR = <int, int>{}, labelMaxR = <int, int>{};
+    final labelMinC = <int, int>{}, labelMaxC = <int, int>{};
+    for (final entry in labelCells.entries) {
+      int minR = rows, maxR = 0, minC = cols, maxC = 0;
+      for (final idx in entry.value) {
+        final r = idx ~/ cols, c = idx % cols;
+        if (r < minR) minR = r;
+        if (r > maxR) maxR = r;
+        if (c < minC) minC = c;
+        if (c > maxC) maxC = c;
+      }
+      labelMinR[entry.key] = minR;
+      labelMaxR[entry.key] = maxR;
+      labelMinC[entry.key] = minC;
+      labelMaxC[entry.key] = maxC;
+    }
+
+    // Union-Find for merging
+    final parent = <int, int>{};
+    int find(int x) {
+      if (!parent.containsKey(x)) parent[x] = x;
+      if (parent[x] != x) parent[x] = find(parent[x]!);
+      return parent[x]!;
+    }
+    void union(int a, int b) {
+      final ra = find(a), rb = find(b);
+      if (ra != rb) parent[ra] = rb;
+    }
+
+    final sortedLabels = labelCells.keys.toList();
+    for (int i = 0; i < sortedLabels.length; i++) {
+      final la = sortedLabels[i];
+      final typeA = labelType[la] ?? 0;
+      for (int j = i + 1; j < sortedLabels.length; j++) {
+        final lb = sortedLabels[j];
+        final typeB = labelType[lb] ?? 0;
+        if (typeA != typeB) continue;
+
+        // Fast bbox proximity check (within 1 cell)
+        if (labelMinR[la]! > labelMaxR[lb]! + 2 || labelMaxR[la]! < labelMinR[lb]! - 2) continue;
+        if (labelMinC[la]! > labelMaxC[lb]! + 2 || labelMaxC[la]! < labelMinC[lb]! - 2) continue;
+
+        // Slope similarity check
+        if ((labelAvgSlope[la]! - labelAvgSlope[lb]!).abs() >= 10.0) continue;
+
+        // Check if any cell in la is within 1 cell of lb
+        final setB = Set<int>.from(labelCells[lb]!);
+        bool adjacent = false;
+        for (final idx in labelCells[la]!) {
+          final r = idx ~/ cols, c = idx % cols;
+          for (int dr = -1; dr <= 1 && !adjacent; dr++) {
+            for (int dc = -1; dc <= 1 && !adjacent; dc++) {
+              if (dr == 0 && dc == 0) continue;
+              final nr = r + dr, nc = c + dc;
+              if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                if (setB.contains(nr * cols + nc)) adjacent = true;
+              }
+            }
+          }
+          if (adjacent) break;
+        }
+        if (adjacent) union(la, lb);
+      }
+    }
+
+    // Rebuild merged cell lists
+    final mergedCells = <int, List<int>>{};
+    final mergedType = <int, int>{};
+    for (final entry in labelCells.entries) {
+      final root = find(entry.key);
+      mergedCells.putIfAbsent(root, () => []).addAll(entry.value);
+      mergedType[root] = labelType[entry.key] ?? 1;
+    }
+
+    // Buffer zones — distance-based dilation
+    const bufferMeters = 15.0;
+    final bufferCells = (bufferMeters / cellNS).round().clamp(0, 1);
+
+    // For each merged component, create zone
+    final zones = <VulnerabilityZone>[];
+    for (final entry in mergedCells.entries) {
+      var cells = entry.value;
+
+      // Area-based filtering
+      final zoneAreaM2 = cells.length * cellAreaM2;
+      if (zoneAreaM2 < minAreaSquareMeters) continue;
+
+      // Apply buffer dilation
+      if (bufferCells > 0) {
+        final expanded = Set<int>.from(cells);
+        for (final idx in cells) {
+          final r = idx ~/ cols, c = idx % cols;
+          for (int dr = -bufferCells; dr <= bufferCells; dr++) {
+            for (int dc = -bufferCells; dc <= bufferCells; dc++) {
+              final nr = r + dr, nc = c + dc;
+              if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                expanded.add(nr * cols + nc);
+              }
+            }
+          }
+        }
+        cells = expanded.toList();
+      }
+
+      // Compute stats
+      double slopeSum = 0, slopeMax = 0;
+      double curvSum = 0, triSum = 0;
+      double minElev = 32767, maxElev = -32768;
+      int statCount = 0;
       for (final ci in cells) {
         final s = slopeResult.slopeGrid[ci];
         slopeSum += s;
         if (s > slopeMax) slopeMax = s;
+        curvSum += curvatureGrid[ci];
+        triSum += triGrid[ci];
+        final elev = dem[ci].toDouble();
+        if (elev != -32768) {
+          if (elev < minElev) minElev = elev;
+          if (elev > maxElev) maxElev = elev;
+        }
+        statCount++;
       }
-      final avgSlope = cells.isNotEmpty ? slopeSum / cells.length : 0.0;
+      final avgSlope = statCount > 0 ? slopeSum / statCount : 0.0;
+      final avgCurv = statCount > 0 ? curvSum / statCount : 0.0;
+      final avgTri = statCount > 0 ? triSum / statCount : 0.0;
+      final areaM2 = cells.length * cellAreaM2;
 
-      // Collect LatLng points from cell positions
-      final points = <LatLng>[];
-      for (final i in cells) {
-        final r = i ~/ _activeCols;
-        final c = i % _activeCols;
-        points.add(_subGridToLatLng(r, c));
+      // Compute concave hull via marching squares
+      final cellSet = Set<int>.from(cells);
+      var hull = _marchingSquaresContour(cellSet, cols, rows);
+      if (hull.length < 3) {
+        // Fallback to convex hull
+        final pts = <LatLng>[];
+        for (final i in cells) {
+          pts.add(_subGridToLatLng(i ~/ cols, i % cols));
+        }
+        hull = _convexHull(pts);
       }
-
-      // Compute convex hull
-      final hull = _convexHull(points);
       if (hull.length < 3) continue;
 
-      final typeIdx = labelType[label] ?? 1;
+      final typeIdx = mergedType[entry.key] ?? 1;
       final vulnType = typeIdx >= 1 && typeIdx <= VulnerabilityType.values.length
           ? VulnerabilityType.values[typeIdx - 1]
           : VulnerabilityType.cliff;
 
+      // Multi-factor severity
+      final severity = (
+        0.45 * (avgSlope / 60.0).clamp(0.0, 1.0) +
+        0.25 * (slopeMax / 75.0).clamp(0.0, 1.0) +
+        0.15 * (avgCurv.abs() / 0.05).clamp(0.0, 1.0) +
+        0.10 * (areaM2 / 10000.0).clamp(0.0, 1.0) +
+        0.05 * ((maxElev - minElev) / 100.0).clamp(0.0, 1.0)
+      ).clamp(0.0, 1.0);
+
       zones.add(VulnerabilityZone(
         polygon: hull,
         type: vulnType,
-        severity: 0.5 + 0.5 * (cells.length / 100).clamp(0.0, 1.0),
+        severity: severity,
         cellCount: cells.length,
         avgSlope: avgSlope,
         maxSlope: slopeMax,
+        areaSquareMeters: areaM2,
+        minElevation: minElev == 32767 ? 0 : minElev,
+        maxElevation: maxElev == -32768 ? 0 : maxElev,
+        avgCurvature: avgCurv,
+        avgTri: avgTri,
       ));
     }
 
@@ -1400,21 +2060,148 @@ class TerrainAnalysisService {
   }
 
   // ---------------------------------------------------------------------------
-  // Helper: topological saddle detection
+  // Helper: Gaussian σ=1 smoothed DEM (cached)
   // ---------------------------------------------------------------------------
 
-  /// בדיקת אוכף טופולוגי — עלייה ב-2 כיוונים נגדיים וירידה ב-2 אחרים
-  bool _isTopologicalSaddle(int r, int c, Int16List dem, int rows, int cols) {
-    final center = dem[r * cols + c].toDouble();
-    if (center == -32768) return false;
+  /// חישוב DEM מוחלק עם Gaussian σ=1 — לייצוב sign changes בזיהוי אוכפים
+  Float64List _getSmoothedDem() {
+    if (_smoothedDem != null) return _smoothedDem!;
+
+    final dem = _activeDem!;
+    final rows = _activeRows;
+    final cols = _activeCols;
+    final smoothed = Float64List(rows * cols);
+
+    // Gaussian 3×3, σ=1: [1,2,1; 2,4,2; 1,2,1] / 16
+    const kernel = [1.0, 2.0, 1.0, 2.0, 4.0, 2.0, 1.0, 2.0, 1.0];
+
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        if (dem[idx] == -32768) {
+          smoothed[idx] = -32768;
+          continue;
+        }
+        if (r < 1 || r >= rows - 1 || c < 1 || c >= cols - 1) {
+          smoothed[idx] = dem[idx].toDouble();
+          continue;
+        }
+        double sum = 0;
+        double weight = 0;
+        int ki = 0;
+        for (int dr = -1; dr <= 1; dr++) {
+          for (int dc = -1; dc <= 1; dc++) {
+            final val = dem[(r + dr) * cols + (c + dc)].toDouble();
+            if (val != -32768) {
+              sum += val * kernel[ki];
+              weight += kernel[ki];
+            }
+            ki++;
+          }
+        }
+        smoothed[idx] = weight > 0 ? sum / weight : dem[idx].toDouble();
+      }
+    }
+
+    _smoothedDem = smoothed;
+    return smoothed;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: D8 flow accumulation (cached)
+  // ---------------------------------------------------------------------------
+
+  /// חישוב צבירת זרימה D8 — לזיהוי נחלים וצמתי ואדיות
+  Int32List _getFlowAccumulation() {
+    if (_flowAccumulation != null) return _flowAccumulation!;
+
+    final dem = _activeDem!;
+    final rows = _activeRows;
+    final cols = _activeCols;
+    final n = rows * cols;
+
+    // D8 flow direction: each cell flows to steepest descent neighbor
+    final flowDir = Int8List(n);
+    for (int i = 0; i < n; i++) flowDir[i] = -1;
+
     const dr = [-1, -1, 0, 1, 1, 1, 0, -1];
     const dc = [0, 1, 1, 1, 0, -1, -1, -1];
+    // Distance weights: cardinal = 1, diagonal = √2
+    const dist = [1.0, 1.414, 1.0, 1.414, 1.0, 1.414, 1.0, 1.414];
+
+    for (int r = 0; r < rows; r++) {
+      for (int c = 0; c < cols; c++) {
+        final idx = r * cols + c;
+        final elev = dem[idx].toDouble();
+        if (elev == -32768) continue;
+
+        double maxSlope = 0;
+        int bestDir = -1;
+        for (int d = 0; d < 8; d++) {
+          final nr = r + dr[d], nc = c + dc[d];
+          if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+          final nElev = dem[nr * cols + nc].toDouble();
+          if (nElev == -32768) continue;
+          final drop = elev - nElev;
+          if (drop > 0) {
+            final slope = drop / dist[d];
+            if (slope > maxSlope) {
+              maxSlope = slope;
+              bestDir = d;
+            }
+          }
+        }
+        flowDir[idx] = bestDir;
+      }
+    }
+
+    // Sort cells by elevation (descending) for top-down accumulation
+    final indices = List<int>.generate(n, (i) => i);
+    indices.sort((a, b) {
+      final ea = dem[a] == -32768 ? -99999 : dem[a];
+      final eb = dem[b] == -32768 ? -99999 : dem[b];
+      return eb.compareTo(ea);
+    });
+
+    final accumulation = Int32List(n);
+    for (int i = 0; i < n; i++) accumulation[i] = 1; // each cell contributes 1
+
+    for (final idx in indices) {
+      if (dem[idx] == -32768) continue;
+      final dir = flowDir[idx];
+      if (dir < 0) continue;
+
+      final r = idx ~/ cols;
+      final c = idx % cols;
+      final nr = r + dr[dir], nc = c + dc[dir];
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        accumulation[nr * cols + nc] += accumulation[idx];
+      }
+    }
+
+    _flowAccumulation = accumulation;
+    return accumulation;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: topological saddle detection (Gaussian-smoothed)
+  // ---------------------------------------------------------------------------
+
+  /// בדיקת אוכף טופולוגי — שימוש ב-DEM מוחלק (Gaussian σ=1) לייצוב sign changes
+  bool _isTopologicalSaddle(int r, int c, Int16List dem, int rows, int cols) {
+    // Use Gaussian-smoothed DEM for stable sign changes
+    final smoothed = _getSmoothedDem();
+    final center = smoothed[r * cols + c];
+    if (center == -32768) return false;
+
+    const drDir = [-1, -1, 0, 1, 1, 1, 0, -1];
+    const dcDir = [0, 1, 1, 1, 0, -1, -1, -1];
 
     int signChanges = 0, lastSign = 0, firstSign = 0;
     for (int d = 0; d < 8; d++) {
-      final nr = r + dr[d], nc = c + dc[d];
+      final nr = r + drDir[d], nc = c + dcDir[d];
       if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return false;
-      final val = dem[nr * cols + nc].toDouble();
+      final val = smoothed[nr * cols + nc];
       if (val == -32768) return false;
       final sign = val > center ? 1 : (val < center ? -1 : 0);
       if (sign == 0) continue;

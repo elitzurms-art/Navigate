@@ -24,6 +24,8 @@ import '../../../core/map_config.dart';
 import 'boundary_setup_screen.dart';
 import '../../../domain/entities/nav_layer.dart';
 import 'navigation_preparation_screen.dart';
+import '../../../domain/entities/checkpoint_punch.dart';
+import '../../widgets/alert_volume_control.dart';
 
 /// מסך יצירת/עריכת ניווט
 class CreateNavigationScreen extends StatefulWidget {
@@ -161,6 +163,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   int _noReceptionMinTime = 30;
   bool _healthCheckEnabled = true;
   int _healthCheckIntervalMinutes = 60;
+  Map<String, double> _alertSoundVolumes = {};
   StreamSubscription<String>? _syncSubscription;
   Timer? _autoSaveTimer;
   Timer? _debounceTimer;
@@ -483,6 +486,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     _noReceptionMinTime = nav.alerts.noReceptionMinTime ?? 60;
     _healthCheckEnabled = nav.alerts.healthCheckEnabled;
     _healthCheckIntervalMinutes = nav.alerts.healthCheckIntervalMinutes;
+    _alertSoundVolumes = Map<String, double>.from(nav.alerts.alertSoundVolumes ?? {});
 
     // טעינת אזור, עץ וגבול
     await _loadAreaTreeAndBoundary();
@@ -1815,17 +1819,38 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     );
   }
 
+  Widget _buildAlertVolumeRow(String alertCode) {
+    return AlertVolumeControl(
+      volume: _alertSoundVolumes[alertCode] ?? 1.0,
+      onVolumeChanged: (v) {
+        setState(() {
+          if (v == 1.0) {
+            _alertSoundVolumes.remove(alertCode);
+          } else {
+            _alertSoundVolumes[alertCode] = v;
+          }
+        });
+        _onSettingChanged();
+      },
+    );
+  }
+
   Widget _buildAlertsSettings() {
     return Column(
       children: [
         // התראת מהירות
-        SwitchListTile(
-          title: const Text('התראת מהירות'),
-          value: _speedAlertEnabled,
-          onChanged: (value) {
-            setState(() => _speedAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.speed.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת מהירות'),
+              value: _speedAlertEnabled,
+              onChanged: (value) {
+                setState(() => _speedAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_speedAlertEnabled)
           Padding(
@@ -1845,13 +1870,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת חוסר תנועה
-        SwitchListTile(
-          title: const Text('התראת חוסר תנועה'),
-          value: _noMovementAlertEnabled,
-          onChanged: (value) {
-            setState(() => _noMovementAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.noMovement.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת חוסר תנועה'),
+              value: _noMovementAlertEnabled,
+              onChanged: (value) {
+                setState(() => _noMovementAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_noMovementAlertEnabled)
           Padding(
@@ -1871,13 +1901,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת גבול גזרה
-        SwitchListTile(
-          title: const Text('התראת גבול גזרה'),
-          value: _ggAlertEnabled,
-          onChanged: (value) {
-            setState(() => _ggAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.boundary.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת גבול גזרה'),
+              value: _ggAlertEnabled,
+              onChanged: (value) {
+                setState(() => _ggAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_ggAlertEnabled)
           Padding(
@@ -1897,13 +1932,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת נתבים
-        SwitchListTile(
-          title: const Text('התראת נתבים'),
-          value: _routesAlertEnabled,
-          onChanged: (value) {
-            setState(() => _routesAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.routeDeviation.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת נתבים'),
+              value: _routesAlertEnabled,
+              onChanged: (value) {
+                setState(() => _routesAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_routesAlertEnabled)
           Padding(
@@ -1923,13 +1963,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת נת"ב
-        SwitchListTile(
-          title: const Text('התראת נת"ב'),
-          value: _nbAlertEnabled,
-          onChanged: (value) {
-            setState(() => _nbAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.safetyPoint.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת נת"ב'),
+              value: _nbAlertEnabled,
+              onChanged: (value) {
+                setState(() => _nbAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_nbAlertEnabled)
           Padding(
@@ -1949,13 +1994,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת קרבת מנווטים
-        SwitchListTile(
-          title: const Text('התראת קרבת מנווטים'),
-          value: _proximityAlertEnabled,
-          onChanged: (value) {
-            setState(() => _proximityAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.proximity.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת קרבת מנווטים'),
+              value: _proximityAlertEnabled,
+              onChanged: (value) {
+                setState(() => _proximityAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_proximityAlertEnabled)
           Padding(
@@ -1992,13 +2042,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת סוללה
-        SwitchListTile(
-          title: const Text('התראת סוללה'),
-          value: _batteryAlertEnabled,
-          onChanged: (value) {
-            setState(() => _batteryAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.battery.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת סוללה'),
+              value: _batteryAlertEnabled,
+              onChanged: (value) {
+                setState(() => _batteryAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_batteryAlertEnabled)
           Padding(
@@ -2018,13 +2073,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           ),
 
         // התראת חוסר קליטה
-        SwitchListTile(
-          title: const Text('התראת חוסר קליטה'),
-          value: _noReceptionAlertEnabled,
-          onChanged: (value) {
-            setState(() => _noReceptionAlertEnabled = value);
-            _onSettingChanged();
-          },
+        Row(
+          children: [
+            _buildAlertVolumeRow(AlertType.noReception.code),
+            Expanded(child: SwitchListTile(
+              title: const Text('התראת חוסר קליטה'),
+              value: _noReceptionAlertEnabled,
+              onChanged: (value) {
+                setState(() => _noReceptionAlertEnabled = value);
+                _onSettingChanged();
+              },
+            )),
+          ],
         ),
         if (_noReceptionAlertEnabled)
           Padding(
@@ -2042,7 +2102,47 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               },
             ),
           ),
+
+        // קטגוריות צליל נוספות
+        const Divider(),
+        _buildCategorySoundRow(
+          label: '📋 בקשות הארכה (צליל)',
+          alertCode: AlertType.extensionRequest.code,
+        ),
+        _buildCategorySoundRow(
+          label: '⚠️ ברבור (צליל)',
+          alertCode: AlertType.barbur.code,
+        ),
+        _buildCategorySoundRow(
+          label: '🚨 חירום מנווט (צליל)',
+          alertCode: AlertType.emergency.code,
+        ),
       ],
+    );
+  }
+
+  Widget _buildCategorySoundRow({required String label, required String alertCode}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Row(
+        children: [
+          AlertVolumeControl(
+            volume: _alertSoundVolumes[alertCode] ?? 1.0,
+            onVolumeChanged: (v) {
+              setState(() {
+                if (v == 1.0) {
+                  _alertSoundVolumes.remove(alertCode);
+                } else {
+                  _alertSoundVolumes[alertCode] = v;
+                }
+              });
+              _onSettingChanged();
+            },
+          ),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontSize: 14)),
+        ],
+      ),
     );
   }
 
@@ -2293,6 +2393,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         noReceptionMinTime: _noReceptionAlertEnabled ? _noReceptionMinTime : null,
         healthCheckEnabled: _healthCheckEnabled,
         healthCheckIntervalMinutes: _healthCheckIntervalMinutes,
+        alertSoundVolumes: _alertSoundVolumes.isEmpty ? null : _alertSoundVolumes,
       );
 
       // חישוב מיקום פתיחת מפה - במרכז הגבול הראשון אם קיים

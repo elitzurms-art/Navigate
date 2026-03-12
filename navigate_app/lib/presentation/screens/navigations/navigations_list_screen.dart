@@ -642,16 +642,21 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
 
     await _showSpinner('מעביר למצב למידה...');
 
+    final _sw = Stopwatch()..start();
+    print('DEBUG PERF _startTrainingMode: begin');
+
     final updatedNavigation = navigation.copyWith(
       status: 'learning',
       trainingStartTime: DateTime.now(),
       updatedAt: DateTime.now(),
     );
     await _repository.update(updatedNavigation);
+    print('DEBUG PERF _startTrainingMode: _repository.update done in ${_sw.elapsedMilliseconds}ms');
 
     if (mounted) {
       Navigator.pop(context); // סגירת spinner
       _loadNavigations();
+      print('DEBUG PERF _startTrainingMode: spinner closed at ${_sw.elapsedMilliseconds}ms');
 
       final isCommander = _currentUser?.hasCommanderPermissions ?? true;
       Navigator.push(
@@ -666,6 +671,7 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
       ).then((_) {
         _loadNavigations();
       });
+      print('DEBUG PERF _startTrainingMode: push done at ${_sw.elapsedMilliseconds}ms');
     }
   }
 
@@ -905,23 +911,28 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     );
 
     try {
+      final _sw = Stopwatch()..start();
+      print('DEBUG PERF _startNavigationAndOpen: begin');
+
       await _resetNavigatorData(navigation.id);
+      print('DEBUG PERF _startNavigationAndOpen: reset done in ${_sw.elapsedMilliseconds}ms');
+
       final updated = navigation.copyWith(
         status: 'active',
         activeStartTime: DateTime.now(),
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
+      print('DEBUG PERF _startNavigationAndOpen: update done in ${_sw.elapsedMilliseconds}ms');
 
-      // יצירת חדר ווקי טוקי אם מופעל
+      // יצירת חדר ווקי טוקי אם מופעל (non-blocking)
       if (updated.communicationSettings.walkieTalkieEnabled) {
-        try {
-          await VoiceMessageRepository().createRoom(updated.id, updated.name);
-        } catch (_) {}
+        unawaited(VoiceMessageRepository().createRoom(updated.id, updated.name).catchError((_) {}));
       }
 
       if (mounted) {
         Navigator.pop(context); // סגירת עיגול טעינה
+        print('DEBUG PERF _startNavigationAndOpen: done at ${_sw.elapsedMilliseconds}ms');
 
         Navigator.push(
           context,
@@ -1212,11 +1223,29 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     }
   }
 
-  /// בדיקה אם ניתן למחוק ניווט
+  /// בדיקה אם ניתן למחוק ניווט — רק בשלב הכנה
   bool _canDelete(domain.Navigation navigation) {
-    if (navigation.status == 'learning') return false;
-    if (navigation.status == 'system_check') return false;
-    return true;
+    return navigation.status == 'preparation' || navigation.status == 'ready';
+  }
+
+  /// הודעת הסבר למה לא ניתן למחוק
+  String _cannotDeleteReason(domain.Navigation navigation) {
+    switch (navigation.status) {
+      case 'learning':
+        return 'לא ניתן למחוק ניווט בשלב למידה';
+      case 'system_check':
+        return 'לא ניתן למחוק ניווט בשלב בדיקת מערכות';
+      case 'waiting':
+        return 'לא ניתן למחוק ניווט בשלב המתנה לאימון';
+      case 'active':
+        return 'לא ניתן למחוק ניווט פעיל';
+      case 'approval':
+        return 'לא ניתן למחוק ניווט בשלב אישור';
+      case 'review':
+        return 'לא ניתן למחוק ניווט בשלב תחקור';
+      default:
+        return 'לא ניתן למחוק ניווט במצב הנוכחי';
+    }
   }
 
   // ======== בניית popup menu לפי סטטוס ========
@@ -1484,30 +1513,28 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     await punchRepo.deleteByNavigation(navigationId);
     await alertRepo.deleteByNavigation(navigationId);
 
-    // מחיקה מ-Firestore — tracks
-    try {
-      final tracksSnapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: navigationId)
-          .get();
-      for (final doc in tracksSnapshot.docs) {
-        await doc.reference.delete();
+    // מחיקה מ-Firestore — tracks + ציונים (non-blocking batch)
+    unawaited(() async {
+      try {
+        final tracksSnapshot = await FirebaseFirestore.instance
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: navigationId)
+            .get();
+        final scoresSnapshot = await FirebaseFirestore.instance
+            .collection(AppConstants.navScoresPath(navigationId))
+            .get();
+        final allDocs = [...tracksSnapshot.docs, ...scoresSnapshot.docs];
+        if (allDocs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          for (final doc in allDocs) {
+            batch.delete(doc.reference);
+          }
+          await batch.commit();
+        }
+      } catch (_) {
+        // Firestore לא זמין — ימחק בסנכרון הבא
       }
-    } catch (_) {
-      // Firestore לא זמין — ימחק בסנכרון הבא
-    }
-
-    // מחיקה מ-Firestore — ציונים (subcollection)
-    try {
-      final scoresSnapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navScoresPath(navigationId))
-          .get();
-      for (final doc in scoresSnapshot.docs) {
-        await doc.reference.delete();
-      }
-    } catch (_) {
-      // Firestore לא זמין — ימחק בסנכרון הבא
-    }
+    }());
   }
 
   Future<void> _startNavigation(domain.Navigation navigation) async {
@@ -1539,8 +1566,12 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
     );
 
     try {
+      final _sw = Stopwatch()..start();
+      print('DEBUG PERF _startNavigation: begin');
+
       // איפוס סטטוסים אישיים — מחיקת tracks, דקירות והתראות ישנים
       await _resetNavigatorData(navigation.id);
+      print('DEBUG PERF _startNavigation: _resetNavigatorData done in ${_sw.elapsedMilliseconds}ms');
 
       final updated = navigation.copyWith(
         status: 'active',
@@ -1548,17 +1579,18 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
         updatedAt: DateTime.now(),
       );
       await _repository.update(updated);
+      print('DEBUG PERF _startNavigation: _repository.update done in ${_sw.elapsedMilliseconds}ms');
 
-      // יצירת חדר ווקי טוקי אם מופעל
+      // יצירת חדר ווקי טוקי אם מופעל (non-blocking)
       if (updated.communicationSettings.walkieTalkieEnabled) {
-        try {
-          await VoiceMessageRepository().createRoom(updated.id, updated.name);
-        } catch (_) {}
+        unawaited(VoiceMessageRepository().createRoom(updated.id, updated.name).catchError((_) {}));
       }
+      print('DEBUG PERF _startNavigation: createRoom done in ${_sw.elapsedMilliseconds}ms');
 
       if (mounted) {
         // סגירת דיאלוג טעינה
         Navigator.pop(context);
+        print('DEBUG PERF _startNavigation: spinner closed at ${_sw.elapsedMilliseconds}ms');
 
         // מעבר ישיר לניהול ניווט
         Navigator.push(
@@ -1854,19 +1886,30 @@ class _NavigationsListScreenState extends State<NavigationsListScreen> with Widg
                 ),
                 const SizedBox(width: 4),
               ],
-              // כפתור מחיקה
-              if (canDelete)
-                SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    color: Colors.red[400],
-                    padding: EdgeInsets.zero,
-                    tooltip: 'מחק ניווט',
-                    onPressed: () => _deleteNavigation(navigation),
-                  ),
+              // כפתור מחיקה — תמיד מוצג, אך מושבת בסטטוסים פעילים
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: IconButton(
+                  icon: Icon(Icons.delete_outline, size: 18,
+                    color: canDelete ? Colors.red[400] : Colors.grey[400]),
+                  padding: EdgeInsets.zero,
+                  tooltip: canDelete ? 'מחק ניווט' : _cannotDeleteReason(navigation),
+                  onPressed: () {
+                    if (canDelete) {
+                      _deleteNavigation(navigation);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(_cannotDeleteReason(navigation)),
+                          backgroundColor: Colors.orange[700],
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
                 ),
+              ),
               // תפריט פעולות
               if (popupItems.isNotEmpty)
                 SizedBox(

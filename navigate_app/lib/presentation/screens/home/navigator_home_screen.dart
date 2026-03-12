@@ -249,9 +249,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     _wasInEmergency = true;
     _lastShownBroadcastId = broadcastId;
 
-    // הפעלת אזעקה
+    // הפעלת סירנת חירום
     _emergencyPlayer?.setReleaseMode(ReleaseMode.loop);
-    _emergencyPlayer?.play(AssetSource('sounds/alert_beep.wav'));
+    _emergencyPlayer?.play(AssetSource('sounds/emergency_siren.wav'));
 
     // רטט כל 2 שניות
     _vibrationTimer?.cancel();
@@ -367,9 +367,9 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
     _routineDialogShowing = true;
 
-    // הפעלת אזעקה
+    // הפעלת סירנה — חזרה לשגרה
     _emergencyPlayer?.setReleaseMode(ReleaseMode.loop);
-    _emergencyPlayer?.play(AssetSource('sounds/alert_beep.wav'));
+    _emergencyPlayer?.play(AssetSource('sounds/emergency_siren.wav'));
 
     // רטט כל 2 שניות
     _vibrationTimer?.cancel();

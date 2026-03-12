@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:isolate';
+import 'package:turf/turf.dart' as turf;
 import '../domain/entities/navigation.dart' as domain;
 import '../domain/entities/checkpoint.dart';
 import '../domain/entities/navigation_tree.dart';
@@ -25,6 +26,8 @@ class _DistributionParams {
   final SendPort progressPort;
   final bool isGuard;
   final String? swapPointId;
+  final List<List<double>>? boundaryCoords;
+  final List<List<List<double>>>? safetyPolygons;
 
   _DistributionParams({
     required this.navigators,
@@ -41,6 +44,8 @@ class _DistributionParams {
     required this.progressPort,
     this.isGuard = false,
     this.swapPointId,
+    this.boundaryCoords,
+    this.safetyPolygons,
   });
 }
 
@@ -90,6 +95,16 @@ class _SimpleWaypoint {
   }
 }
 
+/// סוג הפרת קטע — יציאה מגבול או חיתוך נת"ב
+class _SegmentViolation {
+  final int boundaryCrossings; // 0 = אין יציאה, >0 = מספר חציות של צלעות הגבול
+  final int safetyPolygonsCrossed;
+  const _SegmentViolation(this.boundaryCrossings, this.safetyPolygonsCrossed);
+  static const none = _SegmentViolation(0, 0);
+  bool get exitsBoundary => boundaryCrossings > 0;
+  bool get hasViolation => boundaryCrossings > 0 || safetyPolygonsCrossed > 0;
+}
+
 /// תוצאת ציר פנימית
 class _RouteResult {
   final List<String> checkpointIds;
@@ -100,6 +115,9 @@ class _RouteResult {
   // Guard mode: אורכי חצאי ציר (null כשלא במצב מאבטח)
   final double? firstHalfLengthKm;
   final double? secondHalfLengthKm;
+  // הפרות גיאומטריות — קטעים שחוצים גבול או נת"בים
+  final int boundaryExits;
+  final int safetyIntersections;
 
   _RouteResult({
     required this.checkpointIds,
@@ -109,6 +127,8 @@ class _RouteResult {
     required this.inRange,
     this.firstHalfLengthKm,
     this.secondHalfLengthKm,
+    this.boundaryExits = 0,
+    this.safetyIntersections = 0,
   });
 }
 
@@ -403,6 +423,17 @@ class RoutesDistributionService {
     final effectiveMinRoute = composition.isGuard ? minRouteLength * 2 : minRouteLength;
     final effectiveMaxRoute = composition.isGuard ? maxRouteLength * 2 : maxRouteLength;
 
+    // סריאליזציית גיאומטריה ל-Isolate — גבול גזרה ונת"בים
+    final List<List<double>>? serializedBoundary = (boundary != null && boundary.coordinates.length >= 3)
+        ? boundary.coordinates.map((c) => [c.lat, c.lng]).toList()
+        : null;
+    final List<List<List<double>>>? serializedSafetyPolygons = safetyPoints
+        .where((sp) => sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.length >= 3)
+        .map((sp) => sp.polygonCoordinates!.map((c) => [c.lat, c.lng]).toList())
+        .toList();
+    final effectiveSafetyPolygons = (serializedSafetyPolygons != null && serializedSafetyPolygons.isNotEmpty)
+        ? serializedSafetyPolygons : null;
+
     final result = await _runInIsolate(
       navigators: virtualNavigators,
       checkpointMaps: checkpointMaps,
@@ -417,6 +448,8 @@ class RoutesDistributionService {
       onProgress: onProgress,
       isGuard: composition.isGuard,
       swapPointId: composition.swapPointId,
+      boundaryCoords: serializedBoundary,
+      safetyPolygons: effectiveSafetyPolygons,
     );
 
     // --- שלב 3: הרחבת תוצאות לפי הרכב הכוח ---
@@ -975,6 +1008,8 @@ class RoutesDistributionService {
     void Function(int current, int total)? onProgress,
     bool isGuard = false,
     String? swapPointId,
+    List<List<double>>? boundaryCoords,
+    List<List<List<double>>>? safetyPolygons,
   }) async {
     final receivePort = ReceivePort();
     const maxIterations = 1000;
@@ -994,6 +1029,8 @@ class RoutesDistributionService {
       progressPort: receivePort.sendPort,
       isGuard: isGuard,
       swapPointId: swapPointId,
+      boundaryCoords: boundaryCoords,
+      safetyPolygons: safetyPolygons,
     );
 
     // הרצה ב-Isolate עם error handling
@@ -1099,6 +1136,12 @@ class RoutesDistributionService {
     }
     final distMatrix = _buildDistanceMatrix(allPoints);
 
+    // בניית מטריצת הפרות גיאומטריות (nullable — מדולג כשאין גבול/נת"בים)
+    final Map<String, Map<String, _SegmentViolation>>? violationMatrix =
+        (params.boundaryCoords != null || params.safetyPolygons != null)
+            ? _buildSegmentViolationMatrix(allPoints, params.boundaryCoords, params.safetyPolygons)
+            : null;
+
     final bool needsSharing = pool.length < N * K;
     final bool isDoubleCheck = params.scoringCriterion == 'doubleCheck';
 
@@ -1127,6 +1170,7 @@ class RoutesDistributionService {
         distMatrix: distMatrix,
         isGuard: params.isGuard,
         swapCp: swapCp,
+        violationMatrix: violationMatrix,
       );
     }
 
@@ -1152,6 +1196,7 @@ class RoutesDistributionService {
         distMatrix: distMatrix,
         isGuard: params.isGuard,
         swapCp: swapCp,
+        violationMatrix: violationMatrix,
       );
 
       // העדפת תוצאה טובה יותר
@@ -1208,6 +1253,7 @@ class RoutesDistributionService {
     required Map<String, Map<String, double>> distMatrix,
     bool isGuard = false,
     _SimpleCheckpoint? swapCp,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     _InternalDistribution? best;
     final targetLength = (minRoute + maxRoute) / 2;
@@ -1246,6 +1292,7 @@ class RoutesDistributionService {
         random: random,
         allowSharing: allowSharing,
         distMatrix: distMatrix,
+        violationMatrix: violationMatrix,
       );
 
       if (initialSolution == null) continue;
@@ -1270,6 +1317,7 @@ class RoutesDistributionService {
         distMatrix: distMatrix,
         isGuard: isGuard,
         swapCp: swapCp,
+        violationMatrix: violationMatrix,
       );
 
       // ולידציית K: דילוג על פתרון שבור
@@ -1292,6 +1340,7 @@ class RoutesDistributionService {
         hasSharing: hasSharing,
         totalUniqueCheckpoints: uniqueCpIds.length,
         isGuard: isGuard,
+        violationMatrix: violationMatrix,
       );
 
       final result = _InternalDistribution(
@@ -1338,6 +1387,7 @@ class RoutesDistributionService {
           distMatrix: distMatrix,
           isGuard: isGuard,
           swapCp: swapCp,
+          violationMatrix: violationMatrix,
         );
 
         // ולידציית K על restart SA
@@ -1358,6 +1408,7 @@ class RoutesDistributionService {
           hasSharing: restartHasSharing,
           totalUniqueCheckpoints: restartUniqueCpIds.length,
           isGuard: isGuard,
+          violationMatrix: violationMatrix,
         );
 
         if (restartScore > best.score) {
@@ -1392,6 +1443,7 @@ class RoutesDistributionService {
         maxRoute: maxRoute,
         executionOrder: executionOrder,
         distMatrix: distMatrix,
+        violationMatrix: violationMatrix,
       );
     }
 
@@ -1414,6 +1466,7 @@ class RoutesDistributionService {
     required Random random,
     required bool allowSharing,
     required Map<String, Map<String, double>> distMatrix,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     final N = navigators.length;
     final usedGlobally = <String>{};
@@ -1462,6 +1515,7 @@ class RoutesDistributionService {
         targetLength: targetLength,
         random: random,
         distMatrix: distMatrix,
+        violationMatrix: violationMatrix,
       );
 
       if (chunk.length < K) return null;
@@ -1473,7 +1527,7 @@ class RoutesDistributionService {
       }
 
       // אופטימיזציית רצף (כולל הכנסת waypoints)
-      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
+      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints, violationMatrix);
 
       // בניית ציר מלא עם waypoints
       final fullResult = _buildRouteWithWaypoints(
@@ -1490,12 +1544,19 @@ class RoutesDistributionService {
       final waypointIds = fullResult['waypointIds'] as List<String>;
       final inRange = routeLength >= minRoute && routeLength <= maxRoute;
 
+      final violations = violationMatrix != null
+          ? _countSequenceViolations(
+              sequence.map((cp) => cp.id).toList(), startCp?.id, endCp?.id, violationMatrix)
+          : (boundaryExits: 0, safetyIntersections: 0);
+
       distribution[navigators[navIdx]] = _RouteResult(
         checkpointIds: chunk.map((cp) => cp.id).toList(),
         sequence: sequence.map((cp) => cp.id).toList(),
         waypointIds: waypointIds,
         routeLengthKm: routeLength,
         inRange: inRange,
+        boundaryExits: violations.boundaryExits,
+        safetyIntersections: violations.safetyIntersections,
       );
     }
 
@@ -1574,6 +1635,7 @@ class RoutesDistributionService {
     required double targetLength,
     required Random random,
     required Map<String, Map<String, double>> distMatrix,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     final route = <_SimpleCheckpoint>[];
     final remaining = List<_SimpleCheckpoint>.from(candidatePool);
@@ -1588,14 +1650,24 @@ class RoutesDistributionService {
     for (int j = 0; j < K; j++) {
       if (remaining.isEmpty) break;
 
-      // ניקוד כל מועמד לפי קרבה למרחק היעד
+      // ניקוד כל מועמד לפי קרבה למרחק היעד + penalty על הפרות גבול
       final scored = <MapEntry<_SimpleCheckpoint, double>>[];
       for (final cp in remaining) {
         final dist = currentId != null
             ? _dist(currentId, cp.id, distMatrix)
             : 0.0;
         final diff = (dist - idealSegment).abs();
-        scored.add(MapEntry(cp, diff));
+
+        // boundary violation penalty
+        double violationPenalty = 0;
+        if (violationMatrix != null && currentId != null) {
+          final v = violationMatrix[currentId]?[cp.id];
+          if (v != null && v.exitsBoundary) {
+            violationPenalty = 100.0; // הרבה יותר גדול מ-diff טיפוסי (~0-2 km)
+          }
+        }
+
+        scored.add(MapEntry(cp, diff + violationPenalty));
       }
 
       // מיון לפי קרבה למרחק אידיאלי
@@ -1638,10 +1710,23 @@ class RoutesDistributionService {
       }
     }
 
-    // Fallback: אם הלולאה הסתיימה מוקדם, השלמה מ-candidatePool שלא נבחרו
+    // Fallback מודע-גבול: השלמה מ-candidatePool — מיון לפי crossings + מרחק
     if (route.length < K) {
       final usedIds = route.map((c) => c.id).toSet();
       final leftover = candidatePool.where((c) => !usedIds.contains(c.id)).toList();
+
+      if (violationMatrix != null && route.isNotEmpty) {
+        final lastId = route.last.id;
+        leftover.sort((a, b) {
+          final va = violationMatrix[lastId]?[a.id];
+          final vb = violationMatrix[lastId]?[b.id];
+          final aCrossings = (va != null && va.exitsBoundary) ? va.boundaryCrossings : 0;
+          final bCrossings = (vb != null && vb.exitsBoundary) ? vb.boundaryCrossings : 0;
+          if (aCrossings != bCrossings) return aCrossings.compareTo(bCrossings);
+          return _dist(lastId, a.id, distMatrix).compareTo(_dist(lastId, b.id, distMatrix));
+        });
+      }
+
       for (final cp in leftover) {
         if (route.length >= K) break;
         route.add(cp);
@@ -1694,6 +1779,7 @@ class RoutesDistributionService {
     required Map<String, Map<String, double>> distMatrix,
     bool isGuard = false,
     _SimpleCheckpoint? swapCp,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     if (navigators.length < 2) return Map.from(initial);
 
@@ -1720,9 +1806,9 @@ class RoutesDistributionService {
     // Guard-aware route evaluation: פיצול לחצאים + NN עצמאי לכל חצי
     _RouteResult evalLight(List<_SimpleCheckpoint> chunk) {
       if (isGuard && swapCp != null) {
-        return _evaluateGuardRoute(chunk, startCp, endCp, swapCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
+        return _evaluateGuardRoute(chunk, startCp, endCp, swapCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix, violationMatrix);
       }
-      return _rebuildRouteLight(chunk, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix);
+      return _rebuildRouteLight(chunk, startCp, endCp, waypoints, allCheckpoints, minRoute, maxRoute, distMatrix, violationMatrix);
     }
     _RouteResult evalFull(List<_SimpleCheckpoint> chunk) {
       if (isGuard && swapCp != null) {
@@ -1730,8 +1816,8 @@ class RoutesDistributionService {
         final halfMin = minRoute / 2;
         final halfMax = maxRoute / 2;
         final halves = _splitGuardCheckpoints(chunk, startCp, endCp, swapCp, distMatrix);
-        final first = _rebuildRoute(halves[0], startCp, swapCp, const [], allCheckpoints, executionOrder, halfMin, halfMax, distMatrix);
-        final second = _rebuildRoute(halves[1], swapCp, endCp, const [], allCheckpoints, executionOrder, halfMin, halfMax, distMatrix);
+        final first = _rebuildRoute(halves[0], startCp, swapCp, const [], allCheckpoints, executionOrder, halfMin, halfMax, distMatrix, violationMatrix);
+        final second = _rebuildRoute(halves[1], swapCp, endCp, const [], allCheckpoints, executionOrder, halfMin, halfMax, distMatrix, violationMatrix);
         final combinedLength = first.routeLengthKm + second.routeLengthKm;
         return _RouteResult(
           checkpointIds: [...first.checkpointIds, ...second.checkpointIds],
@@ -1741,12 +1827,14 @@ class RoutesDistributionService {
           inRange: first.inRange && second.inRange,
           firstHalfLengthKm: first.routeLengthKm,
           secondHalfLengthKm: second.routeLengthKm,
+          boundaryExits: first.boundaryExits + second.boundaryExits,
+          safetyIntersections: first.safetyIntersections + second.safetyIntersections,
         );
       }
-      return _rebuildRoute(chunk, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix);
+      return _rebuildRoute(chunk, startCp, endCp, waypoints, allCheckpoints, executionOrder, minRoute, maxRoute, distMatrix, violationMatrix);
     }
 
-    var currentScore = _calculateFullScore(currentRoutes, criterion, minRoute, maxRoute, isGuard: isGuard);
+    var currentScore = _calculateFullScore(currentRoutes, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix);
 
     // בניית free pool — נקודות שלא בשום ציר
     final freePool = <String>{};
@@ -1774,7 +1862,7 @@ class RoutesDistributionService {
       final testR = Map<String, _RouteResult>.from(currentRoutes);
       testR[nav1] = evalFull(r1);
       testR[nav2] = evalFull(r2);
-      final delta = (_calculateFullScore(testR, criterion, minRoute, maxRoute, isGuard: isGuard) - currentScore).abs();
+      final delta = (_calculateFullScore(testR, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix) - currentScore).abs();
       if (delta > 0) calibrationDeltas.add(delta);
       r1[ci1] = old1; r2[ci2] = old2; // undo
     }
@@ -1845,7 +1933,7 @@ class RoutesDistributionService {
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav1] = newResult1;
         testRoutes[nav2] = newResult2;
-        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard);
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix);
 
         final delta = newScore - currentScore;
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
@@ -1914,7 +2002,7 @@ class RoutesDistributionService {
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[navFrom] = newResult1;
         testRoutes[navTo] = newResult2;
-        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard);
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix);
 
         final delta = newScore - currentScore;
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
@@ -1983,7 +2071,7 @@ class RoutesDistributionService {
         final newResult = evalLight(route);
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav] = newResult;
-        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard);
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix);
 
         final delta = newScore - currentScore;
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
@@ -2041,7 +2129,7 @@ class RoutesDistributionService {
         final testRoutes = Map<String, _RouteResult>.from(currentRoutes);
         testRoutes[nav1] = newResult1;
         testRoutes[nav2] = newResult2;
-        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard);
+        final newScore = _calculateFullScore(testRoutes, criterion, minRoute, maxRoute, isGuard: isGuard, violationMatrix: violationMatrix);
 
         final delta = newScore - currentScore;
         if (delta > 0 || random.nextDouble() < exp(delta / temperature)) {
@@ -2109,6 +2197,75 @@ class RoutesDistributionService {
       finalRoutes[nav] = evalFull(chunk);
     }
 
+    // --- תיקון הפרות שנותרו (repair sweep ±3 מיקומים) ---
+    if (violationMatrix != null) {
+      for (final nav in navigators) {
+        final route = finalRoutes[nav];
+        if (route == null || route.boundaryExits == 0) continue;
+
+        final chunk = routeChunks[nav];
+        if (chunk == null || chunk.isEmpty) continue;
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+          if (finalRoutes[nav]!.boundaryExits == 0) break;
+
+          final seq = chunk.toList();
+          final seqIds = seq.map((c) => c.id).toList();
+          final fullSeq = <String>[
+            if (startCp != null) startCp.id,
+            ...seqIds,
+            if (endCp != null) endCp.id,
+          ];
+
+          final offset = startCp != null ? 1 : 0;
+          final violatingIndices = <int>{};
+          for (int i = 0; i < fullSeq.length - 1; i++) {
+            if (_lookupViolationCount(fullSeq[i], fullSeq[i + 1], violationMatrix) > 0) {
+              if (i >= offset && i - offset < seq.length) violatingIndices.add(i - offset);
+              if (i + 1 >= offset && i + 1 - offset < seq.length) violatingIndices.add(i + 1 - offset);
+            }
+          }
+          if (violatingIndices.isEmpty) break;
+
+          int bestBE = finalRoutes[nav]!.boundaryExits;
+          List<_SimpleCheckpoint>? bestChunk;
+
+          for (final removeIdx in violatingIndices) {
+            if (removeIdx >= seq.length) continue;
+            final removed = seq[removeIdx];
+            final trial = List<_SimpleCheckpoint>.from(seq)..removeAt(removeIdx);
+
+            // הכנסה ב-±3 מיקומים בלבד
+            final minIns = (removeIdx - 3).clamp(0, trial.length);
+            final maxIns = (removeIdx + 3).clamp(0, trial.length);
+            for (int ins = minIns; ins <= maxIns; ins++) {
+              if (ins == removeIdx) continue;
+              final candidate = List<_SimpleCheckpoint>.from(trial)..insert(ins, removed);
+              final v = _countSequenceViolations(
+                candidate.map((c) => c.id).toList(), startCp?.id, endCp?.id, violationMatrix,
+              );
+              if (v.boundaryExits < bestBE) {
+                bestBE = v.boundaryExits;
+                bestChunk = candidate;
+              }
+            }
+          }
+
+          if (bestChunk != null) {
+            for (int i = 0; i < chunk.length; i++) chunk[i] = bestChunk[i];
+            finalRoutes[nav] = evalFull(chunk);
+          } else {
+            break;
+          }
+        }
+
+        if (finalRoutes[nav]!.boundaryExits > 0) {
+          print('[WARNING] ציר של $nav עדיין מכיל ${finalRoutes[nav]!.boundaryExits} '
+              'חציות גבול אחרי תיקון');
+        }
+      }
+    }
+
     return finalRoutes;
   }
 
@@ -2122,9 +2279,10 @@ class RoutesDistributionService {
     String executionOrder,
     double minRoute,
     double maxRoute,
-    Map<String, Map<String, double>> distMatrix,
-  ) {
-    final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
+    Map<String, Map<String, double>> distMatrix, [
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
+  ]) {
+    final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints, violationMatrix);
     final result = _buildRouteWithWaypoints(
       chunk: chunk,
       sequence: sequence,
@@ -2136,17 +2294,27 @@ class RoutesDistributionService {
     );
     final length = result['length'] as double;
     final waypointIds = result['waypointIds'] as List<String>;
+    final violations = _countSequenceViolations(
+      sequence.map((c) => c.id).toList(), startCp?.id, endCp?.id, violationMatrix,
+    );
     return _RouteResult(
       checkpointIds: chunk.map((c) => c.id).toList(),
       sequence: sequence.map((c) => c.id).toList(),
       waypointIds: waypointIds,
       routeLengthKm: length,
       inRange: length >= minRoute && length <= maxRoute,
+      boundaryExits: violations.boundaryExits,
+      safetyIntersections: violations.safetyIntersections,
     );
   }
 
-  /// סידור Nearest-Neighbor — מסדר את הנקודות לפי שכן קרוב מנקודת ההתחלה
-  static void _nnOrder(List<_SimpleCheckpoint> chunk, _SimpleCheckpoint? startCp, Map<String, Map<String, double>> distMatrix) {
+  /// סידור Nearest-Neighbor מודע-גבול — effective distance = dist + crossings * 1000
+  static void _nnOrder(
+    List<_SimpleCheckpoint> chunk,
+    _SimpleCheckpoint? startCp,
+    Map<String, Map<String, double>> distMatrix, [
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
+  ]) {
     if (chunk.length <= 1) return;
     final remaining = List<_SimpleCheckpoint>.from(chunk);
     final ordered = <_SimpleCheckpoint>[];
@@ -2154,10 +2322,14 @@ class RoutesDistributionService {
     _SimpleCheckpoint current;
     if (startCp != null && remaining.isNotEmpty) {
       int bestIdx = 0;
-      double bestDist = _dist(startCp.id, remaining[0].id, distMatrix);
-      for (int i = 1; i < remaining.length; i++) {
-        final d = _dist(startCp.id, remaining[i].id, distMatrix);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      double bestScore = double.infinity;
+      for (int i = 0; i < remaining.length; i++) {
+        double d = _dist(startCp.id, remaining[i].id, distMatrix);
+        if (violationMatrix != null) {
+          final v = violationMatrix[startCp.id]?[remaining[i].id];
+          if (v != null && v.exitsBoundary) d += v.boundaryCrossings * 1000.0;
+        }
+        if (d < bestScore) { bestScore = d; bestIdx = i; }
       }
       current = remaining.removeAt(bestIdx);
     } else {
@@ -2167,10 +2339,14 @@ class RoutesDistributionService {
 
     while (remaining.isNotEmpty) {
       int bestIdx = 0;
-      double bestDist = _dist(current.id, remaining[0].id, distMatrix);
-      for (int i = 1; i < remaining.length; i++) {
-        final d = _dist(current.id, remaining[i].id, distMatrix);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      double bestScore = double.infinity;
+      for (int i = 0; i < remaining.length; i++) {
+        double d = _dist(current.id, remaining[i].id, distMatrix);
+        if (violationMatrix != null) {
+          final v = violationMatrix[current.id]?[remaining[i].id];
+          if (v != null && v.exitsBoundary) d += v.boundaryCrossings * 1000.0;
+        }
+        if (d < bestScore) { bestScore = d; bestIdx = i; }
       }
       current = remaining.removeAt(bestIdx);
       ordered.add(current);
@@ -2192,10 +2368,11 @@ class RoutesDistributionService {
     List<_SimpleCheckpoint> allCheckpoints,
     double minRoute,
     double maxRoute,
-    Map<String, Map<String, double>> distMatrix,
-  ) {
+    Map<String, Map<String, double>> distMatrix, [
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
+  ]) {
     final sequence = List<_SimpleCheckpoint>.from(chunk);
-    _nnOrder(sequence, startCp, distMatrix);
+    _nnOrder(sequence, startCp, distMatrix, violationMatrix);
     if (waypoints.isNotEmpty) {
       _insertWaypointsIntoSequence(sequence, startCp, endCp, waypoints, allCheckpoints, distMatrix);
     }
@@ -2211,12 +2388,17 @@ class RoutesDistributionService {
     final length = result['length'] as double;
     assert(chunk.map((c) => c.id).toSet().length == chunk.length,
         '_rebuildRouteLight: duplicate checkpoint IDs in chunk');
+    final violations = _countSequenceViolations(
+      sequence.map((c) => c.id).toList(), startCp?.id, endCp?.id, violationMatrix,
+    );
     return _RouteResult(
       checkpointIds: chunk.map((c) => c.id).toList(),
       sequence: sequence.map((c) => c.id).toList(),
       waypointIds: result['waypointIds'] as List<String>,
       routeLengthKm: length,
       inRange: length >= minRoute && length <= maxRoute,
+      boundaryExits: violations.boundaryExits,
+      safetyIntersections: violations.safetyIntersections,
     );
   }
 
@@ -2260,8 +2442,9 @@ class RoutesDistributionService {
     List<_SimpleCheckpoint> allCheckpoints,
     double minRoute,
     double maxRoute,
-    Map<String, Map<String, double>> distMatrix,
-  ) {
+    Map<String, Map<String, double>> distMatrix, [
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
+  ]) {
     final halfMin = minRoute / 2;
     final halfMax = maxRoute / 2;
 
@@ -2269,11 +2452,11 @@ class RoutesDistributionService {
 
     final firstResult = _rebuildRouteLight(
       halves[0], startCp, swapCp, const [], allCheckpoints,
-      halfMin, halfMax, distMatrix,
+      halfMin, halfMax, distMatrix, violationMatrix,
     );
     final secondResult = _rebuildRouteLight(
       halves[1], swapCp, endCp, const [], allCheckpoints,
-      halfMin, halfMax, distMatrix,
+      halfMin, halfMax, distMatrix, violationMatrix,
     );
 
     final combinedLength = firstResult.routeLengthKm + secondResult.routeLengthKm;
@@ -2285,6 +2468,8 @@ class RoutesDistributionService {
       inRange: firstResult.inRange && secondResult.inRange,
       firstHalfLengthKm: firstResult.routeLengthKm,
       secondHalfLengthKm: secondResult.routeLengthKm,
+      boundaryExits: firstResult.boundaryExits + secondResult.boundaryExits,
+      safetyIntersections: firstResult.safetyIntersections + secondResult.safetyIntersections,
     );
   }
 
@@ -2295,6 +2480,7 @@ class RoutesDistributionService {
     double minRoute,
     double maxRoute, {
     bool isGuard = false,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     final allCpIds = distribution.values.expand((r) => r.checkpointIds).toList();
     final uniqueCpIds = allCpIds.toSet();
@@ -2310,6 +2496,7 @@ class RoutesDistributionService {
       hasSharing: hasSharing,
       totalUniqueCheckpoints: uniqueCpIds.length,
       isGuard: isGuard,
+      violationMatrix: violationMatrix,
     );
   }
 
@@ -2322,6 +2509,7 @@ class RoutesDistributionService {
     Map<String, Map<String, double>> distMatrix, [
     List<_SimpleWaypoint> waypoints = const [],
     List<_SimpleCheckpoint> allCheckpoints = const [],
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   ]) {
     if (chunk.length <= 1 || executionOrder != 'sequential') {
       // גם אם אין אופטימיזציה, עדיין מכניסים waypoints
@@ -2332,17 +2520,21 @@ class RoutesDistributionService {
       return result;
     }
 
-    // שלב 1: Nearest-neighbor מנקודת ההתחלה (רק checkpoints רגילים)
+    // שלב 1: Nearest-neighbor מודע-גבול — effective distance = dist + crossings * 1000
     final remaining = List<_SimpleCheckpoint>.from(chunk);
     final result = <_SimpleCheckpoint>[];
 
     _SimpleCheckpoint current;
     if (startCp != null && remaining.isNotEmpty) {
       int bestIdx = 0;
-      double bestDist = _dist(startCp.id, remaining[0].id, distMatrix);
-      for (int i = 1; i < remaining.length; i++) {
-        final d = _dist(startCp.id, remaining[i].id, distMatrix);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      double bestScore = double.infinity;
+      for (int i = 0; i < remaining.length; i++) {
+        double d = _dist(startCp.id, remaining[i].id, distMatrix);
+        if (violationMatrix != null) {
+          final v = violationMatrix[startCp.id]?[remaining[i].id];
+          if (v != null && v.exitsBoundary) d += v.boundaryCrossings * 1000.0;
+        }
+        if (d < bestScore) { bestScore = d; bestIdx = i; }
       }
       current = remaining.removeAt(bestIdx);
     } else {
@@ -2352,10 +2544,14 @@ class RoutesDistributionService {
 
     while (remaining.isNotEmpty) {
       int bestIdx = 0;
-      double bestDist = _dist(current.id, remaining[0].id, distMatrix);
-      for (int i = 1; i < remaining.length; i++) {
-        final d = _dist(current.id, remaining[i].id, distMatrix);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      double bestScore = double.infinity;
+      for (int i = 0; i < remaining.length; i++) {
+        double d = _dist(current.id, remaining[i].id, distMatrix);
+        if (violationMatrix != null) {
+          final v = violationMatrix[current.id]?[remaining[i].id];
+          if (v != null && v.exitsBoundary) d += v.boundaryCrossings * 1000.0;
+        }
+        if (d < bestScore) { bestScore = d; bestIdx = i; }
       }
       current = remaining.removeAt(bestIdx);
       result.add(current);
@@ -2412,6 +2608,23 @@ class RoutesDistributionService {
               saving -= _dist(result[i].id, endCp.id, distMatrix);
             }
 
+            // בדיקת הפרות גיאומטריות — דחיית swap שמחמיר הפרות
+            if (saving > 1e-10 && violationMatrix != null) {
+              // חישוב הפרות ישנות על 2 הצלעות שנמחקות
+              final prevI = i > 0 ? result[i - 1].id : startCp?.id;
+              final nextJ = j < result.length - 1 ? result[j + 1].id : endCp?.id;
+              int oldV = 0, newV = 0;
+              if (prevI != null) {
+                oldV += _lookupViolationCount(prevI, result[i].id, violationMatrix);
+                newV += _lookupViolationCount(prevI, result[j].id, violationMatrix);
+              }
+              if (nextJ != null) {
+                oldV += _lookupViolationCount(result[j].id, nextJ, violationMatrix);
+                newV += _lookupViolationCount(result[i].id, nextJ, violationMatrix);
+              }
+              if (newV > oldV) continue; // דחיית swap שמחמיר הפרות
+            }
+
             if (saving > 1e-10) {
               // היפוך סגמנט i..j
               int left = i, right = j;
@@ -2425,6 +2638,88 @@ class RoutesDistributionService {
               improved = true;
             }
           }
+        }
+      }
+    }
+
+    // שלב 4: 2-opt תיקוני הפרות — מקבל swap שמקטין הפרות גם במחיר מרחק (עד 30%)
+    if (result.length >= 3 && violationMatrix != null) {
+      int currentViolations = 0;
+      final prevFirst = startCp?.id;
+      if (prevFirst != null) {
+        currentViolations += _lookupViolationCount(prevFirst, result[0].id, violationMatrix);
+      }
+      for (int i = 0; i < result.length - 1; i++) {
+        currentViolations += _lookupViolationCount(result[i].id, result[i + 1].id, violationMatrix);
+      }
+      if (endCp != null) {
+        currentViolations += _lookupViolationCount(result.last.id, endCp.id, violationMatrix);
+      }
+
+      if (currentViolations > 0) {
+        bool improved = true;
+        int passes = 0;
+        while (improved && passes < 10) {
+          improved = false;
+          passes++;
+          for (int i = 0; i < result.length - 1; i++) {
+            if (waypointIdSet.contains(result[i].id)) continue;
+            for (int j = i + 1; j < result.length; j++) {
+              if (waypointIdSet.contains(result[j].id)) continue;
+              bool hasWpInSeg = false;
+              for (int k = i + 1; k < j; k++) {
+                if (waypointIdSet.contains(result[k].id)) { hasWpInSeg = true; break; }
+              }
+              if (hasWpInSeg) continue;
+
+              final prevI = i > 0 ? result[i - 1].id : startCp?.id;
+              final nextJ = j < result.length - 1 ? result[j + 1].id : endCp?.id;
+              int oldV = 0, newV = 0;
+              if (prevI != null) {
+                oldV += _lookupViolationCount(prevI, result[i].id, violationMatrix);
+                newV += _lookupViolationCount(prevI, result[j].id, violationMatrix);
+              }
+              if (nextJ != null) {
+                oldV += _lookupViolationCount(result[j].id, nextJ, violationMatrix);
+                newV += _lookupViolationCount(result[i].id, nextJ, violationMatrix);
+              }
+              // הפרות פנימיות
+              int intOld = 0, intNew = 0;
+              for (int k = i; k < j; k++) {
+                intOld += _lookupViolationCount(result[k].id, result[k + 1].id, violationMatrix);
+              }
+              for (int k = j; k > i; k--) {
+                intNew += _lookupViolationCount(result[k].id, result[k - 1].id, violationMatrix);
+              }
+
+              if ((newV + intNew) < (oldV + intOld)) {
+                // תקציב מרחק — עד 30% עלייה
+                double oldDist = 0, newDist = 0;
+                if (prevI != null) {
+                  oldDist += _dist(prevI, result[i].id, distMatrix);
+                  newDist += _dist(prevI, result[j].id, distMatrix);
+                }
+                if (nextJ != null) {
+                  oldDist += _dist(result[j].id, nextJ, distMatrix);
+                  newDist += _dist(result[i].id, nextJ, distMatrix);
+                }
+                if (oldDist < 1e-10 || (newDist - oldDist) / oldDist <= 0.30) {
+                  int left = i, right = j;
+                  while (left < right) {
+                    final temp = result[left];
+                    result[left] = result[right];
+                    result[right] = temp;
+                    left++; right--;
+                  }
+                  improved = true;
+                  currentViolations = currentViolations - (oldV + intOld) + (newV + intNew);
+                  if (currentViolations <= 0) break;
+                }
+              }
+            }
+            if (currentViolations <= 0) break;
+          }
+          if (currentViolations <= 0) break;
         }
       }
     }
@@ -2544,9 +2839,26 @@ class RoutesDistributionService {
     required bool hasSharing,
     required int totalUniqueCheckpoints,
     bool isGuard = false,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     final lengths = distribution.values.map((r) => r.routeLengthKm).toList();
     if (lengths.isEmpty) return -999999;
+
+    // Segment violation penalty — גבול = hard constraint, נת"בים = soft penalty
+    double segmentPenalty = 0;
+    if (violationMatrix != null) {
+      int totalBE = 0;
+      for (final r in distribution.values) {
+        totalBE += r.boundaryExits;
+        segmentPenalty += r.safetyIntersections * 5000.0;
+      }
+      if (totalBE > 0) return -999999.0 - totalBE * 1000.0;  // גבול ניווט — hard constraint מדורג
+      if (segmentPenalty > 0) {
+        final totalSI = distribution.values.fold(0, (sum, r) => sum + r.safetyIntersections);
+        print('[ScoreDistribution] segmentPenalty=$segmentPenalty '
+            '(safetyIntersections=$totalSI)');
+      }
+    }
 
     // Soft range penalty — ריבועי: SA "מרגיש" כמה רחוק מהטווח
     double rangePenalty = 0;
@@ -2603,18 +2915,18 @@ class RoutesDistributionService {
     switch (criterion) {
       case 'fairness':
         // הוגנות — CV (סטיית תקן / ממוצע) כמדד יחסי לשונות
-        return -cv * 5000 - rangePenalty + allInRangeBonus + uniqueBonus;
+        return -cv * 5000 - rangePenalty - segmentPenalty + allInRangeBonus + uniqueBonus;
 
       case 'midpoint':
         // קרבה לאמצע הטווח
         final midpoint = (minRoute + maxRoute) / 2;
         final deviation = lengths.map((l) => (l - midpoint).abs()).reduce((a, b) => a + b);
         final maxDeviation = lengths.map((l) => (l - midpoint).abs()).reduce(max);
-        return -deviation * 200 - maxDeviation * 300 - rangePenalty + allInRangeBonus + uniqueBonus;
+        return -deviation * 200 - maxDeviation * 300 - rangePenalty - segmentPenalty + allInRangeBonus + uniqueBonus;
 
       case 'uniqueness':
         // מקסימום ייחודיות
-        return totalUniqueCheckpoints * 1000.0 - rangePenalty + allInRangeBonus - variance * 10;
+        return totalUniqueCheckpoints * 1000.0 - rangePenalty - segmentPenalty + allInRangeBonus - variance * 10;
 
       case 'doubleCheck':
         // אימות כפול — כל נקודה נבדקת ע"י בדיוק 2 מנווטים
@@ -2627,10 +2939,10 @@ class RoutesDistributionService {
         final singleOnly = frequency.values.where((c) => c == 1).length;
         final overChecked = frequency.values.where((c) => c > 2).length;
         return doubleChecked * 1500.0 - singleOnly * 500.0 - overChecked * 300.0
-            - rangePenalty + allInRangeBonus - variance * 50;
+            - rangePenalty - segmentPenalty + allInRangeBonus - variance * 50;
 
       default:
-        return -cv * 5000 - rangePenalty + allInRangeBonus + uniqueBonus;
+        return -cv * 5000 - rangePenalty - segmentPenalty + allInRangeBonus + uniqueBonus;
     }
   }
 
@@ -2647,6 +2959,7 @@ class RoutesDistributionService {
     required double maxRoute,
     required String executionOrder,
     required Map<String, Map<String, double>> distMatrix,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
   }) {
     final distribution = <String, _RouteResult>{};
     bool allInRange = true;
@@ -2671,7 +2984,7 @@ class RoutesDistributionService {
         }
       }
 
-      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints);
+      final sequence = _optimizeSequence(chunk, startCp, endCp, executionOrder, distMatrix, waypoints, allCheckpoints, violationMatrix);
       final result = _buildRouteWithWaypoints(
         chunk: chunk,
         sequence: sequence,
@@ -2687,12 +3000,19 @@ class RoutesDistributionService {
       final inRange = length >= minRoute && length <= maxRoute;
       if (!inRange) allInRange = false;
 
+      final violations = violationMatrix != null
+          ? _countSequenceViolations(
+              sequence.map((c) => c.id).toList(), startCp?.id, endCp?.id, violationMatrix)
+          : (boundaryExits: 0, safetyIntersections: 0);
+
       distribution[navigators[i]] = _RouteResult(
         checkpointIds: chunk.map((c) => c.id).toList(),
         sequence: sequence.map((c) => c.id).toList(),
         waypointIds: waypointIds,
         routeLengthKm: length,
         inRange: inRange,
+        boundaryExits: violations.boundaryExits,
+        safetyIntersections: violations.safetyIntersections,
       );
     }
 
@@ -2742,6 +3062,193 @@ class RoutesDistributionService {
   static double _dist(String id1, String id2, Map<String, Map<String, double>> distMatrix) {
     if (id1 == id2) return 0.0;
     return distMatrix[id1]?[id2] ?? 0.0;
+  }
+
+  // === פונקציות גיאומטריה עצמאיות ל-Isolate (turf-based) ===
+
+  /// point-in-polygon באמצעות turf — אלגברי מדויק
+  static bool _pointInPolygon(double lat, double lng, List<List<double>> polygon) {
+    if (polygon.length < 3) return false;
+    final point = turf.Position(lng, lat); // GeoJSON: lng, lat order!
+    final ring = polygon.map((c) => turf.Position(c[1], c[0])).toList();
+    if (ring.first.lng != ring.last.lng || ring.first.lat != ring.last.lat) {
+      ring.add(ring.first);
+    }
+    final poly = turf.Polygon(coordinates: [ring]);
+    return turf.booleanPointInPolygon(point, poly);
+  }
+
+  /// בדיקה אם קטע חותך צלע כלשהי של הגבול — turf lineIntersect (אלגברי, ללא דגימה)
+  static ({bool exits, int crossingCount}) _segmentExitsBoundary(
+    double lat1, double lng1, double lat2, double lng2,
+    List<List<double>> boundaryCoords,
+    turf.Polygon boundaryPolygon,
+  ) {
+    final segment = turf.LineString(coordinates: [
+      turf.Position(lng1, lat1),
+      turf.Position(lng2, lat2),
+    ]);
+    final intersections = turf.lineIntersect(segment, boundaryPolygon);
+    final crossingCount = intersections.features.length;
+    if (crossingCount > 0) return (exits: true, crossingCount: crossingCount);
+    // אין חציות צלעות — endpoint check
+    // מתמטית: endpoints בפנים + 0 חציות → הקטע כולו בפנים (פוליגון פשוט)
+    if (!_pointInPolygon(lat1, lng1, boundaryCoords) ||
+        !_pointInPolygon(lat2, lng2, boundaryCoords)) {
+      return (exits: true, crossingCount: 1);
+    }
+    return (exits: false, crossingCount: 0);
+  }
+
+  /// בדיקה אם קטע חותך פוליגון (נקודה בפנים או חיתוך צלעות) — turf-based
+  static bool _segmentIntersectsPolygon(
+    double lat1, double lng1, double lat2, double lng2,
+    List<List<double>> polygonCoords,
+  ) {
+    if (_pointInPolygon(lat1, lng1, polygonCoords)) return true;
+    if (_pointInPolygon(lat2, lng2, polygonCoords)) return true;
+    final segment = turf.LineString(coordinates: [
+      turf.Position(lng1, lat1),
+      turf.Position(lng2, lat2),
+    ]);
+    final ring = polygonCoords.map((c) => turf.Position(c[1], c[0])).toList();
+    if (ring.first.lng != ring.last.lng || ring.first.lat != ring.last.lat) {
+      ring.add(ring.first);
+    }
+    final poly = turf.Polygon(coordinates: [ring]);
+    return turf.lineIntersect(segment, poly).features.isNotEmpty;
+  }
+
+  /// בניית מטריצת הפרות מחושבת מראש — O(P²×E) פעם אחת, O(1) lookup
+  static Map<String, Map<String, _SegmentViolation>> _buildSegmentViolationMatrix(
+    List<_SimpleCheckpoint> allPoints,
+    List<List<double>>? boundaryCoords,
+    List<List<List<double>>>? safetyPolygons,
+  ) {
+    final matrix = <String, Map<String, _SegmentViolation>>{};
+    for (final p in allPoints) {
+      matrix[p.id] = {};
+    }
+
+    // בניית אובייקט turf Polygon פעם אחת לפני הלולאה O(P²)
+    turf.Polygon? boundaryPolygon;
+    if (boundaryCoords != null && boundaryCoords.length >= 3) {
+      final ring = boundaryCoords.map((c) => turf.Position(c[1], c[0])).toList();
+      if (ring.first.lng != ring.last.lng || ring.first.lat != ring.last.lat) {
+        ring.add(ring.first);
+      }
+      boundaryPolygon = turf.Polygon(coordinates: [ring]);
+    }
+
+    // Bounding-box של הפוליגון — לסינון מהיר O(1) לפני turf
+    double? bMinLat, bMaxLat, bMinLng, bMaxLng;
+    if (boundaryCoords != null && boundaryCoords.isNotEmpty) {
+      bMinLat = bMaxLat = boundaryCoords.first[0];
+      bMinLng = bMaxLng = boundaryCoords.first[1];
+      for (final c in boundaryCoords) {
+        if (c[0] < bMinLat!) bMinLat = c[0];
+        if (c[0] > bMaxLat!) bMaxLat = c[0];
+        if (c[1] < bMinLng!) bMinLng = c[1];
+        if (c[1] > bMaxLng!) bMaxLng = c[1];
+      }
+    }
+
+    int boundaryViolationPairs = 0;
+    int safetyViolationPairs = 0;
+
+    for (int i = 0; i < allPoints.length; i++) {
+      final a = allPoints[i];
+      matrix[a.id]![a.id] = _SegmentViolation.none;
+
+      for (int j = i + 1; j < allPoints.length; j++) {
+        final b = allPoints[j];
+
+        // בדיקת יציאה מגבול — bbox reject + turf lineIntersect
+        int crossings = 0;
+        if (boundaryCoords != null && boundaryPolygon != null) {
+          // bbox reject: אם segment bbox לא חופף ל-polygon bbox → endpoint check יתפוס
+          final segMinLat = a.lat < b.lat ? a.lat : b.lat;
+          final segMaxLat = a.lat > b.lat ? a.lat : b.lat;
+          final segMinLng = a.lng < b.lng ? a.lng : b.lng;
+          final segMaxLng = a.lng > b.lng ? a.lng : b.lng;
+          final bboxOverlaps = segMaxLat >= bMinLat! && segMinLat <= bMaxLat! &&
+                               segMaxLng >= bMinLng! && segMinLng <= bMaxLng!;
+          if (bboxOverlaps) {
+            final result = _segmentExitsBoundary(
+              a.lat, a.lng, b.lat, b.lng, boundaryCoords, boundaryPolygon);
+            crossings = result.crossingCount;
+          } else {
+            // מחוץ ל-bbox — endpoint check
+            if (!_pointInPolygon(a.lat, a.lng, boundaryCoords) ||
+                !_pointInPolygon(b.lat, b.lng, boundaryCoords)) {
+              crossings = 1;
+            }
+          }
+        }
+
+        // בדיקת חיתוך נת"בים
+        int safetyCrossed = 0;
+        if (safetyPolygons != null) {
+          for (final poly in safetyPolygons) {
+            if (_segmentIntersectsPolygon(a.lat, a.lng, b.lat, b.lng, poly)) {
+              safetyCrossed++;
+            }
+          }
+        }
+
+        if (crossings > 0) boundaryViolationPairs++;
+        if (safetyCrossed > 0) safetyViolationPairs++;
+
+        final violation = (crossings > 0 || safetyCrossed > 0)
+            ? _SegmentViolation(crossings, safetyCrossed)
+            : _SegmentViolation.none;
+        matrix[a.id]![b.id] = violation;
+        matrix[b.id]![a.id] = violation;
+      }
+    }
+
+    final totalPairs = allPoints.length * (allPoints.length - 1) ~/ 2;
+    print('[ViolationMatrix] $totalPairs pairs checked: '
+        '$boundaryViolationPairs boundary violations, '
+        '$safetyViolationPairs safety violations');
+
+    return matrix;
+  }
+
+  /// O(1) lookup של הפרת קטע
+  static int _lookupViolationCount(
+    String id1, String id2,
+    Map<String, Map<String, _SegmentViolation>> violationMatrix,
+  ) {
+    final v = violationMatrix[id1]?[id2];
+    if (v == null || !v.hasViolation) return 0;
+    return v.boundaryCrossings + v.safetyPolygonsCrossed;
+  }
+
+  /// ספירת הפרות קטעים לרצף נתון (כולל start/end)
+  static ({int boundaryExits, int safetyIntersections}) _countSequenceViolations(
+    List<String> sequenceIds,
+    String? startId,
+    String? endId,
+    Map<String, Map<String, _SegmentViolation>>? violationMatrix,
+  ) {
+    if (violationMatrix == null) return (boundaryExits: 0, safetyIntersections: 0);
+
+    final fullSeq = <String>[
+      if (startId != null) startId,
+      ...sequenceIds,
+      if (endId != null) endId,
+    ];
+
+    int be = 0, si = 0;
+    for (int i = 0; i < fullSeq.length - 1; i++) {
+      final v = violationMatrix[fullSeq[i]]?[fullSeq[i + 1]];
+      if (v != null && v.hasViolation) {
+        be += v.boundaryCrossings;
+        si += v.safetyPolygonsCrossed;
+      }
+    }
+    return (boundaryExits: be, safetyIntersections: si);
   }
 
   /// שיוך מנווטים לנקודות הצנחה
@@ -2870,6 +3377,17 @@ class RoutesDistributionService {
         .where((m) => !dropPointIdSet.contains(m['id']))
         .toList();
 
+    // סריאליזציית גיאומטריה ל-Isolate
+    final List<List<double>>? serializedBoundary = (boundary != null && boundary.coordinates.length >= 3)
+        ? boundary.coordinates.map((c) => [c.lat, c.lng]).toList()
+        : null;
+    final List<List<List<double>>>? serializedSafetyPolygons = safetyPoints
+        .where((sp) => sp.type == 'polygon' && sp.polygonCoordinates != null && sp.polygonCoordinates!.length >= 3)
+        .map((sp) => sp.polygonCoordinates!.map((c) => [c.lat, c.lng]).toList())
+        .toList();
+    final effectiveSafetyPolygons = (serializedSafetyPolygons != null && serializedSafetyPolygons.isNotEmpty)
+        ? serializedSafetyPolygons : null;
+
     // 3. הרצת האלגוריתם הרגיל ב-Isolate (ללא נקודת התחלה — תוחלף per-navigator)
     final isolateResult = await _runInIsolate(
       navigators: virtualNavigators,
@@ -2883,6 +3401,8 @@ class RoutesDistributionService {
       maxRouteLength: maxRouteLength,
       scoringCriterion: scoringCriterion,
       onProgress: onProgress,
+      boundaryCoords: serializedBoundary,
+      safetyPolygons: effectiveSafetyPolygons,
     );
 
     // 4. החלפת נקודת התחלה per-navigator לפי שיוך נקודות הצנחה
