@@ -457,9 +457,13 @@ class _LearningViewState extends State<LearningView>
     } catch (_) {}
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב
+  /// טעינת שכבות מפה: ג"ג, נת"ב — סנכרון גבולות מ-Firestore לפני קריאה מקומית
   Future<void> _loadMapLayers() async {
     try {
+      // סנכרון גבולות מ-Firestore (מעדכן DB מקומי)
+      try {
+        await _navLayerRepo.syncBoundariesFromFirestore(widget.navigation.id);
+      } catch (_) {}
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
       if (mounted) {
@@ -643,8 +647,8 @@ class _LearningViewState extends State<LearningView>
 
     final allPointsForBounds = [...refPoints, ...plannedPathPoints];
     // עדיפות לגבול גזרה אם קיים, אחרת נקודות ציון/ציר
-    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.coordinates.isNotEmpty
-        ? _navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.allCoordinates.isNotEmpty
+        ? _navBoundaries.first.allCoordinates.map((c) => LatLng(c.lat, c.lng)).toList()
         : <LatLng>[];
     final boundsPoints = boundaryPoints.isNotEmpty
         ? boundaryPoints
@@ -652,8 +656,8 @@ class _LearningViewState extends State<LearningView>
     final bounds = LatLngBounds.fromPoints(boundsPoints);
 
     final markers = <Marker>[];
-    // marker לנקודת התחלה
-    if (_startCheckpoint != null && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
+    // marker לנקודת התחלה (לא בצנחן — נקודת ההצנחה מוסתרת)
+    if (_startCheckpoint != null && !_isParachute && !_startCheckpoint!.isPolygon && _startCheckpoint!.coordinates != null) {
       markers.add(Marker(
         point: _startCheckpoint!.coordinates!.toLatLng(),
         width: 32,
@@ -725,9 +729,8 @@ class _LearningViewState extends State<LearningView>
         }
       }
     } else {
-      // מצב רגיל — נקודות עם מספור
-      for (var i = 0; i < _routeCheckpoints.length; i++) {
-        final cp = _routeCheckpoints[i];
+      // מצב רגיל — נקודות עם מספר סידורי
+      for (final cp in _routeCheckpoints) {
         if (cp.isPolygon || cp.coordinates == null) continue;
         if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
 
@@ -745,7 +748,7 @@ class _LearningViewState extends State<LearningView>
               ),
               child: Center(
                 child: Text(
-                  '${i + 1}',
+                  '${cp.sequenceNumber}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -811,13 +814,15 @@ class _LearningViewState extends State<LearningView>
                 // ג"ג
                 if (_showGG && _navBoundaries.isNotEmpty)
                   PolygonLayer(
-                    polygons: _navBoundaries.map((b) => Polygon(
-                      points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                      color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                      borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                      borderStrokeWidth: b.strokeWidth,
-                      isFilled: true,
-                    )).toList(),
+                    polygons: _navBoundaries.expand((b) => b.allPolygons
+                        .where((poly) => poly.isNotEmpty)
+                        .map((poly) => Polygon(
+                              points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
+                              color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                              borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                              borderStrokeWidth: b.strokeWidth,
+                              isFilled: true,
+                            ))).toList(),
                   ),
                 // נת"ב - נקודות
                 if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
@@ -2447,13 +2452,15 @@ class _FullscreenRouteMapState extends State<_FullscreenRouteMap> {
             layers: [
               if (_showGG && widget.boundaries.isNotEmpty)
                 PolygonLayer(
-                  polygons: widget.boundaries.map((b) => Polygon(
-                    points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                    color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                    borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                    borderStrokeWidth: b.strokeWidth,
-                    isFilled: true,
-                  )).toList(),
+                  polygons: widget.boundaries.expand((b) => b.allPolygons
+                      .where((poly) => poly.isNotEmpty)
+                      .map((poly) => Polygon(
+                            points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            borderStrokeWidth: b.strokeWidth,
+                            isFilled: true,
+                          ))).toList(),
                 ),
               if (_showNB && widget.safetyPoints.where((p) => p.type == 'point').isNotEmpty)
                 MarkerLayer(

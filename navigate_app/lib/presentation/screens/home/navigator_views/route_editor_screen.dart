@@ -93,9 +93,13 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     if (_waypoints.length >= 2) _computeRouteElevation();
   }
 
-  /// טעינת שכבות מפה: ג"ג, נת"ב
+  /// טעינת שכבות מפה: ג"ג, נת"ב — סנכרון גבולות מ-Firestore לפני קריאה מקומית
   Future<void> _loadMapLayers() async {
     try {
+      // סנכרון גבולות מ-Firestore (מעדכן DB מקומי)
+      try {
+        await _navLayerRepo.syncBoundariesFromFirestore(widget.navigation.id);
+      } catch (_) {}
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
@@ -517,8 +521,8 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
         .toList();
     final allPoints = [...cpPoints, ..._waypoints];
     // עדיפות לגבול גזרה אם קיים
-    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.coordinates.isNotEmpty
-        ? _navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList()
+    final boundaryPoints = _navBoundaries.isNotEmpty && _navBoundaries.first.allCoordinates.isNotEmpty
+        ? _navBoundaries.first.allCoordinates.map((c) => LatLng(c.lat, c.lng)).toList()
         : <LatLng>[];
     final boundsPoints = boundaryPoints.isNotEmpty
         ? boundaryPoints
@@ -893,13 +897,15 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
                     // ג"ג
                     if (_showGG && _navBoundaries.isNotEmpty)
                       PolygonLayer(
-                        polygons: _navBoundaries.map((b) => Polygon(
-                          points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                          color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                          borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                          borderStrokeWidth: b.strokeWidth,
-                          isFilled: true,
-                        )).toList(),
+                        polygons: _navBoundaries.expand((b) => b.allPolygons
+                            .where((poly) => poly.isNotEmpty)
+                            .map((poly) => Polygon(
+                                  points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                  color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                                  borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                                  borderStrokeWidth: b.strokeWidth,
+                                  isFilled: true,
+                                ))).toList(),
                       ),
                     // נת"ב - נקודות
                     if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)

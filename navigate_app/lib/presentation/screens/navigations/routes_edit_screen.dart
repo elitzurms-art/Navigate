@@ -460,10 +460,15 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
         .map((r) => r.swapPointId!)
         .toSet();
 
+    // בניווט צנחן — כל מנווט יכול להיות עם נקודת הצנחה שונה
+    final effectiveStartPointId = (navigatorId != null && widget.navigation.navigationType == 'parachute')
+        ? navRoute?.startPointId
+        : _startPointId;
+
     for (final cp in _checkpoints) {
       if (cp.coordinates == null) continue;
       final isSwapPoint = swapIds.contains(cp.id);
-      final isStart = cp.id == _startPointId;
+      final isStart = cp.id == effectiveStartPointId;
       final isEnd = cp.id == _endPointId && !isSwapPoint;
       final isIntermediate = _intermediatePointIds.contains(cp.id);
       final isInSequence = sequenceSet?.contains(cp.id) ?? false;

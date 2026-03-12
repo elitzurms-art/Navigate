@@ -1830,6 +1830,31 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
     setState(() => _navigatorDropPoints = result);
   }
 
+  void _redistributeNavigatorsFromRemovedDropPoint(String removedDropPointId) {
+    if (_navigatorDropPoints.isEmpty || _dropPointIds.isEmpty) return;
+    final displaced = _navigatorDropPoints.entries
+        .where((e) => e.value == removedDropPointId)
+        .map((e) => e.key)
+        .toList();
+    if (displaced.isEmpty) return;
+    _navigatorDropPoints.removeWhere((_, v) => v == removedDropPointId);
+    for (final navId in displaced) {
+      // מצא את הנקודה עם הכי מעט מנווטים
+      String? minDropPoint;
+      int minCount = 999999;
+      for (final dpId in _dropPointIds) {
+        final count = _navigatorDropPoints.values.where((v) => v == dpId).length;
+        if (count < minCount) {
+          minCount = count;
+          minDropPoint = dpId;
+        }
+      }
+      if (minDropPoint != null) {
+        _navigatorDropPoints[navId] = minDropPoint;
+      }
+    }
+  }
+
   void _autoAssignGroups() {
     final baseSize = ForceComposition(type: _forceComposition).baseGroupSize;
     final groups = RoutesDistributionService.autoGroupNavigators(
@@ -2065,6 +2090,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         _dropPointIds.add(cp.id);
                       } else {
                         _dropPointIds.remove(cp.id);
+                        _redistributeNavigatorsFromRemovedDropPoint(cp.id);
                       }
                     });
                   },
@@ -2166,12 +2192,13 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 ),
               ] else ...[
                 const SizedBox(height: 12),
-                ..._dropPointIds.map((dropPointId) {
+                ..._dropPointIds.asMap().entries.map((entry) {
+                  final dropPointIndex = entry.key;
+                  final dropPointId = entry.value;
                   final cp = _checkpoints.cast<Checkpoint?>().firstWhere(
                     (c) => c!.id == dropPointId,
                     orElse: () => null,
                   );
-                  final dropPointName = cp?.name ?? dropPointId;
                   final assignedNavigators = _navigatorDropPoints.entries
                       .where((e) => e.value == dropPointId)
                       .map((e) => e.key)
@@ -2188,9 +2215,11 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                             children: [
                               const Icon(Icons.location_on, size: 18, color: Colors.orange),
                               const SizedBox(width: 6),
-                              Text(
-                                '$dropPointName (${assignedNavigators.length})',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              Expanded(
+                                child: Text(
+                                  'נקודה ${dropPointIndex + 1} — ${cp?.displayLabel ?? dropPointId} (${assignedNavigators.length})',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
                               ),
                             ],
                           ),
@@ -2209,14 +2238,16 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                                       underline: const SizedBox(),
                                       isDense: true,
                                       style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                                      items: _dropPointIds.map((dpId) {
+                                      items: _dropPointIds.asMap().entries.map((dpEntry) {
+                                        final dpIndex = dpEntry.key;
+                                        final dpId = dpEntry.value;
                                         final dpCp = _checkpoints.cast<Checkpoint?>().firstWhere(
                                           (c) => c!.id == dpId,
                                           orElse: () => null,
                                         );
                                         return DropdownMenuItem(
                                           value: dpId,
-                                          child: Text(dpCp?.name ?? dpId),
+                                          child: Text('נקודה ${dpIndex + 1} — ${dpCp?.displayLabel ?? dpId}'),
                                         );
                                       }).toList(),
                                       onChanged: (newDropPointId) {

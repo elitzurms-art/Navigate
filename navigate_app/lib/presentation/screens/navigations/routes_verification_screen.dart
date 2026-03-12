@@ -463,6 +463,18 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
     return widget.navigation.startPoint;
   }
 
+  /// כל נקודות ההתחלה (צנחן — כל מנווט יכול להיות עם נקודת הצנחה שונה)
+  Set<String> get _allStartPointIds {
+    final ids = <String>{};
+    for (final route in _filteredRoutes.values) {
+      if (route.startPointId != null) ids.add(route.startPointId!);
+    }
+    if (ids.isEmpty && widget.navigation.startPoint != null) {
+      ids.add(widget.navigation.startPoint!);
+    }
+    return ids;
+  }
+
   /// נקודת סיום (F) — מחפש בצירים ואז fallback להגדרות ניווט
   /// במאבטח: מחזיר את נקודת הסיום של second_half (לא את swap point)
   String? get _endPointId {
@@ -979,7 +991,9 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
                           .map((cp) {
                         final isShared = _sharedCheckpointIds.contains(cp.id);
                         final isSwapPoint = _swapPointIds.contains(cp.id);
-                        final isStart = cp.id == _startPointId;
+                        final isStart = widget.navigation.navigationType == 'parachute'
+                            ? _allStartPointIds.contains(cp.id)
+                            : cp.id == _startPointId;
                         final isEnd = cp.id == _endPointId;
                         final isWaypoint = waypointIds.contains(cp.id);
 

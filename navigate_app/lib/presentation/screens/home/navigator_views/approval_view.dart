@@ -110,6 +110,10 @@ class _ApprovalViewState extends State<ApprovalView> {
       final areaId = widget.navigation.areaId;
       _checkpoints = await _checkpointRepo.getByArea(areaId);
       _safetyPoints = await _safetyPointRepo.getByArea(areaId);
+      // סנכרון גבולות מ-Firestore לפני קריאה מקומית
+      try {
+        await _navLayerRepo.syncBoundariesFromFirestore(widget.navigation.id);
+      } catch (_) {}
       _navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
       // סינון נקודות לציר הזה
@@ -274,8 +278,8 @@ class _ApprovalViewState extends State<ApprovalView> {
     try {
       if (_navBoundaries.isNotEmpty) {
         final boundary = _navBoundaries.first;
-        if (boundary.coordinates.isNotEmpty) {
-          final points = boundary.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        if (boundary.allCoordinates.isNotEmpty) {
+          final points = boundary.allCoordinates.map((c) => LatLng(c.lat, c.lng)).toList();
           _mapController.fitCamera(CameraFit.bounds(
             bounds: LatLngBounds.fromPoints(points),
             padding: const EdgeInsets.all(30),
@@ -423,16 +427,17 @@ class _ApprovalViewState extends State<ApprovalView> {
               if (_navBoundaries.isNotEmpty)
                 PolygonLayer(
                   polygons: _navBoundaries
-                      .where((b) => b.coordinates.isNotEmpty)
-                      .map((b) => Polygon(
-                            points: b.coordinates
-                                .map((c) => LatLng(c.lat, c.lng))
-                                .toList(),
-                            color: _kBoundaryColor.withOpacity(0.1),
-                            borderColor: _kBoundaryColor,
-                            borderStrokeWidth: 2.0,
-                            isFilled: true,
-                          ))
+                      .expand((b) => b.allPolygons
+                          .where((poly) => poly.isNotEmpty)
+                          .map((poly) => Polygon(
+                                points: poly
+                                    .map((c) => LatLng(c.lat, c.lng))
+                                    .toList(),
+                                color: _kBoundaryColor.withOpacity(0.1),
+                                borderColor: _kBoundaryColor,
+                                borderStrokeWidth: 2.0,
+                                isFilled: true,
+                              )))
                       .toList(),
                 ),
 
@@ -640,14 +645,15 @@ class _ApprovalViewState extends State<ApprovalView> {
                       if (visibility['boundary'] == true && _navBoundaries.isNotEmpty)
                         PolygonLayer(
                           polygons: _navBoundaries
-                              .where((b) => b.coordinates.isNotEmpty)
-                              .map((b) => Polygon(
-                                    points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                                    color: _kBoundaryColor.withOpacity(0.1),
-                                    borderColor: _kBoundaryColor,
-                                    borderStrokeWidth: 2.0,
-                                    isFilled: true,
-                                  ))
+                              .expand((b) => b.allPolygons
+                                  .where((poly) => poly.isNotEmpty)
+                                  .map((poly) => Polygon(
+                                        points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
+                                        color: _kBoundaryColor.withOpacity(0.1),
+                                        borderColor: _kBoundaryColor,
+                                        borderStrokeWidth: 2.0,
+                                        isFilled: true,
+                                      )))
                               .toList(),
                         ),
                       if (visibility['planned'] == true && _plannedRoute.length > 1)

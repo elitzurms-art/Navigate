@@ -1011,4 +1011,50 @@ class NavLayerRepository {
 
     print('DEBUG: All nav layers synced for navigation $navigationId');
   }
+
+  /// סנכרון גבולות בלבד מ-Firestore ל-DB מקומי (קל יותר מ-syncAllLayers)
+  Future<void> syncBoundariesFromFirestore(String navigationId) async {
+    final ggDocs = await fetchBoundariesFromFirestore(navigationId);
+    for (final rawData in ggDocs) {
+      try {
+        final data = _sanitizeFirestoreData(rawData);
+        final boundary = domain.NavBoundary.fromMap(data);
+        final coordinatesJson = jsonEncode(
+          boundary.coordinates.map((c) => c.toMap()).toList(),
+        );
+        await _db.into(_db.navBoundaries).insertOnConflictUpdate(
+          NavBoundariesCompanion.insert(
+            id: boundary.id,
+            navigationId: boundary.navigationId,
+            sourceId: boundary.sourceId,
+            areaId: boundary.areaId,
+            name: boundary.name,
+            description: boundary.description,
+            coordinatesJson: coordinatesJson,
+            color: boundary.color,
+            strokeWidth: boundary.strokeWidth,
+            sourceBoundaryIdsJson: Value(
+              boundary.sourceBoundaryIds.isNotEmpty
+                  ? jsonEncode(boundary.sourceBoundaryIds)
+                  : null,
+            ),
+            creationMode: Value(boundary.creationMode.index),
+            geometryType: Value(boundary.geometryType),
+            multiPolygonCoordinatesJson: Value(
+              boundary.multiPolygonCoordinates != null
+                  ? jsonEncode(boundary.multiPolygonCoordinates!
+                      .map((poly) => poly.map((c) => c.toMap()).toList())
+                      .toList())
+                  : null,
+            ),
+            createdBy: boundary.createdBy,
+            createdAt: boundary.createdAt,
+            updatedAt: boundary.updatedAt,
+          ),
+        );
+      } catch (e) {
+        print('DEBUG: Error syncing GG boundary from Firestore: $e');
+      }
+    }
+  }
 }

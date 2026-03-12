@@ -13,6 +13,7 @@ import '../../services/auth_service.dart';
 import '../../services/auto_map_download_service.dart';
 import '../datasources/local/app_database.dart';
 import '../repositories/navigation_repository.dart';
+import '../repositories/nav_layer_repository.dart';
 import '../repositories/unit_repository.dart';
 
 /// כיוון סנכרון לפי סוג נתונים
@@ -971,6 +972,13 @@ class SyncManager {
       print('SyncManager: Error pulling area layers: $e');
     }
 
+    // Pull navigation boundary subcollections (nav_layers_gg)
+    try {
+      await _pullNavBoundaries();
+    } catch (e) {
+      print('SyncManager: Error pulling nav boundaries: $e');
+    }
+
     // Bidirectional collections
     final bidirectionalCollections = [
       AppConstants.usersCollection,
@@ -1187,6 +1195,23 @@ class SyncManager {
     }
 
     print('SyncManager: Area layers pull complete.');
+  }
+
+  /// משיכת גבולות ניווט (nav_layers_gg subcollection) מ-Firestore
+  Future<void> _pullNavBoundaries() async {
+    final navRows = await (_db.select(_db.navigations)
+      ..where((n) => n.status.isNotIn(['review'])))
+      .get();
+    if (navRows.isEmpty) return;
+
+    final navLayerRepo = NavLayerRepository();
+    for (final nav in navRows) {
+      try {
+        await navLayerRepo.syncBoundariesFromFirestore(nav.id);
+      } catch (e) {
+        print('SyncManager: Error pulling nav boundaries for ${nav.id}: $e');
+      }
+    }
   }
 
   /// משיכת קולקשן בודד מ-Firestore

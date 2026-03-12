@@ -88,6 +88,9 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   /// טעינת שכבות מפה: ג"ג, נת"ב, נ"צ
   Future<void> _loadMapLayers() async {
     try {
+      // סנכרון גבולות מ-Firestore לפני קריאה מקומית — מונע הצגת גבול לא עדכני
+      await _navLayerRepo.syncBoundariesFromFirestore(widget.navigation.id);
+
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
       final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
 
@@ -116,8 +119,8 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
           _checkpoints = checkpoints;
         });
         // התמקד בגבול גזרה אם קיים
-        if (navBoundaries.isNotEmpty && navBoundaries.first.coordinates.isNotEmpty) {
-          final points = navBoundaries.first.coordinates.map((c) => LatLng(c.lat, c.lng)).toList();
+        if (navBoundaries.isNotEmpty && navBoundaries.first.allCoordinates.isNotEmpty) {
+          final points = navBoundaries.first.allCoordinates.map((c) => LatLng(c.lat, c.lng)).toList();
           try {
             _mapController.fitCamera(CameraFit.bounds(
               bounds: LatLngBounds.fromPoints(points),
@@ -443,13 +446,15 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
               // ג"ג
               if (_showGG && _navBoundaries.isNotEmpty)
                 PolygonLayer(
-                  polygons: _navBoundaries.map((b) => Polygon(
-                    points: b.coordinates.map((c) => LatLng(c.lat, c.lng)).toList(),
-                    color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
-                    borderColor: Colors.black.withValues(alpha: _ggOpacity),
-                    borderStrokeWidth: b.strokeWidth,
-                    isFilled: true,
-                  )).toList(),
+                  polygons: _navBoundaries.expand((b) => b.allPolygons
+                      .where((poly) => poly.isNotEmpty)
+                      .map((poly) => Polygon(
+                            points: poly.map((c) => LatLng(c.lat, c.lng)).toList(),
+                            color: Colors.black.withValues(alpha: 0.1 * _ggOpacity),
+                            borderColor: Colors.black.withValues(alpha: _ggOpacity),
+                            borderStrokeWidth: b.strokeWidth,
+                            isFilled: true,
+                          ))).toList(),
                 ),
               // נת"ב - נקודות
               if (_showNB && _safetyPoints.where((p) => p.type == 'point').isNotEmpty)
