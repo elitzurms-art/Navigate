@@ -15,6 +15,8 @@ import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/checkpoint_punch_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../domain/entities/navigation_tree.dart' as tree_domain;
 import '../../../services/gps_tracking_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/auth_service.dart';
@@ -140,6 +142,11 @@ class _InvestigationScreenState extends State<InvestigationScreen>
   bool _showPlayback = false;
 
   late domain.Navigation _currentNavigation;
+
+  // עץ ניווט — לקיבוץ מנווטים לפי תת-מסגרת
+  tree_domain.NavigationTree? _navigationTree;
+  final Map<String, bool> _navigatorGroupExpanded = {};
+  final Map<String, bool> _navigatorGroupLocked = {};
 
   // הגדרות אישור (commander settings tab)
   bool _autoApprovalEnabled = true;
@@ -361,6 +368,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
         }
       }
     }
+
+      // טעינת עץ ניווט
+      try {
+        final treeRepo = NavigationTreeRepository();
+        _navigationTree = await treeRepo.getById(_currentNavigation.treeId);
+      } catch (_) {}
 
     int colorIdx = 0;
 
@@ -2693,13 +2706,12 @@ class _InvestigationScreenState extends State<InvestigationScreen>
 
           const SizedBox(height: 16),
 
-          // Score cards
+          // Score cards — grouped by sub-framework
           const Text('ציונים',
               style: TextStyle(
                   fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          ..._navigatorDataMap.entries.map((entry) =>
-              _buildNavigatorScoreCard(entry.key, entry.value)),
+          ..._buildGroupedScoreCards(),
         ],
       ),
     );
@@ -2958,6 +2970,150 @@ class _InvestigationScreenState extends State<InvestigationScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  List<Widget> _buildGroupedScoreCards() {
+    final allIds = _navigatorDataMap.keys.toList();
+    final selectedSfIds = _currentNavigation.selectedSubFrameworkIds.toSet();
+    final tree = _navigationTree;
+    final groups = <String, List<String>>{};
+    final ungrouped = <String>[];
+
+    if (tree != null && selectedSfIds.isNotEmpty) {
+      final relevantSfs = tree.subFrameworks
+          .where((sf) => selectedSfIds.contains(sf.id))
+          .toList();
+      final assigned = <String>{};
+      for (final sf in relevantSfs) {
+        final sfNavs = allIds.where((id) => sf.userIds.contains(id)).toList();
+        if (sfNavs.isNotEmpty) {
+          groups[sf.name] = sfNavs;
+          assigned.addAll(sfNavs);
+        }
+      }
+      ungrouped.addAll(allIds.where((id) => !assigned.contains(id)));
+    } else {
+      ungrouped.addAll(allIds);
+    }
+
+    final widgets = <Widget>[];
+
+    if (groups.length > 1) {
+      for (final entry in groups.entries) {
+        widgets.add(_buildNavigatorGroup(
+          groupKey: 'sf_${entry.key}',
+          title: 'מנווטים ${entry.key}',
+          icon: Icons.group,
+          color: Colors.blue,
+          navigatorIds: entry.value,
+          itemBuilder: (id) => _buildNavigatorScoreCard(id, _navigatorDataMap[id]!),
+        ));
+      }
+    } else if (groups.length == 1) {
+      for (final id in groups.values.first) {
+        widgets.add(_buildNavigatorScoreCard(id, _navigatorDataMap[id]!));
+      }
+    }
+
+    if (ungrouped.isNotEmpty && groups.isNotEmpty) {
+      widgets.add(_buildNavigatorGroup(
+        groupKey: 'ungrouped',
+        title: 'מנווטים אחר',
+        icon: Icons.person,
+        color: Colors.grey,
+        navigatorIds: ungrouped,
+        itemBuilder: (id) => _buildNavigatorScoreCard(id, _navigatorDataMap[id]!),
+      ));
+    } else {
+      for (final id in ungrouped) {
+        widgets.add(_buildNavigatorScoreCard(id, _navigatorDataMap[id]!));
+      }
+    }
+
+    return widgets;
+  }
+
+  Widget _buildNavigatorGroup({
+    required String groupKey,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> navigatorIds,
+    required Widget Function(String) itemBuilder,
+  }) {
+    final isExpanded = _navigatorGroupExpanded[groupKey] ?? false;
+    final isLocked = _navigatorGroupLocked[groupKey] ?? false;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: isExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            onTap: () {
+              if (!isLocked) {
+                setState(() {
+                  _navigatorGroupExpanded[groupKey] = !isExpanded;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: color.withOpacity(0.15),
+                    radius: 18,
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$title (${navigatorIds.length})',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _navigatorGroupLocked[groupKey] = !isLocked;
+                        if (!isLocked) {
+                          _navigatorGroupExpanded[groupKey] = true;
+                        }
+                      });
+                    },
+                    child: Icon(
+                      isLocked ? Icons.lock : Icons.lock_open,
+                      size: 20,
+                      color: isLocked ? Colors.blue : Colors.grey[400],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: isExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                    child: Column(
+                      children: navigatorIds.map(itemBuilder).toList(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
       ),
     );
   }

@@ -19,6 +19,8 @@ import '../../../core/map_config.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../../domain/entities/navigation_settings.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../domain/entities/navigation_tree.dart' as tree_domain;
 import '../../../core/utils/permission_utils.dart';
 
 /// פלטת צבעים למנווטים מרובים
@@ -59,6 +61,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   final CheckpointRepository _checkpointRepo = CheckpointRepository();
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final NavigationTreeRepository _treeRepo = NavigationTreeRepository();
   final SafetyPointRepository _safetyPointRepo = SafetyPointRepository();
   final MapController _mapController = MapController();
 
@@ -126,6 +129,12 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   // שמות מנווטים
   final Map<String, String> _userNames = {};
+
+  // עץ ניווט — לקיבוץ מנווטים לפי תת-מסגרת
+  tree_domain.NavigationTree? _navigationTree;
+  // מצב פתוח/נעול של קבוצות בטאב טבלה
+  final Map<String, bool> _navigatorGroupExpanded = {};
+  final Map<String, bool> _navigatorGroupLocked = {};
 
   @override
   void initState() {
@@ -342,6 +351,11 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           _userNames[navId] = user.fullName.isNotEmpty ? user.fullName : navId;
         }
       }
+
+      // טעינת עץ ניווט לקיבוץ מנווטים לפי תת-מסגרת
+      try {
+        _navigationTree = await _treeRepo.getById(_currentNavigation.treeId);
+      } catch (_) {}
 
       setState(() {
         _checkpoints = checkpoints;
@@ -1359,6 +1373,43 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   }
 
   Widget _buildTableView() {
+    final allIds = _currentNavigation.sortByGroup(_currentNavigation.routes.keys).toList();
+    final managers = _currentNavigation.permissions.managers.toSet();
+
+    // הפרדת מפקדים ממנווטים
+    final commanderIds = <String>[];
+    final navigatorIds = <String>[];
+    for (final id in allIds) {
+      if (managers.contains(id)) {
+        commanderIds.add(id);
+      } else {
+        navigatorIds.add(id);
+      }
+    }
+
+    // קיבוץ מנווטים לפי תת-מסגרת
+    final selectedSfIds = _currentNavigation.selectedSubFrameworkIds.toSet();
+    final tree = _navigationTree;
+    final groups = <String, List<String>>{};
+    final ungrouped = <String>[];
+
+    if (tree != null) {
+      final relevantSfs = tree.subFrameworks
+          .where((sf) => selectedSfIds.contains(sf.id))
+          .toList();
+      final assigned = <String>{};
+      for (final sf in relevantSfs) {
+        final sfNavs = navigatorIds.where((id) => sf.userIds.contains(id)).toList();
+        if (sfNavs.isNotEmpty) {
+          groups[sf.name] = sfNavs;
+          assigned.addAll(sfNavs);
+        }
+      }
+      ungrouped.addAll(navigatorIds.where((id) => !assigned.contains(id)));
+    } else {
+      ungrouped.addAll(navigatorIds);
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1388,12 +1439,127 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
           if (widget.isCommander) _buildLegend(),
           const SizedBox(height: 16),
 
-          // טבלת צירים
-          ..._currentNavigation.sortByGroup(_currentNavigation.routes.keys).map((navigatorId) {
-            final route = _currentNavigation.routes[navigatorId]!;
+          // מפקדים ומנהלים
+          if (commanderIds.isNotEmpty)
+            _buildNavigatorGroup(
+              groupKey: 'commanders',
+              title: 'מפקדים ומנהלת',
+              icon: Icons.military_tech,
+              color: Colors.amber,
+              navigatorIds: commanderIds,
+              itemBuilder: (id) => _buildRouteCard(id, _currentNavigation.routes[id]!),
+            ),
 
-            return _buildRouteCard(navigatorId, route);
-          }),
+          // מנווטים מקובצים לפי תת-מסגרת
+          if (groups.length > 1)
+            ...groups.entries.map((entry) => _buildNavigatorGroup(
+              groupKey: 'sf_${entry.key}',
+              title: 'מנווטים ${entry.key}',
+              icon: Icons.group,
+              color: Colors.blue,
+              navigatorIds: entry.value,
+              itemBuilder: (id) => _buildRouteCard(id, _currentNavigation.routes[id]!),
+            ))
+          else if (groups.length == 1)
+            ...groups.values.first.map((id) => _buildRouteCard(id, _currentNavigation.routes[id]!))
+          else
+            const SizedBox.shrink(),
+
+          // מנווטים ללא תת-מסגרת
+          if (ungrouped.isNotEmpty && groups.isNotEmpty)
+            _buildNavigatorGroup(
+              groupKey: 'ungrouped',
+              title: 'מנווטים אחר',
+              icon: Icons.person,
+              color: Colors.grey,
+              navigatorIds: ungrouped,
+              itemBuilder: (id) => _buildRouteCard(id, _currentNavigation.routes[id]!),
+            )
+          else
+            ...ungrouped.map((id) => _buildRouteCard(id, _currentNavigation.routes[id]!)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigatorGroup({
+    required String groupKey,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> navigatorIds,
+    required Widget Function(String) itemBuilder,
+  }) {
+    final isExpanded = _navigatorGroupExpanded[groupKey] ?? false;
+    final isLocked = _navigatorGroupLocked[groupKey] ?? false;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: isExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            onTap: () {
+              if (!isLocked) {
+                setState(() {
+                  _navigatorGroupExpanded[groupKey] = !isExpanded;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: color.withOpacity(0.15),
+                    radius: 18,
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$title (${navigatorIds.length})',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _navigatorGroupLocked[groupKey] = !isLocked;
+                        if (!isLocked) {
+                          _navigatorGroupExpanded[groupKey] = true;
+                        }
+                      });
+                    },
+                    child: Icon(
+                      isLocked ? Icons.lock : Icons.lock_open,
+                      size: 20,
+                      color: isLocked ? Colors.blue : Colors.grey[400],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: isExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                    child: Column(
+                      children: navigatorIds.map(itemBuilder).toList(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );

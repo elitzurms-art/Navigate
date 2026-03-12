@@ -27,6 +27,7 @@ import '../../../services/gps_service.dart';
 import '../../../services/gps_tracking_service.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
+import '../../../domain/entities/navigation_tree.dart' as tree_domain;
 import '../../../services/auth_service.dart';
 import '../../../domain/entities/user.dart' as app_user;
 import '../../../services/voice_service.dart';
@@ -171,6 +172,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // שמות משתמשים (מנווטים + מפקדים)
   Map<String, String> _userNames = {};
   app_user.User? _currentUser;
+
+  // עץ ניווט — לקיבוץ מנווטים לפי תת-מסגרת
+  tree_domain.NavigationTree? _navigationTree;
+  // מצב פתוח/נעול של קבוצות בטאב סטטוס
+  final Map<String, bool> _navigatorGroupExpanded = {};
+  final Map<String, bool> _navigatorGroupLocked = {};
 
   // ניווט נוכחי (mutable — מתעדכן אחרי כל שמירה)
   late domain.Navigation _currentNavigation;
@@ -330,6 +337,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         _userNames[navigatorId] = user.fullName.isNotEmpty ? user.fullName : navigatorId;
       }
     }
+
+    // טעינת עץ ניווט לקיבוץ מנווטים לפי תת-מסגרת
+    try {
+      final treeRepo = NavigationTreeRepository();
+      _navigationTree = await treeRepo.getById(widget.navigation.treeId);
+    } catch (_) {}
 
     // טעינת מפקדים — דינמי לפי תפקיד ויחידה
     final commanderUnitId = widget.navigation.selectedUnitId;
@@ -3075,6 +3088,231 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
+  Widget _buildStatusNavigatorCard(String navigatorId) {
+    final data = _navigatorData[navigatorId]!;
+    final statusColor = _getNavigatorStatusColor(data);
+    final arrivals = _getCheckpointArrivals(data);
+    final reachedCount = arrivals.where((a) => a.reached).length;
+    final totalCheckpoints = arrivals.length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: data.hasActiveAlert
+            ? const BorderSide(color: Colors.red, width: 2)
+            : BorderSide.none,
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _showEnhancedNavigatorDetails(navigatorId, data),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header: icon + name + stop button
+              Row(
+                children: [
+                  Icon(_getStatusIcon(data), color: statusColor, size: 28),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _userNames[navigatorId] ?? navigatorId,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (_getGroupLabel(navigatorId) != null)
+                          Text(
+                            _getGroupLabel(navigatorId)!,
+                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (data.isDisqualified)
+                    Container(
+                      margin: const EdgeInsets.only(left: 4),
+                      constraints: const BoxConstraints(maxWidth: 120),
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        data.disqualificationReason ?? 'נפסל',
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (data.hasActiveAlert)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4),
+                      child: Icon(Icons.warning, color: Colors.red, size: 18),
+                    ),
+                  _buildNavigatorActionsMenu(navigatorId, data),
+                ],
+              ),
+              // סטטוס כוכב
+              if (_currentNavigation.navigationType == 'star') ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(Icons.star, size: 14, color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId))),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        _starStatusText(navigatorId),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              // Stats row (only if active or finished with track data)
+              if (data.trackPoints.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  children: [
+                    _statChip(
+                      Icons.speed,
+                      '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש',
+                    ),
+                    _statChip(
+                      Icons.route,
+                      '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ',
+                    ),
+                    _statChip(
+                      Icons.timer,
+                      _formatDuration(
+                        () {
+                          // מנווט שעדיין לא התחיל — אפס
+                          if (data.trackStartedAt == null) return Duration.zero;
+                          final endTime = data.trackEndedAt ?? DateTime.now();
+                          final diff = endTime.difference(data.trackStartedAt!);
+                          return diff.isNegative ? Duration.zero : diff;
+                        }(),
+                      ),
+                    ),
+                    if (totalCheckpoints > 0)
+                      _statChip(
+                        Icons.flag,
+                        '$reachedCount/$totalCheckpoints נ"צ',
+                      ),
+                  ],
+                ),
+              ],
+              // Last update
+              if (data.lastUpdate != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'עדכון לפני ${_formatTimeSince(data.timeSinceLastUpdate)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavigatorGroup({
+    required String groupKey,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> navigatorIds,
+    required Widget Function(String) itemBuilder,
+  }) {
+    final isExpanded = _navigatorGroupExpanded[groupKey] ?? false;
+    final isLocked = _navigatorGroupLocked[groupKey] ?? false;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: isExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            onTap: () {
+              if (!isLocked) {
+                setState(() {
+                  _navigatorGroupExpanded[groupKey] = !isExpanded;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: color.withOpacity(0.15),
+                    radius: 18,
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '$title (${navigatorIds.length})',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _navigatorGroupLocked[groupKey] = !isLocked;
+                        if (!isLocked) {
+                          _navigatorGroupExpanded[groupKey] = true;
+                        }
+                      });
+                    },
+                    child: Icon(
+                      isLocked ? Icons.lock : Icons.lock_open,
+                      size: 20,
+                      color: isLocked ? Colors.blue : Colors.grey[400],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: isExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                    child: Column(
+                      children: navigatorIds.map(itemBuilder).toList(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusView() {
     // ספירות סיכום
     final total = _navigatorData.length;
@@ -3089,6 +3327,36 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .length;
     final alertCount = _activeAlerts.length;
     final distances = _getInterNavigatorDistances();
+
+    final allIds = widget.navigation.sortByGroup(_navigatorData.keys).toList();
+    final managers = _currentNavigation.permissions.managers.toSet();
+    final commanderIds = <String>[];
+    final navigatorIds = <String>[];
+    for (final id in allIds) {
+      if (managers.contains(id)) {
+        commanderIds.add(id);
+      } else {
+        navigatorIds.add(id);
+      }
+    }
+    final selectedSfIds = _currentNavigation.selectedSubFrameworkIds.toSet();
+    final tree = _navigationTree;
+    final groups = <String, List<String>>{};
+    final ungrouped = <String>[];
+    if (tree != null) {
+      final relevantSfs = tree.subFrameworks.where((sf) => selectedSfIds.contains(sf.id)).toList();
+      final assigned = <String>{};
+      for (final sf in relevantSfs) {
+        final sfNavs = navigatorIds.where((id) => sf.userIds.contains(id)).toList();
+        if (sfNavs.isNotEmpty) {
+          groups[sf.name] = sfNavs;
+          assigned.addAll(sfNavs);
+        }
+      }
+      ungrouped.addAll(navigatorIds.where((id) => !assigned.contains(id)));
+    } else {
+      ungrouped.addAll(navigatorIds);
+    }
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -3172,148 +3440,29 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
           ),
 
-        // כרטיסי מנווטים
-        ...widget.navigation.sortByGroup(_navigatorData.keys).map((navigatorId) {
-          final data = _navigatorData[navigatorId]!;
-          final statusColor = _getNavigatorStatusColor(data);
-          final arrivals = _getCheckpointArrivals(data);
-          final reachedCount = arrivals.where((a) => a.reached).length;
-          final totalCheckpoints = arrivals.length;
+        // מפקדים (ללא קיבוץ)
+        ...commanderIds.map((id) => _buildStatusNavigatorCard(id)),
 
-          return Card(
-            margin: const EdgeInsets.only(bottom: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-              side: data.hasActiveAlert
-                  ? const BorderSide(color: Colors.red, width: 2)
-                  : BorderSide.none,
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => _showEnhancedNavigatorDetails(navigatorId, data),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header: icon + name + stop button
-                    Row(
-                      children: [
-                        Icon(_getStatusIcon(data), color: statusColor, size: 28),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _userNames[navigatorId] ?? navigatorId,
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (_getGroupLabel(navigatorId) != null)
-                                Text(
-                                  _getGroupLabel(navigatorId)!,
-                                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (data.isDisqualified)
-                          Container(
-                            margin: const EdgeInsets.only(left: 4),
-                            constraints: const BoxConstraints(maxWidth: 120),
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              data.disqualificationReason ?? 'נפסל',
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        if (data.hasActiveAlert)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.warning, color: Colors.red, size: 18),
-                          ),
-                        _buildNavigatorActionsMenu(navigatorId, data),
-                      ],
-                    ),
-                    // סטטוס כוכב
-                    if (_currentNavigation.navigationType == 'star') ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.star, size: 14, color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId))),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              _starStatusText(navigatorId),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: _starPhaseColor(_computeStarPhaseForNavigator(navigatorId)),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    // Stats row (only if active or finished with track data)
-                    if (data.trackPoints.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 4,
-                        children: [
-                          _statChip(
-                            Icons.speed,
-                            '${data.currentSpeedKmh.toStringAsFixed(1)} קמ"ש',
-                          ),
-                          _statChip(
-                            Icons.route,
-                            '${data.totalDistanceKm.toStringAsFixed(2)} ק"מ',
-                          ),
-                          _statChip(
-                            Icons.timer,
-                            _formatDuration(
-                              () {
-                                // מנווט שעדיין לא התחיל — אפס
-                                if (data.trackStartedAt == null) return Duration.zero;
-                                final endTime = data.trackEndedAt ?? DateTime.now();
-                                final diff = endTime.difference(data.trackStartedAt!);
-                                return diff.isNegative ? Duration.zero : diff;
-                              }(),
-                            ),
-                          ),
-                          if (totalCheckpoints > 0)
-                            _statChip(
-                              Icons.flag,
-                              '$reachedCount/$totalCheckpoints נ"צ',
-                            ),
-                        ],
-                      ),
-                    ],
-                    // Last update
-                    if (data.lastUpdate != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'עדכון לפני ${_formatTimeSince(data.timeSinceLastUpdate)}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          );
-        }),
+        // כרטיסי מנווטים מקובצים לפי תת-מסגרת
+        ...groups.entries.map((entry) => _buildNavigatorGroup(
+          groupKey: entry.key,
+          title: entry.key,
+          icon: Icons.group,
+          color: Colors.indigo,
+          navigatorIds: entry.value,
+          itemBuilder: (id) => _buildStatusNavigatorCard(id),
+        )),
+
+        // מנווטים ללא קבוצה
+        if (ungrouped.isNotEmpty)
+          _buildNavigatorGroup(
+            groupKey: '__ungrouped__',
+            title: 'ללא תת-מסגרת',
+            icon: Icons.person_outline,
+            color: Colors.grey,
+            navigatorIds: ungrouped,
+            itemBuilder: (id) => _buildStatusNavigatorCard(id),
+          ),
       ],
     );
   }
