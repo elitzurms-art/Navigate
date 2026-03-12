@@ -322,6 +322,9 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
+      // רענון layers ל-Firestore — מבטיח שנתונים מקומיים לא נדרסים ע"י sync עם layers ריקים
+      await _navLayerRepo.refreshNavigationLayers(widget.navigation.id);
+
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
       final safetyPoints = await _safetyPointRepo.getByArea(widget.navigation.areaId);
 

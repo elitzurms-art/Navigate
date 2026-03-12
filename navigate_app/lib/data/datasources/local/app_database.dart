@@ -227,6 +227,7 @@ class Navigations extends Table {
   DateTimeColumn get deletedAt => dateTime().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
+  TextColumn get layersJson => text().nullable()(); // JSON שכבות מפה inline
 
   @override
   Set<Column> get primaryKey => {id};
@@ -430,7 +431,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 45;
+  int get schemaVersion => 46;
 
   @override
   MigrationStrategy get migration {
@@ -738,6 +739,10 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 44 && to >= 45) {
           // Commander alert sound volumes — per-navigator override
           await safeAddColumn(navigationTracks, navigationTracks.overrideAlertSoundVolumesJson);
+        }
+        if (from <= 45 && to >= 46) {
+          // Inline navigation layers (checkpoints, safetyPoints, boundaries, clusters)
+          await safeAddColumn(navigations, navigations.layersJson);
         }
       },
     );

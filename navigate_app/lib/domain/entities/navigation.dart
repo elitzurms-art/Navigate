@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'coordinate.dart';
 import 'narration_entry.dart';
+import 'nav_layer.dart';
 import 'navigation_settings.dart';
 import 'security_violation.dart';
 import 'unit_checklist.dart';
@@ -266,6 +267,56 @@ class NavigationPermissions extends Equatable {
   List<Object?> get props => [managers, viewers];
 }
 
+/// שכבות ניווט inline — נקודות ציון, נקודות בטיחות, גבולות ואשכולות
+class NavigationLayers extends Equatable {
+  final List<NavCheckpoint> checkpoints;
+  final List<NavSafetyPoint> safetyPoints;
+  final List<NavBoundary> boundaries;
+  final List<NavCluster> clusters;
+
+  const NavigationLayers({
+    this.checkpoints = const [],
+    this.safetyPoints = const [],
+    this.boundaries = const [],
+    this.clusters = const [],
+  });
+
+  Map<String, dynamic> toMap() => {
+    'checkpoints': checkpoints.map((c) => c.toMap()).toList(),
+    'safetyPoints': safetyPoints.map((s) => s.toMap()).toList(),
+    'boundaries': boundaries.map((b) => b.toMap()).toList(),
+    'clusters': clusters.map((c) => c.toMap()).toList(),
+  };
+
+  factory NavigationLayers.fromMap(Map<String, dynamic> map) => NavigationLayers(
+    checkpoints: (map['checkpoints'] as List<dynamic>?)
+        ?.map((c) => NavCheckpoint.fromMap(c as Map<String, dynamic>)).toList() ?? [],
+    safetyPoints: (map['safetyPoints'] as List<dynamic>?)
+        ?.map((s) => NavSafetyPoint.fromMap(s as Map<String, dynamic>)).toList() ?? [],
+    boundaries: (map['boundaries'] as List<dynamic>?)
+        ?.map((b) => NavBoundary.fromMap(b as Map<String, dynamic>)).toList() ?? [],
+    clusters: (map['clusters'] as List<dynamic>?)
+        ?.map((c) => NavCluster.fromMap(c as Map<String, dynamic>)).toList() ?? [],
+  );
+
+  NavigationLayers copyWith({
+    List<NavCheckpoint>? checkpoints,
+    List<NavSafetyPoint>? safetyPoints,
+    List<NavBoundary>? boundaries,
+    List<NavCluster>? clusters,
+  }) {
+    return NavigationLayers(
+      checkpoints: checkpoints ?? this.checkpoints,
+      safetyPoints: safetyPoints ?? this.safetyPoints,
+      boundaries: boundaries ?? this.boundaries,
+      clusters: clusters ?? this.clusters,
+    );
+  }
+
+  @override
+  List<Object?> get props => [checkpoints, safetyPoints, boundaries, clusters];
+}
+
 DateTime _parseDateTime(dynamic value) {
   if (value is DateTime) return value;
   if (value is String) return DateTime.parse(value);
@@ -389,6 +440,9 @@ class Navigation extends Equatable {
   // Permissions
   final NavigationPermissions permissions;
 
+  // Inline layers (שכבות מפה)
+  final NavigationLayers layers;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -449,6 +503,7 @@ class Navigation extends Equatable {
     this.checklistCompletion,
     this.timeCalculationSettings = const TimeCalculationSettings(),
     required this.permissions,
+    this.layers = const NavigationLayers(),
     required this.createdAt,
     required this.updatedAt,
   });
@@ -535,6 +590,7 @@ class Navigation extends Equatable {
     bool clearChecklistCompletion = false,
     TimeCalculationSettings? timeCalculationSettings,
     NavigationPermissions? permissions,
+    NavigationLayers? layers,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -595,6 +651,7 @@ class Navigation extends Equatable {
       checklistCompletion: clearChecklistCompletion ? null : (checklistCompletion ?? this.checklistCompletion),
       timeCalculationSettings: timeCalculationSettings ?? this.timeCalculationSettings,
       permissions: permissions ?? this.permissions,
+      layers: layers ?? this.layers,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -661,6 +718,8 @@ class Navigation extends Equatable {
       'communicationSettings': communicationSettings.toMap(),
       'timeCalculationSettings': timeCalculationSettings.toMap(),
       'permissions': permissions.toMap(),
+      // layers מסתנכרן רק דרך NavLayerRepository._refreshNavigationLayers()
+      // כדי למנוע Lost Update (full write דורס partial update של שכבות)
       if (variablesSheet != null) 'variablesSheet': variablesSheet!.toMap(),
       if (checklistCompletion != null) 'checklistCompletion': checklistCompletion!.toMap(),
       // Computed field for Firestore security rules — not stored in Drift
@@ -776,6 +835,9 @@ class Navigation extends Equatable {
       permissions: map['permissions'] is Map
           ? NavigationPermissions.fromMap(map['permissions'] as Map<String, dynamic>)
           : const NavigationPermissions(managers: [], viewers: []),
+      layers: map['layers'] is Map
+          ? NavigationLayers.fromMap(map['layers'] as Map<String, dynamic>)
+          : const NavigationLayers(),
       createdAt: _parseDateTime(map['createdAt']),
       updatedAt: _parseDateTime(map['updatedAt']),
     );
@@ -839,6 +901,7 @@ class Navigation extends Equatable {
     checklistCompletion,
     timeCalculationSettings,
     permissions,
+    layers,
     createdAt,
     updatedAt,
   ];

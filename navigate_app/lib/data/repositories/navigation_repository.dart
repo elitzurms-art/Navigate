@@ -148,6 +148,7 @@ class NavigationRepository {
                   ? jsonEncode(navigation.checklistCompletion!.toMap())
                   : null),
               permissionsJson: jsonEncode(navigation.permissions.toMap()),
+              layersJson: Value(jsonEncode(navigation.layers.toMap())),
               createdAt: navigation.createdAt,
               updatedAt: navigation.updatedAt,
             ),
@@ -251,6 +252,7 @@ class NavigationRepository {
               ? jsonEncode(navigation.checklistCompletion!.toMap())
               : null),
           permissionsJson: Value(jsonEncode(navigation.permissions.toMap())),
+          // layersJson לא נכתב כאן — _refreshNavigationLayers() הוא הכותב היחיד
           updatedAt: Value(navigation.updatedAt),
         ),
       );
@@ -534,6 +536,9 @@ class NavigationRepository {
       permissions: _parseJsonAsMap(data.permissionsJson) != null
           ? domain.NavigationPermissions.fromMap(_parseJsonAsMap(data.permissionsJson)!)
           : const domain.NavigationPermissions(managers: [], viewers: []),
+      layers: data.layersJson != null && _parseJsonAsMap(data.layersJson!) != null
+          ? domain.NavigationLayers.fromMap(_parseJsonAsMap(data.layersJson!)!)
+          : const domain.NavigationLayers(),
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
     );

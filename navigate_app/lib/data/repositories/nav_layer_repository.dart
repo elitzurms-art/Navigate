@@ -40,6 +40,41 @@ class NavLayerRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SyncManager _syncManager = SyncManager();
 
+  /// רענון שכבות inline בניווט — קורא מהטבלאות המקומיות וכותב ל-Drift + Firestore.
+  /// נקרא פנימית אחרי כל שינוי שכבה, וחיצונית ממסכים שצריכים לוודא שה-layers מעודכנים.
+  Future<void> refreshNavigationLayers(String navigationId) async {
+    try {
+      final checkpoints = await getCheckpointsByNavigation(navigationId);
+      final safetyPoints = await getSafetyPointsByNavigation(navigationId);
+      final boundaries = await getBoundariesByNavigation(navigationId);
+      final clusters = await getClustersByNavigation(navigationId);
+      final layersMap = {
+        'checkpoints': checkpoints.map((c) => c.toMap()).toList(),
+        'safetyPoints': safetyPoints.map((s) => s.toMap()).toList(),
+        'boundaries': boundaries.map((b) => b.toMap()).toList(),
+        'clusters': clusters.map((c) => c.toMap()).toList(),
+      };
+      await (_db.update(_db.navigations)
+        ..where((n) => n.id.equals(navigationId)))
+        .write(NavigationsCompanion(layersJson: Value(jsonEncode(layersMap))));
+
+      // Queue navigation sync — dot-notation prevents overwriting unrelated layer types
+      await _syncManager.queueOperation(
+        collection: 'navigations',
+        documentId: navigationId,
+        operation: 'update',
+        data: {
+          'layers.checkpoints': layersMap['checkpoints'],
+          'layers.safetyPoints': layersMap['safetyPoints'],
+          'layers.boundaries': layersMap['boundaries'],
+          'layers.clusters': layersMap['clusters'],
+        },
+      );
+    } catch (e) {
+      print('NavLayerRepository: Error refreshing navigation layers: $e');
+    }
+  }
+
   // ===================== NavCheckpoints (NZ) =====================
 
   /// קבלת כל נקודות הציון של ניווט ספציפי
@@ -118,13 +153,7 @@ class NavLayerRepository {
             ),
           );
 
-      // Sync to Firestore subcollection
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersNzPath(checkpoint.navigationId),
-        documentId: checkpoint.id,
-        operation: 'create',
-        data: checkpoint.toMap(),
-      );
+      await refreshNavigationLayers(checkpoint.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -157,12 +186,7 @@ class NavLayerRepository {
         ),
       );
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersNzPath(checkpoint.navigationId),
-        documentId: checkpoint.id,
-        operation: 'update',
-        data: checkpoint.toMap(),
-      );
+      await refreshNavigationLayers(checkpoint.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -174,13 +198,7 @@ class NavLayerRepository {
       await (_db.delete(_db.navCheckpoints)..where((t) => t.id.equals(id)))
           .go();
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersNzPath(navigationId),
-        documentId: id,
-        operation: 'delete',
-        data: {'id': id},
-        priority: SyncPriority.high,
-      );
+      await refreshNavigationLayers(navigationId);
     } catch (e) {
       rethrow;
     }
@@ -224,14 +242,8 @@ class NavLayerRepository {
         }
       });
 
-      // סנכרון ל-Firestore
-      for (final checkpoint in checkpoints) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersNzPath(checkpoint.navigationId),
-          documentId: checkpoint.id,
-          operation: 'create',
-          data: checkpoint.toMap(),
-        );
+      if (checkpoints.isNotEmpty) {
+        await refreshNavigationLayers(checkpoints.first.navigationId);
       }
     } catch (e) {
       rethrow;
@@ -280,12 +292,7 @@ class NavLayerRepository {
         ),
       );
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersNbPath(point.navigationId),
-        documentId: point.id,
-        operation: 'update',
-        data: point.toMap(),
-      );
+      await refreshNavigationLayers(point.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -327,13 +334,8 @@ class NavLayerRepository {
         }
       });
 
-      for (final point in points) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersNbPath(point.navigationId),
-          documentId: point.id,
-          operation: 'create',
-          data: point.toMap(),
-        );
+      if (points.isNotEmpty) {
+        await refreshNavigationLayers(points.first.navigationId);
       }
     } catch (e) {
       rethrow;
@@ -390,12 +392,7 @@ class NavLayerRepository {
         ),
       );
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersGgPath(boundary.navigationId),
-        documentId: boundary.id,
-        operation: 'update',
-        data: boundary.toMap(),
-      );
+      await refreshNavigationLayers(boundary.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -439,12 +436,7 @@ class NavLayerRepository {
             ),
           );
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersGgPath(boundary.navigationId),
-        documentId: boundary.id,
-        operation: 'create',
-        data: boundary.toMap(),
-      );
+      await refreshNavigationLayers(boundary.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -487,12 +479,7 @@ class NavLayerRepository {
         ),
       );
 
-      await _syncManager.queueOperation(
-        collection: AppConstants.navLayersBaPath(cluster.navigationId),
-        documentId: cluster.id,
-        operation: 'update',
-        data: cluster.toMap(),
-      );
+      await refreshNavigationLayers(cluster.navigationId);
     } catch (e) {
       rethrow;
     }
@@ -528,13 +515,8 @@ class NavLayerRepository {
         }
       });
 
-      for (final cluster in clusters) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersBaPath(cluster.navigationId),
-          documentId: cluster.id,
-          operation: 'create',
-          data: cluster.toMap(),
-        );
+      if (clusters.isNotEmpty) {
+        await refreshNavigationLayers(clusters.first.navigationId);
       }
     } catch (e) {
       rethrow;
@@ -546,20 +528,6 @@ class NavLayerRepository {
   /// מחיקת כל השכבות של ניווט ספציפי
   Future<void> deleteAllLayersForNavigation(String navigationId) async {
     try {
-      // שליפת IDs קיימים לפני מחיקה מקומית
-      final checkpoints = await (_db.select(_db.navCheckpoints)
-            ..where((t) => t.navigationId.equals(navigationId)))
-          .get();
-      final safetyPoints = await (_db.select(_db.navSafetyPoints)
-            ..where((t) => t.navigationId.equals(navigationId)))
-          .get();
-      final boundaries = await (_db.select(_db.navBoundaries)
-            ..where((t) => t.navigationId.equals(navigationId)))
-          .get();
-      final clusters = await (_db.select(_db.navClusters)
-            ..where((t) => t.navigationId.equals(navigationId)))
-          .get();
-
       // מחיקה מקומית מ-Drift
       await (_db.delete(_db.navCheckpoints)
             ..where((t) => t.navigationId.equals(navigationId)))
@@ -574,39 +542,7 @@ class NavLayerRepository {
             ..where((t) => t.navigationId.equals(navigationId)))
           .go();
 
-      // סנכרון מחיקה ל-Firestore
-      for (final cp in checkpoints) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersNzPath(navigationId),
-          documentId: cp.id,
-          operation: 'hard_delete',
-          data: {'id': cp.id},
-        );
-      }
-      for (final sp in safetyPoints) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersNbPath(navigationId),
-          documentId: sp.id,
-          operation: 'hard_delete',
-          data: {'id': sp.id},
-        );
-      }
-      for (final b in boundaries) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersGgPath(navigationId),
-          documentId: b.id,
-          operation: 'hard_delete',
-          data: {'id': b.id},
-        );
-      }
-      for (final c in clusters) {
-        await _syncManager.queueOperation(
-          collection: AppConstants.navLayersBaPath(navigationId),
-          documentId: c.id,
-          operation: 'hard_delete',
-          data: {'id': c.id},
-        );
-      }
+      await refreshNavigationLayers(navigationId);
     } catch (e) {
       rethrow;
     }

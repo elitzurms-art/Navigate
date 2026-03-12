@@ -250,6 +250,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
+      // רענון layers ל-Firestore — מבטיח שנתונים מקומיים לא נדרסים ע"י sync עם layers ריקים
+      await _navLayerRepo.refreshNavigationLayers(widget.navigation.id);
+
       final checkpoints = await _checkpointRepo.getByArea(widget.navigation.areaId);
 
       final boundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);

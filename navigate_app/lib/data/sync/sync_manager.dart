@@ -13,7 +13,6 @@ import '../../services/auth_service.dart';
 import '../../services/auto_map_download_service.dart';
 import '../datasources/local/app_database.dart';
 import '../repositories/navigation_repository.dart';
-import '../repositories/nav_layer_repository.dart';
 import '../repositories/unit_repository.dart';
 
 /// כיוון סנכרון לפי סוג נתונים
@@ -972,13 +971,6 @@ class SyncManager {
       print('SyncManager: Error pulling area layers: $e');
     }
 
-    // Pull navigation boundary subcollections (nav_layers_gg)
-    try {
-      await _pullNavBoundaries();
-    } catch (e) {
-      print('SyncManager: Error pulling nav boundaries: $e');
-    }
-
     // Bidirectional collections
     final bidirectionalCollections = [
       AppConstants.usersCollection,
@@ -1195,23 +1187,6 @@ class SyncManager {
     }
 
     print('SyncManager: Area layers pull complete.');
-  }
-
-  /// משיכת גבולות ניווט (nav_layers_gg subcollection) מ-Firestore
-  Future<void> _pullNavBoundaries() async {
-    final navRows = await (_db.select(_db.navigations)
-      ..where((n) => n.status.isNotIn(['review'])))
-      .get();
-    if (navRows.isEmpty) return;
-
-    final navLayerRepo = NavLayerRepository();
-    for (final nav in navRows) {
-      try {
-        await navLayerRepo.syncBoundariesFromFirestore(nav.id);
-      } catch (e) {
-        print('SyncManager: Error pulling nav boundaries for ${nav.id}: $e');
-      }
-    }
   }
 
   /// משיכת קולקשן בודד מ-Firestore
@@ -1769,6 +1744,8 @@ class SyncManager {
         starAutoMode: Value(data['starAutoMode'] as bool? ?? false),
         checklistCompletionJson: Value(data['checklistCompletionJson'] as String? ??
             (data['checklistCompletion'] != null ? jsonEncode(data['checklistCompletion']) : null)),
+        layersJson: Value(data['layersJson'] as String? ??
+            (data['layers'] != null ? jsonEncode(data['layers']) : null)),
         trainingStartTime: Value(_parseDateTime(data['trainingStartTime'])),
         systemCheckStartTime: Value(_parseDateTime(data['systemCheckStartTime'])),
         activeStartTime: Value(_parseDateTime(data['activeStartTime'])),
@@ -1776,6 +1753,183 @@ class SyncManager {
         updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
       ),
     );
+
+    // חילוץ שכבות inline אל טבלאות מקומיות
+    final layersData = data['layers'] as Map<String, dynamic>?;
+    if (layersData == null && data['layersJson'] is String) {
+      try {
+        final parsed = jsonDecode(data['layersJson'] as String);
+        if (parsed is Map<String, dynamic>) {
+          await _extractInlineLayers(id, parsed);
+        }
+      } catch (_) {}
+    } else {
+      await _extractInlineLayers(id, layersData);
+    }
+  }
+
+  /// חילוץ שכבות inline מתוך מסמך ניווט אל טבלאות מקומיות
+  Future<void> _extractInlineLayers(String navId, Map<String, dynamic>? layers) async {
+    if (layers == null) return;
+
+    // Checkpoints (NZ)
+    final checkpointsList = layers['checkpoints'] as List?;
+    if (checkpointsList != null) {
+      // מחיקת קיימים ואז insert חדשים
+      await (_db.delete(_db.navCheckpoints)
+            ..where((t) => t.navigationId.equals(navId)))
+          .go();
+      for (final cpData in checkpointsList) {
+        final data = cpData is Map<String, dynamic> ? cpData : Map<String, dynamic>.from(cpData as Map);
+        final coords = data['coordinates'] as Map<String, dynamic>?;
+        await _db.into(_db.navCheckpoints).insert(
+          NavCheckpointsCompanion.insert(
+            id: data['id'] as String? ?? '',
+            navigationId: navId,
+            sourceId: data['sourceId'] as String? ?? '',
+            areaId: data['areaId'] as String? ?? '',
+            name: data['name'] as String? ?? '',
+            description: data['description'] as String? ?? '',
+            type: data['type'] as String? ?? 'regular',
+            color: data['color'] as String? ?? '',
+            boundaryId: Value(data['boundaryId'] as String?),
+            geometryType: Value(data['geometryType'] as String? ?? 'point'),
+            lat: (coords?['lat'] as num?)?.toDouble() ?? (data['lat'] as num?)?.toDouble() ?? 0.0,
+            lng: (coords?['lng'] as num?)?.toDouble() ?? (data['lng'] as num?)?.toDouble() ?? 0.0,
+            utm: coords?['utm'] as String? ?? data['utm'] as String? ?? '',
+            coordinatesJson: Value(
+              data['polygonCoordinates'] != null
+                  ? (data['polygonCoordinates'] is String
+                      ? data['polygonCoordinates'] as String
+                      : jsonEncode(data['polygonCoordinates']))
+                  : (data['coordinatesJson'] as String?),
+            ),
+            sequenceNumber: (data['sequenceNumber'] as num?)?.toInt() ?? 0,
+            labelsJson: Value(
+              data['labels'] != null
+                  ? (data['labels'] is String ? data['labels'] as String : jsonEncode(data['labels']))
+                  : (data['labelsJson'] as String? ?? '[]'),
+            ),
+            createdBy: data['createdBy'] as String? ?? '',
+            createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
+            updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    // SafetyPoints (NB)
+    final safetyList = layers['safetyPoints'] as List?;
+    if (safetyList != null) {
+      await (_db.delete(_db.navSafetyPoints)
+            ..where((t) => t.navigationId.equals(navId)))
+          .go();
+      for (final spData in safetyList) {
+        final data = spData is Map<String, dynamic> ? spData : Map<String, dynamic>.from(spData as Map);
+        final coords = data['coordinates'] as Map<String, dynamic>?;
+        await _db.into(_db.navSafetyPoints).insert(
+          NavSafetyPointsCompanion.insert(
+            id: data['id'] as String? ?? '',
+            navigationId: navId,
+            sourceId: data['sourceId'] as String? ?? '',
+            areaId: data['areaId'] as String? ?? '',
+            name: data['name'] as String? ?? '',
+            description: data['description'] as String? ?? '',
+            type: Value(data['type'] as String? ?? ''),
+            lat: Value((coords?['lat'] as num?)?.toDouble() ?? (data['lat'] as num?)?.toDouble()),
+            lng: Value((coords?['lng'] as num?)?.toDouble() ?? (data['lng'] as num?)?.toDouble()),
+            utm: Value(coords?['utm'] as String? ?? data['utm'] as String?),
+            coordinatesJson: Value(
+              data['polygonCoordinates'] != null
+                  ? (data['polygonCoordinates'] is String
+                      ? data['polygonCoordinates'] as String
+                      : jsonEncode(data['polygonCoordinates']))
+                  : (data['coordinatesJson'] as String?),
+            ),
+            sequenceNumber: (data['sequenceNumber'] as num?)?.toInt() ?? 0,
+            severity: data['severity'] as String? ?? '',
+            createdBy: data['createdBy'] as String? ?? '',
+            createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
+            updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    // Boundaries (GG)
+    final boundariesList = layers['boundaries'] as List?;
+    if (boundariesList != null) {
+      await (_db.delete(_db.navBoundaries)
+            ..where((t) => t.navigationId.equals(navId)))
+          .go();
+      for (final bData in boundariesList) {
+        final data = bData is Map<String, dynamic> ? bData : Map<String, dynamic>.from(bData as Map);
+        final coordsRaw = data['coordinates'];
+        final coordinatesJson = coordsRaw is String ? coordsRaw : (coordsRaw != null ? jsonEncode(coordsRaw) : '[]');
+        await _db.into(_db.navBoundaries).insert(
+          NavBoundariesCompanion.insert(
+            id: data['id'] as String? ?? '',
+            navigationId: navId,
+            sourceId: data['sourceId'] as String? ?? '',
+            areaId: data['areaId'] as String? ?? '',
+            name: data['name'] as String? ?? '',
+            description: data['description'] as String? ?? '',
+            coordinatesJson: coordinatesJson,
+            color: data['color'] as String? ?? '#FF0000',
+            strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 3.0,
+            sourceBoundaryIdsJson: Value(
+              data['sourceBoundaryIds'] != null
+                  ? (data['sourceBoundaryIds'] is String
+                      ? data['sourceBoundaryIds'] as String
+                      : jsonEncode(data['sourceBoundaryIds']))
+                  : (data['sourceBoundaryIdsJson'] as String?),
+            ),
+            creationMode: Value((data['creationMode'] as num?)?.toInt() ?? 3),
+            geometryType: Value(data['geometryType'] as String? ?? 'polygon'),
+            multiPolygonCoordinatesJson: Value(
+              data['multiPolygonCoordinates'] != null
+                  ? (data['multiPolygonCoordinates'] is String
+                      ? data['multiPolygonCoordinates'] as String
+                      : jsonEncode(data['multiPolygonCoordinates']))
+                  : (data['multiPolygonCoordinatesJson'] as String?),
+            ),
+            createdBy: data['createdBy'] as String? ?? '',
+            createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
+            updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    // Clusters (BA)
+    final clustersList = layers['clusters'] as List?;
+    if (clustersList != null) {
+      await (_db.delete(_db.navClusters)
+            ..where((t) => t.navigationId.equals(navId)))
+          .go();
+      for (final cData in clustersList) {
+        final data = cData is Map<String, dynamic> ? cData : Map<String, dynamic>.from(cData as Map);
+        final coordsRaw = data['coordinates'];
+        final coordinatesJson = coordsRaw is String ? coordsRaw : (coordsRaw != null ? jsonEncode(coordsRaw) : '[]');
+        await _db.into(_db.navClusters).insert(
+          NavClustersCompanion.insert(
+            id: data['id'] as String? ?? '',
+            navigationId: navId,
+            sourceId: data['sourceId'] as String? ?? '',
+            areaId: data['areaId'] as String? ?? '',
+            name: data['name'] as String? ?? '',
+            description: data['description'] as String? ?? '',
+            coordinatesJson: coordinatesJson,
+            color: data['color'] as String? ?? '#FF0000',
+            strokeWidth: (data['strokeWidth'] as num?)?.toDouble() ?? 3.0,
+            fillOpacity: (data['fillOpacity'] as num?)?.toDouble() ?? 0.2,
+            createdBy: data['createdBy'] as String? ?? '',
+            createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
+            updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _upsertUser(String id, Map<String, dynamic> data) async {

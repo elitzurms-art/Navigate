@@ -11,7 +11,9 @@ import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/user.dart' as domain_user;
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
+import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../domain/entities/navigation_tree.dart' as tree_domain;
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../core/utils/utm_converter.dart';
@@ -46,6 +48,7 @@ class SystemCheckScreen extends StatefulWidget {
 class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTickerProviderStateMixin {
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationRepository _navRepo = NavigationRepository();
+  final NavigationTreeRepository _treeRepo = NavigationTreeRepository();
   final UserRepository _userRepo = UserRepository();
   final MapController _mapController = MapController();
   final GpsService _gpsService = GpsService();
@@ -66,6 +69,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   final Map<String, String> _navigatorNames = {};
   // מבחן ניווט — cache של תוצאות (navigatorId → passed)
   Map<String, bool> _quizPassedByNavigator = {};
+
+  // עץ ניווט — לקיבוץ מנווטים לפי תת-מסגרת
+  tree_domain.NavigationTree? _navigationTree;
+
+  // מצב פתוח/נעול של קבוצות בטאב מנווטים
+  final Map<String, bool> _navigatorGroupExpanded = {};
+  final Map<String, bool> _navigatorGroupLocked = {};
 
   // מנווט ממוקד במפה (עיגול כחול)
   String? _focusedNavigatorId;
@@ -428,6 +438,12 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         }
       } catch (_) {}
     }
+
+    // טעינת עץ ניווט לקיבוץ מנווטים לפי תת-מסגרת
+    try {
+      _navigationTree = await _treeRepo.getById(_currentNavigation.treeId);
+    } catch (_) {}
+
     if (mounted) setState(() {});
 
     // טעינת תוצאות מבחן ניווט (אם מופעל)
@@ -926,7 +942,49 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 
   Widget _buildNavigatorsTab() {
-    final navigatorIds = _navigatorStatuses.keys.toList();
+    final allIds = _navigatorStatuses.keys.toList();
+    final managers = _currentNavigation.permissions.managers.toSet();
+
+    // הפרדת מפקדים/מנהלים ממנווטים
+    final commanderIds = <String>[];
+    final navigatorIds = <String>[];
+    for (final id in allIds) {
+      final user = _usersCache[id];
+      if (managers.contains(id) || (user != null && user.hasCommanderPermissions)) {
+        commanderIds.add(id);
+      } else {
+        navigatorIds.add(id);
+      }
+    }
+
+    // קיבוץ מנווטים לפי תת-מסגרת
+    final selectedSfIds = _currentNavigation.selectedSubFrameworkIds.toSet();
+    final tree = _navigationTree;
+    final groups = <String, List<String>>{}; // sfName → navigatorIds
+    final ungrouped = <String>[];
+
+    if (tree != null) {
+      // סינון תתי-מסגרות שנבחרו לניווט
+      final relevantSfs = tree.subFrameworks
+          .where((sf) => selectedSfIds.contains(sf.id))
+          .toList();
+
+      final assigned = <String>{};
+      for (final sf in relevantSfs) {
+        final sfNavigators = navigatorIds
+            .where((id) => sf.userIds.contains(id))
+            .toList();
+        if (sfNavigators.isNotEmpty) {
+          groups[sf.name] = sfNavigators;
+          assigned.addAll(sfNavigators);
+        }
+      }
+      // מנווטים שלא שויכו לאף תת-מסגרת
+      ungrouped.addAll(navigatorIds.where((id) => !assigned.contains(id)));
+    } else {
+      // אין עץ — כולם בקבוצה אחת
+      ungrouped.addAll(navigatorIds);
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -946,7 +1004,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${navigatorIds.length} מנווטים',
+                        '${allIds.length} משתתפים',
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                       ),
                       Text(
@@ -978,11 +1036,148 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           ),
           const SizedBox(height: 16),
 
-          // רשימת מנווטים
-          ...navigatorIds.map((navigatorId) {
-            final status = _navigatorStatuses[navigatorId]!;
-            return _buildNavigatorCard(navigatorId, status);
-          }),
+          // מפקדים ומנהלים
+          if (commanderIds.isNotEmpty)
+            _buildNavigatorGroup(
+              groupKey: 'commanders',
+              title: 'מפקדים ומנהלת',
+              icon: Icons.military_tech,
+              color: Colors.amber,
+              navigatorIds: commanderIds,
+            ),
+
+          // מנווטים מקובצים לפי תת-מסגרת
+          if (groups.length > 1)
+            ...groups.entries.map((entry) => _buildNavigatorGroup(
+              groupKey: 'sf_${entry.key}',
+              title: 'מנווטים ${entry.key}',
+              icon: Icons.group,
+              color: Colors.blue,
+              navigatorIds: entry.value,
+            ))
+          else if (groups.length == 1)
+            // תת-מסגרת אחת — להציג בלי קיבוץ
+            ...groups.values.first.map((id) {
+              final status = _navigatorStatuses[id]!;
+              return _buildNavigatorCard(id, status);
+            })
+          else
+            const SizedBox.shrink(),
+
+          // מנווטים ללא תת-מסגרת
+          if (ungrouped.isNotEmpty && groups.isNotEmpty)
+            _buildNavigatorGroup(
+              groupKey: 'ungrouped',
+              title: 'מנווטים אחר',
+              icon: Icons.person,
+              color: Colors.grey,
+              navigatorIds: ungrouped,
+            )
+          else
+            ...ungrouped.map((id) {
+              final status = _navigatorStatuses[id]!;
+              return _buildNavigatorCard(id, status);
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigatorGroup({
+    required String groupKey,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> navigatorIds,
+  }) {
+    final isExpanded = _navigatorGroupExpanded[groupKey] ?? false;
+    final isLocked = _navigatorGroupLocked[groupKey] ?? false;
+    final reported = navigatorIds
+        .where((id) => _navigatorStatuses[id]?.hasReported == true)
+        .length;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        children: [
+          // Header
+          InkWell(
+            borderRadius: isExpanded
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            onTap: () {
+              if (!isLocked) {
+                setState(() {
+                  _navigatorGroupExpanded[groupKey] = !isExpanded;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: color.withOpacity(0.15),
+                    radius: 18,
+                    child: Icon(icon, color: color, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$title (${navigatorIds.length})',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                        Text(
+                          '$reported מדווחים',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Lock button
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _navigatorGroupLocked[groupKey] = !isLocked;
+                        if (!isLocked) {
+                          _navigatorGroupExpanded[groupKey] = true;
+                        }
+                      });
+                    },
+                    child: Icon(
+                      isLocked ? Icons.lock : Icons.lock_open,
+                      size: 20,
+                      color: isLocked ? Colors.blue : Colors.grey[400],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Body (animated)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: isExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                    child: Column(
+                      children: navigatorIds.map((id) {
+                        final status = _navigatorStatuses[id]!;
+                        return _buildNavigatorCard(id, status);
+                      }).toList(),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );
