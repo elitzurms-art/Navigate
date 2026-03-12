@@ -1710,10 +1710,17 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     final route = _currentNavigation!.routes[_currentUser?.uid];
     if (route == null) return;
 
-    // טעינת שמות נקודות ציון
+    // טעינת שמות נקודות ציון — לפי סדר ה-sequence (NN) ללא start/end
     final cpRepo = CheckpointRepository();
     final navLayerRepo = NavLayerRepository();
-    final futures = route.checkpointIds.map((cpId) async {
+    final excludeIds = <String>{
+      if (route.startPointId != null) route.startPointId!,
+      if (route.endPointId != null) route.endPointId!,
+    };
+    final orderedIds = route.sequence
+        .where((id) => !excludeIds.contains(id))
+        .toList();
+    final futures = orderedIds.map((cpId) async {
       final cp = await cpRepo.getById(cpId);
       if (cp != null) return cp.displayLabel;
       final navCp = await navLayerRepo.getCheckpointById(cpId);

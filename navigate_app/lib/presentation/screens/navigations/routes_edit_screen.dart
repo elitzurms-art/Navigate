@@ -543,32 +543,62 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
   List<Polyline> _buildPolylines({String? selectedNavigatorId}) {
     final polylines = <Polyline>[];
     int colorIdx = 0;
+    final isStar = widget.navigation.navigationType == 'star';
+
+    // נקודה מרכזית לניווט כוכב
+    LatLng? starCenter;
+    if (isStar && _startPointId != null) {
+      final centralCp = _getCheckpoint(_startPointId!);
+      if (centralCp?.coordinates != null) {
+        starCenter = centralCp!.coordinates!.toLatLng();
+      }
+    }
 
     for (final uid in _navigatorIds) {
       final cps = _navigatorCheckpoints[uid] ?? [];
       if (cps.isEmpty) continue;
       final route = widget.navigation.routes[uid];
-      final seq = _buildFullSequence(cps,
-        startOverride: route?.startPointId,
-        endOverride: route?.endPointId,
-      );
-      final points = <LatLng>[];
-      for (final cpId in seq) {
-        final cp = _getCheckpoint(cpId);
-        if (cp?.coordinates != null) {
-          points.add(cp!.coordinates!.toLatLng());
-        }
-      }
-      if (points.length < 2) continue;
 
       final isSelected = uid == selectedNavigatorId;
-      polylines.add(Polyline(
-        points: points,
-        color: isSelected
-            ? Colors.red
-            : _nonRedRouteColors[colorIdx % _nonRedRouteColors.length].withValues(alpha: 0.6),
-        strokeWidth: isSelected ? 4.0 : 2.5,
-      ));
+      final color = isSelected
+          ? Colors.red
+          : _nonRedRouteColors[colorIdx % _nonRedRouteColors.length].withValues(alpha: 0.6);
+      final strokeWidth = isSelected ? 4.0 : 2.5;
+
+      if (isStar && starCenter != null) {
+        // ניווט כוכב — קווים מהנקודה המרכזית לכל נקודה
+        for (final cpId in cps) {
+          if (cpId == _startPointId) continue;
+          final cp = _getCheckpoint(cpId);
+          if (cp?.coordinates != null) {
+            polylines.add(Polyline(
+              points: [starCenter, cp!.coordinates!.toLatLng()],
+              color: color,
+              strokeWidth: strokeWidth,
+            ));
+          }
+        }
+      } else {
+        // ניווט רגיל — ציר רציף בין הנקודות
+        final seq = _buildFullSequence(cps,
+          startOverride: route?.startPointId,
+          endOverride: route?.endPointId,
+        );
+        final points = <LatLng>[];
+        for (final cpId in seq) {
+          final cp = _getCheckpoint(cpId);
+          if (cp?.coordinates != null) {
+            points.add(cp!.coordinates!.toLatLng());
+          }
+        }
+        if (points.length < 2) continue;
+
+        polylines.add(Polyline(
+          points: points,
+          color: color,
+          strokeWidth: strokeWidth,
+        ));
+      }
       if (!isSelected) colorIdx++;
     }
     return polylines;

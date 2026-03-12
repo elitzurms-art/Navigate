@@ -1076,10 +1076,18 @@ class _LearningViewState extends State<LearningView>
                 ),
               ),
               title: Text(cp.name),
-              subtitle: Text(
-                utmStr,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (cp.description.isNotEmpty)
+                    Text(cp.description),
+                  Text(
+                    utmStr,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
+                  ),
+                ],
               ),
+              isThreeLine: cp.description.isNotEmpty,
             );
           }
 

@@ -826,7 +826,8 @@ void main() {
       final nav = Navigation.fromMap(navMap);
 
       final map1 = nav.toMap();
-      expect(map1.containsKey('routesStage'), false);
+      expect(map1.containsKey('routesStage'), true);
+      expect(map1['routesStage'], isNull);
       expect(map1['routesDistributed'], false);
 
       final navWithStage = nav.copyWith(routesStage: 'ready');

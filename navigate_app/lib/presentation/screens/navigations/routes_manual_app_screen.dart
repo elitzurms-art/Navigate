@@ -1800,6 +1800,16 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
     );
   }
 
+  void _autoAssignDropPoints() {
+    final navigators = List<String>.from(_navigatorIds);
+    navigators.shuffle();
+    final result = <String, String>{};
+    for (var i = 0; i < navigators.length; i++) {
+      result[navigators[i]] = _dropPointIds[i % _dropPointIds.length];
+    }
+    setState(() => _navigatorDropPoints = result);
+  }
+
   void _autoAssignGroups() {
     final baseSize = ForceComposition(type: _forceComposition).baseGroupSize;
     final groups = RoutesDistributionService.autoGroupNavigators(
@@ -2036,6 +2046,9 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
               onChanged: (value) {
                 if (value != null) {
                   setState(() => _parachuteAssignmentMethod = value);
+                  if (value == 'manual' && _dropPointIds.isNotEmpty) {
+                    _autoAssignDropPoints();
+                  }
                 }
               },
             ),
@@ -2047,6 +2060,110 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                 contentPadding: EdgeInsets.zero,
                 onChanged: (v) => setState(() => _samePointPerSubFramework = v),
               ),
+            ],
+            if (_parachuteAssignmentMethod == 'manual' && _dropPointIds.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Text(
+                    'שיבוץ מנווטים לנקודות',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _autoAssignDropPoints,
+                    icon: const Icon(Icons.shuffle, size: 18),
+                    label: Text(_navigatorDropPoints.isEmpty ? 'חלק שווה' : 'ערבב מחדש'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${_navigatorIds.length} מנווטים, ${_dropPointIds.length} נקודות הצנחה',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              if (_navigatorDropPoints.isEmpty) ...[
+                const SizedBox(height: 16),
+                Center(
+                  child: Text(
+                    'לחץ "חלק שווה" לחלוקה אוטומטית',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 12),
+                ..._dropPointIds.map((dropPointId) {
+                  final cp = _checkpoints.cast<Checkpoint?>().firstWhere(
+                    (c) => c!.id == dropPointId,
+                    orElse: () => null,
+                  );
+                  final dropPointName = cp?.name ?? dropPointId;
+                  final assignedNavigators = _navigatorDropPoints.entries
+                      .where((e) => e.value == dropPointId)
+                      .map((e) => e.key)
+                      .toList();
+                  return Card(
+                    color: Colors.orange[50],
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.location_on, size: 18, color: Colors.orange),
+                              const SizedBox(width: 6),
+                              Text(
+                                '$dropPointName (${assignedNavigators.length})',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          if (assignedNavigators.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            ...assignedNavigators.map((navId) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.person, size: 18, color: Colors.blueGrey),
+                                    const SizedBox(width: 8),
+                                    Expanded(child: Text(navId, style: const TextStyle(fontSize: 13))),
+                                    DropdownButton<String>(
+                                      value: dropPointId,
+                                      underline: const SizedBox(),
+                                      isDense: true,
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                      items: _dropPointIds.map((dpId) {
+                                        final dpCp = _checkpoints.cast<Checkpoint?>().firstWhere(
+                                          (c) => c!.id == dpId,
+                                          orElse: () => null,
+                                        );
+                                        return DropdownMenuItem(
+                                          value: dpId,
+                                          child: Text(dpCp?.name ?? dpId),
+                                        );
+                                      }).toList(),
+                                      onChanged: (newDropPointId) {
+                                        if (newDropPointId != null && newDropPointId != dropPointId) {
+                                          setState(() {
+                                            _navigatorDropPoints[navId] = newDropPointId;
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
             ],
             const Divider(height: 24),
             const Text(
