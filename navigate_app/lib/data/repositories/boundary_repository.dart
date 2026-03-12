@@ -7,7 +7,7 @@ import '../../domain/entities/coordinate.dart';
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
 
-/// מאגר נתוני גבולות גדוד (GG)
+/// מאגר נתוני גבול גזרה (GG)
 class BoundaryRepository {
   final AppDatabase _db = AppDatabase();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;

@@ -1048,9 +1048,10 @@ class SyncManager {
 
             final existingIds = snapshot.docs.map((d) => d.id).toSet();
 
-            // הגנה: אם Firestore לא החזירה אף תוצאה ל-batch מלא,
+            // הגנה: אם Firestore לא החזירה אף תוצאה ל-batch גדול (5+),
             // סביר שהשאילתה נכשלה (cache ריק / בעיית רשת) — לא למחוק!
-            if (existingIds.isEmpty && batch.length > 1) {
+            // batch-ים קטנים (עד 4) עשויים להיות מחיקות לגיטימיות.
+            if (existingIds.isEmpty && batch.length >= 5) {
               print('SyncManager: Reconcile — Firestore returned 0 results for '
                   '${batch.length} $collection IDs. Skipping batch (possible cache/network issue).');
               continue;
@@ -1070,8 +1071,20 @@ class SyncManager {
               }
             }
           } catch (batchError) {
-            // permission-denied — דילוג על batch (למשל ניווטים שהמשתמש לא משתתף בהם)
-            print('SyncManager: Reconcile — skipping batch for $collection: $batchError');
+            // permission-denied עבור navigations = המשתמש כבר לא participant → מחיקה מקומית
+            final errorStr = batchError.toString();
+            if (collection == AppConstants.navigationsCollection &&
+                errorStr.contains('permission-denied')) {
+              print('SyncManager: Reconcile — permission-denied for $collection batch, '
+                  'removing ${batch.length} inaccessible navigations locally');
+              for (final localId in batch) {
+                await _deleteLocalRecord(collection, localId);
+                deletedCount++;
+                print('SyncManager: Reconcile — removed inaccessible $collection/$localId');
+              }
+            } else {
+              print('SyncManager: Reconcile — skipping batch for $collection: $batchError');
+            }
           }
         }
 
@@ -2281,9 +2294,31 @@ class SyncManager {
             await _deleteLocalRecord(collection, change.doc.id);
             processedCount++;
           } else if (change.type == DocumentChangeType.removed) {
-            // removed = query membership change (token refresh, scope change, unit reassignment)
-            // NOT a deletion — ignore. Pull sync will reconcile stale records.
-            print('SyncManager: Ignoring removed event for $collection/${change.doc.id} (query scope change)');
+            // removed יכול להיות:
+            // 1. מסמך נמחק מ-Firestore (hard-delete) — צריך למחוק מקומית
+            // 2. שינוי scope (token refresh, unit reassignment) — לא צריך למחוק
+            //
+            // בדיקה: האם המסמך עדיין קיים ב-Firestore?
+            // אם לא — מחיקה אמיתית. אם כן — שינוי scope בלבד.
+            try {
+              final docSnapshot = await _firestore
+                  .collection(collection)
+                  .doc(change.doc.id)
+                  .get(const GetOptions(source: Source.server))
+                  .timeout(const Duration(seconds: 5));
+              if (!docSnapshot.exists) {
+                // המסמך באמת נמחק מ-Firestore — מחיקה מקומית
+                print('SyncManager: Document $collection/${change.doc.id} hard-deleted from Firestore — removing locally');
+                await _deleteLocalRecord(collection, change.doc.id);
+                processedCount++;
+              } else {
+                // המסמך עדיין קיים — שינוי scope בלבד
+                print('SyncManager: Ignoring removed event for $collection/${change.doc.id} (query scope change)');
+              }
+            } catch (e) {
+              // שגיאה בבדיקה (רשת/הרשאות) — לא מוחקים, reconciliation יטפל
+              print('SyncManager: Could not verify removal for $collection/${change.doc.id}: $e');
+            }
           } else {
             try {
               await _upsertLocalFromServer(collection, change.doc.id, data);

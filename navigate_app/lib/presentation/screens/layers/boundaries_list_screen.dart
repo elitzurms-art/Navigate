@@ -10,7 +10,7 @@ import '../../../core/utils/geometry_utils.dart';
 import 'create_boundary_screen.dart';
 import 'edit_boundary_screen.dart';
 
-/// מסך רשימת גבולות גדוד
+/// מסך רשימת גבול גזרה
 class BoundariesListScreen extends StatefulWidget {
   final Area area;
 
@@ -211,7 +211,7 @@ class _BoundariesListScreenState extends State<BoundariesListScreen> with Widget
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _isSelectMode ? _buildSelectModeAppBar() : AppBar(
-        title: Text('גבולות גדוד - ${widget.area.name}'),
+        title: Text('גבול גזרה - ${widget.area.name}'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
       ),

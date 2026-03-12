@@ -415,7 +415,19 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
 
     try {
       final distributionResult = await _distributionService.distributeAutomatically(
-        navigation: widget.navigation.copyWith(navigationType: _navigationType),
+        navigation: widget.navigation.copyWith(
+          navigationType: _navigationType,
+          parachuteSettings: _navigationType == 'parachute'
+              ? ParachuteSettings(
+                  dropPointIds: _dropPointIds,
+                  assignmentMethod: _parachuteAssignmentMethod,
+                  navigatorDropPoints: _navigatorDropPoints,
+                  subFrameworkDropPoints: _subFrameworkDropPoints,
+                  samePointPerSubFramework: _samePointPerSubFramework,
+                  routeMode: _routeMode,
+                )
+              : null,
+        ),
         tree: _tree!,
         checkpoints: _checkpoints,
         boundary: null,
@@ -820,12 +832,6 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         _buildNavigationTypeSection(),
                         const SizedBox(height: 16),
 
-                        // נקודות הצנחה (צנחנים בלבד)
-                        if (_navigationType == 'parachute') ...[
-                          _buildDropPointsSection(),
-                          const SizedBox(height: 16),
-                        ],
-
                         // הרכב הכוח
                         _buildForceCompositionSection(),
                         const SizedBox(height: 16),
@@ -833,6 +839,12 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                         // שיבוץ קבוצות (רק כשהרכב ≠ בדד)
                         if (_forceComposition != 'solo') ...[
                           _buildGroupsSection(),
+                          const SizedBox(height: 16),
+                        ],
+
+                        // נקודות הצנחה (צנחנים בלבד)
+                        if (_navigationType == 'parachute') ...[
+                          _buildDropPointsSection(),
                           const SizedBox(height: 16),
                         ],
 
@@ -1051,7 +1063,7 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                 DropdownMenuItem(value: 'reverse', child: Text('הפוך')),
                 DropdownMenuItem(
                   value: 'parachute',
-                  child: Text('צנחנים'),
+                  child: Text('צנחן'),
                 ),
                 DropdownMenuItem(value: 'clusters', child: Text('אשכולות')),
                 DropdownMenuItem(value: 'clusters_reverse', child: Text('אשכולות הפוך')),
@@ -2050,6 +2062,25 @@ class _RoutesAutomaticSetupScreenState extends State<RoutesAutomaticSetupScreen>
                   checkmarkColor: Colors.orange[800],
                 );
               }).toList(),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final selectedId = await Navigator.push<String>(context,
+                  MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
+                    checkpoints: _checkpoints,
+                    boundary: _boundary,
+                  )));
+                if (selectedId != null && !_dropPointIds.contains(selectedId)) {
+                  setState(() => _dropPointIds.add(selectedId));
+                }
+              },
+              icon: const Icon(Icons.map, size: 18),
+              label: const Text('בחר במפה'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.blue,
+                side: const BorderSide(color: Colors.blue),
+              ),
             ),
             if (_dropPointIds.isNotEmpty) ...[
               const SizedBox(height: 8),

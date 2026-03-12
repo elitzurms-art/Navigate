@@ -343,9 +343,11 @@ class _LearningViewState extends State<LearningView>
         endCp = await _checkpointRepo.getById(route.endPointId!);
       }
 
-      // צנחנים — ערבוב נקודות בסדר דטרמיניסטי, ללא נקודת התחלה
+      // צנחנים — הסרת נקודת ההצנחה מרשימת הנקודות + ערבוב דטרמיניסטי
       if (_isParachute) {
-        startCp = null;
+        if (route.startPointId != null) {
+          loaded.removeWhere((cp) => cp.id == route.startPointId);
+        }
         final seed = widget.currentUser.uid.hashCode ^ widget.navigation.id.hashCode;
         loaded.shuffle(Random(seed));
       }
@@ -673,9 +675,15 @@ class _LearningViewState extends State<LearningView>
     }
     if (_currentNavigation.usesClusters && _clusterMap.isNotEmpty) {
       // מצב אשכולות — כל הנקודות עם sequenceNumber מהדומיין
+      // Safeguard: מעבר על אשכולות לפי סדר route.sequence
+      final clusterRoute = _currentNavigation.routes[widget.currentUser.uid];
+      final orderedClusterKeys = clusterRoute != null
+          ? clusterRoute.sequence.where((id) => _clusterMap.containsKey(id)).toList()
+          : _clusterMap.keys.toList();
       final seen = <String>{};
       const jitter = 0.0002; // ~10m
-      for (final cluster in _clusterMap.values) {
+      for (final key in orderedClusterKeys) {
+        final cluster = _clusterMap[key]!;
         for (final cp in cluster) {
           if (cp.isPolygon || cp.coordinates == null) continue;
           if (cp.id == _startCheckpoint?.id || cp.id == _endCheckpoint?.id) continue;
@@ -942,6 +950,17 @@ class _LearningViewState extends State<LearningView>
     final middleCps = _routeCheckpoints.where(
       (cp) => cp.id != _startCheckpoint?.id && cp.id != _endCheckpoint?.id,
     ).toList();
+
+    // Safeguard: מיון לפי מיקום ב-route.sequence (שנקבע ע"י NN בחלוקה)
+    final route = _currentNavigation.routes[widget.currentUser.uid];
+    if (route != null && route.sequence.isNotEmpty) {
+      final seqIndex = <String, int>{};
+      for (int i = 0; i < route.sequence.length; i++) {
+        seqIndex[route.sequence[i]] = i;
+      }
+      middleCps.sort((a, b) =>
+        (seqIndex[a.id] ?? 999).compareTo(seqIndex[b.id] ?? 999));
+    }
 
     if (_currentNavigation.usesClusters && _clusterMap.isNotEmpty) {
       // מצב אשכולות — הצגה מקובצת עם decoys

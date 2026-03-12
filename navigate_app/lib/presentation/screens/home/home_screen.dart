@@ -27,6 +27,7 @@ import '../../../data/repositories/unit_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/boundary_repository.dart';
 import '../../../domain/entities/user.dart';
+import '../../../domain/entities/unit.dart' as domain;
 import '../../../domain/entities/boundary.dart';
 
 /// מסך ראשי עם מפה
@@ -277,7 +278,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentHat?.type == HatType.commander ||
                 _currentHat == null)
               ListTile(
-                leading: const Icon(Icons.navigation, color: Colors.blue),
+                leading: const Icon(Icons.navigation, color: Colors.lightGreen),
                 title: const Text('ניווטים'),
                 onTap: () {
                   Navigator.pop(context);
@@ -292,7 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentHat?.type == HatType.commander ||
                 _currentHat == null)
               ListTile(
-                leading: const Icon(Icons.map),
+                leading: const Icon(Icons.map, color: Colors.blue),
                 title: const Text('שכבות'),
                 onTap: () {
                   Navigator.pop(context);
@@ -519,23 +520,49 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-            // דוח מבחנים — מפתח בלבד (standalone)
+            // דוח מבחנים — מפתח (תת-תפריט לפי יחידות)
             if (_userRole == 'developer')
-              ListTile(
+              ExpansionTile(
                 leading: const Icon(Icons.assessment, color: Colors.blue),
                 title: const Text('דוח מבחנים'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final user = _currentUser;
-                  if (user?.unitId != null && user!.unitId!.isNotEmpty && mounted) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => QuizReportScreen(unitId: user.unitId!),
-                      ),
-                    );
-                  }
-                },
+                children: [
+                  FutureBuilder<List<domain.Unit>>(
+                    future: UnitRepository().getAll(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+                      final units = snapshot.data ?? [];
+                      if (units.isEmpty) {
+                        return const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('לא נמצאו יחידות', style: TextStyle(color: Colors.grey)),
+                        );
+                      }
+                      return Column(
+                        children: units.map<Widget>((unit) {
+                          return ListTile(
+                            contentPadding: const EdgeInsetsDirectional.only(start: 28),
+                            leading: const Icon(Icons.military_tech, color: Colors.purple),
+                            title: Text(unit.name),
+                            onTap: () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => QuizReportScreen(unitId: unit.id),
+                                ),
+                              );
+                            },
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                ],
               ),
             // ניתוח שטח — מפתח ומנהל יחידה
             if (terrainIsSupported && (_userRole == 'developer' || _userRole == 'unit_admin' || _userRole == 'admin'))
@@ -561,7 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.logout),
+              leading: const Icon(Icons.logout, color: Colors.red),
               title: const Text('התנתקות'),
               onTap: () async {
                 await _authService.signOut();
