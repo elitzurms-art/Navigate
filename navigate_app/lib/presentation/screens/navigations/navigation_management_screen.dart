@@ -149,6 +149,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Set<String> _shownExtensionPopups = {}; // מניעת popup כפול
   Timer? _extensionSnoozeTimer;
 
+  // שעת בטיחות
+  Timer? _safetyTimer;
+  bool _safetyWarningShown = false;
+  bool _safetyAlertShown = false;
+
   // מרכוז מפה
   CenteringMode _centeringMode = CenteringMode.off;
   String? _centeredNavigatorId; // null = מרכוז עצמי
@@ -194,6 +199,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startPunchesPolling();
     _startExtensionRequestListener();
     _startEmergencyFlagListener();
+    _startSafetyTimeMonitor();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
@@ -229,6 +235,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _commanderStatusListener?.cancel();
     _extensionListener?.cancel();
     _extensionSnoozeTimer?.cancel();
+    _safetyTimer?.cancel();
     _emergencyFlagListener?.cancel();
     _ackListener?.cancel();
     _autoRetryTimer?.cancel();
@@ -2139,14 +2146,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
     if (confirmed != true) return;
 
-    // הצגת עיגול טעינה
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
-      );
-    }
+    setState(() => _isLoading = true);
 
     try {
       // שאילתת Firestore — כל ה-tracks הפעילים של הניווט הזה
@@ -2179,6 +2179,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
 
+      // מניעת pop כפול — הליסנר על Firestore יזהה 'review' וינסה pop
+      _alreadyClosed = true;
+
       // עדכון סטטוס ניווט — ישירות לתחקור (ללא שלב אישור נפרד)
       final updatedNavigation = widget.navigation.copyWith(
         status: 'review',
@@ -2188,7 +2191,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       await _navRepo.update(updatedNavigation);
 
       if (mounted) {
-        Navigator.pop(context); // סגירת עיגול טעינה
+        setState(() => _isLoading = false);
         Navigator.pop(context, true); // חזרה לרשימה עם סימון לרענון
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2199,7 +2202,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // סגירת עיגול טעינה
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('שגיאה בסיום ניווט כללי: $e'),
@@ -5588,6 +5591,76 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
             ),
           ),
 
+        // שעת בטיחות
+        if (activeStartTime != null && _currentNavigation.timeCalculationSettings.enabled && _currentNavigation.routes.isNotEmpty)
+          () {
+            final safetyTime = _computeSafetyTime();
+            if (safetyTime == null) return const SizedBox.shrink();
+            final now = DateTime.now();
+            final minutesUntilSafety = safetyTime.difference(now).inMinutes;
+            final safetyTimeStr = '${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}';
+
+            // חישוב שעת סיום משימה הארוכה ביותר
+            final longestMissionEnd = safetyTime.subtract(const Duration(minutes: 60));
+            final missionEndStr = '${longestMissionEnd.hour.toString().padLeft(2, '0')}:${longestMissionEnd.minute.toString().padLeft(2, '0')}';
+
+            final Color safetyColor;
+            final String countdownStr;
+            if (minutesUntilSafety <= 0) {
+              safetyColor = Colors.red;
+              final over = -minutesUntilSafety;
+              countdownStr = 'חריגה: +${over ~/ 60}:${(over % 60).toString().padLeft(2, '0')}';
+            } else if (minutesUntilSafety <= 10) {
+              safetyColor = Colors.orange;
+              countdownStr = '$minutesUntilSafety דק\'';
+            } else {
+              safetyColor = Colors.green;
+              countdownStr = '${minutesUntilSafety ~/ 60}:${(minutesUntilSafety % 60).toString().padLeft(2, '0')} שעות';
+            }
+
+            return _dashboardCard(
+              title: 'שעת בטיחות',
+              icon: Icons.shield,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          missionEndStr,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        Text('סיום אחרון', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          safetyTimeStr,
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: safetyColor),
+                        ),
+                        Text('שעת בטיחות', style: TextStyle(fontSize: 12, color: safetyColor)),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          countdownStr,
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: safetyColor),
+                        ),
+                        Text('נותר', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }(),
+
         // מהיר/איטי
         if (fastest != null)
           _dashboardCard(
@@ -6202,6 +6275,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         .listen((requests) {
       if (!mounted) return;
       setState(() => _extensionRequests = requests);
+      // בדיקת שעת בטיחות לאחר שינוי הארכות
+      _checkSafetyTimeAlerts();
       // popup אוטומטי לבקשות חדשות
       for (final req in requests) {
         if (req.status == ExtensionRequestStatus.pending &&
@@ -6213,6 +6288,126 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
       }
     });
+  }
+
+  // =========================================================================
+  // Safety Time Monitor (שעת בטיחות)
+  // =========================================================================
+
+  DateTime? _computeSafetyTime() {
+    final nav = _currentNavigation;
+    final activeStart = nav.activeStartTime;
+    if (activeStart == null || !nav.timeCalculationSettings.enabled || nav.routes.isEmpty) return null;
+
+    final perNavExt = <String, int>{};
+    for (final navigatorId in nav.routes.keys) {
+      perNavExt[navigatorId] = _extensionRequests
+          .where((r) => r.navigatorId == navigatorId && r.status == ExtensionRequestStatus.approved)
+          .fold<int>(0, (sum, r) => sum + (r.approvedMinutes ?? 0));
+    }
+
+    return GeometryUtils.calculateSafetyTime(
+      activeStartTime: activeStart,
+      routes: nav.routes,
+      settings: nav.timeCalculationSettings,
+      perNavigatorExtensionMinutes: perNavExt,
+    );
+  }
+
+  void _startSafetyTimeMonitor() {
+    // בדיקה ראשונית אחרי השהיה קצרה (המתנה לטעינת נתונים)
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) _checkSafetyTimeAlerts();
+    });
+    _safetyTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _checkSafetyTimeAlerts();
+    });
+  }
+
+  void _checkSafetyTimeAlerts() {
+    final safetyTime = _computeSafetyTime();
+    if (safetyTime == null) return;
+    final now = DateTime.now();
+    final minutesUntilSafety = safetyTime.difference(now).inMinutes;
+
+    // איפוס דגלים אם שעת הבטיחות התרחקה (הארכה אושרה)
+    if (minutesUntilSafety > 10) {
+      _safetyWarningShown = false;
+      _safetyAlertShown = false;
+      return;
+    }
+
+    // 10 דקות לפני — התראה שקטה
+    if (minutesUntilSafety <= 10 && minutesUntilSafety > 0 && !_safetyWarningShown) {
+      _safetyWarningShown = true;
+      AlertSoundService().playAlert(AlertType.noMovement, 0.6);
+      _showSafetyWarningDialog(safetyTime, minutesUntilSafety);
+    }
+
+    // הגעה לשעת בטיחות — סירנה
+    if (minutesUntilSafety <= 0 && !_safetyAlertShown) {
+      _safetyAlertShown = true;
+      AlertSoundService().playAlert(AlertType.emergency, 1.0);
+      _showSafetyReachedDialog(safetyTime);
+    }
+  }
+
+  void _showSafetyWarningDialog(DateTime safetyTime, int minutesLeft) {
+    if (!mounted) return;
+    final timeStr = '${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}';
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+            SizedBox(width: 8),
+            Expanded(child: Text('שעת בטיחות מתקרבת', style: TextStyle(color: Colors.orange))),
+          ],
+        ),
+        content: Text(
+          'עוד $minutesLeft דקות תגיע שעת הבטיחות ($timeStr).\n'
+          'יש לוודא שכל המנווטים במסלול חזרה.',
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSafetyReachedDialog(DateTime safetyTime) {
+    if (!mounted) return;
+    final timeStr = '${safetyTime.hour.toString().padLeft(2, '0')}:${safetyTime.minute.toString().padLeft(2, '0')}';
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.crisis_alert, color: Colors.red, size: 28),
+            SizedBox(width: 8),
+            Expanded(child: Text('שעת בטיחות הגיעה!', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
+          ],
+        ),
+        content: Text(
+          'שעת הבטיחות ($timeStr) הגיעה.\n'
+          'יש לוודא מיידית שכל המנווטים בטוחים!',
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('הבנתי', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   // =========================================================================
@@ -8011,7 +8206,7 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
             },
           ),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 13)),
+          Text(label, style: const TextStyle(fontSize: 13, color: Colors.white)),
         ],
       ),
     );

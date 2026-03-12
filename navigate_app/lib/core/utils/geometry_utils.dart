@@ -282,19 +282,22 @@ class GeometryUtils {
     );
   }
 
-  /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר), כולל הארכות
+  /// חישוב שעת בטיחות (שעה אחרי הזמן הארוך ביותר), כולל הארכות פר-מנווט
   static DateTime? calculateSafetyTime({
     required DateTime activeStartTime,
     required Map<String, AssignedRoute> routes,
     required TimeCalculationSettings settings,
     int extensionMinutes = 0,
+    Map<String, int> perNavigatorExtensionMinutes = const {},
   }) {
     if (!settings.enabled || routes.isEmpty) return null;
     int maxMinutes = 0;
-    for (final route in routes.values) {
+    for (final entry in routes.entries) {
+      final extMin = perNavigatorExtensionMinutes[entry.key] ?? 0;
       final minutes = getEffectiveTimeMinutes(
-        route: route,
+        route: entry.value,
         settings: settings,
+        extensionMinutes: extMin,
       );
       if (minutes > maxMinutes) maxMinutes = minutes;
     }

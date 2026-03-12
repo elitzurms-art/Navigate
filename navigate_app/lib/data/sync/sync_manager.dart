@@ -449,16 +449,14 @@ class SyncManager {
 
       print('SyncManager: Authenticated (firebaseUid=$firebaseUid)');
 
-      // initSession לקביעת custom claims (only on non-desktop or if signInAnonymously was used)
-      if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
-        try {
-          final authService = AuthService();
-          await authService.initSessionClaims(loggedInUid);
-          try { await _auth.currentUser?.getIdToken(true); } catch (_) {}
-          print('SyncManager: initSession succeeded after reconnect.');
-        } catch (e) {
-          print('SyncManager: initSession failed after reconnect: $e');
-        }
+      // initSession לקביעת custom claims (כל הפלטפורמות — Firestore rules דורשים claims)
+      try {
+        final authService = AuthService();
+        await authService.initSessionClaims(loggedInUid);
+        try { await _auth.currentUser?.getIdToken(true); } catch (_) {}
+        print('SyncManager: initSession succeeded after reconnect.');
+      } catch (e) {
+        print('SyncManager: initSession failed after reconnect: $e');
       }
 
       // Trigger full sync

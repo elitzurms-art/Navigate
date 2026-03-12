@@ -1707,10 +1707,9 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
           .get();
 
       if (!doc.exists) {
-        if (_trackJustCreated &&
-            _trackCreatedAt != null &&
-            DateTime.now().difference(_trackCreatedAt!) < const Duration(seconds: 10)) {
+        if (_trackJustCreated) {
           // track נוצר מקומית וטרם סונכרן ל-Firestore — לא מדובר במחיקת מפקד
+          // ה-listener על ה-track doc יטפל ב-reset אם צריך (אחרי שהסנכרון יצליח)
           return false;
         }
         // המפקד מחק את ה-track (איפוס — חזרה למצב ממתין)

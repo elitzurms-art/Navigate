@@ -836,7 +836,9 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
           .set({
         'status': 'system_check',
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true)).catchError((_) {}));
+      }, SetOptions(merge: true)).catchError((e) {
+        print('DEBUG: Firestore direct write failed (status→system_check): $e');
+      }));
 
       if (mounted) {
         Navigator.pop(context); // סגירת עיגול טעינה
@@ -913,7 +915,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _currentNavigation = updatedNavigation;
 
     if (mounted) {
-      Navigator.pop(context, true);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('בדיקת המערכות הסתיימה בהצלחה'),
+          backgroundColor: Colors.green,
+        ),
+      );
     }
   }
 

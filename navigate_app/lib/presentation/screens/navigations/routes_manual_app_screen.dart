@@ -41,7 +41,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
 
   // Data
   List<Checkpoint> _checkpoints = [];
-  NavBoundary? _boundary;
+  List<NavBoundary> _boundaries = [];
   List<String> _navigatorIds = [];
   Map<String, User> _usersCache = {};
 
@@ -185,16 +185,12 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
         }
       }
 
-      // טעינת גבול ניווט (לשימוש במפת בחירת נקודות)
-      NavBoundary? boundary;
+      // טעינת גבולות ניווט (לשימוש במפה ובמפת בחירת נקודות)
       final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(widget.navigation.id);
-      if (navBoundaries.isNotEmpty) {
-        boundary = navBoundaries.first;
-      }
 
       setState(() {
         _checkpoints = checkpoints;
-        _boundary = boundary;
+        _boundaries = navBoundaries;
         _navigatorIds = navigators;
         _usersCache = usersCache;
         _navigatorCheckpoints = navigatorCheckpoints;
@@ -563,10 +559,20 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
   }
 
   LatLngBounds? _getMapBounds() {
-    final allCoords = _checkpoints
-        .where((c) => c.coordinates != null)
-        .map((c) => c.coordinates!.toLatLng())
-        .toList();
+    final allCoords = <LatLng>[];
+
+    // גבולות ניווט (עדיפות למרכוז ראשוני)
+    for (final b in _boundaries) {
+      allCoords.addAll(b.allCoordinates.map((c) => c.toLatLng()));
+    }
+
+    // נקודות ציון
+    allCoords.addAll(
+      _checkpoints
+          .where((c) => c.coordinates != null)
+          .map((c) => c.coordinates!.toLatLng()),
+    );
+
     if (allCoords.isEmpty) return null;
     return LatLngBounds.fromPoints(allCoords);
   }
@@ -876,7 +882,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
                 final selectedId = await Navigator.push<String>(context,
                   MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
                     checkpoints: _checkpoints,
-                    boundary: _boundary,
+                    boundary: _boundaries.isNotEmpty ? _boundaries.first : null,
                     excludeIds: excludeIds,
                   )));
                 if (selectedId != null) onChanged(selectedId);
@@ -904,7 +910,7 @@ class _RoutesManualAppScreenState extends State<RoutesManualAppScreen> {
           final selectedId = await Navigator.push<String>(context,
             MaterialPageRoute(builder: (_) => CheckpointMapPickerScreen(
               checkpoints: _checkpoints,
-              boundary: _boundary,
+              boundary: _boundaries.isNotEmpty ? _boundaries.first : null,
               excludeIds: excludeIds,
             )));
           if (selectedId != null) {

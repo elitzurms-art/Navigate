@@ -193,14 +193,11 @@ Future<void> _ensureFirebaseAuth() async {
     await userRepo.saveUserLocally(user.copyWith(firebaseUid: firebaseUid), queueSync: false);
   }
 
-  // initSession — on desktop, custom token already sets claims via CF.
-  // On mobile or if custom token wasn't used, call initSession for claims.
-  if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
-    try {
-      await AuthService().initSessionClaims(loggedInUid);
-    } catch (e) {
-      print('DEBUG: initSession call failed: $e');
-    }
+  // initSession — set custom claims so Firestore rules work (myRole, isParticipant, etc.)
+  try {
+    await AuthService().initSessionClaims(loggedInUid);
+  } catch (e) {
+    print('DEBUG: initSession call failed: $e');
   }
 
   // Windows workaround: Firestore C++ SDK may not pick up refreshed auth token.

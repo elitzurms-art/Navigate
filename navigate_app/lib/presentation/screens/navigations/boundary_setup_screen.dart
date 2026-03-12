@@ -166,6 +166,8 @@ class _BoundarySetupScreenState extends State<BoundarySetupScreen> {
           _selectedBoundaryIds.isNotEmpty) {
         _computeUnion();
       }
+      // מרכוז המפה על גבולות הגזרה של האזור
+      _fitMapToBoundaries();
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -363,6 +365,20 @@ class _BoundarySetupScreenState extends State<BoundarySetupScreen> {
     } catch (_) {
       // Ignore if map is not ready yet
     }
+  }
+
+  /// מרכוז המפה על כל גבולות הגזרה של האזור
+  void _fitMapToBoundaries() {
+    if (_boundaries.isEmpty) return;
+    final allPoints = <LatLng>[];
+    for (final b in _boundaries) {
+      allPoints.addAll(b.coordinates.map((c) => LatLng(c.lat, c.lng)));
+    }
+    if (allPoints.isEmpty) return;
+    // post-frame callback — מפה עדיין לא מוכנה בזמן setState
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fitMapToPoints(allPoints);
+    });
   }
 
   // ---------------------------------------------------------------------------
