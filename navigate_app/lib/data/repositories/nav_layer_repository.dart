@@ -414,13 +414,7 @@ class NavLayerRepository {
               ),
               creationMode: Value(boundary.creationMode.index),
               geometryType: Value(boundary.geometryType),
-              multiPolygonCoordinatesJson: Value(
-                boundary.multiPolygonCoordinates != null
-                    ? jsonEncode(boundary.multiPolygonCoordinates!
-                        .map((poly) => poly.map((c) => c.toMap()).toList())
-                        .toList())
-                    : null,
-              ),
+              multiPolygonCoordinatesJson: const Value(null),
               createdBy: boundary.createdBy,
               createdAt: boundary.createdAt,
               updatedAt: boundary.updatedAt,
@@ -629,16 +623,6 @@ class NavLayerRepository {
         ? domain.NavBoundaryCreationMode.values[creationModeIndex]
         : domain.NavBoundaryCreationMode.legacy;
 
-    // multiPolygonCoordinates: decode JSON if present
-    List<List<Coordinate>>? multiPolygonCoordinates;
-    if (row.multiPolygonCoordinatesJson != null) {
-      multiPolygonCoordinates = (jsonDecode(row.multiPolygonCoordinatesJson!) as List)
-          .map((poly) => (poly as List)
-              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
-              .toList())
-          .toList();
-    }
-
     return domain.NavBoundary(
       id: row.id,
       navigationId: row.navigationId,
@@ -654,7 +638,6 @@ class NavLayerRepository {
           : [row.sourceId],
       creationMode: creationMode,
       geometryType: row.geometryType,
-      multiPolygonCoordinates: multiPolygonCoordinates,
       createdBy: row.createdBy,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -888,13 +871,7 @@ class NavLayerRepository {
             ),
             creationMode: Value(boundary.creationMode.index),
             geometryType: Value(boundary.geometryType),
-            multiPolygonCoordinatesJson: Value(
-              boundary.multiPolygonCoordinates != null
-                  ? jsonEncode(boundary.multiPolygonCoordinates!
-                      .map((poly) => poly.map((c) => c.toMap()).toList())
-                      .toList())
-                  : null,
-            ),
+            multiPolygonCoordinatesJson: const Value(null),
             createdBy: boundary.createdBy,
             createdAt: boundary.createdAt,
             updatedAt: boundary.updatedAt,
@@ -967,13 +944,7 @@ class NavLayerRepository {
             ),
             creationMode: Value(boundary.creationMode.index),
             geometryType: Value(boundary.geometryType),
-            multiPolygonCoordinatesJson: Value(
-              boundary.multiPolygonCoordinates != null
-                  ? jsonEncode(boundary.multiPolygonCoordinates!
-                      .map((poly) => poly.map((c) => c.toMap()).toList())
-                      .toList())
-                  : null,
-            ),
+            multiPolygonCoordinatesJson: const Value(null),
             createdBy: boundary.createdBy,
             createdAt: boundary.createdAt,
             updatedAt: boundary.updatedAt,

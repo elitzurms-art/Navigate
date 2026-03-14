@@ -351,7 +351,6 @@ class NavBoundary extends Equatable {
       sourceBoundaryIds: sourceBoundaryIds ?? this.sourceBoundaryIds,
       creationMode: creationMode ?? this.creationMode,
       geometryType: geometryType ?? this.geometryType,
-      multiPolygonCoordinates: clearMultiPolygon ? null : (multiPolygonCoordinates ?? this.multiPolygonCoordinates),
       createdBy: createdBy ?? this.createdBy,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -372,10 +371,6 @@ class NavBoundary extends Equatable {
       if (sourceBoundaryIds.isNotEmpty) 'sourceBoundaryIds': sourceBoundaryIds,
       'creationMode': creationMode.index,
       'geometryType': geometryType,
-      if (multiPolygonCoordinates != null)
-        'multiPolygonCoordinates': multiPolygonCoordinates!
-            .map((poly) => poly.map((c) => c.toMap()).toList())
-            .toList(),
       'createdBy': createdBy,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -411,13 +406,6 @@ class NavBoundary extends Equatable {
           : [sourceId], // backward compat: default to [sourceId]
       creationMode: mode,
       geometryType: map['geometryType'] as String? ?? 'polygon',
-      multiPolygonCoordinates: map['multiPolygonCoordinates'] != null
-          ? (map['multiPolygonCoordinates'] as List)
-              .map((poly) => (poly as List)
-                  .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
-                  .toList())
-              .toList()
-          : null,
       createdBy: map['createdBy'] as String,
       createdAt: DateTime.parse(map['createdAt'] as String),
       updatedAt: DateTime.parse(map['updatedAt'] as String),
@@ -428,7 +416,7 @@ class NavBoundary extends Equatable {
   List<Object?> get props => [
         id, navigationId, sourceId, areaId, name, description,
         coordinates, color, strokeWidth, sourceBoundaryIds,
-        creationMode, geometryType, multiPolygonCoordinates,
+        creationMode, geometryType,
         createdBy, createdAt, updatedAt,
       ];
 }

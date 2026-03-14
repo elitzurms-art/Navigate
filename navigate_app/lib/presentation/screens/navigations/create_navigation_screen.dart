@@ -2227,19 +2227,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     for (int i = 0; i < orig.coordinates.length; i++) {
       if (orig.coordinates[i] != curr.coordinates[i]) return true;
     }
-    // השוואת multiPolygonCoordinates
-    final origMulti = orig.multiPolygonCoordinates;
-    final currMulti = curr.multiPolygonCoordinates;
-    if ((origMulti == null) != (currMulti == null)) return true;
-    if (origMulti != null && currMulti != null) {
-      if (origMulti.length != currMulti.length) return true;
-      for (int i = 0; i < origMulti.length; i++) {
-        if (origMulti[i].length != currMulti[i].length) return true;
-        for (int j = 0; j < origMulti[i].length; j++) {
-          if (origMulti[i][j] != currMulti[i][j]) return true;
-        }
-      }
-    }
     return false;
   }
 
@@ -2315,7 +2302,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         builder: (_) => BoundarySetupScreen(
           areaId: _selectedArea!.id,
           existingBoundaryCoordinates: _boundaryResult?.coordinates,
-          existingMultiPolygonCoordinates: _boundaryResult?.multiPolygonCoordinates,
           existingCreationMode: _boundaryResult?.creationMode,
           existingSourceBoundaryIds: _boundaryResult?.sourceBoundaryIds,
         ),
@@ -2529,7 +2515,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           final copyResult = await _layerCopyService.copyLayersWithCustomBoundary(
             navigationId: navigation.id,
             boundaryCoordinates: _boundaryResult!.coordinates,
-            multiPolygonCoordinates: _boundaryResult!.multiPolygonCoordinates,
             geometryType: _boundaryResult!.geometryType,
             sourceBoundaryIds: _boundaryResult!.sourceBoundaryIds,
             creationMode: _boundaryResult!.creationMode,
@@ -2569,7 +2554,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           final copyResult = await _layerCopyService.copyLayersWithCustomBoundary(
             navigationId: navigation.id,
             boundaryCoordinates: _boundaryResult!.coordinates,
-            multiPolygonCoordinates: _boundaryResult!.multiPolygonCoordinates,
             geometryType: _boundaryResult!.geometryType,
             sourceBoundaryIds: _boundaryResult!.sourceBoundaryIds,
             creationMode: _boundaryResult!.creationMode,

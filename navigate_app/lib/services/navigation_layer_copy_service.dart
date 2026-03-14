@@ -228,14 +228,12 @@ class NavigationLayerCopyService {
   /// העתקת שכבות עם גבול מותאם אישית (מצבים 1-3 של BoundarySetupScreen)
   ///
   /// [boundaryCoordinates] — הפוליגון הראשי (ממוזג/מצויר/משוכפל)
-  /// [multiPolygonCoordinates] — רשימת פוליגונים (ל-MultiPolygon)
-  /// [geometryType] — 'polygon' או 'multipolygon'
+  /// [geometryType] — 'polygon'
   /// [sourceBoundaryIds] — מזהי גבולות מקור (ריק אם ציור ידני)
   /// [creationMode] — מצב היצירה
   Future<LayerCopyResult> copyLayersWithCustomBoundary({
     required String navigationId,
     required List<Coordinate> boundaryCoordinates,
-    List<List<Coordinate>>? multiPolygonCoordinates,
     required String geometryType,
     required List<String> sourceBoundaryIds,
     required NavBoundaryCreationMode creationMode,
@@ -269,7 +267,6 @@ class NavigationLayerCopyService {
         sourceBoundaryIds: sourceBoundaryIds,
         creationMode: creationMode,
         geometryType: geometryType,
-        multiPolygonCoordinates: multiPolygonCoordinates,
         createdBy: createdBy,
         createdAt: now,
         updatedAt: now,
@@ -278,9 +275,7 @@ class NavigationLayerCopyService {
       print('DEBUG: Created custom NavBoundary (mode: $creationMode, type: $geometryType)');
 
       // 2. קביעת פוליגונים לסינון
-      final filterPolygons = geometryType == 'multipolygon' && multiPolygonCoordinates != null
-          ? multiPolygonCoordinates
-          : [boundaryCoordinates];
+      final filterPolygons = [boundaryCoordinates];
 
       // 3. טעינת כל הנקודות והשכבות של האזור
       final allCheckpoints = await _checkpointRepo.getByArea(areaId);
