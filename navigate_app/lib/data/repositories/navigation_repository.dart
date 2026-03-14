@@ -3,10 +3,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart';
 import '../../core/constants/app_constants.dart';
 import '../../domain/entities/navigation.dart' as domain;
+import '../../domain/entities/navigation_doc_snapshot.dart';
 import '../../domain/entities/navigation_settings.dart' as domain;
 import '../../domain/entities/unit_checklist.dart' as domain;
 import '../../domain/entities/variables_sheet.dart' as domain;
 import '../datasources/local/app_database.dart';
+import '../sync/ref_counted_stream.dart';
 import '../sync/sync_manager.dart';
 import 'navigation_track_repository.dart';
 
@@ -28,6 +30,12 @@ class NavigationRepository {
   final AppDatabase _db = AppDatabase();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final SyncManager _syncManager = SyncManager();
+
+  // Cache סטטי
+  static final Map<String, RefCountedStream<NavigationDocSnapshot>>
+      _navDocStreams = {};
+  static final Map<String, RefCountedStream<List<domain.Navigation>>>
+      _navsByParticipantStreams = {};
 
   /// קבלת כל הניווטים (ללא מחוקים)
   Future<List<domain.Navigation>> getAll() async {
@@ -1318,5 +1326,85 @@ class NavigationRepository {
     } catch (e) {
       print('DEBUG: Error syncing navigations from Firestore: $e');
     }
+  }
+
+  // ===========================================================================
+  // Ref-counted Firestore streams
+  // ===========================================================================
+
+  /// מאזין ל-navigation doc כולל שדות חירום (ref-counted + polling fallback)
+  Stream<NavigationDocSnapshot> watchNavigationDocSnapshot(
+      String navigationId) {
+    final key = 'nav_doc_$navigationId';
+    _navDocStreams[key] ??= RefCountedStream<NavigationDocSnapshot>(
+      sourceFactory: () => _firestore
+          .collection(AppConstants.navigationsCollection)
+          .doc(navigationId)
+          .snapshots()
+          .map((snap) {
+        if (!snap.exists) {
+          return NavigationDocSnapshot(id: navigationId);
+        }
+        return NavigationDocSnapshot.fromFirestore(snap.id, snap.data()!);
+      }),
+      pollFallback: () async {
+        final snap = await _firestore
+            .collection(AppConstants.navigationsCollection)
+            .doc(navigationId)
+            .get();
+        if (!snap.exists) {
+          return NavigationDocSnapshot(id: navigationId);
+        }
+        return NavigationDocSnapshot.fromFirestore(snap.id, snap.data()!);
+      },
+    );
+    return _navDocStreams[key]!.stream;
+  }
+
+  /// מאזין לכל הניווטים שמשתמש מסוים משתתף בהם (Firestore)
+  Stream<List<domain.Navigation>> watchNavigationsByParticipant(
+      String userId) {
+    final key = 'navs_participant_$userId';
+    _navsByParticipantStreams[key] ??=
+        RefCountedStream<List<domain.Navigation>>(
+      sourceFactory: () => _firestore
+          .collection(AppConstants.navigationsCollection)
+          .where('participants', arrayContains: userId)
+          .snapshots()
+          .map((snap) => _parseNavigationsSnapshot(snap)),
+      pollFallback: () async {
+        final snap = await _firestore
+            .collection(AppConstants.navigationsCollection)
+            .where('participants', arrayContains: userId)
+            .get();
+        return _parseNavigationsSnapshot(snap);
+      },
+    );
+    return _navsByParticipantStreams[key]!.stream;
+  }
+
+  List<domain.Navigation> _parseNavigationsSnapshot(
+      QuerySnapshot<Map<String, dynamic>> snap) {
+    final results = <domain.Navigation>[];
+    for (final doc in snap.docs) {
+      try {
+        final data = doc.data();
+        data['id'] = doc.id;
+        results.add(domain.Navigation.fromMap(data));
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  /// ניקוי cache סטטי
+  static void clearCache() {
+    for (final s in _navDocStreams.values) {
+      s.dispose();
+    }
+    _navDocStreams.clear();
+    for (final s in _navsByParticipantStreams.values) {
+      s.dispose();
+    }
+    _navsByParticipantStreams.clear();
   }
 }

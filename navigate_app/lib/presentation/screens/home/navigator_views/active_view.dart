@@ -49,6 +49,8 @@ import '../../../../domain/entities/extension_request.dart';
 import '../../../../domain/entities/navigation_settings.dart' show StarPhase, computeStarPhase;
 import '../../../../services/ios_navigation_security_service.dart';
 import '../../../../domain/entities/navigation_security_session.dart';
+import '../../../../data/repositories/system_status_repository.dart';
+import '../../../../data/sync/clock_sync_service.dart';
 import '../../security/guided_access_instructions_screen.dart';
 
 /// תצוגת ניווט פעיל למנווט — 3 מצבים: ממתין / פעיל / סיים
@@ -108,7 +110,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // מאבטח — מנווט second_half ממתין ל-first_half לסיים
   bool _isGuardSecondHalf = false;
   bool _guardPartnerFinished = false;
-  StreamSubscription<QuerySnapshot>? _guardPartnerListener;
+  StreamSubscription<Map<String, dynamic>?>? _guardPartnerListener;
 
   // דריסות מפה פר-מנווט (מהמפקד) — מאותחלים מערכי הניווט הגלובליים
   late bool _overrideAllowOpenMap;
@@ -184,7 +186,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   bool _guidedAccessConfirmed = false;
 
   // Firestore real-time listener — זיהוי מיידי של עצירה/איפוס מרחוק
-  StreamSubscription<DocumentSnapshot>? _trackDocListener;
+  StreamSubscription<Map<String, dynamic>?>? _trackDocListener;
   bool _trackJustCreated = false; // grace flag — track נוצר מקומית, טרם סונכרן ל-Firestore
   DateTime? _trackCreatedAt;
   String? _navigationSessionId; // session guard — מונע פעולות async מניווט ישן אחרי reset
@@ -659,15 +661,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (partnerId == null) return;
 
     _guardPartnerListener?.cancel();
-    _guardPartnerListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationTracksCollection)
-        .where('navigationId', isEqualTo: _nav.id)
-        .where('navigatorUserId', isEqualTo: partnerId)
-        .snapshots()
-        .listen((snap) {
+    _guardPartnerListener = NavigationTrackRepository()
+        .watchTrackByNavigator(_nav.id, partnerId)
+        .listen((data) {
       if (!mounted) return;
-      if (snap.docs.isNotEmpty) {
-        final data = snap.docs.first.data();
+      if (data != null) {
         final isActive = data['isActive'] as bool? ?? true;
         if (!isActive && !_guardPartnerFinished) {
           setState(() => _guardPartnerFinished = true);
@@ -1007,12 +1005,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       }
       _lastStatusData = compareData;
 
-      final docRef = FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(_nav.id)
-          .collection('system_status')
-          .doc(uid);
-
       final data = <String, dynamic>{
         'navigatorId': uid,
         'navigatorName': widget.currentUser.fullName,
@@ -1031,7 +1023,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
         data['longitude'] = lastPoint.coordinate.lng;
       }
 
-      await docRef.set(data, SetOptions(merge: true));
+      await SystemStatusRepository().reportStatus(_nav.id, uid, data);
     } catch (e) {
       print('DEBUG ActiveView: system_status report failed: $e');
     }
@@ -1244,14 +1236,12 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (_track == null) return;
     _trackDocListener?.cancel();
 
-    _trackDocListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationTracksCollection)
-        .doc(_track!.id)
-        .snapshots()
-        .listen((snapshot) async {
+    _trackDocListener = NavigationTrackRepository()
+        .watchTrackDoc(_track!.id)
+        .listen((data) async {
       if (!mounted) return;
 
-      if (!snapshot.exists) {
+      if (data == null) {
         if (_trackJustCreated) {
           // track נוצר מקומית וטרם סונכרן ל-Firestore — לא מדובר במחיקת מפקד
           return;
@@ -1263,9 +1253,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       // Doc exists — track סונכרן בהצלחה
       _trackJustCreated = false;
 
-      final data = snapshot.data();
-      print('DEBUG ActiveView: track doc snapshot — overrideWalkieTalkieEnabled=${data?['overrideWalkieTalkieEnabled']}, personalStatus=$_personalStatus');
-      if (data == null) return;
+      print('DEBUG ActiveView: track doc snapshot — overrideWalkieTalkieEnabled=${data['overrideWalkieTalkieEnabled']}, personalStatus=$_personalStatus');
 
       // בדיקת ביטול פסילה — רלוונטי בכל מצב (פעיל או סיים)
       final remoteDisqualified = data['isDisqualified'] as bool? ?? false;
@@ -1471,14 +1459,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
 
   Future<void> _computeServerTimeOffset() async {
     try {
-      final doc = FirebaseFirestore.instance.collection('sync_metadata').doc('_clock_check');
-      await doc.set({'t': FieldValue.serverTimestamp()});
-      final snap = await doc.get();
-      final serverTime = (snap.data()?['t'] as Timestamp?)?.toDate();
-      if (serverTime != null) {
-        _serverTimeOffset = serverTime.difference(DateTime.now());
-        print('DEBUG ActiveView: server time offset = ${_serverTimeOffset.inMilliseconds}ms');
-      }
+      _serverTimeOffset = await ClockSyncService().computeServerTimeOffset();
+      print('DEBUG ActiveView: server time offset = ${_serverTimeOffset.inMilliseconds}ms');
     } catch (e) {
       print('DEBUG ActiveView: clock sync error: $e');
     }

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:drift/drift.dart' hide Query;
 import 'package:uuid/uuid.dart';
 import '../datasources/local/app_database.dart';
 import '../sync/sync_manager.dart';
+import '../sync/ref_counted_stream.dart';
 import '../../core/constants/app_constants.dart';
 import '../../domain/entities/navigator_personal_status.dart';
 import '../../services/gps_tracking_service.dart';
@@ -11,6 +13,13 @@ import '../../services/gps_tracking_service.dart';
 /// Repository לניהול רשומות track של מנווטים
 class NavigationTrackRepository {
   final AppDatabase _db = AppDatabase();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // Cache סטטי — כי Repositories לא singletons
+  static final Map<String, RefCountedStream<List<Map<String, dynamic>>>>
+      _tracksStreams = {};
+  static final Map<String, RefCountedStream<Map<String, dynamic>?>>
+      _trackDocStreams = {};
 
   /// שליפת רשומת track למנווט ספציפי בניווט ספציפי
   Future<NavigationTrack?> getByNavigatorAndNavigation(
@@ -528,5 +537,261 @@ class NavigationTrackRepository {
       isActive: track.isActive,
       endedAt: track.endedAt,
     );
+  }
+
+  // ===========================================================================
+  // Ref-counted Firestore streams
+  // ===========================================================================
+
+  /// מאזין לכל ה-tracks של ניווט נתון (ref-counted + polling fallback)
+  Stream<List<Map<String, dynamic>>> watchTracksByNavigation(
+      String navigationId) {
+    final key = 'tracks_$navigationId';
+    _tracksStreams[key] ??= RefCountedStream<List<Map<String, dynamic>>>(
+      sourceFactory: () => _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .snapshots()
+          .map((snap) =>
+              snap.docs.map((d) => {'id': d.id, ...d.data()}).toList()),
+      pollFallback: () async {
+        final snap = await _firestore
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: navigationId)
+            .get();
+        return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      },
+    );
+    return _tracksStreams[key]!.stream;
+  }
+
+  /// מאזין ל-track doc ספציפי (לזיהוי שינויים מרחוק — עצירה, override)
+  Stream<Map<String, dynamic>?> watchTrackDoc(String trackId) {
+    final key = 'track_doc_$trackId';
+    _trackDocStreams[key] ??= RefCountedStream<Map<String, dynamic>?>(
+      sourceFactory: () => _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .snapshots()
+          .map((snap) =>
+              snap.exists ? {'id': snap.id, ...snap.data()!} : null),
+      pollFallback: () async {
+        final snap = await _firestore
+            .collection(AppConstants.navigationTracksCollection)
+            .doc(trackId)
+            .get();
+        return snap.exists ? {'id': snap.id, ...snap.data()!} : null;
+      },
+    );
+    return _trackDocStreams[key]!.stream;
+  }
+
+  /// מאזין ל-track של מנווט ספציפי בניווט (לשותף/שומר)
+  Stream<Map<String, dynamic>?> watchTrackByNavigator(
+    String navigationId,
+    String navigatorUserId,
+  ) {
+    final key = 'track_nav_${navigationId}_$navigatorUserId';
+    _trackDocStreams[key] ??= RefCountedStream<Map<String, dynamic>?>(
+      sourceFactory: () => _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .where('navigatorUserId', isEqualTo: navigatorUserId)
+          .snapshots()
+          .map((snap) => snap.docs.isNotEmpty
+              ? {'id': snap.docs.first.id, ...snap.docs.first.data()}
+              : null),
+      pollFallback: () async {
+        final snap = await _firestore
+            .collection(AppConstants.navigationTracksCollection)
+            .where('navigationId', isEqualTo: navigationId)
+            .where('navigatorUserId', isEqualTo: navigatorUserId)
+            .get();
+        return snap.docs.isNotEmpty
+            ? {'id': snap.docs.first.id, ...snap.docs.first.data()}
+            : null;
+      },
+    );
+    return _trackDocStreams[key]!.stream;
+  }
+
+  /// עצירת מנווט מרחוק (batch write)
+  Future<void> stopNavigatorRemote(
+    String navigationId,
+    String navigatorId,
+  ) async {
+    final now = DateTime.now();
+    final snapshot = await _firestore
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .where('navigatorUserId', isEqualTo: navigatorId)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      // Fallback: חפש כל track ללא endedAt
+      final allTracks = await _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .where('navigatorUserId', isEqualTo: navigatorId)
+          .get();
+      final batch = _firestore.batch();
+      final endedDocIds = <String>[];
+      for (final doc in allTracks.docs) {
+        final trackData = doc.data();
+        if (trackData['endedAt'] == null) {
+          batch.update(doc.reference, {
+            'isActive': false,
+            'endedAt': now.toIso8601String(),
+          });
+          endedDocIds.add(doc.id);
+        }
+      }
+      if (endedDocIds.isNotEmpty) {
+        unawaited(batch.commit().catchError((_) {}));
+        for (final docId in endedDocIds) {
+          try {
+            await endNavigation(docId);
+          } catch (_) {}
+        }
+      }
+    } else {
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isActive': false,
+          'endedAt': now.toIso8601String(),
+        });
+      }
+      unawaited(batch.commit().catchError((_) {}));
+      for (final doc in snapshot.docs) {
+        try {
+          await endNavigation(doc.id);
+        } catch (_) {}
+      }
+    }
+
+    // עדכון updatedAt על navigation doc לטריגר UI
+    unawaited(_firestore
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId)
+        .update({'updatedAt': FieldValue.serverTimestamp()})
+        .catchError((_) {}));
+  }
+
+  /// עצירת כל המנווטים בניווט
+  Future<void> stopAllNavigatorsRemote(String navigationId) async {
+    final now = DateTime.now();
+    final snapshot = await _firestore
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    if (snapshot.docs.isNotEmpty) {
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isActive': false,
+          'endedAt': now.toIso8601String(),
+        });
+      }
+      unawaited(batch.commit().catchError((_) {}));
+      for (final doc in snapshot.docs) {
+        try {
+          await endNavigation(doc.id);
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// חידוש מנווט שהופסק
+  Future<void> resumeNavigatorRemote(
+    String navigationId,
+    String navigatorId,
+  ) async {
+    final snapshot = await _firestore
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .where('navigatorUserId', isEqualTo: navigatorId)
+        .get();
+
+    if (snapshot.docs.isEmpty) return;
+    final trackDoc = snapshot.docs.first;
+
+    unawaited(trackDoc.reference.update({
+      'isActive': true,
+      'endedAt': null,
+    }).catchError((_) {}));
+
+    await resumeNavigation(trackDoc.id);
+  }
+
+  /// איפוס מנווט (מחיקת track + punches)
+  Future<void> resetNavigatorRemote(
+    String navigationId,
+    String navigatorId,
+  ) async {
+    final snapshot = await _firestore
+        .collection(AppConstants.navigationTracksCollection)
+        .where('navigationId', isEqualTo: navigationId)
+        .where('navigatorUserId', isEqualTo: navigatorId)
+        .get();
+
+    if (snapshot.docs.isNotEmpty) {
+      unawaited(
+          snapshot.docs.first.reference.delete().catchError((_) {}));
+    }
+
+    await deleteByNavigator(navigationId, navigatorId);
+
+    unawaited(_firestore
+        .collection(AppConstants.navigationsCollection)
+        .doc(navigationId)
+        .update({'updatedAt': FieldValue.serverTimestamp()})
+        .catchError((_) {}));
+  }
+
+  /// כתיבת override per-navigator
+  Future<void> setTrackOverride(
+    String trackId,
+    Map<String, dynamic> overrides,
+  ) async {
+    try {
+      await _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update(overrides);
+    } catch (_) {}
+  }
+
+  /// חיפוש track ID ע"פ ניווט ומנווט (Firestore)
+  Future<String?> findTrackId(
+    String navigationId,
+    String navigatorId,
+  ) async {
+    try {
+      final snapshot = await _firestore
+          .collection(AppConstants.navigationTracksCollection)
+          .where('navigationId', isEqualTo: navigationId)
+          .where('navigatorUserId', isEqualTo: navigatorId)
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty ? snapshot.docs.first.id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// ניקוי cache סטטי
+  static void clearCache() {
+    for (final s in _tracksStreams.values) {
+      s.dispose();
+    }
+    _tracksStreams.clear();
+    for (final s in _trackDocStreams.values) {
+      s.dispose();
+    }
+    _trackDocStreams.clear();
   }
 }

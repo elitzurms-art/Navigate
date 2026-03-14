@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import '../../../services/auth_service.dart';
 import '../../../data/repositories/user_repository.dart';
+import '../../../domain/entities/user.dart' as domain;
 import 'choose_unit_screen.dart';
 
 /// מסך המתנה לאישור — המנווט ממתין לאישור מפקד
@@ -23,67 +23,37 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
   final AuthService _authService = AuthService();
   final UserRepository _userRepo = UserRepository();
 
-  StreamSubscription<DocumentSnapshot>? _firestoreListener;
-  Timer? _retryTimer;
-  Timer? _fallbackTimer;
+  StreamSubscription<domain.User?>? _userDocListener;
   bool _cancelling = false;
 
   @override
   void initState() {
     super.initState();
-    // Firestore snapshot listener — יורה רק כשמסמך המשתמש משתנה (לא polling)
-    _startFirestoreListener();
+    _startUserDocListener();
   }
 
-  /// התחלת listener ישיר למסמך המשתמש ב-Firestore — יורה רק בשינוי
-  /// אם נכשל (permission-denied לפני claims), מנסה שוב אחרי 5 שניות
-  Future<void> _startFirestoreListener() async {
+  /// התחלת listener למסמך המשתמש דרך UserRepository.watchUserDoc
+  /// ה-RefCountedStream מטפל ב-polling fallback ו-retry פנימית
+  Future<void> _startUserDocListener() async {
     final user = await _authService.getCurrentUser();
     if (user == null || !mounted) return;
 
-    _firestoreListener?.cancel();
-    _firestoreListener = FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .snapshots()
-        .listen((snapshot) async {
-      if (!mounted) return;
-      if (!snapshot.exists || snapshot.data() == null) return;
-
-      final data = snapshot.data()!;
-      _handleUserData(data);
-    }, onError: (e) {
-      print('DEBUG WaitingForApproval: Firestore listener error: $e — retrying in 5s');
-      // ניסיון חוזר אחרי 5 שניות — claims עשויים להתעדכן
-      _retryTimer?.cancel();
-      _retryTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) _startFirestoreListener();
-      });
-    });
-
-    // fallback: בדיקה ישירה כל 10 שניות — למקרה שה-listener מת
-    _fallbackTimer?.cancel();
-    _fallbackTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
-      if (!mounted) return;
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get()
-            .timeout(const Duration(seconds: 5));
-        if (doc.exists && doc.data() != null && mounted) {
-          _handleUserData(doc.data()!);
-        }
-      } catch (_) {}
-    });
+    _userDocListener?.cancel();
+    _userDocListener = _userRepo.watchUserDoc(user.uid).listen(
+      (domain.User? firestoreUser) {
+        if (!mounted) return;
+        if (firestoreUser == null) return;
+        _handleUserData(firestoreUser);
+      },
+      onError: (e) {
+        print('DEBUG WaitingForApproval: watchUserDoc error: $e');
+      },
+    );
   }
 
-  /// טיפול בנתוני משתמש שהתקבלו מ-Firestore (listener או fallback)
-  Future<void> _handleUserData(Map<String, dynamic> data) async {
-    final rawApproval = data['isApproved'];
-    final firestoreUnitId = data['unitId'] as String?;
-
-    if (rawApproval == true) {
+  /// טיפול בנתוני משתמש שהתקבלו מ-UserRepository.watchUserDoc
+  Future<void> _handleUserData(domain.User firestoreUser) async {
+    if (firestoreUser.isApproved) {
       // אושר — עדכון DB מקומי + רענון token לקבלת claims חדשים + מעבר למסך הבית
       final currentUser = await _authService.getCurrentUser();
       if (currentUser != null) {
@@ -97,10 +67,10 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/home');
       }
-    } else if (rawApproval == false) {
+    } else if (firestoreUser.isRejected) {
       // נדחה — הצגת דיאלוג דחייה עם אפשרויות
       if (mounted) _showRejectionDialog();
-    } else if (firestoreUnitId == null || firestoreUnitId.isEmpty) {
+    } else if (firestoreUser.unitId == null || firestoreUser.unitId!.isEmpty) {
       // הוסר מיחידה — חזרה למסך בחירת יחידה
       final currentUser = await _authService.getCurrentUser();
       if (currentUser != null) {
@@ -171,9 +141,7 @@ class _WaitingForApprovalScreenState extends State<WaitingForApprovalScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
-    _fallbackTimer?.cancel();
-    _firestoreListener?.cancel();
+    _userDocListener?.cancel();
     super.dispose();
   }
 

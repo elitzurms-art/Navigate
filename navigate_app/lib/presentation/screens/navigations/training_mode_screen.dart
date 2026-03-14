@@ -119,9 +119,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
   StreamSubscription? _syncListener;
-  // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
-  Timer? _navigationPollTimer;
-
   // טיימרים ללמידה אוטומטית
   Timer? _autoStartTimer;
   Timer? _autoEndTimer;
@@ -149,7 +146,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _loadData();
     _reloadNavigationFromDb();
     _startNavigationListener();
-    _startNavigationPolling();
     _startSyncListener();
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
@@ -161,7 +157,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   @override
   void dispose() {
     _navigationListener?.cancel();
-    _navigationPollTimer?.cancel();
     _syncListener?.cancel();
     _autoStartTimer?.cancel();
     _autoEndTimer?.cancel();
@@ -494,50 +489,6 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
         print('DEBUG TrainingMode: navigation listener error: $e');
       },
     );
-  }
-
-  // ===========================================================================
-  // Navigation polling fallback — direct Firestore .get() every 3 seconds
-  // (bypasses Windows threading bug with .snapshots() listeners)
-  // ===========================================================================
-
-  void _startNavigationPolling() {
-    // שאילתה ראשונית מיידית
-    _pollNavigation();
-    _navigationPollTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _pollNavigation(),
-    );
-  }
-
-  Future<void> _pollNavigation() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .get();
-
-      if (!mounted || !snapshot.exists || snapshot.data() == null) return;
-
-      final data = snapshot.data()!;
-      data['id'] = snapshot.id;
-      final nav = domain.Navigation.fromMap(data);
-
-      // עדכון רק אם הנתונים באמת השתנו (צירים, סטטוס)
-      // לא מעדכנים הגדרות למידה — כדי לא לדרוס שינויים מקומיים שעדיין לא נשמרו
-      final routesChanged = _currentNavigation.routes != nav.routes;
-      final statusChanged = _currentNavigation.status != nav.status;
-      if (routesChanged || statusChanged) {
-        setState(() {
-          _currentNavigation = nav;
-          _learningStarted = nav.status == 'learning';
-        });
-        // עדכון DB מקומי כדי לשמור על סנכרון Drift
-        await _navRepo.upsertLocalFromFirestore(nav);
-      }
-    } catch (e) {
-      print('DEBUG TrainingMode: poll error: $e');
-    }
   }
 
   Future<void> _approveRoute(String navigatorId) async {

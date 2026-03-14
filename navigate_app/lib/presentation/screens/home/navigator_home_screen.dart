@@ -19,8 +19,10 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
+import '../../../data/repositories/emergency_broadcast_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../domain/entities/navigation_doc_snapshot.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../onboarding/choose_unit_screen.dart';
 import '../onboarding/waiting_for_approval_screen.dart';
@@ -85,7 +87,7 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   // שידור חירום
   AudioPlayer? _emergencyPlayer;
   StreamSubscription<RemoteMessage>? _emergencySubscription;
-  StreamSubscription<DocumentSnapshot>? _emergencyFirestoreListener;
+  StreamSubscription<NavigationDocSnapshot>? _emergencyFirestoreListener;
   Timer? _vibrationTimer;
   bool _emergencyDialogShowing = false;
   bool _routineDialogShowing = false;
@@ -93,12 +95,11 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   String? _currentBroadcastId;
   String? _lastShownBroadcastId;
 
-  Timer? _pollTimer;
   StreamSubscription<List<Map<String, dynamic>>>? _scoreSubscription;
   Timer? _debounceTimer;
   StreamSubscription<domain.Navigation?>? _navigationListener;
   StreamSubscription<String>? _syncSubscription;
-  StreamSubscription<QuerySnapshot>? _allNavigationsWatcher;
+  StreamSubscription<List<domain.Navigation>>? _allNavigationsWatcher;
 
   @override
   void initState() {
@@ -125,10 +126,6 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
           if (mounted) _loadState(silent: true);
         });
       }
-    });
-    // סקר כל 60 שניות כ-fallback (Firestore listener הוא העיקרי)
-    _pollTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _loadState(silent: true);
     });
   }
 
@@ -164,16 +161,14 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   /// Firestore listener — fallback אמין למצב חירום (עובד גם עם מסך כבוי)
   void _startEmergencyFirestoreListener(String navigationId) {
     _emergencyFirestoreListener?.cancel();
-    _emergencyFirestoreListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(navigationId)
-        .snapshots()
-        .listen((snap) {
+    _emergencyFirestoreListener = _navigationRepo
+        .watchNavigationDocSnapshot(navigationId)
+        .listen((docSnap) {
       if (!mounted) return;
-      final active = snap.data()?['emergencyActive'] == true;
-      final broadcastId = snap.data()?['activeBroadcastId'] as String?;
-      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
-      final cancelId = snap.data()?['cancelBroadcastId'] as String?;
+      final active = docSnap.emergencyActive;
+      final broadcastId = docSnap.activeBroadcastId;
+      final mode = docSnap.emergencyMode;
+      final cancelId = docSnap.cancelBroadcastId;
 
       if (active && !_emergencyDialogShowing && broadcastId != null && broadcastId != _lastShownBroadcastId) {
         // חירום חדש — fallback: השהייה 2 שניות לתת ל-FCM להגיע ראשון
@@ -181,16 +176,12 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
         Future.delayed(const Duration(seconds: 2), () {
           if (!mounted || _emergencyDialogShowing || _routineDialogShowing) return;
           if (broadcastId == _lastShownBroadcastId) return;
-          FirebaseFirestore.instance
-              .collection(AppConstants.navigationsCollection)
-              .doc(navigationId)
-              .collection('emergency_broadcasts')
-              .doc(broadcastId)
-              .get()
-              .then((doc) {
+          EmergencyBroadcastRepository()
+              .getBroadcastDoc(navigationId, broadcastId)
+              .then((data) {
             if (!mounted || _emergencyDialogShowing || _routineDialogShowing) return;
             if (broadcastId == _lastShownBroadcastId) return;
-            final data = doc.data() ?? {};
+            data ??= {};
             _showEmergencyDialog(
               message: data['message'] as String? ?? '',
               instructions: data['instructions'] as String? ?? '',
@@ -328,12 +319,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
                   // כתיבת אישור קבלה
                   if (broadcastId != null && _currentNavigation != null && _currentUser != null) {
-                    FirebaseFirestore.instance
-                        .collection(AppConstants.navigationsCollection)
-                        .doc(_currentNavigation!.id)
-                        .collection('emergency_broadcasts')
-                        .doc(broadcastId)
-                        .update({'acknowledgedBy': FieldValue.arrayUnion([_currentUser!.uid])});
+                    EmergencyBroadcastRepository().acknowledge(
+                      _currentNavigation!.id, broadcastId, _currentUser!.uid);
                   }
 
                   // פתיחת מפה לפי מצב
@@ -414,12 +401,8 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
 
                   // כתיבת אישור קבלה לביטול
                   if (cancelBroadcastId != null && _currentNavigation != null && _currentUser != null) {
-                    FirebaseFirestore.instance
-                        .collection(AppConstants.navigationsCollection)
-                        .doc(_currentNavigation!.id)
-                        .collection('emergency_broadcasts')
-                        .doc(cancelBroadcastId)
-                        .update({'acknowledgedBy': FieldValue.arrayUnion([_currentUser!.uid])});
+                    EmergencyBroadcastRepository().acknowledge(
+                      _currentNavigation!.id, cancelBroadcastId, _currentUser!.uid);
                   }
                 },
               ),
@@ -433,7 +416,6 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
   @override
   void dispose() {
     _debounceTimer?.cancel();
-    _pollTimer?.cancel();
     _scoreSubscription?.cancel();
     _navigationListener?.cancel();
     _syncSubscription?.cancel();
@@ -535,30 +517,21 @@ class _NavigatorHomeScreenState extends State<NavigatorHomeScreen> {
     final userId = _currentUser?.uid;
     if (userId == null) return;
 
-    _allNavigationsWatcher = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .where('participants', arrayContains: userId)
-        .snapshots()
+    _allNavigationsWatcher = _navigationRepo
+        .watchNavigationsByParticipant(userId)
         .listen(
-      (snapshot) async {
+      (navigations) async {
         if (!mounted) return;
 
         final currentPriority = _currentNavigation != null
             ? navigationStatusPriority(_currentNavigation!.status)
             : 0;
 
-        for (final change in snapshot.docChanges) {
-          if (change.type == DocumentChangeType.removed) continue;
-          if (change.doc.id == _currentNavigation?.id) continue;
-          final data = change.doc.data();
-          if (data == null) continue;
-          final status = data['status'] as String? ?? '';
-          if (navigationStatusPriority(status) > currentPriority) {
+        for (final nav in navigations) {
+          if (nav.id == _currentNavigation?.id) continue;
+          if (navigationStatusPriority(nav.status) > currentPriority) {
             // Found a higher-priority navigation — upsert locally, then reload
-            final navData = Map<String, dynamic>.from(data);
-            navData['id'] = change.doc.id;
             try {
-              final nav = domain.Navigation.fromMap(navData);
               await _navigationRepo.upsertLocalFromFirestore(nav);
             } catch (_) {}
             if (mounted) _loadState(silent: true);

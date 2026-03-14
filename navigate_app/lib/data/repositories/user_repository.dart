@@ -4,6 +4,7 @@ import '../../domain/entities/user.dart' as domain;
 import '../datasources/remote/firebase_service.dart';
 import '../datasources/local/app_database.dart';
 import '../../core/constants/app_constants.dart';
+import '../sync/ref_counted_stream.dart';
 import '../sync/sync_manager.dart';
 import 'navigation_repository.dart';
 
@@ -12,6 +13,13 @@ class UserRepository {
   final FirebaseService? _firebaseService;
   final AppDatabase? _localDatabase;
   final SyncManager _syncManager = SyncManager();
+  final FirebaseFirestore _fs = FirebaseFirestore.instance;
+
+  // Cache סטטי
+  static final Map<String, RefCountedStream<domain.User?>> _userDocStreams =
+      {};
+  static final Map<String, RefCountedStream<List<domain.User>>>
+      _pendingUsersStreams = {};
 
   UserRepository([this._firebaseService, this._localDatabase]);
 
@@ -797,5 +805,120 @@ class UserRepository {
       print('DEBUG: Error in getNavigatorsForUnit: $e');
       return [];
     }
+  }
+
+  // ===========================================================================
+  // Ref-counted Firestore streams
+  // ===========================================================================
+
+  /// מאזין ל-user doc ספציפי (עבור WaitingForApprovalScreen)
+  Stream<domain.User?> watchUserDoc(String uid) {
+    final key = 'user_doc_$uid';
+    _userDocStreams[key] ??= RefCountedStream<domain.User?>(
+      sourceFactory: () => _fs
+          .collection(AppConstants.usersCollection)
+          .doc(uid)
+          .snapshots()
+          .map((snap) {
+        if (!snap.exists) return null;
+        final data = _sanitizeTimestamps(snap.data()!);
+        data['uid'] = snap.id;
+        return domain.User.fromMap(data);
+      }),
+      pollFallback: () async {
+        final snap =
+            await _fs.collection(AppConstants.usersCollection).doc(uid).get();
+        if (!snap.exists) return null;
+        final data = _sanitizeTimestamps(snap.data()!);
+        data['uid'] = snap.id;
+        return domain.User.fromMap(data);
+      },
+    );
+    return _userDocStreams[key]!.stream;
+  }
+
+  /// מאזין למשתמשים ממתינים לאישור ביחידות נתונות
+  Stream<List<domain.User>> watchPendingUsers(List<String> unitIds) {
+    final sortedIds = List<String>.from(unitIds)..sort();
+    final key = 'pending_users_${sortedIds.join(',')}';
+    _pendingUsersStreams[key] ??= RefCountedStream<List<domain.User>>(
+      sourceFactory: () {
+        if (unitIds.isEmpty) {
+          // Developer mode — כל הממתינים
+          return _fs
+              .collection(AppConstants.usersCollection)
+              .snapshots()
+              .map((snap) => _filterPendingUsers(snap));
+        }
+        // Firestore whereIn מוגבל ל-30 ערכים — ניקח batch ראשון
+        final batch =
+            unitIds.length > 30 ? unitIds.sublist(0, 30) : unitIds;
+        return _fs
+            .collection(AppConstants.usersCollection)
+            .where('unitId', whereIn: batch)
+            .snapshots()
+            .map((snap) => _filterPendingUsers(snap));
+      },
+      pollFallback: () async {
+        if (unitIds.isEmpty) {
+          final snap =
+              await _fs.collection(AppConstants.usersCollection).get();
+          return _filterPendingUsers(snap);
+        }
+        final batch =
+            unitIds.length > 30 ? unitIds.sublist(0, 30) : unitIds;
+        final snap = await _fs
+            .collection(AppConstants.usersCollection)
+            .where('unitId', whereIn: batch)
+            .get();
+        return _filterPendingUsers(snap);
+      },
+    );
+    return _pendingUsersStreams[key]!.stream;
+  }
+
+  List<domain.User> _filterPendingUsers(
+      QuerySnapshot<Map<String, dynamic>> snap) {
+    final results = <domain.User>[];
+    for (final doc in snap.docs) {
+      final data = _sanitizeTimestamps(doc.data());
+      data['uid'] = doc.id;
+      // סינון pending בצד הקליינט
+      final approvalStatus = data['approvalStatus'] as String?;
+      final isApproved = data['isApproved'];
+      final isPending = approvalStatus == 'pending' ||
+          (isApproved == 'pending') ||
+          (isApproved == false && data['unitId'] != null);
+      if (!isPending) continue;
+      try {
+        results.add(domain.User.fromMap(data));
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  /// המרת Firestore Timestamps ל-ISO strings
+  Map<String, dynamic> _sanitizeTimestamps(Map<String, dynamic> data) {
+    final result = Map<String, dynamic>.from(data);
+    for (final key in result.keys.toList()) {
+      final value = result[key];
+      if (value != null && value.runtimeType.toString().contains('Timestamp')) {
+        try {
+          result[key] = (value as dynamic).toDate().toIso8601String();
+        } catch (_) {}
+      }
+    }
+    return result;
+  }
+
+  static void clearCache() {
+    for (final s in _userDocStreams.values) {
+      s.dispose();
+    }
+    _userDocStreams.clear();
+    for (final s in _pendingUsersStreams.values) {
+      s.dispose();
+    }
+    _pendingUsersStreams.clear();
   }
 }

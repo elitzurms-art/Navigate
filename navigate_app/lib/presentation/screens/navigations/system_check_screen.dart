@@ -27,6 +27,8 @@ import '../../widgets/fullscreen_map_screen.dart';
 import '../../../services/voice_service.dart';
 import '../../widgets/voice_messages_panel.dart';
 import '../../../core/utils/permission_utils.dart';
+import '../../../data/repositories/system_status_repository.dart';
+import '../../../domain/entities/navigator_status.dart';
 
 /// מסך בדיקת מערכות
 class SystemCheckScreen extends StatefulWidget {
@@ -128,10 +130,7 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   bool _isLoadingPermissions = true;
 
   // Firestore listener — סטטוס מנווטים בזמן אמת (למפקד)
-  StreamSubscription<QuerySnapshot>? _systemStatusListener;
-
-  // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
-  Timer? _statusPollTimer;
+  StreamSubscription<Map<String, NavigatorStatus>>? _systemStatusListener;
 
   // טיימר בדיקה מחזורית (למנווט)
   Timer? _navigatorCheckTimer;
@@ -147,7 +146,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       _initializeNavigatorStatuses();
       _loadNavigatorUsers();
       _startSystemStatusListener();
-      _startStatusPolling();
       _initDataLoader();
       _loadCommanderPermissions();
     } else {
@@ -267,13 +265,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     final uid = widget.currentUser?.uid;
     if (uid == null) return;
 
-    final docRef = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('system_status')
-        .doc(uid);
-
-    unawaited(docRef.set({
+    final repo = SystemStatusRepository();
+    unawaited(repo.reportStatus(widget.navigation.id, uid, {
       'navigatorId': uid,
       'isConnected': _currentPosition != null,
       'batteryLevel': _batteryLevel,
@@ -288,8 +281,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'hasPhonePermission': _permissionStatuses['phone']?.isGranted ?? false,
       'hasDNDPermission': _hasDNDPermission,
       'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true)).catchError((e) {
-      print('DEBUG SystemCheck: failed to report status: $e');
     }));
   }
 
@@ -369,7 +360,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _dataLoader?.dispose();
     _gpsService.dispose();
     _systemStatusListener?.cancel();
-    _statusPollTimer?.cancel();
     _navigatorCheckTimer?.cancel();
     _voiceService?.dispose();
     super.dispose();
@@ -475,116 +465,13 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
   /// האזנה בזמן אמת לסטטוס מנווטים מ-Firestore (למפקד)
   void _startSystemStatusListener() {
-    _systemStatusListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('system_status')
-        .snapshots()
-        .listen(
-      (snapshot) {
-        if (!mounted) return;
-        setState(() {
-          for (final doc in snapshot.docs) {
-            final data = doc.data();
-            final navigatorId = data['navigatorId'] as String? ?? doc.id;
-            final navigatorName = data['navigatorName'] as String?;
-            if (navigatorName != null && navigatorName.isNotEmpty) {
-              _navigatorNames[navigatorId] = navigatorName;
-            }
-
-            final posUpdatedAt = data['positionUpdatedAt'];
-            DateTime? posTime;
-            if (posUpdatedAt is Timestamp) {
-              posTime = posUpdatedAt.toDate();
-            } else if (posUpdatedAt is String) {
-              posTime = DateTime.tryParse(posUpdatedAt);
-            }
-
-            _navigatorStatuses[navigatorId] = NavigatorStatus(
-              isConnected: data['isConnected'] as bool? ?? false,
-              hasReported: true,
-              batteryLevel: data['batteryLevel'] as int? ?? 0,
-              hasGPS: data['hasGPS'] as bool? ?? false,
-              receptionLevel: data['receptionLevel'] as int? ?? 0,
-              latitude: (data['latitude'] as num?)?.toDouble(),
-              longitude: (data['longitude'] as num?)?.toDouble(),
-              positionSource: data['positionSource'] as String? ?? 'gps',
-              positionUpdatedAt: posTime,
-              gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
-              mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
-              hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
-              hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
-              hasDNDPermission: data['hasDNDPermission'] as bool? ?? false,
-            );
-          }
-        });
-      },
-      onError: (e) {
-        print('DEBUG SystemCheck: system_status listener error: $e');
-      },
-    );
-  }
-
-  /// polling fallback — שאילתת Firestore ישירה כל 10 שניות
-  /// (עוקף את בעיית ה-threading של snapshots ב-Windows)
-  void _startStatusPolling() {
-    // שאילתה ראשונית מיידית
-    _pollNavigatorStatuses();
-    _statusPollTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _pollNavigatorStatuses(),
-    );
-  }
-
-  Future<void> _pollNavigatorStatuses() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('system_status')
-          .get();
-
+    final repo = SystemStatusRepository();
+    _systemStatusListener = repo.watchStatuses(widget.navigation.id).listen((statuses) {
       if (!mounted) return;
-      print('DEBUG SystemCheck poll: ${snapshot.docs.length} docs');
       setState(() {
-        for (final doc in snapshot.docs) {
-          final data = doc.data();
-          final navigatorId = data['navigatorId'] as String? ?? doc.id;
-          final navigatorName = data['navigatorName'] as String?;
-          if (navigatorName != null && navigatorName.isNotEmpty) {
-            _navigatorNames[navigatorId] = navigatorName;
-          }
-          print('DEBUG SystemCheck poll: navigator=$navigatorId connected=${data['isConnected']} hasGPS=${data['hasGPS']} lat=${data['latitude']} lng=${data['longitude']} source=${data['positionSource']} posUpdatedAt=${data['positionUpdatedAt']}');
-
-          final posUpdatedAt = data['positionUpdatedAt'];
-          DateTime? posTime;
-          if (posUpdatedAt is Timestamp) {
-            posTime = posUpdatedAt.toDate();
-          } else if (posUpdatedAt is String) {
-            posTime = DateTime.tryParse(posUpdatedAt);
-          }
-
-          _navigatorStatuses[navigatorId] = NavigatorStatus(
-            isConnected: data['isConnected'] as bool? ?? false,
-            hasReported: true,
-            batteryLevel: data['batteryLevel'] as int? ?? 0,
-            hasGPS: data['hasGPS'] as bool? ?? false,
-            receptionLevel: data['receptionLevel'] as int? ?? 0,
-            latitude: (data['latitude'] as num?)?.toDouble(),
-            longitude: (data['longitude'] as num?)?.toDouble(),
-            positionSource: data['positionSource'] as String? ?? 'gps',
-            positionUpdatedAt: posTime,
-            gpsAccuracy: (data['gpsAccuracy'] as num?)?.toDouble() ?? -1,
-            mapsStatus: data['mapsStatus'] as String? ?? 'notStarted',
-            hasMicrophonePermission: data['hasMicrophonePermission'] as bool? ?? false,
-            hasPhonePermission: data['hasPhonePermission'] as bool? ?? false,
-            hasDNDPermission: data['hasDNDPermission'] as bool? ?? false,
-          );
-        }
+        _navigatorStatuses = statuses;
       });
-    } catch (e) {
-      print('DEBUG SystemCheck: poll error: $e');
-    }
+    });
   }
 
   void _initDataLoader() {
@@ -902,25 +789,8 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
 
     if (confirmed != true) return;
 
-    // Clean up system_status documents from Firestore (non-blocking batch)
-    unawaited(() async {
-      try {
-        final statusCollection = FirebaseFirestore.instance
-            .collection(AppConstants.navigationsCollection)
-            .doc(_currentNavigation.id)
-            .collection('system_status');
-        final snapshot = await statusCollection.get();
-        if (snapshot.docs.isNotEmpty) {
-          final batch = FirebaseFirestore.instance.batch();
-          for (final doc in snapshot.docs) {
-            batch.delete(doc.reference);
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        print('DEBUG SystemCheck: failed to clean up system_status: $e');
-      }
-    }());
+    // Clean up system_status documents from Firestore (non-blocking)
+    unawaited(SystemStatusRepository().deleteAll(_currentNavigation.id));
 
     final updatedNavigation = _currentNavigation.copyWith(
       status: 'preparation',
@@ -3168,39 +3038,3 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
   }
 }
 
-/// סטטוס מנווט
-class NavigatorStatus {
-  final bool isConnected;
-  final bool hasReported; // האם המנווט דיווח ל-Firestore (להבדיל מ-placeholder)
-  final int batteryLevel; // 0-100
-  final bool hasGPS;
-  final int receptionLevel; // 0-4 (0=אין, 4=מצוין)
-  final double? latitude;
-  final double? longitude;
-  final String positionSource; // 'gps', 'cellTower', or 'none'
-  final DateTime? positionUpdatedAt; // מתי עודכן המיקום לאחרונה
-  final double gpsAccuracy; // -1 = לא ידוע
-  final String mapsStatus; // 'notStarted', 'downloading', 'completed', 'failed'
-  final bool hasMicrophonePermission;
-  final bool hasPhonePermission;
-  final bool hasDNDPermission;
-
-  NavigatorStatus({
-    required this.isConnected,
-    this.hasReported = false,
-    required this.batteryLevel,
-    required this.hasGPS,
-    this.receptionLevel = 0,
-    this.latitude,
-    this.longitude,
-    this.positionSource = 'gps',
-    this.positionUpdatedAt,
-    this.gpsAccuracy = -1,
-    this.mapsStatus = 'notStarted',
-    this.hasMicrophonePermission = false,
-    this.hasPhonePermission = false,
-    this.hasDNDPermission = false,
-  });
-
-  bool get mapsReady => mapsStatus == 'completed';
-}

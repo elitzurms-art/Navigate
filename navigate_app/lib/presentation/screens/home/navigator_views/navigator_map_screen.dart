@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../../data/repositories/nav_layer_repository.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
+import '../../../../data/repositories/navigation_repository.dart';
+import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../domain/entities/nav_layer.dart' as nav;
+import '../../../../domain/entities/navigation_doc_snapshot.dart';
 import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/safety_point.dart';
@@ -66,8 +68,8 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   bool _emergencyActive = false;
   int _emergencyMode = 0;
   List<Map<String, dynamic>> _emergencyNavigatorPositions = [];
-  StreamSubscription<DocumentSnapshot>? _emergencyFlagSubscription;
-  StreamSubscription<QuerySnapshot>? _emergencyTracksSubscription;
+  StreamSubscription<NavigationDocSnapshot>? _emergencyFlagSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _emergencyTracksSubscription;
 
   double _ggOpacity = 1.0;
   double _nbOpacity = 1.0;
@@ -177,14 +179,12 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   }
 
   void _startEmergencyFlagListener() {
-    _emergencyFlagSubscription = FirebaseFirestore.instance
-        .collection('navigations')
-        .doc(widget.navigation.id)
-        .snapshots()
-        .listen((snap) {
+    _emergencyFlagSubscription = NavigationRepository()
+        .watchNavigationDocSnapshot(widget.navigation.id)
+        .listen((snapshot) {
       if (!mounted) return;
-      final active = snap.data()?['emergencyActive'] == true;
-      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
+      final active = snapshot.emergencyActive;
+      final mode = snapshot.emergencyMode;
 
       if (active != _emergencyActive) {
         // חירום בוטל כשהמפה נפתחה מחירום → חזרה אחורה
@@ -209,15 +209,12 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   }
 
   void _startEmergencyTracksListener() {
-    _emergencyTracksSubscription = FirebaseFirestore.instance
-        .collection('navigation_tracks')
-        .where('navigationId', isEqualTo: widget.navigation.id)
-        .snapshots()
-        .listen((snap) {
+    _emergencyTracksSubscription = NavigationTrackRepository()
+        .watchTracksByNavigation(widget.navigation.id)
+        .listen((tracks) {
       if (!mounted) return;
       final positions = <Map<String, dynamic>>[];
-      for (final doc in snap.docs) {
-        final data = doc.data();
+      for (final data in tracks) {
         final navigatorId = data['navigatorId'] as String? ?? '';
         if (navigatorId == widget.currentUser.uid) continue;
         try {

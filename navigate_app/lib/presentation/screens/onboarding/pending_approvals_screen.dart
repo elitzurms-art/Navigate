@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/unit_repository.dart';
 import '../../../domain/entities/unit.dart';
@@ -28,8 +27,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
   bool _isDeveloper = false;
   bool _canAssignRoles = false; // רק developer/unit_admin יכולים לקבוע תפקידים
   String? _commanderUnitId;
-  StreamSubscription<QuerySnapshot>? _firestoreListener;
-  Timer? _retryTimer;
+  StreamSubscription<List<User>>? _pendingUsersListener;
 
   // מעקב אחרי toggle "מפקד" לכל משתמש
   final Map<String, bool> _commanderToggle = {};
@@ -43,14 +41,6 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
   // יחידות ללא חברים מאושרים כלל — חובה מנהל יחידה
   final Set<String> _unitsWithNoMembers = {};
 
-  /// המרת Timestamp ל-ISO string (מונעת crash ב-User.fromMap)
-  Map<String, dynamic> _sanitize(Map<String, dynamic> data) {
-    return data.map((key, value) {
-      if (value is Timestamp) return MapEntry(key, value.toDate().toIso8601String());
-      if (value is Map<String, dynamic>) return MapEntry(key, _sanitize(value));
-      return MapEntry(key, value);
-    });
-  }
   @override
   void initState() {
     super.initState();
@@ -59,8 +49,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
-    _firestoreListener?.cancel();
+    _pendingUsersListener?.cancel();
     super.dispose();
   }
 
@@ -74,7 +63,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
       final session = await _sessionService.getSavedSession();
       _commanderUnitId = session?.unitId;
 
-      _startFirestoreListener();
+      _startPendingUsersListener();
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -82,114 +71,64 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
     }
   }
 
-  /// Firestore snapshot listener — עדכונים בזמן אמת כשמגיעות בקשות חדשות
-  void _startFirestoreListener() {
-    _firestoreListener?.cancel();
-    _retryTimer?.cancel();
+  /// התחלת האזנה למשתמשים ממתינים דרך UserRepository
+  void _startPendingUsersListener() async {
+    _pendingUsersListener?.cancel();
 
     try {
-      // שאילתה לפי unitId scope — סינון isApproved בצד הקליינט
-      if (!_isDeveloper && _commanderUnitId != null) {
-        _unitRepo.getDescendantIds(_commanderUnitId!).then((descendantIds) {
-          if (!mounted) return;
-          final allUnitIds = [_commanderUnitId!, ...descendantIds];
-          final batch = allUnitIds.length > 10 ? allUnitIds.sublist(0, 10) : allUnitIds;
-
-          _firestoreListener = FirebaseFirestore.instance
-              .collection('users')
-              .where('unitId', whereIn: batch)
-              .snapshots()
-              .listen(
-            _onFirestoreSnapshot,
-            onError: _onFirestoreError,
-          );
-        });
-      } else {
-        // developer — כל המשתמשים (סינון unitId בצד הקליינט)
-        _firestoreListener = FirebaseFirestore.instance
-            .collection('users')
-            .snapshots()
-            .listen(
-          _onFirestoreSnapshot,
-          onError: _onFirestoreError,
-        );
-      }
-    } catch (e) {
-      print('DEBUG PendingApprovals: Firestore listener setup failed: $e');
-      _scheduleListenerRetry();
-    }
-  }
-
-  void _onFirestoreSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) async {
-    if (!mounted) return;
-    final users = <User>[];
-    for (final doc in snapshot.docs) {
-      final data = _sanitize(doc.data());
-      data['uid'] = doc.id;
-      final unitId = data['unitId'] as String?;
-      if (unitId == null || unitId.isEmpty) continue;
-      // סינון בצד הקליינט — רק משתמשים עם isApproved="pending"
-      if (data['isApproved'] != 'pending') continue;
-      try {
-        users.add(User.fromMap(data));
-      } catch (_) {}
-    }
-
-    await _loadUnitMetadata(users);
-    if (mounted) {
-      setState(() {
-        _pendingUsers = users;
-        _isLoading = false;
-        _errorMessage = null;
-      });
-    }
-  }
-
-  void _onFirestoreError(dynamic error) {
-    print('DEBUG PendingApprovals: Firestore listener error: $error');
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'שגיאה בטעינת בקשות: $error';
-      });
-    }
-    _scheduleListenerRetry();
-  }
-
-  void _scheduleListenerRetry() {
-    _retryTimer?.cancel();
-    _retryTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) _startFirestoreListener();
-    });
-  }
-
-  /// שאילתה ישירה ל-Firestore — מקור הנתונים היחיד לבקשות ממתינות
-  Future<void> _refreshFromFirestore() async {
-    try {
-      List<String>? unitIds;
+      List<String> unitIds;
       if (!_isDeveloper && _commanderUnitId != null) {
         final descendantIds = await _unitRepo.getDescendantIds(_commanderUnitId!);
+        if (!mounted) return;
         unitIds = [_commanderUnitId!, ...descendantIds];
+      } else {
+        // developer — רשימה ריקה = כל המשתמשים הממתינים
+        unitIds = [];
       }
 
-      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('users');
-      if (unitIds != null && unitIds.isNotEmpty) {
-        final batch = unitIds.length > 10 ? unitIds.sublist(0, 10) : unitIds;
-        query = query.where('unitId', whereIn: batch);
+      _pendingUsersListener = _userRepo.watchPendingUsers(unitIds).listen(
+        (users) async {
+          if (!mounted) return;
+          await _loadUnitMetadata(users);
+          if (mounted) {
+            setState(() {
+              _pendingUsers = users;
+              _isLoading = false;
+              _errorMessage = null;
+            });
+          }
+        },
+        onError: (error) {
+          print('DEBUG PendingApprovals: watchPendingUsers error: $error');
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _errorMessage = 'שגיאה בטעינת בקשות: $error';
+            });
+          }
+        },
+      );
+    } catch (e) {
+      print('DEBUG PendingApprovals: listener setup failed: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'שגיאה בהגדרת האזנה: $e';
+        });
       }
-      // developer — ללא סינון בשאילתה, סינון unitId בצד הקליינט
+    }
+  }
 
-      final snapshot = await query.get().timeout(const Duration(seconds: 8));
-      final users = <User>[];
-      for (final doc in snapshot.docs) {
-        final data = _sanitize(doc.data());
-        data['uid'] = doc.id;
-        final unitId = data['unitId'] as String?;
-        if (unitId == null || unitId.isEmpty) continue;
-        if (data['isApproved'] != 'pending') continue;
-        try {
-          users.add(User.fromMap(data));
-        } catch (_) {}
+  /// רענון ידני — שאילתה חד-פעמית דרך UserRepository
+  Future<void> _refreshFromFirestore() async {
+    try {
+      List<User> users;
+      if (!_isDeveloper && _commanderUnitId != null) {
+        final descendantIds = await _unitRepo.getDescendantIds(_commanderUnitId!);
+        final unitIds = [_commanderUnitId!, ...descendantIds];
+        users = await _userRepo.getPendingApprovalUsers(unitIds);
+      } else {
+        users = await _userRepo.getAllPendingApprovalUsers();
       }
 
       await _loadUnitMetadata(users);
@@ -337,7 +276,7 @@ class _PendingApprovalsScreenState extends State<PendingApprovalsScreen> {
                         TextButton(
                           onPressed: () {
                             setState(() => _errorMessage = null);
-                            _startFirestoreListener();
+                            _startPendingUsersListener();
                           },
                           child: const Text('נסה שוב'),
                         ),

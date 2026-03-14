@@ -13,12 +13,18 @@ import '../../../domain/entities/navigation_settings.dart';
 import '../../../domain/entities/coordinate.dart';
 import '../../../domain/entities/nav_layer.dart';
 import '../../../domain/entities/navigator_personal_status.dart';
+import '../../../domain/entities/navigation_doc_snapshot.dart';
+import '../../../domain/entities/navigator_status.dart';
+import '../../../domain/entities/commander_location.dart';
 import '../../../data/repositories/checkpoint_repository.dart';
 import '../../../data/repositories/checkpoint_punch_repository.dart';
 import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
+import '../../../data/repositories/system_status_repository.dart';
+import '../../../data/repositories/commander_status_repository.dart';
+import '../../../data/repositories/emergency_broadcast_repository.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../data/sync/sync_manager.dart';
 import '../../../core/constants/hospitals_data.dart';
@@ -73,25 +79,23 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   late TabController _tabController;
   Timer? _refreshTimer;
   Timer? _stalenessTimer;
-  Timer? _tracksPollTimer;
-  Timer? _punchesPollTimer;
-  StreamSubscription<QuerySnapshot>? _tracksListener;
-  StreamSubscription<QuerySnapshot>? _systemStatusListener;
+  StreamSubscription<List<Map<String, dynamic>>>? _tracksListener;
+  StreamSubscription<Map<String, NavigatorStatus>>? _systemStatusListener;
   StreamSubscription<List<NavigatorAlert>>? _alertsListener;
   StreamSubscription<List<CheckpointPunch>>? _punchesListener;
-  StreamSubscription<DocumentSnapshot>? _emergencyFlagListener;
+  StreamSubscription<NavigationDocSnapshot>? _emergencyFlagListener;
 
   // מצב חירום
   bool _emergencyActive = false;
   bool _isJumpDialogOpen = false;
   int _emergencyMode = 0;
   String? _activeBroadcastId;
-  StreamSubscription<DocumentSnapshot>? _ackListener;
+  StreamSubscription<Map<String, dynamic>?>? _ackListener;
   List<String> _acknowledgedBy = [];
   Timer? _autoRetryTimer;
   // ביטול
   String? _cancelBroadcastId;
-  StreamSubscription<DocumentSnapshot>? _cancelAckListener;
+  StreamSubscription<Map<String, dynamic>?>? _cancelAckListener;
   List<String> _cancelAcknowledgedBy = [];
   Timer? _cancelAutoRetryTimer;
 
@@ -189,7 +193,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Timer? _selfGpsTimer;
 
   // מפקדים אחרים
-  Map<String, _CommanderLocation> _otherCommanders = {};
+  Map<String, CommanderLocation> _otherCommanders = {};
   Timer? _commanderPublishTimer;
   StreamSubscription? _commanderStatusListener;
 
@@ -204,8 +208,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startSystemStatusListener();
     _startAlertsListener();
     _startPunchesListener();
-    _startTracksPolling();
-    _startPunchesPolling();
     _startExtensionRequestListener();
     _startEmergencyFlagListener();
     _startSafetyTimeMonitor();
@@ -231,8 +233,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   void dispose() {
     _refreshTimer?.cancel();
     _stalenessTimer?.cancel();
-    _tracksPollTimer?.cancel();
-    _punchesPollTimer?.cancel();
     _tracksListener?.cancel();
     _systemStatusListener?.cancel();
     _alertsListener?.cancel();
@@ -395,12 +395,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
 
     // האזנה למיקומי מפקדים אחרים
-    _commanderStatusListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('commander_status')
-        .snapshots()
-        .listen((snapshot) => _updateCommanderLocations(snapshot));
+    _commanderStatusListener = CommanderStatusRepository()
+        .watchCommanderLocations(widget.navigation.id)
+        .listen((locations) => _updateCommanderLocations(locations));
 
     if (mounted) setState(() {});
   }
@@ -537,40 +534,37 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _publishCommanderLocation() async {
     if (_selfPosition == null || _currentUser == null) return;
-    unawaited(FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('commander_status')
-        .doc(_currentUser!.uid)
-        .set({
-      'userId': _currentUser!.uid,
-      'name': _currentUser!.fullName,
-      'latitude': _selfPosition!.latitude,
-      'longitude': _selfPosition!.longitude,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true)).catchError((_) {}));
+    CommanderStatusRepository().publishLocation(
+      widget.navigation.id,
+      _currentUser!.uid,
+      {
+        'userId': _currentUser!.uid,
+        'name': _currentUser!.fullName,
+        'latitude': _selfPosition!.latitude,
+        'longitude': _selfPosition!.longitude,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    );
   }
 
-  void _updateCommanderLocations(QuerySnapshot snapshot) {
+  void _updateCommanderLocations(Map<String, CommanderLocation> locations) {
     if (!mounted) return;
-    final updated = <String, _CommanderLocation>{};
-    for (final doc in snapshot.docs) {
-      final data = doc.data() as Map<String, dynamic>?;
-      if (data == null) continue;
-      final uid = data['userId'] as String? ?? doc.id;
+    final updated = <String, CommanderLocation>{};
+    for (final entry in locations.entries) {
+      final uid = entry.key;
       if (uid == _currentUser?.uid) continue;
-      final lat = (data['latitude'] as num?)?.toDouble();
-      final lng = (data['longitude'] as num?)?.toDouble();
-      if (lat == null || lng == null) continue;
-      DateTime? lastUpdate;
-      final ts = data['updatedAt'];
-      if (ts is Timestamp) lastUpdate = ts.toDate();
-      updated[uid] = _CommanderLocation(
-        userId: uid,
-        name: data['name'] as String? ?? _userNames[uid] ?? uid,
-        position: LatLng(lat, lng),
-        lastUpdate: lastUpdate ?? DateTime.now(),
-      );
+      final loc = entry.value;
+      // עדכון שם מ-cache מקומי אם חסר
+      if (loc.name.isEmpty) {
+        updated[uid] = CommanderLocation(
+          userId: uid,
+          name: _userNames[uid] ?? uid,
+          position: loc.position,
+          lastUpdate: loc.lastUpdate,
+        );
+      } else {
+        updated[uid] = loc;
+      }
     }
     setState(() => _otherCommanders = updated);
   }
@@ -580,13 +574,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // ===========================================================================
 
   void _startTrackListener() {
-    _tracksListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationTracksCollection)
-        .where('navigationId', isEqualTo: widget.navigation.id)
-        .snapshots()
+    _tracksListener = _trackRepo
+        .watchTracksByNavigation(widget.navigation.id)
         .listen(
-      (snapshot) {
-        _updateNavigatorDataFromFirestore(snapshot);
+      (tracks) {
+        _updateNavigatorDataFromFirestore(tracks);
       },
       onError: (e) {
         print('DEBUG NavigationManagement: track listener error: $e');
@@ -599,14 +591,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // ===========================================================================
 
   void _startSystemStatusListener() {
-    _systemStatusListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('system_status')
-        .snapshots()
+    _systemStatusListener = SystemStatusRepository()
+        .watchStatuses(widget.navigation.id)
         .listen(
-      (snapshot) {
-        _updateNavigatorDataFromSystemStatus(snapshot);
+      (statuses) {
+        _updateNavigatorDataFromSystemStatus(statuses);
       },
       onError: (e) {
         print('DEBUG NavigationManagement: system_status listener error: $e');
@@ -614,13 +603,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     );
   }
 
-  void _updateNavigatorDataFromSystemStatus(QuerySnapshot snapshot) {
+  void _updateNavigatorDataFromSystemStatus(Map<String, NavigatorStatus> statuses) {
     if (!mounted) return;
 
     setState(() {
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        final navigatorId = data['navigatorId'] as String? ?? doc.id;
+      for (final entry in statuses.entries) {
+        final navigatorId = entry.key;
+        final status = entry.value;
 
         // אם מנווט חדש שלא ברשימה (מקרה קצה)
         if (!_navigatorData.containsKey(navigatorId)) {
@@ -636,33 +625,24 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         final liveData = _navigatorData[navigatorId]!;
 
         // עדכון מצב סוללה
-        final batteryRaw = data['batteryLevel'];
-        if (batteryRaw is int) {
-          liveData.batteryLevel = batteryRaw;
-        } else if (batteryRaw is num) {
-          liveData.batteryLevel = batteryRaw.toInt();
+        if (status.batteryLevel >= 0) {
+          liveData.batteryLevel = status.batteryLevel;
         }
 
         // עדכון הרשאות מיקרופון, טלפון ו-DND
-        liveData.hasMicrophonePermission = data['hasMicrophonePermission'] as bool? ?? false;
-        liveData.hasPhonePermission = data['hasPhonePermission'] as bool? ?? false;
-        liveData.hasDNDPermission = data['hasDNDPermission'] as bool? ?? false;
+        liveData.hasMicrophonePermission = status.hasMicrophonePermission;
+        liveData.hasPhonePermission = status.hasPhonePermission;
+        liveData.hasDNDPermission = status.hasDNDPermission;
 
-        final latitude = (data['latitude'] as num?)?.toDouble();
-        final longitude = (data['longitude'] as num?)?.toDouble();
+        final latitude = status.latitude;
+        final longitude = status.longitude;
 
         // עדכון מיקום — רק אם יש מיקום תקין
         if (latitude == null || longitude == null) continue;
         if (latitude == 0.0 && longitude == 0.0) continue;
 
         // עדכון מיקום מ-system_status — רק אם אין נתונים או ה-timestamp חדש יותר
-        DateTime? statusTime;
-        final updatedAtRaw = data['updatedAt'];
-        if (updatedAtRaw is Timestamp) {
-          statusTime = updatedAtRaw.toDate();
-        } else if (updatedAtRaw is String) {
-          statusTime = DateTime.tryParse(updatedAtRaw);
-        }
+        final statusTime = status.positionUpdatedAt;
 
         final shouldUpdate = liveData.currentPosition == null ||
             (statusTime != null &&
@@ -748,66 +728,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         print('DEBUG NavigationManagement: punches listener error: $e');
       },
     );
-  }
-
-  // ===========================================================================
-  // Polling Fallback — שאילתת Firestore ישירה כל 10 שניות
-  // (עוקף את בעיית ה-threading של snapshots ב-Windows)
-  // ===========================================================================
-
-  void _startTracksPolling() {
-    _pollTracks();
-    _tracksPollTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _pollTracks(),
-    );
-  }
-
-  Future<void> _pollTracks() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .get();
-
-      if (!mounted) return;
-      _updateNavigatorDataFromFirestore(snapshot);
-    } catch (e) {
-      print('DEBUG NavigationManagement: tracks poll error: $e');
-    }
-  }
-
-  void _startPunchesPolling() {
-    _pollPunches();
-    _punchesPollTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (_) => _pollPunches(),
-    );
-  }
-
-  Future<void> _pollPunches() async {
-    try {
-      final punches = await _punchRepo.getByNavigationFromFirestore(
-        widget.navigation.id,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        final punchMap = <String, List<CheckpointPunch>>{};
-        for (final punch in punches) {
-          punchMap.putIfAbsent(punch.navigatorId, () => []).add(punch);
-        }
-        for (final entry in _navigatorData.entries) {
-          final navPunches = punchMap[entry.key] ?? [];
-          // עדכון רק אם יש נתונים חדשים (לא לדרוס ברשימה ריקה)
-          if (navPunches.isNotEmpty || entry.value.punches.isEmpty) {
-            entry.value.punches = navPunches;
-          }
-        }
-      });
-    } catch (e) {
-      print('DEBUG NavigationManagement: punches poll error: $e');
-    }
   }
 
   Future<void> _resolveAlert(NavigatorAlert alert) async {
@@ -1192,14 +1112,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     ];
   }
 
-  void _updateNavigatorDataFromFirestore(QuerySnapshot snapshot) {
+  void _updateNavigatorDataFromFirestore(List<Map<String, dynamic>> tracks) {
     if (!mounted) return;
 
     setState(() {
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
+      for (final data in tracks) {
         final navigatorId = data['navigatorUserId'] as String?;
         if (navigatorId == null) continue;
+        final docId = data['id'] as String? ?? '';
 
         // אם מנווט חדש שלא ברשימה (מקרה קצה)
         if (!_navigatorData.containsKey(navigatorId)) {
@@ -1274,7 +1194,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         liveData.disqualificationReason = data['disqualificationReason'] as String?;
 
         // cache trackId + קריאת דריסות מפה (רק אם הוגדר ב-Firestore — אחרת נשאר default מהגדרות הניווט)
-        _navigatorTrackIds[navigatorId] = doc.id;
+        _navigatorTrackIds[navigatorId] = docId;
         if (data.containsKey('overrideAllowOpenMap')) {
           _navigatorOverrideAllowOpenMap[navigatorId] = data['overrideAllowOpenMap'] as bool? ?? false;
         }
@@ -1643,62 +1563,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (confirmed != true) return;
 
     try {
-      // שאילתת Firestore — מציאת ה-track הפעיל
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('navigatorUserId', isEqualTo: navigatorId)
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      final now = DateTime.now();
-
-      if (snapshot.docs.isEmpty) {
-        // אין track פעיל — מנסה לחפש בלי isActive filter (אולי השדה חסר)
-        final allTracks = await FirebaseFirestore.instance
-            .collection(AppConstants.navigationTracksCollection)
-            .where('navigationId', isEqualTo: widget.navigation.id)
-            .where('navigatorUserId', isEqualTo: navigatorId)
-            .get();
-
-        final batch = FirebaseFirestore.instance.batch();
-        final endedDocIds = <String>[];
-        for (final doc in allTracks.docs) {
-          final trackData = doc.data();
-          if (trackData['endedAt'] == null) {
-            batch.update(doc.reference, {
-              'isActive': false,
-              'endedAt': now.toIso8601String(),
-            });
-            endedDocIds.add(doc.id);
-          }
-        }
-        if (endedDocIds.isNotEmpty) {
-          unawaited(batch.commit().catchError((_) {}));
-          for (final docId in endedDocIds) {
-            try { await _trackRepo.endNavigation(docId); } catch (_) {}
-          }
-        }
-      } else {
-        // עדכון Firestore ב-batch אחד
-        final batch = FirebaseFirestore.instance.batch();
-        for (final doc in snapshot.docs) {
-          batch.update(doc.reference, {
-            'isActive': false,
-            'endedAt': now.toIso8601String(),
-          });
-        }
-        unawaited(batch.commit().catchError((_) {}));
-
-        // עדכון מקומי ב-Drift
-        for (final doc in snapshot.docs) {
-          try {
-            await _trackRepo.endNavigation(doc.id);
-          } catch (_) {
-            // ייתכן שה-track לא קיים מקומית אצל המפקד
-          }
-        }
-      }
+      await _trackRepo.stopNavigatorRemote(widget.navigation.id, navigatorId);
 
       // עדכון UI
       if (mounted) {
@@ -1749,17 +1614,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (confirmed != true) return;
 
     try {
-      // מחיקת track מ-Drift + Firestore
-      await _trackRepo.deleteByNavigator(widget.navigation.id, navigatorId);
-
-      // מחיקת דקירות מ-SharedPreferences + Firestore
+      await _trackRepo.resetNavigatorRemote(widget.navigation.id, navigatorId);
       await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
-
-      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט) — non-blocking
-      unawaited(FirebaseFirestore.instance
-          .collection('navigations')
-          .doc(widget.navigation.id)
-          .update({'updatedAt': FieldValue.serverTimestamp()}).catchError((_) {}));
 
       // עדכון UI מקומי
       if (mounted) {
@@ -1819,35 +1675,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (confirmed != true) return;
 
     try {
-      // מציאת track קיים ב-Firestore
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('navigatorUserId', isEqualTo: navigatorId)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('לא נמצא track עבור $navigatorId'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      final trackDoc = snapshot.docs.first;
-
-      // עדכון Firestore — isActive=true, endedAt=null (non-blocking)
-      unawaited(trackDoc.reference.update({
-        'isActive': true,
-        'endedAt': null,
-      }).catchError((_) {}));
-
-      // עדכון Drift מקומי
-      await _trackRepo.resumeNavigation(trackDoc.id);
+      await _trackRepo.resumeNavigatorRemote(widget.navigation.id, navigatorId);
 
       // עדכון UI מקומי
       if (mounted) {
@@ -1906,17 +1734,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (confirmed != true) return;
 
     try {
-      // מחיקת track מ-Drift + Firestore
-      await _trackRepo.deleteByNavigator(widget.navigation.id, navigatorId);
-
-      // מחיקת דקירות מ-SharedPreferences + Firestore
+      await _trackRepo.resetNavigatorRemote(widget.navigation.id, navigatorId);
       await _punchRepo.deleteByNavigator(widget.navigation.id, navigatorId);
-
-      // עדכון updatedAt בניווט (trigger ל-rebuild במנווט) — non-blocking
-      unawaited(FirebaseFirestore.instance
-          .collection('navigations')
-          .doc(widget.navigation.id)
-          .update({'updatedAt': FieldValue.serverTimestamp()}).catchError((_) {}));
 
       // עדכון UI מקומי
       if (mounted) {
@@ -1980,14 +1799,11 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     if (confirmed != true) return;
 
     try {
-      // מציאת track ID מ-Firestore
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('navigatorUserId', isEqualTo: navigatorId)
-          .get();
+      // מציאת track ID
+      final trackId = _navigatorTrackIds[navigatorId] ??
+          await _trackRepo.findTrackId(widget.navigation.id, navigatorId);
 
-      if (snapshot.docs.isEmpty) {
+      if (trackId == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -1999,7 +1815,6 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         return;
       }
 
-      final trackId = snapshot.docs.first.id;
       await _trackRepo.undoDisqualification(trackId);
 
       if (mounted) {
@@ -2188,35 +2003,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     setState(() => _isLoading = true);
 
     try {
-      // שאילתת Firestore — כל ה-tracks הפעילים של הניווט הזה
-      final snapshot = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationTracksCollection)
-          .where('navigationId', isEqualTo: widget.navigation.id)
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      final now = DateTime.now();
-
-      // עצירת כל track פעיל — batch Firestore update
-      if (snapshot.docs.isNotEmpty) {
-        final batch = FirebaseFirestore.instance.batch();
-        for (final doc in snapshot.docs) {
-          batch.update(doc.reference, {
-            'isActive': false,
-            'endedAt': now.toIso8601String(),
-          });
-        }
-        unawaited(batch.commit().catchError((_) {}));
-
-        // עדכון מקומי ב-Drift
-        for (final doc in snapshot.docs) {
-          try {
-            await _trackRepo.endNavigation(doc.id);
-          } catch (_) {
-            // ייתכן שה-track לא קיים מקומית אצל המפקד
-          }
-        }
-      }
+      await _trackRepo.stopAllNavigatorsRemote(widget.navigation.id);
 
       // מניעת pop כפול — הליסנר על Firestore יזהה 'review' וינסה pop
       _alreadyClosed = true;
@@ -2225,7 +2012,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       final updatedNavigation = widget.navigation.copyWith(
         status: 'review',
         activeStartTime: null,
-        updatedAt: now,
+        updatedAt: DateTime.now(),
       );
       await _navRepo.update(updatedNavigation);
 
@@ -5277,20 +5064,12 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   Future<void> _updateNavigatorMapOverrides(String navigatorId) async {
     String? trackId = _navigatorTrackIds[navigatorId];
 
-    // fallback: חיפוש track ב-Firestore אם אין cache
+    // fallback: חיפוש track דרך repository אם אין cache
     if (trackId == null) {
-      try {
-        final snapshot = await FirebaseFirestore.instance
-            .collection(AppConstants.navigationTracksCollection)
-            .where('navigationId', isEqualTo: widget.navigation.id)
-            .where('navigatorUserId', isEqualTo: navigatorId)
-            .limit(1)
-            .get();
-        if (snapshot.docs.isNotEmpty) {
-          trackId = snapshot.docs.first.id;
-          _navigatorTrackIds[navigatorId] = trackId;
-        }
-      } catch (_) {}
+      trackId = await _trackRepo.findTrackId(widget.navigation.id, navigatorId);
+      if (trackId != null) {
+        _navigatorTrackIds[navigatorId] = trackId;
+      }
     }
 
     if (trackId == null) return;
@@ -5458,18 +5237,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     for (final navigatorId in nav.routes.keys) {
       String? trackId = _navigatorTrackIds[navigatorId];
       if (trackId == null) {
-        try {
-          final snapshot = await FirebaseFirestore.instance
-              .collection(AppConstants.navigationTracksCollection)
-              .where('navigationId', isEqualTo: nav.id)
-              .where('navigatorUserId', isEqualTo: navigatorId)
-              .limit(1)
-              .get();
-          if (snapshot.docs.isNotEmpty) {
-            trackId = snapshot.docs.first.id;
-            _navigatorTrackIds[navigatorId] = trackId;
-          }
-        } catch (_) {}
+        trackId = await _trackRepo.findTrackId(nav.id, navigatorId);
+        if (trackId != null) {
+          _navigatorTrackIds[navigatorId] = trackId;
+        }
       }
       if (trackId == null) continue;
 
@@ -6590,18 +6361,13 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   // =========================================================================
 
   void _startEmergencyFlagListener() {
-    _emergencyFlagListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .snapshots()
+    _emergencyFlagListener = _navRepo
+        .watchNavigationDocSnapshot(widget.navigation.id)
         .listen((snap) {
       if (!mounted || _alreadyClosed) return;
 
       // Detect external status change — another admin finished the navigation
-      // Only close if status moved to a "finished" state (review/approval),
-      // not for pre-active statuses (preparation/learning/system_check) which
-      // can appear from stale Firestore cache before sync pushes the new status.
-      final status = snap.data()?['status'] as String?;
+      final status = snap.navigation?.status;
       const finishedStatuses = {'review', 'approval'};
       if (status != null && finishedStatuses.contains(status)) {
         _alreadyClosed = true;
@@ -6615,9 +6381,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         return;
       }
 
-      final active = snap.data()?['emergencyActive'] == true;
-      final mode = snap.data()?['emergencyMode'] as int? ?? 0;
-      final broadcastId = snap.data()?['activeBroadcastId'] as String?;
+      final active = snap.emergencyActive;
+      final mode = snap.emergencyMode;
+      final broadcastId = snap.activeBroadcastId;
 
       if (active != _emergencyActive || mode != _emergencyMode) {
         setState(() {
@@ -6779,29 +6545,14 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         ...widget.navigation.permissions.managers,
         widget.navigation.createdBy,
       }.where((uid) => uid != me).toList();
-      final broadcastDoc = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('emergency_broadcasts')
-          .add({
-        'message': message,
-        'instructions': instructions,
-        'emergencyMode': emergencyMode,
-        'createdBy': _currentUser?.uid ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'participants': participants,
-        'acknowledgedBy': [],
-        'status': 'active',
-      });
-
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .update({
-        'emergencyActive': true,
-        'emergencyMode': emergencyMode,
-        'activeBroadcastId': broadcastDoc.id,
-      });
+      await EmergencyBroadcastRepository().createBroadcast(
+        widget.navigation.id,
+        message: message,
+        instructions: instructions,
+        emergencyMode: emergencyMode,
+        createdBy: _currentUser?.uid ?? '',
+        participants: participants,
+      );
     } catch (e) {
       print('DEBUG NavigationManagement: send emergency broadcast error: $e');
     }
@@ -6844,47 +6595,20 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         widget.navigation.createdBy,
       }.where((uid) => uid != me).toList();
 
-      final navRef = FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id);
-
-      // עדכון סטטוס השידור המקורי
-      if (_activeBroadcastId != null) {
-        await navRef
-            .collection('emergency_broadcasts')
-            .doc(_activeBroadcastId)
-            .update({
-          'status': 'cancelled',
-          'cancelledAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      // שידור ביטול — מסמך חדש ב-emergency_broadcasts (מפעיל Cloud Function)
-      final cancelDoc = await navRef
-          .collection('emergency_broadcasts')
-          .add({
-        'type': 'cancellation',
-        'message': 'חזרה לשגרה — המשך בניווט',
-        'originalBroadcastId': _activeBroadcastId ?? '',
-        'participants': participants,
-        'acknowledgedBy': [],
-        'createdBy': _currentUser?.uid ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      // עדכון מסמך ניווט — כולל cancelBroadcastId כדי שהמנווט יוכל לקרוא אותו ישירות
-      await navRef.update({
-        'emergencyActive': false,
-        'cancelBroadcastId': cancelDoc.id,
-      });
+      final cancelDocId = await EmergencyBroadcastRepository().cancelBroadcast(
+        widget.navigation.id,
+        activeBroadcastId: _activeBroadcastId,
+        createdBy: _currentUser?.uid ?? '',
+        participants: participants,
+      );
 
       // מעקב אישורי ביטול
       setState(() {
-        _cancelBroadcastId = cancelDoc.id;
+        _cancelBroadcastId = cancelDocId;
         _cancelAcknowledgedBy = [];
       });
-      _startCancelAckListener(cancelDoc.id);
-      _startCancelAutoRetryTimer(cancelDoc.id);
+      _startCancelAckListener(cancelDocId);
+      _startCancelAutoRetryTimer(cancelDocId);
 
       // ביטול מעקב חירום
       _autoRetryTimer?.cancel();
@@ -6900,15 +6624,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   void _startAckListener(String broadcastId) {
     _ackListener?.cancel();
-    _ackListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('emergency_broadcasts')
-        .doc(broadcastId)
-        .snapshots()
-        .listen((snap) {
+    _ackListener = EmergencyBroadcastRepository()
+        .watchBroadcast(widget.navigation.id, broadcastId)
+        .listen((data) {
       if (!mounted) return;
-      final data = snap.data();
       if (data == null) return;
       final acked = List<String>.from(data['acknowledgedBy'] ?? []);
       setState(() => _acknowledgedBy = acked);
@@ -6924,40 +6643,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _resendToUnacknowledged(String broadcastId) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('emergency_broadcasts')
-          .doc(broadcastId)
-          .get();
-
-      if (!doc.exists) return;
-      final data = doc.data()!;
-      final allParticipants = List<String>.from(data['participants'] ?? []);
-      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
-      final missing = allParticipants.where((p) => !acked.contains(p)).toList();
-
-      if (missing.isEmpty) {
-        _autoRetryTimer?.cancel();
-        return;
-      }
-
-      // שידור חוזר רק לחסרים
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('emergency_broadcasts')
-          .add({
-        'message': data['message'] ?? '',
-        'instructions': data['instructions'] ?? '',
-        'emergencyMode': data['emergencyMode'] ?? 0,
-        'createdBy': _currentUser?.uid ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'participants': missing,
-        'acknowledgedBy': [],
-        'status': 'retry',
-        'originalBroadcastId': broadcastId,
-      });
+      await EmergencyBroadcastRepository().resendToUnacknowledged(
+        widget.navigation.id,
+        broadcastId,
+      );
     } catch (e) {
       print('DEBUG NavigationManagement: auto-retry error: $e');
     }
@@ -6965,15 +6654,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   void _startCancelAckListener(String cancelBroadcastId) {
     _cancelAckListener?.cancel();
-    _cancelAckListener = FirebaseFirestore.instance
-        .collection(AppConstants.navigationsCollection)
-        .doc(widget.navigation.id)
-        .collection('emergency_broadcasts')
-        .doc(cancelBroadcastId)
-        .snapshots()
-        .listen((snap) {
+    _cancelAckListener = EmergencyBroadcastRepository()
+        .watchBroadcast(widget.navigation.id, cancelBroadcastId)
+        .listen((data) {
       if (!mounted) return;
-      final data = snap.data();
       if (data == null) return;
       final acked = List<String>.from(data['acknowledgedBy'] ?? []);
       setState(() => _cancelAcknowledgedBy = acked);
@@ -6989,37 +6673,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   Future<void> _resendCancelToUnacknowledged(String cancelBroadcastId) async {
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('emergency_broadcasts')
-          .doc(cancelBroadcastId)
-          .get();
-
-      if (!doc.exists) return;
-      final data = doc.data()!;
-      final allParticipants = List<String>.from(data['participants'] ?? []);
-      final acked = List<String>.from(data['acknowledgedBy'] ?? []);
-      final missing = allParticipants.where((p) => !acked.contains(p)).toList();
-
-      if (missing.isEmpty) {
-        _cancelAutoRetryTimer?.cancel();
-        return;
-      }
-
-      await FirebaseFirestore.instance
-          .collection(AppConstants.navigationsCollection)
-          .doc(widget.navigation.id)
-          .collection('emergency_broadcasts')
-          .add({
-        'type': 'cancellation',
-        'message': 'חזרה לשגרה — המשך בניווט',
-        'originalBroadcastId': cancelBroadcastId,
-        'participants': missing,
-        'acknowledgedBy': [],
-        'createdBy': _currentUser?.uid ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      await EmergencyBroadcastRepository().resendCancelToUnacknowledged(
+        widget.navigation.id,
+        cancelBroadcastId,
+      );
     } catch (e) {
       print('DEBUG NavigationManagement: cancel auto-retry error: $e');
     }
@@ -7515,21 +7172,6 @@ class _NavigatorPairDistance {
     }
     return '${distanceMeters.toStringAsFixed(0)} מ\'';
   }
-}
-
-/// מיקום מפקד אחר על המפה
-class _CommanderLocation {
-  final String userId;
-  final String name;
-  LatLng position;
-  DateTime lastUpdate;
-
-  _CommanderLocation({
-    required this.userId,
-    required this.name,
-    required this.position,
-    required this.lastUpdate,
-  });
 }
 
 // =============================================================================

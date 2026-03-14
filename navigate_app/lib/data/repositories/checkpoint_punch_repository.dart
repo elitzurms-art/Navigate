@@ -3,11 +3,15 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../domain/entities/checkpoint_punch.dart';
+import '../sync/ref_counted_stream.dart';
 
 /// Repository לניהול דקירות נקודות
 class CheckpointPunchRepository {
   static const String _key = 'checkpoint_punches';
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  static final Map<String, RefCountedStream<List<CheckpointPunch>>>
+      _punchesStreams = {};
 
   CollectionReference<Map<String, dynamic>> _punchesCollection(String navigationId) {
     return _firestore
@@ -258,5 +262,47 @@ class CheckpointPunchRepository {
       rejectionReason: reason,
     );
     await update(updated);
+  }
+
+  // ===========================================================================
+  // Ref-counted Firestore streams
+  // ===========================================================================
+
+  /// מאזין לדקירות מ-Firestore (ref-counted + polling fallback) — עבור מפקדים
+  Stream<List<CheckpointPunch>> watchPunchesFromFirestore(
+      String navigationId) {
+    final key = 'punches_fs_$navigationId';
+    _punchesStreams[key] ??= RefCountedStream<List<CheckpointPunch>>(
+      sourceFactory: () =>
+          _punchesCollection(navigationId).snapshots().map((snap) {
+        return snap.docs.map((doc) {
+          final data = _sanitizeTimestamps(doc.data());
+          data['id'] = doc.id;
+          return CheckpointPunch.fromMap(data);
+        }).toList();
+      }),
+      pollFallback: () => getByNavigationFromFirestore(navigationId),
+    );
+    return _punchesStreams[key]!.stream;
+  }
+
+  Map<String, dynamic> _sanitizeTimestamps(Map<String, dynamic> data) {
+    final result = Map<String, dynamic>.from(data);
+    for (final key in result.keys.toList()) {
+      final value = result[key];
+      if (value != null && value.runtimeType.toString().contains('Timestamp')) {
+        try {
+          result[key] = (value as dynamic).toDate().toIso8601String();
+        } catch (_) {}
+      }
+    }
+    return result;
+  }
+
+  static void clearCache() {
+    for (final s in _punchesStreams.values) {
+      s.dispose();
+    }
+    _punchesStreams.clear();
   }
 }
