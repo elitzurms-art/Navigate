@@ -6,7 +6,10 @@ import '../sync/ref_counted_stream.dart';
 
 /// Repository לניהול שידורי חירום (emergency broadcasts)
 class EmergencyBroadcastRepository {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  EmergencyBroadcastRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   static final Map<String, RefCountedStream<Map<String, dynamic>?>> _streams =
       {};
@@ -34,7 +37,7 @@ class EmergencyBroadcastRepository {
       'createdBy': createdBy,
       'createdAt': FieldValue.serverTimestamp(),
       'participants': participants,
-      'acknowledgedBy': [],
+      'acknowledgedBy': [if (createdBy.isNotEmpty) createdBy],
       'status': 'active',
     });
 
@@ -78,7 +81,7 @@ class EmergencyBroadcastRepository {
       'message': 'חזרה לשגרה — המשך בניווט',
       'originalBroadcastId': activeBroadcastId ?? '',
       'participants': participants,
-      'acknowledgedBy': [],
+      'acknowledgedBy': [if (createdBy.isNotEmpty) createdBy],
       'createdBy': createdBy,
       'createdAt': FieldValue.serverTimestamp(),
     });

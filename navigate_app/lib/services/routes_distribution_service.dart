@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:isolate';
 import 'package:turf/turf.dart' as turf;
 import '../domain/entities/navigation.dart' as domain;
+import '../domain/entities/coordinate.dart';
 import '../domain/entities/checkpoint.dart';
 import '../domain/entities/navigation_tree.dart';
 import '../domain/entities/navigation_settings.dart';
@@ -105,6 +106,13 @@ class _SegmentViolation {
   bool get hasViolation => boundaryCrossings > 0 || safetyPolygonsCrossed > 0;
 }
 
+/// גרף נראות — צמתים וקשתות עם משקלים
+class _VisibilityGraph {
+  final List<_SimpleCheckpoint> nodes;
+  final Map<String, Map<String, double>> adj; // adjacency list with weights
+  _VisibilityGraph({required this.nodes, required this.adj});
+}
+
 /// תוצאת ציר פנימית
 class _RouteResult {
   final List<String> checkpointIds;
@@ -118,6 +126,8 @@ class _RouteResult {
   // הפרות גיאומטריות — קטעים שחוצים גבול או נת"בים
   final int boundaryExits;
   final int safetyIntersections;
+  // נתיב מלא בתוך הפוליגון (כולל נקודות ביניים מגרף הנראות)
+  final List<List<double>>? renderedPath; // [[lat, lng], ...]
 
   _RouteResult({
     required this.checkpointIds,
@@ -129,6 +139,7 @@ class _RouteResult {
     this.secondHalfLengthKm,
     this.boundaryExits = 0,
     this.safetyIntersections = 0,
+    this.renderedPath,
   });
 }
 
@@ -1134,13 +1145,23 @@ class RoutesDistributionService {
     for (final cp in checkpoints) {
       if (seenIds.add(cp.id)) allPoints.add(cp);
     }
-    final distMatrix = _buildDistanceMatrix(allPoints);
+    // Visibility Graph: מרחקי shortest-path בתוך הפוליגון (במקום קו ישר)
+    final constrained = _buildConstrainedDistanceMatrix(allPoints, params.boundaryCoords);
+    final distMatrix = constrained.distMatrix;
+    final pathMatrix = constrained.pathMatrix;
 
-    // בניית מטריצת הפרות גיאומטריות (nullable — מדולג כשאין גבול/נת"בים)
-    final Map<String, Map<String, _SegmentViolation>>? violationMatrix =
-        (params.boundaryCoords != null || params.safetyPolygons != null)
-            ? _buildSegmentViolationMatrix(allPoints, params.boundaryCoords, params.safetyPolygons)
-            : null;
+    // מטריצת הפרות: גבול נאכף מבנית ע"י visibility graph + failsafe violation penalty
+    final Map<String, Map<String, _SegmentViolation>>? violationMatrix;
+    if (params.boundaryCoords != null && params.boundaryCoords!.length >= 3) {
+      // גבול נאכף ע"י visibility graph, אבל שומרים violation matrix כ-failsafe
+      violationMatrix = _buildSegmentViolationMatrix(
+          allPoints, params.boundaryCoords, params.safetyPolygons);
+    } else if (params.safetyPolygons != null) {
+      // אין גבול אבל יש נת"בים — בדיקת נת"בים בלבד
+      violationMatrix = _buildSafetyOnlyViolationMatrix(allPoints, params.safetyPolygons!);
+    } else {
+      violationMatrix = null;
+    }
 
     final bool needsSharing = pool.length < N * K;
     final bool isDoubleCheck = params.scoringCriterion == 'doubleCheck';
@@ -1210,6 +1231,41 @@ class RoutesDistributionService {
     assert(_validKInvariant(bestDistribution.routes, K),
         'K-invariant broken before sending isolate result');
 
+    // --- שלב 3: בניית renderedPath מנקודות ביניים של visibility graph ---
+    if (pathMatrix.isNotEmpty) {
+      final cpById = <String, _SimpleCheckpoint>{};
+      for (final cp in checkpoints) cpById[cp.id] = cp;
+      if (startCp != null) cpById[startCp.id] = startCp;
+      if (endCp != null) cpById[endCp.id] = endCp;
+
+      final updatedRoutes = <String, _RouteResult>{};
+      for (final entry in bestDistribution.routes.entries) {
+        final route = entry.value;
+        final renderedPath = _buildRenderedPath(
+          route.sequence, startCp?.id, endCp?.id, pathMatrix, cpById,
+        );
+        updatedRoutes[entry.key] = _RouteResult(
+          checkpointIds: route.checkpointIds,
+          sequence: route.sequence,
+          waypointIds: route.waypointIds,
+          routeLengthKm: route.routeLengthKm,
+          inRange: route.inRange,
+          firstHalfLengthKm: route.firstHalfLengthKm,
+          secondHalfLengthKm: route.secondHalfLengthKm,
+          boundaryExits: route.boundaryExits,
+          safetyIntersections: route.safetyIntersections,
+          renderedPath: renderedPath,
+        );
+      }
+      bestDistribution = _InternalDistribution(
+        routes: updatedRoutes,
+        score: bestDistribution.score,
+        allInRange: bestDistribution.allInRange,
+        hasSharedCheckpoints: bestDistribution.hasSharedCheckpoints,
+        sharedCount: bestDistribution.sharedCount,
+      );
+    }
+
     // שליחת תוצאה
     final routesData = <String, Map<String, dynamic>>{};
     for (final entry in bestDistribution.routes.entries) {
@@ -1219,6 +1275,7 @@ class RoutesDistributionService {
         'waypointIds': entry.value.waypointIds,
         'routeLengthKm': entry.value.routeLengthKm,
         'inRange': entry.value.inRange,
+        if (entry.value.renderedPath != null) 'renderedPath': entry.value.renderedPath,
       };
     }
 
@@ -3029,6 +3086,480 @@ class RoutesDistributionService {
     );
   }
 
+  // ============================================================
+  // === Visibility Graph — ניתוב בתוך פוליגון הגבול ===
+  // ============================================================
+
+  /// זיהוי קודקודים רפלקסיביים (זווית פנימית > 180°) בפוליגון הגבול.
+  /// אלה הנקודות שדרכן ניתן לבנות קיצורי דרך חוקיים בתוך הפוליגון.
+  static List<_SimpleCheckpoint> _identifyReflexVertices(List<List<double>> boundaryCoords) {
+    final n = boundaryCoords.length;
+    if (n < 3) return [];
+
+    // חישוב שטח חתום (signed area) לזיהוי כיוון הסיבוב (CW/CCW)
+    double signedArea = 0.0;
+    for (int i = 0; i < n; i++) {
+      final j = (i + 1) % n;
+      // Shoelace formula: sum of (x_i * y_j - x_j * y_i)
+      signedArea += boundaryCoords[i][1] * boundaryCoords[j][0] -
+                    boundaryCoords[j][1] * boundaryCoords[i][0];
+    }
+    signedArea /= 2.0;
+    // signedArea > 0 → CCW, signedArea < 0 → CW
+    final isCCW = signedArea > 0;
+
+    final reflexVertices = <_SimpleCheckpoint>[];
+    for (int i = 0; i < n; i++) {
+      final prev = (i - 1 + n) % n;
+      final next = (i + 1) % n;
+
+      // וקטורים: prev→i, i→next
+      final dx1 = boundaryCoords[i][1] - boundaryCoords[prev][1]; // lng diff
+      final dy1 = boundaryCoords[i][0] - boundaryCoords[prev][0]; // lat diff
+      final dx2 = boundaryCoords[next][1] - boundaryCoords[i][1];
+      final dy2 = boundaryCoords[next][0] - boundaryCoords[i][0];
+
+      // Cross product: dx1*dy2 - dy1*dx2
+      final cross = dx1 * dy2 - dy1 * dx2;
+
+      // דילוג על קודקודים קולינאריים
+      if (cross.abs() < 1e-10) continue;
+
+      // קודקוד רפלקסיבי: ב-CCW cross < 0, ב-CW cross > 0
+      final isReflex = isCCW ? cross < 0 : cross > 0;
+      if (isReflex) {
+        reflexVertices.add(_SimpleCheckpoint(
+          id: '__reflex_$i',
+          lat: boundaryCoords[i][0],
+          lng: boundaryCoords[i][1],
+        ));
+      }
+    }
+
+    return reflexVertices;
+  }
+
+  /// בדיקה אם קטע (segment) נמצא לגמרי בתוך הפוליגון.
+  /// שני הקצוות חייבים להיות בפנים, אין חציית צלעות, ונקודת האמצע בפנים.
+  static bool _isSegmentInsidePolygon(
+    double lat1, double lng1,
+    double lat2, double lng2,
+    List<List<double>> boundaryCoords,
+    turf.Polygon boundaryPolygon,
+  ) {
+    // בדיקת endpoints — עם סובלנות לנקודות על הקצה
+    bool isEndpointInside(double lat, double lng) {
+      // בדיקה ראשונה: point-in-polygon רגיל
+      if (_pointInPolygon(lat, lng, boundaryCoords)) return true;
+
+      // בדיקה אם הנקודה היא קודקוד של הפוליגון (סובלנות מרחקית)
+      for (final coord in boundaryCoords) {
+        final dLat = (lat - coord[0]).abs();
+        final dLng = (lng - coord[1]).abs();
+        if (dLat < 1e-9 && dLng < 1e-9) return true;
+      }
+
+      // הזזה מזערית פנימה ובדיקה חוזרת (לנקודות על הקצה)
+      // חישוב centroid לקביעת כיוון "פנימה"
+      double cLat = 0, cLng = 0;
+      for (final c in boundaryCoords) {
+        cLat += c[0];
+        cLng += c[1];
+      }
+      cLat /= boundaryCoords.length;
+      cLng /= boundaryCoords.length;
+
+      final dx = cLat - lat;
+      final dy = cLng - lng;
+      final dist = sqrt(dx * dx + dy * dy);
+      if (dist < 1e-15) return true; // הנקודה היא ה-centroid
+
+      final nudgeLat = lat + dx / dist * 1e-8;
+      final nudgeLng = lng + dy / dist * 1e-8;
+      return _pointInPolygon(nudgeLat, nudgeLng, boundaryCoords);
+    }
+
+    if (!isEndpointInside(lat1, lng1)) return false;
+    if (!isEndpointInside(lat2, lng2)) return false;
+
+    // בדיקת חציית צלעות — 0 חציות נדרש
+    final segment = turf.LineString(coordinates: [
+      turf.Position(lng1, lat1),
+      turf.Position(lng2, lat2),
+    ]);
+    final intersections = turf.lineIntersect(segment, boundaryPolygon);
+    // סינון: חציות שנמצאות על קודקוד הפוליגון הן "נגיעה", לא חצייה אמיתית
+    int realCrossings = 0;
+    for (final feat in intersections.features) {
+      final pos = feat.geometry!.coordinates;
+      bool isVertex = false;
+      for (final coord in boundaryCoords) {
+        if ((pos.lat - coord[0]).abs() < 1e-7 &&
+            (pos.lng - coord[1]).abs() < 1e-7) {
+          isVertex = true;
+          break;
+        }
+      }
+      if (!isVertex) realCrossings++;
+    }
+    if (realCrossings > 0) return false;
+
+    // רשת ביטחון: נקודת אמצע חייבת להיות בפנים (מגן מפני מקרים קולינאריים)
+    final midLat = (lat1 + lat2) / 2;
+    final midLng = (lng1 + lng2) / 2;
+    if (!isEndpointInside(midLat, midLng)) return false;
+
+    return true;
+  }
+
+  /// בניית גרף נראות (Visibility Graph) מנקודות ומגבול פוליגון.
+  /// הצמתים: נקודות ציון + קודקודים רפלקסיביים + כל קודקודי הגבול.
+  /// הקשתות: כל זוג צמתים שהקטע ביניהם נמצא לגמרי בתוך הפוליגון,
+  /// + צלעות הפוליגון (תמיד חוקיות).
+  static _VisibilityGraph _buildVisibilityGraph(
+    List<_SimpleCheckpoint> checkpoints,
+    List<List<double>> boundaryCoords,
+  ) {
+    // 1. זיהוי קודקודים רפלקסיביים
+    final reflexVertices = _identifyReflexVertices(boundaryCoords);
+
+    // 2. יצירת צמתים לכל קודקודי הגבול
+    final boundaryVertices = <_SimpleCheckpoint>[];
+    for (int i = 0; i < boundaryCoords.length; i++) {
+      boundaryVertices.add(_SimpleCheckpoint(
+        id: '__bv_$i',
+        lat: boundaryCoords[i][0],
+        lng: boundaryCoords[i][1],
+      ));
+    }
+
+    // 3. איחוד כל הצמתים — checkpoints + boundary vertices
+    // (reflex vertices כלולים כבר כ-boundary vertices — אין צורך בכפילויות)
+    final allNodes = <_SimpleCheckpoint>[
+      ...checkpoints,
+      ...boundaryVertices,
+    ];
+
+    // הסרת כפילויות: קודקוד רפלקסיבי שגם הוא boundary vertex
+    // (שניהם באותו מיקום — reflex הוא תמיד גם boundary vertex)
+    // נשמור את ה-boundary vertices ונסיר את ה-reflex duplicates
+    final nodeMap = <String, _SimpleCheckpoint>{};
+    for (final node in allNodes) {
+      nodeMap[node.id] = node;
+    }
+    final nodes = nodeMap.values.toList();
+
+    // בניית turf Polygon פעם אחת
+    final ring = boundaryCoords.map((c) => turf.Position(c[1], c[0])).toList();
+    if (ring.first.lng != ring.last.lng || ring.first.lat != ring.last.lat) {
+      ring.add(ring.first);
+    }
+    final boundaryPolygon = turf.Polygon(coordinates: [ring]);
+
+    // 4. אתחול adjacency list
+    final adj = <String, Map<String, double>>{};
+    for (final node in nodes) {
+      adj[node.id] = {};
+    }
+
+    // 5. בדיקת כל זוגות הצמתים — O(N²)
+    for (int i = 0; i < nodes.length; i++) {
+      for (int j = i + 1; j < nodes.length; j++) {
+        final a = nodes[i];
+        final b = nodes[j];
+
+        if (_isSegmentInsidePolygon(
+          a.lat, a.lng, b.lat, b.lng, boundaryCoords, boundaryPolygon,
+        )) {
+          final dist = _haversine(a.lat, a.lng, b.lat, b.lng);
+          adj[a.id]![b.id] = dist;
+          adj[b.id]![a.id] = dist;
+        }
+      }
+    }
+
+    // 6. הוספת צלעות הפוליגון ללא תנאי (תמיד בתוך הפוליגון)
+    for (int i = 0; i < boundaryCoords.length; i++) {
+      final j = (i + 1) % boundaryCoords.length;
+      final idA = '__bv_$i';
+      final idB = '__bv_$j';
+      if (adj.containsKey(idA) && adj.containsKey(idB)) {
+        final dist = _haversine(
+          boundaryCoords[i][0], boundaryCoords[i][1],
+          boundaryCoords[j][0], boundaryCoords[j][1],
+        );
+        // כתיבה גם אם כבר קיים — צלע פוליגון תמיד חוקית
+        adj[idA]![idB] = dist;
+        adj[idB]![idA] = dist;
+      }
+    }
+
+    // 7. ולידציה: כל checkpoint מחובר לפחות ל-boundary vertex אחד
+    for (final cp in checkpoints) {
+      final hasAnyBvConnection = adj[cp.id]!.keys.any((id) => id.startsWith('__bv_'));
+      if (!hasAnyBvConnection) {
+        // חיבור כפוי ל-boundary vertex הקרוב ביותר
+        double minDist = double.infinity;
+        String? nearestBvId;
+        for (final bv in boundaryVertices) {
+          final d = _haversine(cp.lat, cp.lng, bv.lat, bv.lng);
+          if (d < minDist) {
+            minDist = d;
+            nearestBvId = bv.id;
+          }
+        }
+        if (nearestBvId != null) {
+          adj[cp.id]![nearestBvId] = minDist;
+          adj[nearestBvId]![cp.id] = minDist;
+          print('[VisibilityGraph] Force-connected ${cp.id} to $nearestBvId (${minDist.toStringAsFixed(3)} km)');
+        }
+      }
+    }
+
+    print('[VisibilityGraph] ${nodes.length} nodes '
+        '(${checkpoints.length} checkpoints, ${reflexVertices.length} reflex, '
+        '${boundaryVertices.length} boundary), '
+        '${adj.values.fold<int>(0, (sum, m) => sum + m.length) ~/ 2} edges');
+
+    return _VisibilityGraph(nodes: nodes, adj: adj);
+  }
+
+  /// Dijkstra — מציאת מסלולים קצרים ביותר ממקור יחיד.
+  /// מחזיר מרחק + רשימת צמתים (כולל מקור ויעד) לכל יעד נגיש.
+  /// O(N²) — מספיק ל-~150 צמתים.
+  static Map<String, ({double dist, List<String> path})> _dijkstraShortestPath(
+    String sourceId,
+    _VisibilityGraph graph,
+  ) {
+    final nodeIds = graph.nodes.map((n) => n.id).toSet();
+    if (!nodeIds.contains(sourceId)) return {};
+
+    final dist = <String, double>{};
+    final prev = <String, String?>{};
+    final visited = <String>{};
+
+    for (final id in nodeIds) {
+      dist[id] = double.infinity;
+      prev[id] = null;
+    }
+    dist[sourceId] = 0.0;
+
+    for (int iter = 0; iter < nodeIds.length; iter++) {
+      // מציאת הצומת הלא-מבוקר עם המרחק המינימלי
+      String? u;
+      double minDist = double.infinity;
+      for (final id in nodeIds) {
+        if (!visited.contains(id) && dist[id]! < minDist) {
+          minDist = dist[id]!;
+          u = id;
+        }
+      }
+      if (u == null) break; // כל הצמתים הנגישים כבר בוקרו
+
+      visited.add(u);
+
+      // רלקסציה של שכנים
+      final neighbors = graph.adj[u];
+      if (neighbors == null) continue;
+      for (final entry in neighbors.entries) {
+        final v = entry.key;
+        final weight = entry.value;
+        final alt = dist[u]! + weight;
+        if (alt < dist[v]!) {
+          dist[v] = alt;
+          prev[v] = u;
+        }
+      }
+    }
+
+    // בניית מסלולים
+    final result = <String, ({double dist, List<String> path})>{};
+    for (final id in nodeIds) {
+      if (dist[id] == double.infinity) continue;
+
+      // שחזור מסלול מ-prev
+      final path = <String>[];
+      String? current = id;
+      while (current != null) {
+        path.add(current);
+        current = prev[current];
+      }
+      path.reversed; // לא in-place, נהפוך ידנית
+      result[id] = (dist: dist[id]!, path: path.reversed.toList());
+    }
+
+    return result;
+  }
+
+  /// בניית מטריצת מרחקים מוגבלת (constrained) דרך גרף נראות.
+  /// כשיש גבול פוליגון — המרחקים הם אורך המסלול הקצר ביותר *בתוך* הפוליגון,
+  /// לא קו ישר. גם מחזיר את נקודות הביניים של כל מסלול.
+  static ({
+    Map<String, Map<String, double>> distMatrix,
+    Map<String, Map<String, List<_SimpleCheckpoint>>> pathMatrix,
+  }) _buildConstrainedDistanceMatrix(
+    List<_SimpleCheckpoint> allPoints,
+    List<List<double>>? boundaryCoords,
+  ) {
+    // Fallback: אין גבול → מטריצת מרחקים ישירה
+    if (boundaryCoords == null || boundaryCoords.length < 3) {
+      return (
+        distMatrix: _buildDistanceMatrix(allPoints),
+        pathMatrix: <String, Map<String, List<_SimpleCheckpoint>>>{},
+      );
+    }
+
+    // בניית גרף נראות
+    final graph = _buildVisibilityGraph(allPoints, boundaryCoords);
+
+    // מיפוי ID → _SimpleCheckpoint לכל צמתי הגרף
+    final nodeById = <String, _SimpleCheckpoint>{};
+    for (final node in graph.nodes) {
+      nodeById[node.id] = node;
+    }
+
+    // הרצת Dijkstra מכל checkpoint (לא מ-reflex/boundary — הם רק ביניים)
+    final checkpointIds = allPoints.map((p) => p.id).toSet();
+    final dijkstraResults = <String, Map<String, ({double dist, List<String> path})>>{};
+    for (final cp in allPoints) {
+      dijkstraResults[cp.id] = _dijkstraShortestPath(cp.id, graph);
+    }
+
+    // בניית מטריצות
+    final distMatrix = <String, Map<String, double>>{};
+    final pathMatrix = <String, Map<String, List<_SimpleCheckpoint>>>{};
+    for (final p in allPoints) {
+      distMatrix[p.id] = {};
+      pathMatrix[p.id] = {};
+    }
+
+    for (int i = 0; i < allPoints.length; i++) {
+      final a = allPoints[i];
+      distMatrix[a.id]![a.id] = 0.0;
+      pathMatrix[a.id]![a.id] = [];
+
+      for (int j = i + 1; j < allPoints.length; j++) {
+        final b = allPoints[j];
+        final result = dijkstraResults[a.id]?[b.id];
+
+        if (result != null && result.dist < double.infinity) {
+          distMatrix[a.id]![b.id] = result.dist;
+          distMatrix[b.id]![a.id] = result.dist;
+
+          // נקודות ביניים — ללא A ו-B עצמם
+          final intermediatePath = result.path
+              .where((id) => id != a.id && id != b.id)
+              .map((id) => nodeById[id])
+              .whereType<_SimpleCheckpoint>()
+              .toList();
+          pathMatrix[a.id]![b.id] = intermediatePath;
+          pathMatrix[b.id]![a.id] = intermediatePath.reversed.toList();
+        } else {
+          // Fallback: Dijkstra לא מצא מסלול → מרחק ענישתי (ישיר × 100)
+          // SA ימנע מקטע זה כי המרחק גבוה מאוד
+          final directDist = _haversine(a.lat, a.lng, b.lat, b.lng);
+          final penaltyDist = directDist * 100.0;
+          distMatrix[a.id]![b.id] = penaltyDist;
+          distMatrix[b.id]![a.id] = penaltyDist;
+          pathMatrix[a.id]![b.id] = [];
+          pathMatrix[b.id]![a.id] = [];
+          print('[ConstrainedDistMatrix] WARNING: no path found from ${a.id} to ${b.id}, '
+              'using penalty distance ${penaltyDist.toStringAsFixed(3)} km '
+              '(direct: ${directDist.toStringAsFixed(3)} km)');
+        }
+      }
+    }
+
+    print('[ConstrainedDistMatrix] ${allPoints.length}×${allPoints.length} matrix built '
+        'via visibility graph');
+
+    return (distMatrix: distMatrix, pathMatrix: pathMatrix);
+  }
+
+  /// בניית מטריצת הפרות לנת"בים בלבד (ללא בדיקת גבול — הגבול נאכף מבנית ע"י גרף נראות).
+  /// boundaryCrossings תמיד 0.
+  static Map<String, Map<String, _SegmentViolation>> _buildSafetyOnlyViolationMatrix(
+    List<_SimpleCheckpoint> allPoints,
+    List<List<List<double>>> safetyPolygons,
+  ) {
+    final matrix = <String, Map<String, _SegmentViolation>>{};
+    for (final p in allPoints) {
+      matrix[p.id] = {};
+    }
+
+    int safetyViolationPairs = 0;
+
+    for (int i = 0; i < allPoints.length; i++) {
+      final a = allPoints[i];
+      matrix[a.id]![a.id] = _SegmentViolation.none;
+
+      for (int j = i + 1; j < allPoints.length; j++) {
+        final b = allPoints[j];
+
+        // בדיקת חיתוך נת"בים בלבד
+        int safetyCrossed = 0;
+        for (final poly in safetyPolygons) {
+          if (_segmentIntersectsPolygon(a.lat, a.lng, b.lat, b.lng, poly)) {
+            safetyCrossed++;
+          }
+        }
+
+        if (safetyCrossed > 0) safetyViolationPairs++;
+
+        final violation = safetyCrossed > 0
+            ? _SegmentViolation(0, safetyCrossed)
+            : _SegmentViolation.none;
+        matrix[a.id]![b.id] = violation;
+        matrix[b.id]![a.id] = violation;
+      }
+    }
+
+    final totalPairs = allPoints.length * (allPoints.length - 1) ~/ 2;
+    print('[SafetyOnlyViolationMatrix] $totalPairs pairs checked: '
+        '$safetyViolationPairs safety violations (boundary enforced by visibility graph)');
+
+    return matrix;
+  }
+
+  /// בניית renderedPath — הנתיב המלא בתוך הפוליגון כולל נקודות ביניים מגרף הנראות.
+  /// לכל קטע ברצף (A→B), אם יש נקודות ביניים ב-pathMatrix — מוסיפים אותן.
+  static List<List<double>> _buildRenderedPath(
+    List<String> sequenceIds,
+    String? startId,
+    String? endId,
+    Map<String, Map<String, List<_SimpleCheckpoint>>> pathMatrix,
+    Map<String, _SimpleCheckpoint> cpById,
+  ) {
+    final fullSeq = <String>[
+      if (startId != null) startId,
+      ...sequenceIds,
+      if (endId != null) endId,
+    ];
+
+    if (fullSeq.isEmpty) return [];
+
+    final rendered = <List<double>>[];
+    for (int i = 0; i < fullSeq.length; i++) {
+      final current = cpById[fullSeq[i]];
+      if (current == null) continue;
+
+      // הוספת הנקודה הנוכחית
+      rendered.add([current.lat, current.lng]);
+
+      // הוספת נקודות ביניים לקטע הבא
+      if (i < fullSeq.length - 1) {
+        final intermediates = pathMatrix[fullSeq[i]]?[fullSeq[i + 1]];
+        if (intermediates != null && intermediates.isNotEmpty) {
+          for (final inter in intermediates) {
+            rendered.add([inter.lat, inter.lng]);
+          }
+        }
+      }
+    }
+
+    return rendered;
+  }
+
   /// Haversine distance (km)
   static double _haversine(double lat1, double lng1, double lat2, double lng2) {
     const R = 6371.0;
@@ -3493,6 +4024,17 @@ class RoutesDistributionService {
         status = 'optimal';
       }
 
+      // פירוק renderedPath לרשימת Coordinate (constrainedPath)
+      List<Coordinate>? constrainedPath;
+      if (r['renderedPath'] != null) {
+        final rendered = r['renderedPath'] as List<List<double>>;
+        if (rendered.length > 2) {
+          constrainedPath = rendered
+              .map((p) => Coordinate(lat: p[0], lng: p[1], utm: ''))
+              .toList();
+        }
+      }
+
       routes[entry.key] = domain.AssignedRoute(
         checkpointIds: List<String>.from(r['checkpointIds'] as List),
         routeLengthKm: routeLength,
@@ -3502,6 +4044,7 @@ class RoutesDistributionService {
         waypointIds: List<String>.from(r['waypointIds'] as List),
         status: status,
         isVerified: false,
+        constrainedPath: constrainedPath,
       );
     }
 

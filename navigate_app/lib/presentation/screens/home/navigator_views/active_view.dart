@@ -126,7 +126,8 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   // GPS tracking
   final GPSTrackingService _gpsTracker = GPSTrackingService();
   Timer? _trackSaveTimer;
-  Timer? _firestoreSyncTimer; // סנכרון ל-Firestore כל 2 דקות (נפרד משמירה ל-Drift)
+  Timer? _firestoreSyncTimer; // סנכרון ל-Firestore (תדירות מוגדרת — ברירת מחדל 30 שניות)
+  int? _overrideGpsSyncInterval; // דריסת תדירות סנכרון מהמפקד
   bool _isSavingTrack = false;
   bool _isSyncingToFirestore = false;
   int _lastSyncedPointCount = 0; // מספר נקודות בסנכרון האחרון — לזיהוי שינויים
@@ -1125,10 +1126,11 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       },
     );
 
-    // סנכרון ל-Firestore כל 2 דקות (נפרד משמירה ל-Drift — חיסכון בכתיבות)
+    // סנכרון ל-Firestore (תדירות מוגדרת — ברירת מחדל 30 שניות)
     _firestoreSyncTimer?.cancel();
+    final syncInterval = _overrideGpsSyncInterval ?? _nav.gpsSyncIntervalSeconds;
     _firestoreSyncTimer = Timer.periodic(
-      const Duration(minutes: 2),
+      Duration(seconds: syncInterval),
       (_) {
         if (session != _navigationSessionId) return;
         _syncTrackToFirestore();
@@ -1390,6 +1392,23 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       _trackSaveTimer = Timer.periodic(
         Duration(seconds: saveInterval),
         (_) => _saveTrackPointsLocal(),
+      );
+    }
+
+    // קריאת דריסת תדירות סנכרון GPS
+    final overrideGpsSyncInterval = (data['overrideGpsSyncIntervalSeconds'] as num?)?.toInt();
+    if (overrideGpsSyncInterval != _overrideGpsSyncInterval) {
+      _overrideGpsSyncInterval = overrideGpsSyncInterval;
+      final effectiveSyncInterval = overrideGpsSyncInterval ?? _nav.gpsSyncIntervalSeconds;
+      print('DEBUG ActiveView: GPS sync interval override changed to $effectiveSyncInterval seconds');
+      _firestoreSyncTimer?.cancel();
+      final session = _navigationSessionId;
+      _firestoreSyncTimer = Timer.periodic(
+        Duration(seconds: effectiveSyncInterval),
+        (_) {
+          if (session != _navigationSessionId) return;
+          _syncTrackToFirestore();
+        },
       );
     }
 

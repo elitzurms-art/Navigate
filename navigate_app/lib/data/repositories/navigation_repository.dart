@@ -28,8 +28,11 @@ import 'navigation_track_repository.dart';
 ///   /navigations/{navId}/scores/{navigatorId}         -- scoring
 class NavigationRepository {
   final AppDatabase _db = AppDatabase();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
   final SyncManager _syncManager = SyncManager();
+
+  NavigationRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   // Cache סטטי
   static final Map<String, RefCountedStream<NavigationDocSnapshot>>
@@ -134,6 +137,7 @@ class NavigationRepository {
               systemCheckStartTime: Value(navigation.systemCheckStartTime),
               activeStartTime: Value(navigation.activeStartTime),
               gpsUpdateIntervalSeconds: navigation.gpsUpdateIntervalSeconds,
+              gpsSyncIntervalSeconds: Value(navigation.gpsSyncIntervalSeconds),
               enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
               allowManualPosition: Value(navigation.allowManualPosition),
               gpsSpoofingDetectionEnabled: Value(navigation.gpsSpoofingDetectionEnabled),
@@ -238,6 +242,7 @@ class NavigationRepository {
           systemCheckStartTime: Value(navigation.systemCheckStartTime),
           activeStartTime: Value(navigation.activeStartTime),
           gpsUpdateIntervalSeconds: Value(navigation.gpsUpdateIntervalSeconds),
+          gpsSyncIntervalSeconds: Value(navigation.gpsSyncIntervalSeconds),
           enabledPositionSourcesJson: Value(jsonEncode(navigation.enabledPositionSources)),
           allowManualPosition: Value(navigation.allowManualPosition),
           gpsSpoofingDetectionEnabled: Value(navigation.gpsSpoofingDetectionEnabled),
@@ -514,6 +519,7 @@ class NavigationRepository {
       systemCheckStartTime: data.systemCheckStartTime,
       activeStartTime: data.activeStartTime,
       gpsUpdateIntervalSeconds: data.gpsUpdateIntervalSeconds,
+      gpsSyncIntervalSeconds: data.gpsSyncIntervalSeconds,
       enabledPositionSources: data.enabledPositionSourcesJson.isNotEmpty
           ? List<String>.from(jsonDecode(data.enabledPositionSourcesJson) as List)
           : const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
@@ -1302,6 +1308,7 @@ class NavigationRepository {
                   systemCheckStartTime: Value(nav.systemCheckStartTime),
                   activeStartTime: Value(nav.activeStartTime),
                   gpsUpdateIntervalSeconds: nav.gpsUpdateIntervalSeconds,
+                  gpsSyncIntervalSeconds: Value(nav.gpsSyncIntervalSeconds),
                   communicationSettingsJson: Value(jsonEncode(nav.communicationSettings.toMap())),
                   variablesSheetJson: Value(nav.variablesSheet != null
                       ? jsonEncode(nav.variablesSheet!.toMap())

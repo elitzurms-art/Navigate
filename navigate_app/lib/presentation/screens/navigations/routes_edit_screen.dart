@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -594,8 +595,18 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
             ));
           }
         }
+      } else if (route?.constrainedPath != null && route!.constrainedPath!.length >= 2) {
+        // נתיב מוגבל-גבול — visibility graph path
+        final points = route.constrainedPath!
+            .map((c) => LatLng(c.lat, c.lng))
+            .toList();
+        polylines.add(Polyline(
+          points: points,
+          color: color,
+          strokeWidth: strokeWidth,
+        ));
       } else {
-        // ניווט רגיל — ציר רציף בין הנקודות
+        // ניווט רגיל — ציר רציף בין הנקודות (קו ישר)
         final seq = _buildFullSequence(cps,
           startOverride: route?.startPointId,
           endOverride: route?.endPointId,
@@ -665,6 +676,10 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
         final lengthKm = _calculateRouteLength(sequence);
         final status = _getRouteStatus(lengthKm, checkpointIds: manualCps);
 
+        // בדיקה: האם הנקודות זהות לציר המקורי? אם כן — שומרים constrainedPath
+        final sameCheckpoints = existingRoute != null &&
+            listEquals(manualCps, existingRoute.checkpointIds);
+
         // שמירת ה-route הקיים עם עדכון הנקודות (שימור start/end per-navigator למאבטח)
         routes[uid] = domain.AssignedRoute(
           checkpointIds: manualCps,
@@ -678,6 +693,7 @@ class _RoutesEditScreenState extends State<RoutesEditScreen> {
           approvalStatus: existingRoute?.approvalStatus ?? 'not_submitted',
           plannedPath: existingRoute?.plannedPath ?? const [],
           narrationEntries: existingRoute?.narrationEntries ?? const [],
+          constrainedPath: sameCheckpoints ? existingRoute?.constrainedPath : null,
         );
       }
 

@@ -205,6 +205,7 @@ class Navigations extends Table {
   TextColumn get routesStage => text().nullable()(); // שלב תהליך הצירים
   BoolColumn get routesDistributed => boolean().withDefault(const Constant(false))(); // האם חולקו צירים
   IntColumn get gpsUpdateIntervalSeconds => integer()();
+  IntColumn get gpsSyncIntervalSeconds => integer().withDefault(const Constant(30))();
   TextColumn get enabledPositionSourcesJson => text().withDefault(const Constant('["gps","cellTower","pdr","pdrCellHybrid"]'))();
   BoolColumn get allowManualPosition => boolean().withDefault(const Constant(false))();
   BoolColumn get gpsSpoofingDetectionEnabled => boolean().withDefault(const Constant(true))();
@@ -258,6 +259,7 @@ class NavigationTracks extends Table {
   DateTimeColumn get starNavigatingEndTime => dateTime().nullable()();
   BoolColumn get starReturnedToCenter => boolean().withDefault(const Constant(false))();
   BoolColumn get overrideRevealEnabled => boolean().nullable()(); // nullable: null=nav default, true=force open, false=force closed
+  IntColumn get overrideGpsSyncIntervalSeconds => integer().nullable()(); // דריסת תדירות סנכרון GPS פר-מנווט
   TextColumn get overrideAlertSoundVolumesJson => text().nullable()(); // JSON עוצמות צליל פר-מנווט
 
   @override
@@ -431,7 +433,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 46;
+  int get schemaVersion => 47;
 
   @override
   MigrationStrategy get migration {
@@ -743,6 +745,11 @@ class AppDatabase extends _$AppDatabase {
         if (from <= 45 && to >= 46) {
           // Inline navigation layers (checkpoints, safetyPoints, boundaries, clusters)
           await safeAddColumn(navigations, navigations.layersJson);
+        }
+        if (from <= 46 && to >= 47) {
+          // תדירות סנכרון GPS ל-Firestore (ברמת ניווט + דריסה פר-מנווט)
+          await safeAddColumn(navigations, navigations.gpsSyncIntervalSeconds);
+          await safeAddColumn(navigationTracks, navigationTracks.overrideGpsSyncIntervalSeconds);
         }
       },
     );

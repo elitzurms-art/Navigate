@@ -1,3 +1,4 @@
+import 'package:latlong2/latlong.dart';
 import 'package:navigate_app/domain/entities/user.dart';
 import 'package:navigate_app/domain/entities/unit.dart';
 import 'package:navigate_app/domain/entities/navigation.dart';
@@ -10,6 +11,9 @@ import 'package:navigate_app/domain/entities/security_violation.dart';
 import 'package:navigate_app/domain/entities/navigation_score.dart';
 import 'package:navigate_app/domain/entities/navigation_tree.dart';
 import 'package:navigate_app/domain/entities/unit_checklist.dart';
+import 'package:navigate_app/domain/entities/navigator_status.dart';
+import 'package:navigate_app/domain/entities/commander_location.dart';
+import 'package:navigate_app/domain/entities/navigation_doc_snapshot.dart';
 
 final _now = DateTime(2026, 2, 15, 10, 0, 0);
 
@@ -317,9 +321,77 @@ Map<String, dynamic> buildMinimalNavigationMap([
       viewers: [],
     ).toMap(),
     'gpsUpdateIntervalSeconds': 30,
+    'gpsSyncIntervalSeconds': 30,
     'createdAt': _now.toIso8601String(),
     'updatedAt': _now.toIso8601String(),
   };
   base.addAll(overrides);
   return base;
+}
+
+NavigatorStatus createTestNavigatorStatus({
+  bool isConnected = true,
+  bool hasReported = true,
+  int batteryLevel = 85,
+  bool hasGPS = true,
+  int receptionLevel = 3,
+  double? latitude = 31.5,
+  double? longitude = 34.8,
+  String positionSource = 'gps',
+  DateTime? positionUpdatedAt,
+  double gpsAccuracy = 5.0,
+  String mapsStatus = 'completed',
+  bool hasMicrophonePermission = true,
+  bool hasPhonePermission = true,
+  bool hasDNDPermission = true,
+}) {
+  return NavigatorStatus(
+    isConnected: isConnected,
+    hasReported: hasReported,
+    batteryLevel: batteryLevel,
+    hasGPS: hasGPS,
+    receptionLevel: receptionLevel,
+    latitude: latitude,
+    longitude: longitude,
+    positionSource: positionSource,
+    positionUpdatedAt: positionUpdatedAt ?? _now,
+    gpsAccuracy: gpsAccuracy,
+    mapsStatus: mapsStatus,
+    hasMicrophonePermission: hasMicrophonePermission,
+    hasPhonePermission: hasPhonePermission,
+    hasDNDPermission: hasDNDPermission,
+  );
+}
+
+CommanderLocation createTestCommanderLocation({
+  String userId = '7654321',
+  String name = 'מפקד א',
+  double latitude = 31.5,
+  double longitude = 34.8,
+  DateTime? lastUpdate,
+}) {
+  return CommanderLocation(
+    userId: userId,
+    name: name,
+    position: LatLng(latitude, longitude),
+    lastUpdate: lastUpdate ?? _now,
+  );
+}
+
+NavigationDocSnapshot createTestNavigationDocSnapshot({
+  String id = 'nav-001',
+  Navigation? navigation,
+  bool emergencyActive = false,
+  int emergencyMode = 0,
+  String? activeBroadcastId,
+  String? cancelBroadcastId,
+}) {
+  return NavigationDocSnapshot(
+    id: id,
+    navigation: navigation,
+    emergencyActive: emergencyActive,
+    emergencyMode: emergencyMode,
+    activeBroadcastId: activeBroadcastId,
+    cancelBroadcastId: cancelBroadcastId,
+  );
 }

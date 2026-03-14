@@ -25,6 +25,7 @@ class AssignedRoute extends Equatable {
   final String? segmentType; // 'full', 'first_half', 'second_half' (רלוונטי למאבטח)
   final String? swapPointId; // נקודת ההחלפה (רלוונטי למאבטח)
   final int? manualTimeMinutes; // זמן ידני (דקות) — דורס את החישוב האוטומטי
+  final List<Coordinate>? constrainedPath; // full boundary-respecting path geometry
 
   /// תאימות אחורה — isApproved נגזר מ-approvalStatus
   bool get isApproved => approvalStatus == 'approved';
@@ -46,6 +47,7 @@ class AssignedRoute extends Equatable {
     this.segmentType,
     this.swapPointId,
     this.manualTimeMinutes,
+    this.constrainedPath,
   });
 
   AssignedRoute copyWith({
@@ -67,6 +69,8 @@ class AssignedRoute extends Equatable {
     String? swapPointId,
     int? manualTimeMinutes,
     bool clearManualTimeMinutes = false,
+    List<Coordinate>? constrainedPath,
+    bool clearConstrainedPath = false,
   }) {
     return AssignedRoute(
       checkpointIds: checkpointIds ?? this.checkpointIds,
@@ -85,6 +89,7 @@ class AssignedRoute extends Equatable {
       segmentType: segmentType ?? this.segmentType,
       swapPointId: swapPointId ?? this.swapPointId,
       manualTimeMinutes: clearManualTimeMinutes ? null : (manualTimeMinutes ?? this.manualTimeMinutes),
+      constrainedPath: clearConstrainedPath ? null : (constrainedPath ?? this.constrainedPath),
     );
   }
 
@@ -109,6 +114,8 @@ class AssignedRoute extends Equatable {
       if (segmentType != null) 'segmentType': segmentType,
       if (swapPointId != null) 'swapPointId': swapPointId,
       if (manualTimeMinutes != null) 'manualTimeMinutes': manualTimeMinutes,
+      if (constrainedPath != null && constrainedPath!.isNotEmpty)
+        'constrainedPath': constrainedPath!.map((c) => c.toMap()).toList(),
     };
   }
 
@@ -145,11 +152,16 @@ class AssignedRoute extends Equatable {
       segmentType: map['segmentType'] as String?,
       swapPointId: map['swapPointId'] as String?,
       manualTimeMinutes: map['manualTimeMinutes'] as int?,
+      constrainedPath: map['constrainedPath'] != null
+          ? (map['constrainedPath'] as List)
+              .map((c) => Coordinate.fromMap(c as Map<String, dynamic>))
+              .toList()
+          : null,
     );
   }
 
   @override
-  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId, manualTimeMinutes];
+  List<Object?> get props => [checkpointIds, routeLengthKm, sequence, startPointId, endPointId, waypointIds, status, isVerified, approvalStatus, rejectionNotes, plannedPath, narrationEntries, groupId, segmentType, swapPointId, manualTimeMinutes, constrainedPath];
 }
 
 /// אפשרות אישור כשחלוקה חורגת מהטווח
@@ -400,6 +412,7 @@ class Navigation extends Equatable {
 
   // Active settings
   final int gpsUpdateIntervalSeconds;
+  final int gpsSyncIntervalSeconds; // תדירות סנכרון GPS ל-Firestore (ברירת מחדל: 30 שניות)
 
   // Location sources
   final List<String> enabledPositionSources;
@@ -488,6 +501,7 @@ class Navigation extends Equatable {
     this.systemCheckStartTime,
     this.activeStartTime,
     required this.gpsUpdateIntervalSeconds,
+    this.gpsSyncIntervalSeconds = 30,
     this.enabledPositionSources = const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
     this.allowManualPosition = false,
     this.gpsSpoofingDetectionEnabled = true,
@@ -572,6 +586,7 @@ class Navigation extends Equatable {
     DateTime? systemCheckStartTime,
     DateTime? activeStartTime,
     int? gpsUpdateIntervalSeconds,
+    int? gpsSyncIntervalSeconds,
     List<String>? enabledPositionSources,
     bool? allowManualPosition,
     bool? gpsSpoofingDetectionEnabled,
@@ -636,6 +651,7 @@ class Navigation extends Equatable {
       systemCheckStartTime: systemCheckStartTime ?? this.systemCheckStartTime,
       activeStartTime: activeStartTime ?? this.activeStartTime,
       gpsUpdateIntervalSeconds: gpsUpdateIntervalSeconds ?? this.gpsUpdateIntervalSeconds,
+      gpsSyncIntervalSeconds: gpsSyncIntervalSeconds ?? this.gpsSyncIntervalSeconds,
       enabledPositionSources: enabledPositionSources ?? this.enabledPositionSources,
       allowManualPosition: allowManualPosition ?? this.allowManualPosition,
       gpsSpoofingDetectionEnabled: gpsSpoofingDetectionEnabled ?? this.gpsSpoofingDetectionEnabled,
@@ -705,6 +721,7 @@ class Navigation extends Equatable {
       if (activeStartTime != null)
         'activeStartTime': activeStartTime!.toIso8601String(),
       'gpsUpdateIntervalSeconds': gpsUpdateIntervalSeconds,
+      'gpsSyncIntervalSeconds': gpsSyncIntervalSeconds,
       'enabledPositionSources': enabledPositionSources,
       'allowManualPosition': allowManualPosition,
       'gpsSpoofingDetectionEnabled': gpsSpoofingDetectionEnabled,
@@ -804,6 +821,7 @@ class Navigation extends Equatable {
       systemCheckStartTime: _parseDateTimeOrNull(map['systemCheckStartTime']),
       activeStartTime: _parseDateTimeOrNull(map['activeStartTime']),
       gpsUpdateIntervalSeconds: map['gpsUpdateIntervalSeconds'] as int? ?? 5,
+      gpsSyncIntervalSeconds: (map['gpsSyncIntervalSeconds'] as num?)?.toInt() ?? 30,
       enabledPositionSources: (map['enabledPositionSources'] as List?)?.cast<String>() ?? const ['gps', 'cellTower', 'pdr', 'pdrCellHybrid'],
       allowManualPosition: map['allowManualPosition'] as bool? ?? false,
       gpsSpoofingDetectionEnabled: map['gpsSpoofingDetectionEnabled'] as bool? ?? true,
@@ -886,6 +904,7 @@ class Navigation extends Equatable {
     systemCheckStartTime,
     activeStartTime,
     gpsUpdateIntervalSeconds,
+    gpsSyncIntervalSeconds,
     enabledPositionSources,
     allowManualPosition,
     gpsSpoofingDetectionEnabled,

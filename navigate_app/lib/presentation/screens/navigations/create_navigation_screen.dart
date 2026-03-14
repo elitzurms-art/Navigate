@@ -63,6 +63,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   List<domain_unit.Unit> _permittedUnits = [];
   bool _isLoading = false;
   bool _isSaving = false;
+  bool _isUpdatingLayers = false;
 
   // הגדרות שטח ומשתתפים
   double _distanceMin = 5.0;
@@ -91,12 +92,26 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
   // הגדרות ניווט
   int _gpsUpdateInterval = 5; // דינמי ברירת מחדל
+  int _gpsSyncInterval = 30; // תדירות סנכרון GPS ל-Firestore (ברירת מחדל: 30 שניות)
 
   String get _samplingModeDescription {
     if (_gpsUpdateInterval <= 2) return 'GPS רציף + PDR — צריכת סוללה גבוהה';
     if (_gpsUpdateInterval <= 10) return 'איזון מושלם — דגימה כל 5 שניות';
     return 'חיסכון סוללה — דגימה כל 30 שניות, ללא PDR';
   }
+
+  static const Map<int, String> _syncIntervalLabels = {
+    5: '5 שניות',
+    15: '15 שניות',
+    30: '30 שניות',
+    60: 'דקה',
+    120: '2 דקות',
+    300: '5 דקות',
+    600: '10 דקות',
+    1800: '30 דקות',
+    3600: 'שעה',
+    7200: 'שעתיים',
+  };
 
   // הגדרות מיקום
   bool _useAllPositionSources = true;
@@ -416,6 +431,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
 
     // הגדרות GPS
     _gpsUpdateInterval = nav.gpsUpdateIntervalSeconds;
+    _gpsSyncInterval = nav.gpsSyncIntervalSeconds;
 
     // הגדרות מיקום
     final sources = nav.enabledPositionSources;
@@ -631,7 +647,16 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (widget.navigation != null) {
-          // מצב עריכה: שמירה אוטומטית — תמיד אפשר לחזור
+          // מצב עריכה: חסימת חזרה בזמן עדכון שכבות
+          if (_isSaving || _isUpdatingLayers) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('ממתין לסיום עדכון שכבות...'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+            return;
+          }
           Navigator.pop(context, true);
         } else if (_hasUnsavedChanges) {
           // מצב יצירה עם שינויים: אזהרה
@@ -863,7 +888,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                           child: Text(b.name),
                         );
                       }).toList(),
-                      onChanged: (_selectedArea == null || _isSaving) ? null : (value) {
+                      onChanged: (_selectedArea == null || _isSaving || _isUpdatingLayers) ? null : (value) {
                         if (value != null) _onSimpleBoundarySelected(value);
                       },
                     ),
@@ -888,11 +913,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.edit),
-                          onPressed: _openBoundarySetup,
+                          onPressed: _isUpdatingLayers ? null : _openBoundarySetup,
                         ),
                         IconButton(
                           icon: const Icon(Icons.close, color: Colors.red),
-                          onPressed: () async {
+                          onPressed: _isUpdatingLayers ? null : () async {
                             if (!await _confirmBoundaryChange()) return;
                             setState(() {
                               _boundaryResult = null;
@@ -911,7 +936,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.add_location_alt),
                     label: const Text('הגדרת גבול ניווט מתקדם'),
-                    onPressed: _selectedArea != null ? _openBoundarySetup : null,
+                    onPressed: (_selectedArea != null && !_isUpdatingLayers) ? _openBoundarySetup : null,
                   ),
                 ),
                 FormField<String>(
@@ -925,6 +950,18 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 ),
               ],
             ],
+            if (_isUpdatingLayers)
+              Container(
+                padding: const EdgeInsets.all(12),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 10),
+                    Text('מעדכן שכבות ניווט...', style: TextStyle(color: Colors.blue)),
+                  ],
+                ),
+              ),
             const SizedBox(height: 16),
 
             // בחירת מסגרת מנווטת
@@ -1082,9 +1119,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   }
 
   /// סימון שינוי בהגדרות — במצב עריכה: שמירה אוטומטית עם debounce
-  void _onSettingChanged() {
+  void _onSettingChanged({bool skipAutoSave = false}) {
     _hasUnsavedChanges = true;
-    if (widget.navigation != null) {
+    if (widget.navigation != null && !skipAutoSave) {
       _autoSaveTimer?.cancel();
       _autoSaveTimer = Timer(const Duration(seconds: 1), () {
         if (mounted) _performSave(silent: true);
@@ -1352,6 +1389,32 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                 onSelectionChanged: (Set<int> sel) {
                   setState(() => _gpsUpdateInterval = sel.first);
                   _onSettingChanged();
+                },
+              ),
+            ),
+            const Divider(),
+            // תדירות סנכרון GPS ל-Firestore
+            ListTile(
+              leading: const Icon(Icons.sync, color: Colors.blue),
+              title: const Text('תדירות סנכרון מיקום'),
+              subtitle: Text(_syncIntervalLabels[_gpsSyncInterval] ?? '$_gpsSyncInterval שניות'),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<int>(
+                value: _syncIntervalLabels.containsKey(_gpsSyncInterval) ? _gpsSyncInterval : 30,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: _syncIntervalLabels.entries
+                    .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    setState(() => _gpsSyncInterval = v);
+                    _onSettingChanged();
+                  }
                 },
               ),
             ),
@@ -2286,7 +2349,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         name: boundary.name,
       );
     });
-    _onSettingChanged();
+    _autoSaveTimer?.cancel();
+    _onSettingChanged(skipAutoSave: true);
+    if (widget.navigation != null) {
+      setState(() => _isUpdatingLayers = true);
+      _performSave(silent: true);
+    }
   }
 
   Future<void> _openBoundarySetup() async {
@@ -2312,7 +2380,12 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         _boundaryResult = result;
         _selectedSimpleBoundaryId = null;
       });
-      _onSettingChanged();
+      _autoSaveTimer?.cancel();
+      _onSettingChanged(skipAutoSave: true);
+      if (widget.navigation != null) {
+        setState(() => _isUpdatingLayers = true);
+        _performSave(silent: true);
+      }
     }
   }
 
@@ -2483,6 +2556,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         systemCheckStartTime: widget.navigation?.systemCheckStartTime,
         activeStartTime: widget.navigation?.activeStartTime,
         gpsUpdateIntervalSeconds: _gpsUpdateInterval,
+        gpsSyncIntervalSeconds: _gpsSyncInterval,
         enabledPositionSources: _buildEnabledPositionSources(),
         allowManualPosition: _allowManualPosition,
         gpsSpoofingDetectionEnabled: _gpsSpoofingDetectionEnabled,
@@ -2577,6 +2651,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
               ),
             );
           }
+          if (mounted) setState(() => _isUpdatingLayers = false);
+        } else {
+          if (mounted) setState(() => _isUpdatingLayers = false);
         }
       }
 
@@ -2616,7 +2693,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       }
     } finally {
       if (mounted) {
-        setState(() => _isSaving = false);
+        setState(() {
+          _isSaving = false;
+          _isUpdatingLayers = false;
+        });
       }
       if (_needsResave) {
         _needsResave = false;

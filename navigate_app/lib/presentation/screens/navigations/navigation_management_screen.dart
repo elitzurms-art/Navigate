@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -98,6 +99,15 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   StreamSubscription<Map<String, dynamic>?>? _cancelAckListener;
   List<String> _cancelAcknowledgedBy = [];
   Timer? _cancelAutoRetryTimer;
+  // שידור חירום — דיאלוג למפקדים אחרים
+  bool _commanderEmergencyDialogShowing = false;
+  bool _commanderRoutineDialogShowing = false;
+  bool _wasInCommanderEmergency = false;
+  String? _lastShownCommanderBroadcastId;
+  AudioPlayer? _commanderEmergencyPlayer;
+  Timer? _commanderVibrationTimer;
+  bool _iSentEmergencyBroadcast = false;
+  bool _iSentCancelBroadcast = false;
 
   List<Checkpoint> _checkpoints = [];
   List<NavBoundary> _boundaries = [];
@@ -142,7 +152,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   final Map<String, bool> _navigatorOverrideWalkieTalkieEnabled = {};
   Map<String, bool?> _navigatorOverrideRevealEnabled = {};
   final Map<String, int?> _navigatorGpsIntervalOverride = {};
+  final Map<String, int?> _navigatorGpsSyncIntervalOverride = {};
   final Map<String, List<String>?> _navigatorPositionSourcesOverride = {};
+
+  static const Map<int, String> _gpsSyncIntervalLabels = {
+    5: '5 שניות',
+    15: '15 שניות',
+    30: '30 שניות',
+    60: 'דקה',
+    120: '2 דקות',
+    300: '5 דקות',
+    600: '10 דקות',
+    1800: '30 דקות',
+    3600: 'שעה',
+    7200: 'שעתיים',
+  };
   // דריסות עוצמות צליל פר-מנווט: navigatorId -> { alertTypeCode -> volume }
   final Map<String, Map<String, double>> _navigatorAlertSoundVolumes = {};
 
@@ -210,6 +234,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startPunchesListener();
     _startExtensionRequestListener();
     _startEmergencyFlagListener();
+    _initCommanderEmergencyAlarm();
     _startSafetyTimeMonitor();
     _startSyncListener();
     // רענון תקופתי כל 15 שניות
@@ -251,6 +276,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _autoRetryTimer?.cancel();
     _cancelAckListener?.cancel();
     _cancelAutoRetryTimer?.cancel();
+    _commanderVibrationTimer?.cancel();
+    _commanderEmergencyPlayer?.dispose();
     _syncListener?.cancel();
     _removeTacticalMenu();
     _tabController.dispose();
@@ -330,6 +357,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
       _navigatorOverrideShowRouteOnMap[navigatorId] = widget.navigation.showRouteOnMap;
       _navigatorOverrideWalkieTalkieEnabled[navigatorId] = widget.navigation.communicationSettings.walkieTalkieEnabled;
       _navigatorGpsIntervalOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
+      _navigatorGpsSyncIntervalOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
       _navigatorPositionSourcesOverride[navigatorId] = null; // null = שימוש בברירת מחדל של הניווט
 
       // ברירת מחדל טוגלי התראות — כל הסוגים, ברירת מחדל מהגדרות הניווט
@@ -1212,6 +1240,9 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
         }
         if (data.containsKey('overrideGpsIntervalSeconds')) {
           _navigatorGpsIntervalOverride[navigatorId] = data['overrideGpsIntervalSeconds'] as int?;
+        }
+        if (data.containsKey('overrideGpsSyncIntervalSeconds')) {
+          _navigatorGpsSyncIntervalOverride[navigatorId] = (data['overrideGpsSyncIntervalSeconds'] as num?)?.toInt();
         }
         if (data.containsKey('overrideEnabledPositionSources')) {
           final sources = data['overrideEnabledPositionSources'];
@@ -4987,6 +5018,59 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                         );
                       }(),
 
+                      // 6.6 תדירות סנכרון מיקום (פר-מנווט)
+                      const Divider(height: 16),
+                      const Text('תדירות סנכרון מיקום', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 4),
+                      () {
+                        final overrideVal = _navigatorGpsSyncIntervalOverride[navigatorId];
+                        final isOverridden = overrideVal != null;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isOverridden)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text('דריסה פעילה — שונה מברירת המחדל',
+                                    style: TextStyle(fontSize: 11, color: Colors.orange[700])),
+                              ),
+                            DropdownButton<int?>(
+                              value: overrideVal,
+                              isExpanded: true,
+                              items: [
+                                const DropdownMenuItem(value: null, child: Text('ברירת מחדל')),
+                                ..._gpsSyncIntervalLabels.entries
+                                    .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))),
+                              ],
+                              onChanged: (v) {
+                                setState(() => _navigatorGpsSyncIntervalOverride[navigatorId] = v);
+                                setSheetState(() {});
+                                final trackId = _navigatorTrackIds[navigatorId];
+                                if (trackId != null) {
+                                  NavigationTrackRepository().updateGpsSyncIntervalOverride(trackId, intervalSeconds: v);
+                                }
+                              },
+                            ),
+                            if (isOverridden)
+                              Align(
+                                alignment: AlignmentDirectional.centerEnd,
+                                child: TextButton.icon(
+                                  icon: const Icon(Icons.restart_alt, size: 16),
+                                  label: const Text('חזרה לברירת מחדל', style: TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    setState(() => _navigatorGpsSyncIntervalOverride[navigatorId] = null);
+                                    setSheetState(() {});
+                                    final trackId = _navigatorTrackIds[navigatorId];
+                                    if (trackId != null) {
+                                      NavigationTrackRepository().updateGpsSyncIntervalOverride(trackId, intervalSeconds: null);
+                                    }
+                                  },
+                                ),
+                              ),
+                          ],
+                        );
+                      }(),
+
                       // 7. נתונים חיים
                       const Divider(height: 20),
                       const Text('נתונים חיים', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -5273,6 +5357,10 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           break;
         case 'gpsInterval':
           _navigatorGpsIntervalOverride[navigatorId] = null;
+          break;
+        case 'gpsSyncInterval':
+          _navigatorGpsSyncIntervalOverride[navigatorId] = null;
+          await _trackRepo.updateGpsSyncIntervalOverride(trackId, intervalSeconds: null);
           break;
         case 'positionSources':
           _navigatorPositionSourcesOverride[navigatorId] = null;
@@ -6395,7 +6483,32 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
           _activeBroadcastId = broadcastId;
           _startAckListener(broadcastId);
           _startAutoRetryTimer(broadcastId);
+
+          // שידור חירום — הודעה למפקדים אחרים (שלא הפעילו את השידור)
+          if (!_iSentEmergencyBroadcast && broadcastId != _lastShownCommanderBroadcastId) {
+            EmergencyBroadcastRepository()
+                .getBroadcastDoc(widget.navigation.id, broadcastId)
+                .then((data) {
+              if (!mounted || _commanderEmergencyDialogShowing) return;
+              data ??= {};
+              _showCommanderEmergencyDialog(
+                message: data['message'] as String? ?? '',
+                instructions: data['instructions'] as String? ?? '',
+                broadcastId: broadcastId,
+              );
+            });
+          }
+          _iSentCancelBroadcast = false;
         } else if (!active) {
+          // חזרה לשגרה — הודעה למפקדים אחרים (שלא ביטלו)
+          if (_wasInCommanderEmergency && !_iSentCancelBroadcast) {
+            _wasInCommanderEmergency = false;
+            _showCommanderReturnToRoutineDialog(
+              cancelBroadcastId: snap.cancelBroadcastId,
+            );
+          }
+          _iSentEmergencyBroadcast = false;
+
           _ackListener?.cancel();
           _autoRetryTimer?.cancel();
           _activeBroadcastId = null;
@@ -6538,6 +6651,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     String instructions,
     int emergencyMode,
   ) async {
+    _iSentEmergencyBroadcast = true;
     try {
       final me = _currentUser?.uid;
       final participants = <String>{
@@ -6587,6 +6701,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
   }
 
   Future<void> _deactivateEmergencyMode() async {
+    _iSentCancelBroadcast = true;
     try {
       final me = _currentUser?.uid;
       final participants = <String>{
@@ -6616,6 +6731,201 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     } catch (e) {
       print('DEBUG NavigationManagement: deactivate emergency error: $e');
     }
+  }
+
+  // =========================================================================
+  // Commander Emergency Dialog (for other commanders)
+  // =========================================================================
+
+  void _initCommanderEmergencyAlarm() {
+    _commanderEmergencyPlayer = AudioPlayer();
+    _commanderEmergencyPlayer!.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        usageType: AndroidUsageType.alarm,
+        contentType: AndroidContentType.sonification,
+        audioFocus: AndroidAudioFocus.gainTransient,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.duckOthers},
+      ),
+    ));
+  }
+
+  /// דיאלוג חירום למפקדים — כמו של מנווט אבל בלי פתיחת מפה
+  void _showCommanderEmergencyDialog({
+    required String message,
+    required String instructions,
+    String? broadcastId,
+  }) {
+    if (_commanderEmergencyDialogShowing || _commanderRoutineDialogShowing) return;
+    _commanderEmergencyDialogShowing = true;
+    _wasInCommanderEmergency = true;
+    _lastShownCommanderBroadcastId = broadcastId;
+
+    // הפעלת סירנת חירום
+    _commanderEmergencyPlayer?.setReleaseMode(ReleaseMode.loop);
+    _commanderEmergencyPlayer?.play(AssetSource('sounds/emergency_siren.wav'));
+
+    // רטט כל 2 שניות
+    _commanderVibrationTimer?.cancel();
+    _commanderVibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      HapticFeedback.heavyImpact();
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.red[50],
+          icon: const Icon(Icons.campaign, color: Colors.red, size: 48),
+          title: const Text(
+            'שידור חירום',
+            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(message, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              if (instructions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    border: Border.all(color: Colors.orange),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(instructions, style: const TextStyle(fontSize: 14)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle),
+                label: const Text('אישור והבנתי'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () {
+                  _commanderEmergencyPlayer?.stop();
+                  _commanderVibrationTimer?.cancel();
+                  _commanderEmergencyDialogShowing = false;
+                  Navigator.of(ctx).pop();
+
+                  // כתיבת אישור קבלה
+                  if (broadcastId != null && _currentUser != null) {
+                    EmergencyBroadcastRepository().acknowledge(
+                      widget.navigation.id, broadcastId, _currentUser!.uid);
+                  }
+                  // מפקדים — אין פתיחת מפה
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// דיאלוג חזרה לשגרה למפקדים — כמו של מנווט אבל בלי סגירת מפה
+  void _showCommanderReturnToRoutineDialog({String? cancelBroadcastId}) {
+    if (_commanderRoutineDialogShowing) return;
+
+    // סגירת דיאלוג חירום אם עדיין פתוח
+    if (_commanderEmergencyDialogShowing) {
+      _commanderEmergencyPlayer?.stop();
+      _commanderVibrationTimer?.cancel();
+      _commanderEmergencyDialogShowing = false;
+      Navigator.of(context).pop();
+    }
+
+    _commanderRoutineDialogShowing = true;
+
+    // הפעלת סירנה — חזרה לשגרה
+    _commanderEmergencyPlayer?.setReleaseMode(ReleaseMode.loop);
+    _commanderEmergencyPlayer?.play(AssetSource('sounds/emergency_siren.wav'));
+
+    // רטט כל 2 שניות
+    _commanderVibrationTimer?.cancel();
+    _commanderVibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      HapticFeedback.heavyImpact();
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.green[50],
+          icon: const Icon(Icons.check_circle, color: Colors.green, size: 48),
+          title: const Text(
+            'חזרה לשגרה',
+            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          content: const Text(
+            'חזרה לשגרה — המשך בניווט',
+            style: TextStyle(fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle),
+                label: const Text('אישור'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () {
+                  _commanderEmergencyPlayer?.stop();
+                  _commanderVibrationTimer?.cancel();
+                  _commanderRoutineDialogShowing = false;
+                  Navigator.of(ctx).pop();
+
+                  // כתיבת אישור קבלה לביטול
+                  if (cancelBroadcastId != null && _currentUser != null) {
+                    EmergencyBroadcastRepository().acknowledge(
+                      widget.navigation.id, cancelBroadcastId, _currentUser!.uid);
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // =========================================================================
@@ -7195,6 +7505,19 @@ class _GlobalSettingsContent extends StatefulWidget {
 }
 
 class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
+  static const Map<int, String> _gpsSyncIntervalLabels = {
+    5: '5 שניות',
+    15: '15 שניות',
+    30: '30 שניות',
+    60: 'דקה',
+    120: '2 דקות',
+    300: '5 דקות',
+    600: '10 דקות',
+    1800: '30 דקות',
+    3600: 'שעה',
+    7200: 'שעתיים',
+  };
+
   late domain.Navigation _nav;
 
   @override
@@ -7574,6 +7897,38 @@ class _GlobalSettingsContentState extends State<_GlobalSettingsContent> {
                         ? 'איזון מושלם — דגימה כל 5 שניות'
                         : 'חיסכון סוללה — דגימה כל 30 שניות, ללא PDR',
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('תדירות סנכרון מיקום', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: DropdownButton<int>(
+                  value: _gpsSyncIntervalLabels.containsKey(_nav.gpsSyncIntervalSeconds) ? _nav.gpsSyncIntervalSeconds : 30,
+                  dropdownColor: const Color(0xFF2E2E2E),
+                  style: const TextStyle(color: Colors.white),
+                  isExpanded: true,
+                  items: _gpsSyncIntervalLabels.entries
+                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      _applySetting(
+                        _nav.copyWith(gpsSyncIntervalSeconds: v),
+                        'תדירות סנכרון מיקום',
+                        'gpsSyncInterval',
+                      );
+                    }
+                  },
+                ),
               ),
             ],
           ),

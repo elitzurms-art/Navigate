@@ -8,7 +8,10 @@ import '../sync/ref_counted_stream.dart';
 /// Repository לניהול דקירות נקודות
 class CheckpointPunchRepository {
   static const String _key = 'checkpoint_punches';
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  CheckpointPunchRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   static final Map<String, RefCountedStream<List<CheckpointPunch>>>
       _punchesStreams = {};

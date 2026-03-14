@@ -13,7 +13,10 @@ import '../../services/gps_tracking_service.dart';
 /// Repository לניהול רשומות track של מנווטים
 class NavigationTrackRepository {
   final AppDatabase _db = AppDatabase();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  NavigationTrackRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   // Cache סטטי — כי Repositories לא singletons
   static final Map<String, RefCountedStream<List<Map<String, dynamic>>>>
@@ -377,6 +380,20 @@ class NavigationTrackRepository {
           .collection(AppConstants.navigationTracksCollection)
           .doc(trackId)
           .update({'overrideRevealEnabled': enabled});
+    } catch (_) {}
+  }
+
+  /// עדכון דריסת תדירות סנכרון GPS פר-מנווט (Drift + Firestore)
+  Future<void> updateGpsSyncIntervalOverride(String trackId, {required int? intervalSeconds}) async {
+    await (_db.update(_db.navigationTracks)..where((t) => t.id.equals(trackId)))
+        .write(NavigationTracksCompanion(
+      overrideGpsSyncIntervalSeconds: Value(intervalSeconds),
+    ));
+    try {
+      await FirebaseFirestore.instance
+          .collection(AppConstants.navigationTracksCollection)
+          .doc(trackId)
+          .update({'overrideGpsSyncIntervalSeconds': intervalSeconds});
     } catch (_) {}
   }
 

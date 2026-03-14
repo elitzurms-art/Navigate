@@ -7,7 +7,10 @@ import '../sync/ref_counted_stream.dart';
 
 /// Repository לניהול מיקומי מפקדים בזמן אמת
 class CommanderStatusRepository {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  CommanderStatusRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   static final Map<String, RefCountedStream<Map<String, CommanderLocation>>>
       _streams = {};

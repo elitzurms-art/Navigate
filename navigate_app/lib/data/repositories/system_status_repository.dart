@@ -5,7 +5,10 @@ import '../sync/ref_counted_stream.dart';
 
 /// Repository לניהול סטטוסי מנווטים (system_status subcollection)
 class SystemStatusRepository {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  SystemStatusRepository({FirebaseFirestore? firestore})
+      : _firestore = firestore ?? FirebaseFirestore.instance;
 
   // Cache סטטי — כי Repositories לא singletons
   static final Map<String, RefCountedStream<Map<String, NavigatorStatus>>>

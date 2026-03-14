@@ -1706,6 +1706,7 @@ class SyncManager {
         routesStage: Value(data['routesStage'] as String?),
         gpsUpdateIntervalSeconds: (data['gpsUpdateIntervalSeconds'] as num?)?.toInt() ??
             AppConstants.defaultGpsUpdateInterval,
+        gpsSyncIntervalSeconds: Value((data['gpsSyncIntervalSeconds'] as num?)?.toInt() ?? 30),
         permissionsJson: data['permissionsJson'] as String? ??
             (data['permissions'] != null ? jsonEncode(data['permissions']) : '{}'),
         frameworkId: Value(data['frameworkId'] as String? ?? data['selectedUnitId'] as String?),

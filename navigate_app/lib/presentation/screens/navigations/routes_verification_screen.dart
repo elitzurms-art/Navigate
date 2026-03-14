@@ -1320,8 +1320,13 @@ class _RoutesVerificationScreenState extends State<RoutesVerificationScreen> wit
               polylines.add(PolylineLayer(polylines: starLines));
             }
           }
+        } else if (route.constrainedPath != null && route.constrainedPath!.length >= 2) {
+          // נתיב מוגבל-גבול — visibility graph path
+          points = route.constrainedPath!
+              .map((c) => LatLng(c.lat, c.lng))
+              .toList();
         } else {
-          // fallback — חיבור נקודות ציון ברצף
+          // fallback — חיבור נקודות ציון ברצף (קו ישר)
           if (route.startPointId != null) {
             final startPoint = checkpointsById[route.startPointId];
             if (startPoint != null && !startPoint.isPolygon && startPoint.coordinates != null) {
