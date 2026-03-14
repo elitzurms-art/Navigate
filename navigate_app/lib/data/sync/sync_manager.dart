@@ -1755,7 +1755,22 @@ class SyncManager {
     );
 
     // חילוץ שכבות inline אל טבלאות מקומיות
-    final layersData = data['layers'] as Map<String, dynamic>?;
+    Map<String, dynamic>? layersData = data['layers'] as Map<String, dynamic>?;
+    // Fallback: מסמכים ישנים עם שדות dot-notation (לפני התיקון)
+    if (layersData == null) {
+      final cp = data['layers.checkpoints'];
+      final sp = data['layers.safetyPoints'];
+      final bd = data['layers.boundaries'];
+      final cl = data['layers.clusters'];
+      if (cp != null || sp != null || bd != null || cl != null) {
+        layersData = {
+          if (cp != null) 'checkpoints': cp,
+          if (sp != null) 'safetyPoints': sp,
+          if (bd != null) 'boundaries': bd,
+          if (cl != null) 'clusters': cl,
+        };
+      }
+    }
     if (layersData == null && data['layersJson'] is String) {
       try {
         final parsed = jsonDecode(data['layersJson'] as String);
@@ -1886,13 +1901,7 @@ class SyncManager {
             ),
             creationMode: Value((data['creationMode'] as num?)?.toInt() ?? 3),
             geometryType: Value(data['geometryType'] as String? ?? 'polygon'),
-            multiPolygonCoordinatesJson: Value(
-              data['multiPolygonCoordinates'] != null
-                  ? (data['multiPolygonCoordinates'] is String
-                      ? data['multiPolygonCoordinates'] as String
-                      : jsonEncode(data['multiPolygonCoordinates']))
-                  : (data['multiPolygonCoordinatesJson'] as String?),
-            ),
+            multiPolygonCoordinatesJson: const Value(null),
             createdBy: data['createdBy'] as String? ?? '',
             createdAt: _parseDateTime(data['createdAt']) ?? DateTime.now(),
             updatedAt: _parseDateTime(data['updatedAt']) ?? DateTime.now(),

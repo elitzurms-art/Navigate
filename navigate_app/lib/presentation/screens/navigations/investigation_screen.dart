@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +35,8 @@ import '../../widgets/map_image_export.dart';
 import '../../widgets/fullscreen_map_screen.dart';
 import '../../widgets/checkpoint_style_utils.dart';
 import '../../../core/utils/permission_utils.dart';
+import '../../../data/sync/sync_manager.dart';
+import '../../../core/constants/app_constants.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -81,6 +84,7 @@ class InvestigationScreen extends StatefulWidget {
 
 class _InvestigationScreenState extends State<InvestigationScreen>
     with SingleTickerProviderStateMixin {
+  StreamSubscription? _syncListener;
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
@@ -174,13 +178,30 @@ class _InvestigationScreenState extends State<InvestigationScreen>
     if (!widget.isNavigator) {
       _tabController = TabController(length: 4, vsync: this);
     }
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadLayers();
+      }
+    });
     _loadAllData();
   }
 
   @override
   void dispose() {
+    _syncListener?.cancel();
     _tabController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _reloadLayers() async {
+    try {
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(
+        _currentNavigation.id,
+      );
+      if (mounted) {
+        setState(() => _navBoundaries = boundaries);
+      }
+    } catch (_) {}
   }
 
   // ===========================================================================

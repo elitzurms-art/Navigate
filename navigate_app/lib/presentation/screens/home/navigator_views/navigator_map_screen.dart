@@ -16,6 +16,8 @@ import '../../../../services/gps_service.dart';
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 
 /// מסך מפה מלא — נפתח מ-drawer בזמן ניווט פעיל
 class NavigatorMapScreen extends StatefulWidget {
@@ -52,6 +54,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
 
   List<SafetyPoint> _safetyPoints = [];
   List<nav.NavBoundary> _navBoundaries = [];
+  StreamSubscription? _syncListener;
   List<Checkpoint> _checkpoints = [];
 
   bool _showGG = true;
@@ -82,7 +85,27 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
       _startLocationTracking();
     }
     _loadMapLayers();
+    _startSyncListener();
     _startEmergencyFlagListener();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadNavBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadNavBoundaries() async {
+    try {
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+        widget.navigation.id,
+      );
+      if (mounted) {
+        setState(() => _navBoundaries = navBoundaries);
+      }
+    } catch (_) {}
   }
 
   /// טעינת שכבות מפה: ג"ג, נת"ב, נ"צ
@@ -136,6 +159,7 @@ class _NavigatorMapScreenState extends State<NavigatorMapScreen> {
   void dispose() {
     _emergencyFlagSubscription?.cancel();
     _emergencyTracksSubscription?.cancel();
+    _syncListener?.cancel();
     super.dispose();
   }
 

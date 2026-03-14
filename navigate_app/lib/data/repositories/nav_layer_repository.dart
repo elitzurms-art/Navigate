@@ -58,16 +58,13 @@ class NavLayerRepository {
         ..where((n) => n.id.equals(navigationId)))
         .write(NavigationsCompanion(layersJson: Value(jsonEncode(layersMap))));
 
-      // Queue navigation sync — dot-notation prevents overwriting unrelated layer types
+      // Queue navigation sync — nested map (not dot-notation, which set(merge:true) treats as literal keys)
       await _syncManager.queueOperation(
         collection: 'navigations',
         documentId: navigationId,
         operation: 'update',
         data: {
-          'layers.checkpoints': layersMap['checkpoints'],
-          'layers.safetyPoints': layersMap['safetyPoints'],
-          'layers.boundaries': layersMap['boundaries'],
-          'layers.clusters': layersMap['clusters'],
+          'layers': layersMap,
         },
       );
     } catch (e) {
@@ -381,13 +378,7 @@ class NavLayerRepository {
           ),
           creationMode: Value(boundary.creationMode.index),
           geometryType: Value(boundary.geometryType),
-          multiPolygonCoordinatesJson: Value(
-            boundary.multiPolygonCoordinates != null
-                ? jsonEncode(boundary.multiPolygonCoordinates!
-                    .map((poly) => poly.map((c) => c.toMap()).toList())
-                    .toList())
-                : null,
-          ),
+          multiPolygonCoordinatesJson: const Value(null),
           updatedAt: Value(boundary.updatedAt),
         ),
       );

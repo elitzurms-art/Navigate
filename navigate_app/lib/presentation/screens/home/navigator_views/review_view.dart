@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -7,6 +8,8 @@ import '../../../../domain/entities/navigation.dart' as domain;
 import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../../domain/entities/checkpoint.dart' as domain_cp;
 import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 import '../../../../domain/entities/safety_point.dart' as domain_sp;
 import '../../../../domain/entities/checkpoint_punch.dart';
 import '../../../../domain/entities/navigation_score.dart';
@@ -72,6 +75,7 @@ class _ReviewViewState extends State<ReviewView> {
   List<domain_cp.Checkpoint> _checkpoints = [];
   List<domain_sp.SafetyPoint> _safetyPoints = [];
   List<nav.NavBoundary> _navBoundaries = [];
+  StreamSubscription? _syncListener;
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = [];
   List<TrackPoint> _trackPoints = [];
@@ -109,6 +113,7 @@ class _ReviewViewState extends State<ReviewView> {
   void initState() {
     super.initState();
     _loadData();
+    _startSyncListener();
   }
 
   @override
@@ -118,6 +123,31 @@ class _ReviewViewState extends State<ReviewView> {
         widget.initialScore != oldWidget.initialScore) {
       setState(() => _score = widget.initialScore);
     }
+  }
+
+  @override
+  void dispose() {
+    _syncListener?.cancel();
+    super.dispose();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadNavBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadNavBoundaries() async {
+    try {
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+        widget.navigation.id,
+      );
+      if (mounted) {
+        setState(() => _navBoundaries = navBoundaries);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {

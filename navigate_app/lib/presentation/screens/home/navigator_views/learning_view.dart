@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -18,6 +19,8 @@ import '../../../../domain/entities/checkpoint.dart';
 import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/area_repository.dart';
 import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigation_repository.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
@@ -64,6 +67,7 @@ class _LearningViewState extends State<LearningView>
 
   List<SafetyPoint> _safetyPoints = [];
   List<NavBoundary> _navBoundaries = [];
+  StreamSubscription? _syncListener;
 
   bool _showGG = true;
   bool _showNZ = true;
@@ -113,6 +117,7 @@ class _LearningViewState extends State<LearningView>
     _loadCheckpoints();
     _loadDisplayNames();
     _loadMapLayers();
+    _startSyncListener();
     _promptMapDownload();
   }
 
@@ -183,6 +188,7 @@ class _LearningViewState extends State<LearningView>
 
   @override
   void dispose() {
+    _syncListener?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -453,6 +459,28 @@ class _LearningViewState extends State<LearningView>
       if (nav.selectedUnitId != null) {
         final unit = await UnitRepository().getById(nav.selectedUnitId!);
         if (unit != null && mounted) setState(() => _unitName = unit.name);
+      }
+    } catch (_) {}
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadNavBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadNavBoundaries() async {
+    try {
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+        _currentNavigation.id,
+      );
+      if (mounted) {
+        setState(() {
+          _navBoundaries = navBoundaries;
+          _boundaryName = navBoundaries.isNotEmpty ? navBoundaries.first.name : null;
+        });
       }
     } catch (_) {}
   }

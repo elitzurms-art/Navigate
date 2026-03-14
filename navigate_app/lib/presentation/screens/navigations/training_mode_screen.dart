@@ -11,6 +11,7 @@ import '../../../data/repositories/nav_layer_repository.dart';
 import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/safety_point_repository.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/sync/sync_manager.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../domain/entities/safety_point.dart';
 import '../../widgets/map_with_selector.dart';
@@ -117,6 +118,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
 
   // האזנה בזמן אמת לשינויים בניווט (צירים, סטטוסים)
   StreamSubscription<domain.Navigation?>? _navigationListener;
+  StreamSubscription? _syncListener;
   // polling fallback — למקרה שה-listener לא עובד (Windows threading bug)
   Timer? _navigationPollTimer;
 
@@ -148,6 +150,7 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
     _reloadNavigationFromDb();
     _startNavigationListener();
     _startNavigationPolling();
+    _startSyncListener();
 
     // אתחול בחירת מנווטים וסטטוסי אישור מהאובייקט שהתקבל
     for (final navigatorId in widget.navigation.routes.keys) {
@@ -159,10 +162,32 @@ class _TrainingModeScreenState extends State<TrainingModeScreen> with SingleTick
   void dispose() {
     _navigationListener?.cancel();
     _navigationPollTimer?.cancel();
+    _syncListener?.cancel();
     _autoStartTimer?.cancel();
     _autoEndTimer?.cancel();
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadBoundary();
+      }
+    });
+  }
+
+  Future<void> _reloadBoundary() async {
+    try {
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(
+        _currentNavigation.id,
+      );
+      if (mounted) {
+        setState(() {
+          _boundary = boundaries.isNotEmpty ? boundaries.first : null;
+        });
+      }
+    } catch (_) {}
   }
 
   void _initLearningSettings() {

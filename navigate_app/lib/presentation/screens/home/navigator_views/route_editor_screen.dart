@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -15,6 +16,8 @@ import '../../../../domain/entities/nav_layer.dart' as nav;
 import '../../../widgets/map_with_selector.dart';
 import '../../../widgets/map_controls.dart';
 import '../../../../core/map_config.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 import '../../../../services/elevation_service.dart';
 
 /// מסך עריכת ציר על המפה — ציור polyline בין נקודות ציון
@@ -64,6 +67,7 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
   List<SafetyPoint> _safetyPoints = [];
   List<nav.NavBoundary> _navBoundaries = [];
   nav.NavBoundary? _navigationBoundary;
+  StreamSubscription? _syncListener;
 
   bool _showGG = true;
   bool _showNZ = true;
@@ -90,7 +94,37 @@ class _RouteEditorScreenState extends State<RouteEditorScreen> {
     }
     _loadStartEndCheckpoints();
     _loadMapLayers();
+    _startSyncListener();
     if (_waypoints.length >= 2) _computeRouteElevation();
+  }
+
+  @override
+  void dispose() {
+    _syncListener?.cancel();
+    super.dispose();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadNavBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadNavBoundaries() async {
+    try {
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+        widget.navigation.id,
+      );
+      final navBoundary = navBoundaries.isNotEmpty ? navBoundaries.first : null;
+      if (mounted) {
+        setState(() {
+          _navBoundaries = navBoundaries;
+          _navigationBoundary = navBoundary;
+        });
+      }
+    } catch (_) {}
   }
 
   /// טעינת שכבות מפה: ג"ג, נת"ב — סנכרון גבולות מ-Firestore לפני קריאה מקומית

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +35,8 @@ import '../../../data/repositories/user_repository.dart';
 import '../../../data/repositories/navigation_tree_repository.dart';
 import '../../../domain/entities/navigation_tree.dart' as tree_domain;
 import '../../../core/utils/permission_utils.dart';
+import '../../../data/sync/sync_manager.dart';
+import '../../../core/constants/app_constants.dart';
 
 /// צבעי מסלול
 const _kPlannedRouteColor = Color(0xFFF44336); // אדום — מתוכנן
@@ -77,6 +80,7 @@ class ApprovalScreen extends StatefulWidget {
 
 class _ApprovalScreenState extends State<ApprovalScreen>
     with SingleTickerProviderStateMixin {
+  StreamSubscription? _syncListener;
   final NavLayerRepository _navLayerRepo = NavLayerRepository();
   final NavigationTrackRepository _trackRepo = NavigationTrackRepository();
   final CheckpointPunchRepository _punchRepo = CheckpointPunchRepository();
@@ -154,13 +158,30 @@ class _ApprovalScreenState extends State<ApprovalScreen>
     if (!widget.isNavigator) {
       _tabController = TabController(length: 4, vsync: this);
     }
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadLayers();
+      }
+    });
     _loadAllData();
   }
 
   @override
   void dispose() {
+    _syncListener?.cancel();
     _tabController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _reloadLayers() async {
+    try {
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(
+        _currentNavigation.id,
+      );
+      if (mounted) {
+        setState(() => _navBoundaries = boundaries);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadAllData() async {

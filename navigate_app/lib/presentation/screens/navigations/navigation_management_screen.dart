@@ -20,6 +20,7 @@ import '../../../data/repositories/navigation_repository.dart';
 import '../../../data/repositories/navigation_track_repository.dart';
 import '../../../data/repositories/navigator_alert_repository.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/sync/sync_manager.dart';
 import '../../../core/constants/hospitals_data.dart';
 import '../../../core/utils/geometry_utils.dart';
 import '../../../core/utils/utm_converter.dart';
@@ -96,6 +97,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
 
   List<Checkpoint> _checkpoints = [];
   List<NavBoundary> _boundaries = [];
+  StreamSubscription? _syncListener;
   bool _isLoading = false;
   bool _alreadyClosed = false;
 
@@ -207,6 +209,7 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _startExtensionRequestListener();
     _startEmergencyFlagListener();
     _startSafetyTimeMonitor();
+    _startSyncListener();
     // רענון תקופתי כל 15 שניות
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshNavigatorStatuses();
@@ -248,10 +251,30 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
     _autoRetryTimer?.cancel();
     _cancelAckListener?.cancel();
     _cancelAutoRetryTimer?.cancel();
+    _syncListener?.cancel();
     _removeTacticalMenu();
     _tabController.dispose();
     _voiceService?.dispose();
     super.dispose();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadLayers();
+      }
+    });
+  }
+
+  Future<void> _reloadLayers() async {
+    try {
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(
+        _currentNavigation.id,
+      );
+      if (mounted) {
+        setState(() => _boundaries = boundaries);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {

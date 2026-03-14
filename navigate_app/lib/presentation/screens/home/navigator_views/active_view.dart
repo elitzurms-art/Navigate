@@ -19,6 +19,7 @@ import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/navigator_alert_repository.dart';
 import '../../../../data/datasources/local/app_database.dart' hide User;
 import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 import '../../../../core/utils/geometry_utils.dart';
 import '../../../../domain/entities/checkpoint.dart' as domain_cp;
 import '../../../../services/gps_service.dart';
@@ -200,6 +201,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
   List<domain_sp.SafetyPoint> _starMapSafetyPoints = [];
   List<nav.NavBoundary> _starMapBoundaries = [];
   bool _starMapLayersLoaded = false;
+  StreamSubscription? _syncListener;
 
   DateTime get _adjustedNow => DateTime.now().add(_serverTimeOffset);
 
@@ -256,6 +258,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _overrideShowSelfLocation = widget.navigation.showSelfLocation;
     _overrideShowRouteOnMap = widget.navigation.showRouteOnMap;
     _loadTrackState();
+    _startSyncListener();
   }
 
   @override
@@ -307,6 +310,7 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     _barburAlertListener?.cancel();
     _guardPartnerListener?.cancel();
     _stopStarTicker();
+    _syncListener?.cancel();
     super.dispose();
   }
 
@@ -1530,6 +1534,23 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
     if (!_starMapLayersLoaded) {
       _loadStarMapLayers();
     }
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadStarMapBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadStarMapBoundaries() async {
+    try {
+      final boundaries = await _navLayerRepo.getBoundariesByNavigation(_nav.id);
+      if (mounted) {
+        setState(() => _starMapBoundaries = boundaries);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadStarMapLayers() async {

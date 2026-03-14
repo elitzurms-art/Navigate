@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,6 +13,8 @@ import '../../../../domain/entities/coordinate.dart';
 import '../../../../domain/entities/user.dart';
 import '../../../../data/repositories/checkpoint_repository.dart';
 import '../../../../data/repositories/nav_layer_repository.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../../data/sync/sync_manager.dart';
 import '../../../../data/repositories/safety_point_repository.dart';
 import '../../../../data/repositories/navigation_track_repository.dart';
 import '../../../../data/repositories/checkpoint_punch_repository.dart';
@@ -72,6 +75,7 @@ class _ApprovalViewState extends State<ApprovalView> {
   List<domain_cp.Checkpoint> _checkpoints = [];
   List<domain_sp.SafetyPoint> _safetyPoints = [];
   List<nav.NavBoundary> _navBoundaries = [];
+  StreamSubscription? _syncListener;
   List<LatLng> _plannedRoute = [];
   List<LatLng> _actualRoute = [];
   List<TrackPoint> _trackPoints = [];
@@ -91,12 +95,33 @@ class _ApprovalViewState extends State<ApprovalView> {
   void initState() {
     super.initState();
     _loadData();
+    _startSyncListener();
   }
 
   @override
   void dispose() {
+    _syncListener?.cancel();
     _voiceService?.dispose();
     super.dispose();
+  }
+
+  void _startSyncListener() {
+    _syncListener = SyncManager().onDataChanged.listen((collection) {
+      if (collection == AppConstants.navigationsCollection && mounted) {
+        _reloadNavBoundaries();
+      }
+    });
+  }
+
+  Future<void> _reloadNavBoundaries() async {
+    try {
+      final navBoundaries = await _navLayerRepo.getBoundariesByNavigation(
+        widget.navigation.id,
+      );
+      if (mounted) {
+        setState(() => _navBoundaries = navBoundaries);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {

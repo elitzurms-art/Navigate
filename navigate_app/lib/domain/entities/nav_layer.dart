@@ -292,8 +292,7 @@ class NavBoundary extends Equatable {
   final double strokeWidth;
   final List<String> sourceBoundaryIds; // רשימת מזהי גבולות מקוריים שגבול זה מכסה
   final NavBoundaryCreationMode creationMode;
-  final String geometryType; // 'polygon' או 'multipolygon'
-  final List<List<Coordinate>>? multiPolygonCoordinates; // רק ל-multipolygon
+  final String geometryType; // 'polygon' (נשאר לתאימות DB/Firestore)
   final String createdBy;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -311,28 +310,16 @@ class NavBoundary extends Equatable {
     this.sourceBoundaryIds = const [],
     this.creationMode = NavBoundaryCreationMode.legacy,
     this.geometryType = 'polygon',
-    this.multiPolygonCoordinates,
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
   });
 
-  /// כל הקואורדינטות — לפוליגון רגיל מחזיר coordinates,
-  /// ל-multipolygon מחזיר שטוח של כל הפוליגונים (לחישובי bounding box / center)
-  List<Coordinate> get allCoordinates {
-    if (geometryType == 'multipolygon' && multiPolygonCoordinates != null) {
-      return multiPolygonCoordinates!.expand((poly) => poly).toList();
-    }
-    return coordinates;
-  }
+  /// כל הקואורדינטות של הגבול
+  List<Coordinate> get allCoordinates => coordinates;
 
   /// רשימת כל הפוליגונים — לסינון נקודות בתוך גבולות
-  List<List<Coordinate>> get allPolygons {
-    if (geometryType == 'multipolygon' && multiPolygonCoordinates != null) {
-      return multiPolygonCoordinates!;
-    }
-    return [coordinates];
-  }
+  List<List<Coordinate>> get allPolygons => [coordinates];
 
   NavBoundary copyWith({
     String? id,
@@ -347,8 +334,6 @@ class NavBoundary extends Equatable {
     List<String>? sourceBoundaryIds,
     NavBoundaryCreationMode? creationMode,
     String? geometryType,
-    List<List<Coordinate>>? multiPolygonCoordinates,
-    bool clearMultiPolygon = false,
     String? createdBy,
     DateTime? createdAt,
     DateTime? updatedAt,

@@ -168,6 +168,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   Timer? _autoSaveTimer;
   Timer? _debounceTimer;
   bool _hasUnsavedChanges = false;
+  bool _needsResave = false;
 
   @override
   void initState() {
@@ -527,7 +528,6 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
           final nb = navBoundaries.first;
           _boundaryResult = BoundarySetupResult(
             coordinates: nb.coordinates,
-            multiPolygonCoordinates: nb.multiPolygonCoordinates,
             geometryType: nb.geometryType,
             creationMode: nb.creationMode,
             sourceBoundaryIds: nb.sourceBoundaryIds,
@@ -863,7 +863,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
                           child: Text(b.name),
                         );
                       }).toList(),
-                      onChanged: _selectedArea == null ? null : (value) {
+                      onChanged: (_selectedArea == null || _isSaving) ? null : (value) {
                         if (value != null) _onSimpleBoundarySelected(value);
                       },
                     ),
@@ -2223,6 +2223,23 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       if (orig.sourceBoundaryIds[i] != curr.sourceBoundaryIds[i]) return true;
     }
     if (orig.coordinates.length != curr.coordinates.length) return true;
+    // השוואת ערכי הקואורדינטות בפועל (Coordinate הוא Equatable)
+    for (int i = 0; i < orig.coordinates.length; i++) {
+      if (orig.coordinates[i] != curr.coordinates[i]) return true;
+    }
+    // השוואת multiPolygonCoordinates
+    final origMulti = orig.multiPolygonCoordinates;
+    final currMulti = curr.multiPolygonCoordinates;
+    if ((origMulti == null) != (currMulti == null)) return true;
+    if (origMulti != null && currMulti != null) {
+      if (origMulti.length != currMulti.length) return true;
+      for (int i = 0; i < origMulti.length; i++) {
+        if (origMulti[i].length != currMulti[i].length) return true;
+        for (int j = 0; j < origMulti[i].length; j++) {
+          if (origMulti[i][j] != currMulti[i][j]) return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -2316,7 +2333,11 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
   Future<void> _save() => _performSave();
 
   Future<void> _performSave({bool silent = false}) async {
-    if (_isSaving) return;
+    if (_isSaving) {
+      if (silent) _needsResave = true;
+      return;
+    }
+    _needsResave = false;
 
     // Silent mode (auto-save): skip validation, check required fields
     if (silent) {
@@ -2557,6 +2578,9 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
             boundaryName: _boundaryResult!.name,
           );
 
+          if (!copyResult.hasError) {
+            _originalBoundaryResult = _boundaryResult;
+          }
           if (mounted && !copyResult.hasError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -2609,6 +2633,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
+      }
+      if (_needsResave) {
+        _needsResave = false;
+        _performSave(silent: true);
       }
     }
   }
