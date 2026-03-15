@@ -261,11 +261,13 @@
     <div class="warning">המחיקה סופית ובלתי הפיכה</div>
   </div>
 
-  <!-- Step 1: Personal Number -->
+  <!-- Step 1: First Name + Last Name -->
   <div id="step1" class="step active">
-    <div class="step-title">שלב 1 — מספר אישי</div>
-    <label for="personalNumber">הזן מספר אישי (7 ספרות)</label>
-    <input type="text" id="personalNumber" maxlength="7" inputmode="numeric" autocomplete="off" placeholder="1234567">
+    <div class="step-title">שלב 1 — זיהוי משתמש</div>
+    <label for="firstName">שם פרטי</label>
+    <input type="text" id="firstName" autocomplete="off" placeholder="שם פרטי" style="direction: rtl; letter-spacing: 0; text-align: right; margin-bottom: 12px;">
+    <label for="lastName">שם משפחה</label>
+    <input type="text" id="lastName" autocomplete="off" placeholder="שם משפחה" style="direction: rtl; letter-spacing: 0; text-align: right;">
     <div id="step1Error" class="error-msg"></div>
     <button id="step1Btn" class="btn btn-primary" onclick="lookupUser()">המשך</button>
   </div>
@@ -367,15 +369,23 @@
 
   // ─── Step 1: Lookup User ───
   async function lookupUser() {
-    const input = document.getElementById("personalNumber");
-    const val = input.value.trim();
+    const firstNameInput = document.getElementById("firstName");
+    const lastNameInput = document.getElementById("lastName");
+    const firstVal = firstNameInput.value.trim();
+    const lastVal = lastNameInput.value.trim();
 
     setError("step1Error", "");
-    input.classList.remove("error");
+    firstNameInput.classList.remove("error");
+    lastNameInput.classList.remove("error");
 
-    if (!/^\d{7}$/.test(val)) {
-      input.classList.add("error");
-      setError("step1Error", "יש להזין מספר אישי בן 7 ספרות בלבד");
+    if (firstVal.length < 2) {
+      firstNameInput.classList.add("error");
+      setError("step1Error", "שם פרטי חייב להכיל לפחות 2 תווים");
+      return;
+    }
+    if (lastVal.length < 2) {
+      lastNameInput.classList.add("error");
+      setError("step1Error", "שם משפחה חייב להכיל לפחות 2 תווים");
       return;
     }
 
@@ -385,18 +395,21 @@
       const resp = await fetch(CF_BASE + "/httpLookupUserForDeletion", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personalNumber: val })
+        body: JSON.stringify({ firstName: firstVal, lastName: lastVal })
       });
 
       const data = await resp.json();
 
       if (!resp.ok || !data.exists) {
-        setError("step1Error", "לא נמצא חשבון עם מספר אישי זה");
+        const errMsg = data.error === "multiple_users_found"
+          ? "נמצאו כמה משתמשים עם שם זה, פנה לתמיכה"
+          : "לא נמצא חשבון עם שם זה";
+        setError("step1Error", errMsg);
         setLoading("step1Btn", false);
         return;
       }
 
-      personalNumber = val;
+      personalNumber = data.personalNumber || "";
       maskedEmail = data.maskedEmail || "";
       maskedPhone = data.maskedPhone || "";
 
@@ -475,6 +488,7 @@
     }
 
     // Need the real phone from the CF (we only have masked) — the CF returns fullPhone for signIn
+    // Use personalNumber (returned from lookup) for the second call
     const resp = await fetch(CF_BASE + "/httpLookupUserForDeletion", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -577,12 +591,13 @@
       });
     });
 
-    // Personal number — digits only
-    const pnInput = document.getElementById("personalNumber");
-    pnInput.addEventListener("input", () => {
-      pnInput.value = pnInput.value.replace(/\D/g, "").slice(0, 7);
+    // Name fields — Enter to submit
+    const firstNameInput = document.getElementById("firstName");
+    const lastNameInput = document.getElementById("lastName");
+    firstNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") lastNameInput.focus();
     });
-    pnInput.addEventListener("keydown", (e) => {
+    lastNameInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") lookupUser();
     });
   });

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -344,6 +345,47 @@ class AuthService {
     return null;
   }
 
+  /// כניסה לפי שם פרטי + שם משפחה — חיפוש מקומי, אם לא נמצא → Firestore fallback
+  Future<app_user.User?> loginByFullName(String firstName, String lastName) async {
+    final userRepo = UserRepository();
+
+    // 1. חיפוש מקומי
+    final localUser = await userRepo.getUserByFullName(firstName, lastName);
+    if (localUser != null) return localUser;
+
+    // 2. Firestore fallback
+    if (_auth.currentUser == null) {
+      try {
+        await _auth.signInAnonymously();
+      } catch (e) {
+        print('DEBUG loginByFullName: anonymous sign-in failed: $e');
+      }
+    }
+
+    try {
+      final query = await _firestore
+          .collection('users')
+          .where('firstName', isEqualTo: firstName)
+          .where('lastName', isEqualTo: lastName)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 5));
+
+      if (query.docs.isNotEmpty) {
+        final doc = query.docs.first;
+        final data = _sanitizeFirestoreData(doc.data());
+        data['uid'] = doc.id;
+        final user = app_user.User.fromMap(data);
+        await userRepo.saveUserLocally(user, queueSync: false);
+        return user;
+      }
+    } catch (e) {
+      print('DEBUG loginByFullName: Firestore lookup failed: $e');
+    }
+
+    return null;
+  }
+
   /// המרת אובייקטי Firestore Timestamp ל-ISO strings
   Map<String, dynamic> _sanitizeFirestoreData(Map<String, dynamic> data) {
     return data.map((key, value) {
@@ -490,6 +532,79 @@ class AuthService {
   }
 
   // ─── הרשמה ───
+
+  /// ייצור מספר אישי אוטומטי (6 ספרות) — ייחודי מקומית ו-Firestore
+  Future<String> generateUniquePersonalNumber() async {
+    final random = Random.secure();
+    final userRepo = UserRepository();
+
+    for (int attempt = 0; attempt < 20; attempt++) {
+      final number = (random.nextInt(900000) + 100000).toString(); // 100000-999999
+
+      // בדיקה מקומית
+      final localUser = await userRepo.getUserByPersonalNumber(number);
+      if (localUser != null) continue;
+
+      // בדיקה ב-Firestore
+      try {
+        final doc = await _firestore
+            .collection('users')
+            .doc(number)
+            .get()
+            .timeout(const Duration(seconds: 5));
+        if (doc.exists) continue;
+      } catch (e) {
+        // Firestore לא זמין — הסתמכות על בדיקה מקומית בלבד
+        print('DEBUG generateUniquePersonalNumber: Firestore check failed, using local only: $e');
+      }
+
+      return number;
+    }
+
+    throw Exception('לא ניתן לייצר מספר אישי ייחודי לאחר 20 ניסיונות');
+  }
+
+  /// בדיקה אם מספר טלפון כבר רשום (מקומי + phone_lookup ב-Firestore)
+  Future<bool> isPhoneNumberRegistered(String phoneNumber) async {
+    final normalized = phoneNumber.replaceAll(RegExp(r'[\s\-]'), '');
+    final userRepo = UserRepository();
+
+    // בדיקה מקומית
+    final localUser = await userRepo.getUserByPhoneNumber(normalized);
+    if (localUser != null) return true;
+
+    // בדיקה ב-Firestore phone_lookup (שני פורמטים)
+    try {
+      final doc = await _firestore
+          .collection('phone_lookup')
+          .doc(normalized)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      if (doc.exists) return true;
+
+      // פורמט אלטרנטיבי
+      String? altFormat;
+      if (normalized.startsWith('05') && normalized.length == 10) {
+        altFormat = '+972${normalized.substring(1)}';
+      } else if (normalized.startsWith('+9725')) {
+        altFormat = '0${normalized.substring(4)}';
+      }
+      if (altFormat != null) {
+        final altDoc = await _firestore
+            .collection('phone_lookup')
+            .doc(altFormat)
+            .get()
+            .timeout(const Duration(seconds: 5));
+        if (altDoc.exists) return true;
+      }
+    } catch (e) {
+      // Firestore לא זמין — offline-first, מניחים שלא רשום
+      print('DEBUG isPhoneNumberRegistered: Firestore check failed: $e');
+      return false;
+    }
+
+    return false;
+  }
 
   /// בדיקה אם מספר אישי כבר רשום (מקומי + Firestore עם timeout)
   Future<bool> isPersonalNumberRegistered(String personalNumber) async {

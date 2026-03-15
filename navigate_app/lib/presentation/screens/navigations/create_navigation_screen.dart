@@ -2403,7 +2403,10 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       if (widget.navigation == null) return;
       if (_nameController.text.isEmpty || _selectedArea == null ||
           _boundaryResult == null || _selectedUnit == null ||
-          _selectedTree == null) return;
+          _selectedTree == null) {
+        if (mounted) setState(() => _isUpdatingLayers = false);
+        return;
+      }
     } else {
       if (!_formKey.currentState!.validate()) return;
     }
@@ -2683,6 +2686,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
         }
       }
     } catch (e) {
+      if (mounted) setState(() => _isUpdatingLayers = false);
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2693,10 +2697,7 @@ class _CreateNavigationScreenState extends State<CreateNavigationScreen> {
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-          _isUpdatingLayers = false;
-        });
+        setState(() => _isSaving = false);
       }
       if (_needsResave) {
         _needsResave = false;

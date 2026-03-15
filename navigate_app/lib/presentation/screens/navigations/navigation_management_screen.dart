@@ -5024,7 +5024,8 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                       const SizedBox(height: 4),
                       () {
                         final overrideVal = _navigatorGpsSyncIntervalOverride[navigatorId];
-                        final isOverridden = overrideVal != null;
+                        final effectiveVal = overrideVal ?? _currentNavigation.gpsSyncIntervalSeconds;
+                        final isOverridden = overrideVal != null && overrideVal != _currentNavigation.gpsSyncIntervalSeconds;
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -5034,20 +5035,21 @@ class _NavigationManagementScreenState extends State<NavigationManagementScreen>
                                 child: Text('דריסה פעילה — שונה מברירת המחדל',
                                     style: TextStyle(fontSize: 11, color: Colors.orange[700])),
                               ),
-                            DropdownButton<int?>(
-                              value: overrideVal,
+                            DropdownButton<int>(
+                              value: _gpsSyncIntervalLabels.containsKey(effectiveVal) ? effectiveVal : 30,
                               isExpanded: true,
-                              items: [
-                                const DropdownMenuItem(value: null, child: Text('ברירת מחדל')),
-                                ..._gpsSyncIntervalLabels.entries
-                                    .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))),
-                              ],
+                              items: _gpsSyncIntervalLabels.entries
+                                  .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                                  .toList(),
                               onChanged: (v) {
-                                setState(() => _navigatorGpsSyncIntervalOverride[navigatorId] = v);
+                                if (v == null) return;
+                                // אם הערך שווה לברירת מחדל — מנקה דריסה
+                                final newOverride = v == _currentNavigation.gpsSyncIntervalSeconds ? null : v;
+                                setState(() => _navigatorGpsSyncIntervalOverride[navigatorId] = newOverride);
                                 setSheetState(() {});
                                 final trackId = _navigatorTrackIds[navigatorId];
                                 if (trackId != null) {
-                                  NavigationTrackRepository().updateGpsSyncIntervalOverride(trackId, intervalSeconds: v);
+                                  NavigationTrackRepository().updateGpsSyncIntervalOverride(trackId, intervalSeconds: newOverride);
                                 }
                               },
                             ),

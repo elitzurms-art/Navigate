@@ -1228,22 +1228,50 @@ exports.httpLookupUserForDeletion = onRequest(
       return;
     }
 
-    const { personalNumber, includePhone } = req.body;
-
-    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
-      res.status(400).json({ error: "invalid_personal_number" });
-      return;
-    }
+    const { firstName, lastName, personalNumber, includePhone } = req.body;
 
     try {
-      const userDoc = await db.collection("users").doc(personalNumber).get();
+      let userDoc;
 
-      if (!userDoc.exists) {
-        res.json({ exists: false });
+      if (personalNumber) {
+        // Lookup by personalNumber (used internally for includePhone re-lookup)
+        if (!/^\d{6,7}$/.test(personalNumber)) {
+          res.status(400).json({ error: "invalid_personal_number" });
+          return;
+        }
+        userDoc = await db.collection("users").doc(personalNumber).get();
+        if (!userDoc.exists) {
+          res.json({ exists: false });
+          return;
+        }
+      } else if (firstName && lastName) {
+        // Lookup by first name + last name
+        if (firstName.length < 2 || lastName.length < 2) {
+          res.status(400).json({ error: "invalid_name" });
+          return;
+        }
+        const query = await db.collection("users")
+          .where("firstName", "==", firstName)
+          .where("lastName", "==", lastName)
+          .limit(5)
+          .get();
+
+        if (query.empty) {
+          res.json({ exists: false });
+          return;
+        }
+        if (query.docs.length > 1) {
+          res.status(400).json({ error: "multiple_users_found" });
+          return;
+        }
+        userDoc = query.docs[0];
+      } else {
+        res.status(400).json({ error: "firstName+lastName or personalNumber required" });
         return;
       }
 
       const userData = userDoc.data();
+      const docId = userDoc.id || (userDoc.ref ? userDoc.ref.id : personalNumber);
       const email = userData.email || "";
       const phone = userData.phoneNumber || "";
 
@@ -1265,7 +1293,7 @@ exports.httpLookupUserForDeletion = onRequest(
         }
       }
 
-      const result = { exists: true, maskedEmail, maskedPhone };
+      const result = { exists: true, personalNumber: docId, maskedEmail, maskedPhone };
 
       // Include full phone in E.164 format for Firebase Phone Auth signIn
       if (includePhone && phone) {
@@ -1301,7 +1329,7 @@ exports.httpSendDeletionCode = onRequest(
 
     const { personalNumber } = req.body;
 
-    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
+    if (!personalNumber || !/^\d{6,7}$/.test(personalNumber)) {
       res.status(400).json({ error: "invalid_personal_number" });
       return;
     }
@@ -1362,7 +1390,7 @@ exports.httpDeleteAccount = onRequest(
 
     const { personalNumber, code, idToken } = req.body;
 
-    if (!personalNumber || !/^\d{7}$/.test(personalNumber)) {
+    if (!personalNumber || !/^\d{6,7}$/.test(personalNumber)) {
       res.status(400).json({ error: "invalid_personal_number" });
       return;
     }

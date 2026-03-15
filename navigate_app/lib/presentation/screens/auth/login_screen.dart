@@ -7,8 +7,8 @@ import '../../../services/session_service.dart';
 import 'sms_verification_screen.dart';
 import 'email_code_verification_screen.dart';
 
-/// מצב כניסה — מספר אישי (לבדיקות) או מספר טלפון/מייל
-enum _LoginMode { personalNumber, phoneOrEmail }
+/// מצב כניסה — שם מלא (למפתחים) או מספר טלפון/מייל
+enum _LoginMode { fullName, phoneOrEmail }
 
 /// מסך כניסה — הזנת מספר אישי או מספר טלפון
 class LoginScreen extends StatefulWidget {
@@ -21,15 +21,16 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final AuthService _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
-  final _personalNumberController = TextEditingController();
+  final _devFirstNameController = TextEditingController();
+  final _devLastNameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   bool _isLoading = false;
   _LoginMode _loginMode = _LoginMode.phoneOrEmail;
-  bool _showPersonalNumberOption = false;
+  bool _showDevLoginOption = false;
   bool _phoneHintAttempted = false;
   final List<DateTime> _navigateTapTimestamps = [];
-  Timer? _hidePersonalNumberTimer;
+  Timer? _hideDevLoginTimer;
 
   bool get _isDesktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -45,8 +46,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _hidePersonalNumberTimer?.cancel();
-    _personalNumberController.dispose();
+    _hideDevLoginTimer?.cancel();
+    _devFirstNameController.dispose();
+    _devLastNameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
     super.dispose();
@@ -77,13 +79,22 @@ class _LoginScreenState extends State<LoginScreen> {
     _handlePhoneLogin();
   }
 
-  String? _validatePersonalNumber(String? value) {
+  String? _validateDevFirstName(String? value) {
     if (value == null || value.trim().isEmpty) {
-      return 'נא להזין מספר אישי';
+      return 'נא להזין שם פרטי';
     }
-    final regex = RegExp(r'^\d{7}$');
-    if (!regex.hasMatch(value.trim())) {
-      return 'מספר אישי חייב להכיל 7 ספרות בדיוק';
+    if (value.trim().length < 2) {
+      return 'שם פרטי חייב להכיל לפחות 2 תווים';
+    }
+    return null;
+  }
+
+  String? _validateDevLastName(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'נא להזין שם משפחה';
+    }
+    if (value.trim().length < 2) {
+      return 'שם משפחה חייב להכיל לפחות 2 תווים';
     }
     return null;
   }
@@ -99,15 +110,16 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  /// כניסה לפי מספר אישי — ללא אימות SMS (לבדיקות)
-  Future<void> _handlePersonalNumberLogin() async {
+  /// כניסה לפי שם מלא — ללא אימות SMS (למפתחים)
+  Future<void> _handleFullNameLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final personalNumber = _personalNumberController.text.trim();
-      final user = await _authService.loginByPersonalNumber(personalNumber);
+      final firstName = _devFirstNameController.text.trim();
+      final lastName = _devLastNameController.text.trim();
+      final user = await _authService.loginByFullName(firstName, lastName);
 
       if (!mounted) return;
 
@@ -123,7 +135,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // בדיקת session פעיל במכשיר אחר
-      final sessionCheck = await _authService.checkActiveSession(personalNumber);
+      final sessionCheck = await _authService.checkActiveSession(user.uid);
       if (!mounted) return;
 
       if (sessionCheck == ActiveSessionCheckResult.activeSessionExists) {
@@ -133,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _isLoading = true);
       }
 
-      await _authService.completeLogin(personalNumber);
+      await _authService.completeLogin(user.uid);
       await SessionService().clearSession();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -332,21 +344,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (_navigateTapTimestamps.length >= 6) {
       setState(() {
-        _showPersonalNumberOption = true;
+        _showDevLoginOption = true;
         _navigateTapTimestamps.clear();
       });
-      _hidePersonalNumberTimer?.cancel();
-      _hidePersonalNumberTimer = Timer(const Duration(minutes: 1), () {
+      _hideDevLoginTimer?.cancel();
+      _hideDevLoginTimer = Timer(const Duration(minutes: 1), () {
         if (mounted) {
           setState(() {
-            _showPersonalNumberOption = false;
+            _showDevLoginOption = false;
             _loginMode = _LoginMode.phoneOrEmail;
           });
         }
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('כניסה במספר אישי זמינה לדקה אחת'),
+          content: Text('כניסת מפתחים זמינה לדקה אחת'),
           duration: Duration(seconds: 3),
         ),
       );
@@ -355,11 +367,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Guard: force phoneOrEmail mode if personal number option is hidden on mobile
-    if (!_isDesktop && !_showPersonalNumberOption && _loginMode == _LoginMode.personalNumber) {
+    // Guard: force phoneOrEmail mode if dev login option is hidden on mobile
+    if (!_isDesktop && !_showDevLoginOption && _loginMode == _LoginMode.fullName) {
       _loginMode = _LoginMode.phoneOrEmail;
     }
-    final showPersonalNumber = _isDesktop || _showPersonalNumberOption;
+    final showDevLogin = _isDesktop || _showDevLoginOption;
 
     return Scaffold(
       body: Container(
@@ -430,7 +442,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 24),
 
                             // טוגל בין מצבי כניסה (מוסתר במובייל עד הפעלה)
-                            if (showPersonalNumber) ...[
+                            if (showDevLogin) ...[
                               SegmentedButton<_LoginMode>(
                                 segments: [
                                   ButtonSegment<_LoginMode>(
@@ -439,9 +451,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     icon: Icon(_isDesktop ? Icons.email : Icons.phone),
                                   ),
                                   const ButtonSegment<_LoginMode>(
-                                    value: _LoginMode.personalNumber,
-                                    label: Text('מספר אישי'),
-                                    icon: Icon(Icons.badge),
+                                    value: _LoginMode.fullName,
+                                    label: const Text('שם מלא'),
+                                    icon: const Icon(Icons.person),
                                   ),
                                 ],
                                 selected: {_loginMode},
@@ -473,7 +485,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             if (_loginMode == _LoginMode.phoneOrEmail)
                               _isDesktop ? _buildEmailField() : _buildPhoneField()
                             else
-                              _buildPersonalNumberField(),
+                              _buildDeveloperLoginFields(),
 
                             const SizedBox(height: 24),
 
@@ -495,7 +507,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ElevatedButton.icon(
                                     onPressed: _loginMode == _LoginMode.phoneOrEmail
                                         ? (_isDesktop ? _handleEmailLogin : _handlePhoneLogin)
-                                        : _handlePersonalNumberLogin,
+                                        : _handleFullNameLogin,
                                     icon: Icon(_loginMode == _LoginMode.phoneOrEmail
                                         ? (_isDesktop ? Icons.email : Icons.sms)
                                         : Icons.login),
@@ -605,34 +617,49 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// שדה מספר אישי
-  Widget _buildPersonalNumberField() {
-    return TextFormField(
-      controller: _personalNumberController,
-      decoration: InputDecoration(
-        labelText: 'מספר אישי',
-        hintText: '7 ספרות',
-        prefixIcon: const Icon(Icons.badge),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+  /// שדות כניסת מפתחים — שם פרטי + שם משפחה
+  Widget _buildDeveloperLoginFields() {
+    return Column(
+      children: [
+        TextFormField(
+          controller: _devFirstNameController,
+          decoration: InputDecoration(
+            labelText: 'שם פרטי',
+            hintText: 'בעברית',
+            prefixIcon: const Icon(Icons.person_outline),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          validator: _validateDevFirstName,
+          enabled: !_isLoading,
+          textInputAction: TextInputAction.next,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
         ),
-      ),
-      keyboardType: TextInputType.number,
-      textDirection: TextDirection.ltr,
-      textAlign: TextAlign.center,
-      maxLength: 7,
-      inputFormatters: [
-        FilteringTextInputFormatter.digitsOnly,
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _devLastNameController,
+          decoration: InputDecoration(
+            labelText: 'שם משפחה',
+            hintText: 'בעברית',
+            prefixIcon: const Icon(Icons.person),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          validator: _validateDevLastName,
+          enabled: !_isLoading,
+          textInputAction: TextInputAction.done,
+          onFieldSubmitted: (_) => _handleFullNameLogin(),
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
-      validator: _validatePersonalNumber,
-      enabled: !_isLoading,
-      textInputAction: TextInputAction.done,
-      onFieldSubmitted: (_) => _handlePersonalNumberLogin(),
-      style: const TextStyle(
-        fontSize: 20,
-        letterSpacing: 4,
-        fontWeight: FontWeight.bold,
-      ),
     );
   }
 }

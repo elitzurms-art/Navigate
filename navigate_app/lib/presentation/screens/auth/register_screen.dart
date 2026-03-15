@@ -17,7 +17,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final AuthService _authService = AuthService();
 
-  final _personalNumberController = TextEditingController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -30,7 +29,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
-    _personalNumberController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _emailController.dispose();
@@ -39,17 +37,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   // ─── ולידציות ───
-
-  String? _validatePersonalNumber(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'נא להזין מספר אישי';
-    }
-    final regex = RegExp(r'^\d{7}$');
-    if (!regex.hasMatch(value.trim())) {
-      return 'מספר אישי חייב להכיל 7 ספרות בדיוק';
-    }
-    return null;
-  }
 
   String? _validateHebrewName(String? value, String fieldName) {
     if (value == null || value.trim().isEmpty) {
@@ -66,8 +53,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String? _validateEmail(String? value) {
+    // מייל אופציונלי — ריק = תקין
     if (value == null || value.trim().isEmpty) {
-      return 'נא להזין כתובת מייל';
+      return null;
     }
     final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
     if (!emailRegex.hasMatch(value.trim())) {
@@ -96,29 +84,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final email = _emailController.text.trim();
+    final phone = _phoneController.text.trim();
+
+    // בדסקטופ — מייל חובה (אין SMS)
+    if (_isDesktop && email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('כתובת מייל נדרשת בדסקטופ'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      final personalNumber = _personalNumberController.text.trim();
-
-      // בדיקת כפילות מספר אישי
-      final isTaken = await _authService.isPersonalNumberRegistered(personalNumber);
-      if (isTaken) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('מספר אישי זה כבר רשום במערכת'),
-              backgroundColor: Colors.red,
-            ),
-          );
+      // בדיקת ייחודיות טלפון
+      if (phone.isNotEmpty) {
+        final isPhoneTaken = await _authService.isPhoneNumberRegistered(phone);
+        if (isPhoneTaken) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('מספר טלפון זה כבר רשום במערכת'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
         }
-        return;
       }
 
+      // ייצור מספר אישי אוטומטי (6 ספרות)
+      final personalNumber = await _authService.generateUniquePersonalNumber();
+
       // נתוני הרשמה
-      final phone = _phoneController.text.trim();
-      final email = _emailController.text.trim();
       final registrationData = {
         'personalNumber': personalNumber,
         'firstName': _firstNameController.text.trim(),
@@ -266,29 +269,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 24),
 
-              // מספר אישי
-              TextFormField(
-                controller: _personalNumberController,
-                decoration: InputDecoration(
-                  labelText: 'מספר אישי',
-                  hintText: '7 ספרות',
-                  prefixIcon: const Icon(Icons.badge),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                keyboardType: TextInputType.number,
-                textDirection: TextDirection.ltr,
-                maxLength: 7,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                ],
-                validator: _validatePersonalNumber,
-                textInputAction: TextInputAction.next,
-                enabled: !_isLoading,
-              ),
-              const SizedBox(height: 16),
-
               // שם פרטי
               TextFormField(
                 controller: _firstNameController,
@@ -323,13 +303,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 16),
 
-              // כתובת מייל
+              // כתובת מייל (אופציונלי)
               TextFormField(
                 controller: _emailController,
                 decoration: InputDecoration(
-                  labelText: 'כתובת מייל',
+                  labelText: 'כתובת מייל (אופציונלי)',
                   prefixIcon: const Icon(Icons.email),
-                  hintText: 'example@mail.com',
+                  hintText: 'נדרש לשם כניסה ממחשב שולחני / Windows / MacOS',
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),

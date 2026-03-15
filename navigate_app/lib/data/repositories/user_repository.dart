@@ -108,6 +108,25 @@ class UserRepository {
     }
   }
 
+  /// קבלת משתמש לפי שם פרטי + שם משפחה — חיפוש מקומי ב-Drift (case-insensitive)
+  Future<domain.User?> getUserByFullName(String firstName, String lastName) async {
+    final db = _localDatabase ?? AppDatabase();
+    try {
+      final normalizedFirst = firstName.trim().toLowerCase();
+      final normalizedLast = lastName.trim().toLowerCase();
+      final results = await (db.select(db.users)
+        ..where((tbl) =>
+            tbl.firstName.lower().equals(normalizedFirst) &
+            tbl.lastName.lower().equals(normalizedLast)))
+          .get();
+
+      if (results.isEmpty) return null;
+      return _userFromRow(results.first);
+    } catch (e) {
+      return null;
+    }
+  }
+
   /// קבלת משתמש לפי מספר אישי — חיפוש מקומי ב-Drift
   Future<domain.User?> getUserByPersonalNumber(String personalNumber) async {
     final db = _localDatabase ?? AppDatabase();
