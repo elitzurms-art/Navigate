@@ -1784,9 +1784,28 @@ class SyncManager {
     }
   }
 
+  /// בדיקה אם יש פריטי סנכרון ממתינים לניווט ספציפי
+  Future<bool> _hasPendingSyncForNavigation(String navigationId) async {
+    final items = await (_db.select(_db.syncQueue)
+          ..where((t) =>
+              t.synced.equals(false) &
+              t.collectionName.equals(AppConstants.navigationsCollection) &
+              t.recordId.equals(navigationId))
+          ..limit(1))
+        .get();
+    return items.isNotEmpty;
+  }
+
   /// חילוץ שכבות inline מתוך מסמך ניווט אל טבלאות מקומיות
   Future<void> _extractInlineLayers(String navId, Map<String, dynamic>? layers) async {
     if (layers == null) return;
+
+    // דילוג אם יש שינויים מקומיים שעדיין לא נדחפו ל-Firestore —
+    // מונע דריסת שכבות מקומיות עדכניות בנתונים ישנים מ-Firestore
+    if (await _hasPendingSyncForNavigation(navId)) {
+      print('SyncManager: Skipping layer extraction for $navId — pending local sync');
+      return;
+    }
 
     // Checkpoints (NZ)
     final checkpointsList = layers['checkpoints'] as List?;

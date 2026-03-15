@@ -245,10 +245,9 @@ Future<String?> _signInWithEmailFallback(String personalNumber) async {
 /// בקשת כל ההרשאות הנדרשות שעדיין לא אושרו
 Future<void> _requestMissingPermissions() async {
   // הרשאות בסיסיות — כל הפלטפורמות
+  // הערה: הרשאות מיקום (location, locationAlways) מבוקשות בנפרד דרך דיאלוג rationale ב-_NavigateAppState
   final permissions = <Permission>[
     Permission.notification,
-    Permission.location,
-    Permission.locationAlways,
     Permission.microphone,
   ];
 
@@ -256,7 +255,6 @@ Future<void> _requestMissingPermissions() async {
   if (Platform.isAndroid || Platform.isIOS) {
     permissions.addAll([
       Permission.phone,
-      Permission.sms,
       Permission.activityRecognition,
     ]);
   }
@@ -373,7 +371,65 @@ class _NavigateAppState extends State<NavigateApp> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForAppUpdate();
+      _showLocationRationaleIfNeeded();
     });
+  }
+
+  Future<void> _showLocationRationaleIfNeeded() async {
+    // רק מובייל — דסקטופ לא צריך הרשאת מיקום דרך permission_handler
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+
+    // אם כבר יש הרשאת מיקום — לא צריך דיאלוג
+    final locationStatus = await Permission.location.status;
+    if (locationStatus.isGranted) return;
+
+    // אם הדיאלוג כבר הוצג בעבר — לא מציגים שוב
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('location_rationale_shown') == true) return;
+
+    // השהייה קצרה לאפשר למסך להיטען
+    await Future.delayed(const Duration(seconds: 1));
+
+    final navContext = NavigateApp.navigatorKey.currentContext;
+    if (navContext == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: navContext,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('שימוש במיקום'),
+        content: const Text(
+          'האפליקציה משתמשת במיקום המכשיר כדי להציג את המיקום שלך על המפה ולאפשר ניווט ומעקב בזמן אמת.\n\n'
+          'כאשר ניווט פעיל, האפליקציה עשויה להשתמש במיקום גם כאשר האפליקציה אינה פתוחה, כדי להמשיך לעדכן את המיקום בצורה מדויקת.\n\n'
+          'המיקום משמש רק לצורך פעולת האפליקציה ואינו משותף עם צדדים שלישיים.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(navContext).pop(false),
+            child: const Text('ביטול'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(navContext).pop(true),
+            child: const Text('המשך'),
+          ),
+        ],
+      ),
+    );
+
+    // שמירת flag — הדיאלוג הוצג
+    await prefs.setBool('location_rationale_shown', true);
+
+    if (confirmed == true) {
+      // בקשת הרשאת מיקום רגילה
+      final locationResult = await Permission.location.request();
+      print('DEBUG: Permission.location → ${locationResult.name}');
+
+      // אם מיקום רגיל אושר — מבקשים גם מיקום ברקע
+      if (locationResult.isGranted) {
+        final alwaysResult = await Permission.locationAlways.request();
+        print('DEBUG: Permission.locationAlways → ${alwaysResult.name}');
+      }
+    }
   }
 
   Future<void> _checkForAppUpdate() async {

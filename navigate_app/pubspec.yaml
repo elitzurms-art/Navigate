@@ -1,7 +1,7 @@
 name: navigate_app
 description: אפליקציית ניווט Flutter לניהול ניווטים ותחקור
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.6+7
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -42,9 +42,6 @@ dependencies:
   connectivity_plus: ^5.0.2
   http: ^1.2.0
   archive: ^3.6.1
-
-  # SMS (Android) - זמנית מושבת, דורש מכשיר אמיתי (לא עובד על אמולטור)
-  # sms_advanced: ^1.0.1
 
   # Location & GPS & Device
   geolocator: ^11.0.0

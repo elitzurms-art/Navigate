@@ -702,6 +702,7 @@ class RouteExportService {
     final checkpoints = await navLayerRepo.getCheckpointsByNavigation(navigation.id);
     final safetyPoints = await navLayerRepo.getSafetyPointsByNavigation(navigation.id);
     final boundaries = await navLayerRepo.getBoundariesByNavigation(navigation.id);
+    final clusters = await navLayerRepo.getClustersByNavigation(navigation.id);
 
     // טעינת tracks לכל מנווט
     final tracks = <String, dynamic>{};
@@ -750,33 +751,10 @@ class RouteExportService {
       'tracks': tracks,
       'punches': punches.map((p) => p.toMap()).toList(),
       'scores': scores,
-      'checkpoints': checkpoints.map((c) => {
-        'id': c.id,
-        'sourceId': c.sourceId,
-        'name': c.name,
-        'type': c.type,
-        'sequenceNumber': c.sequenceNumber,
-        'labels': c.labels,
-        if (c.coordinates != null) 'coordinates': c.coordinates!.toMap(),
-        if (c.description.isNotEmpty) 'description': c.description,
-        'geometryType': c.geometryType,
-        if (c.polygonCoordinates != null && c.polygonCoordinates!.isNotEmpty)
-          'polygonCoordinates': c.polygonCoordinates!.map((co) => co.toMap()).toList(),
-      }).toList(),
-      'boundaries': boundaries.map((b) => {
-        'id': b.id,
-        'sourceId': b.sourceId,
-        'name': b.name,
-        'coordinates': b.coordinates.map((c) => c.toMap()).toList(),
-      }).toList(),
-      'safetyPoints': safetyPoints.map((s) => {
-        'id': s.id,
-        'sourceId': s.sourceId,
-        'name': s.name,
-        if (s.coordinates != null) 'coordinates': s.coordinates!.toMap(),
-        if (s.polygonCoordinates != null && s.polygonCoordinates!.isNotEmpty)
-          'polygonCoordinates': s.polygonCoordinates!.map((co) => co.toMap()).toList(),
-      }).toList(),
+      'checkpoints': checkpoints.map((c) => c.toMap()).toList(),
+      'boundaries': boundaries.map((b) => b.toMap()).toList(),
+      'safetyPoints': safetyPoints.map((s) => s.toMap()).toList(),
+      'clusters': clusters.map((c) => c.toMap()).toList(),
     };
 
     final sanitized = _sanitizeForJson(exportData);
@@ -906,6 +884,28 @@ class RouteExportService {
         } catch (e) {
           print('DEBUG import: Skipping boundary: $e');
         }
+      }
+    }
+
+    // Import clusters
+    if (data['clusters'] != null) {
+      final clustersList = (data['clusters'] as List)
+          .map((m) {
+            final cMap = Map<String, dynamic>.from(m as Map);
+            cMap['navigationId'] = navigation.id;
+            return cMap;
+          })
+          .toList();
+      final clusters = <NavCluster>[];
+      for (final cMap in clustersList) {
+        try {
+          clusters.add(NavCluster.fromMap(cMap));
+        } catch (e) {
+          print('DEBUG import: Skipping cluster: $e');
+        }
+      }
+      if (clusters.isNotEmpty) {
+        await navLayerRepo.addClustersBatch(clusters);
       }
     }
 

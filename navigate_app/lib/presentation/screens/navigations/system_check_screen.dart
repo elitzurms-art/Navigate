@@ -312,7 +312,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'notification': await Permission.notification.status,
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
-      'sms': await Permission.sms.status,
       'activityRecognition': await Permission.activityRecognition.status,
     };
   }
@@ -328,7 +327,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       Permission.locationAlways,
       Permission.microphone,
       Permission.phone,
-      Permission.sms,
       Permission.activityRecognition,
     ];
 
@@ -469,7 +467,10 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
     _systemStatusListener = repo.watchStatuses(widget.navigation.id).listen((statuses) {
       if (!mounted) return;
       setState(() {
-        _navigatorStatuses = statuses;
+        // מיזוג: עדכון מנווטים שדיווחו, שמירה על רשומות של מי שלא דיווח
+      for (final entry in statuses.entries) {
+        _navigatorStatuses[entry.key] = entry.value;
+      }
       });
     });
   }
@@ -2982,7 +2983,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
       'notification': await Permission.notification.status,
       'microphone': await Permission.microphone.status,
       'phone': await Permission.phone.status,
-      'sms': await Permission.sms.status,
       'activityRecognition': await Permission.activityRecognition.status,
     };
   }
@@ -2999,8 +2999,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return 'מיקרופון';
       case 'phone':
         return 'טלפון';
-      case 'sms':
-        return 'SMS';
       case 'activityRecognition':
         return 'חיישני תנועה (צעדים)';
       default:
@@ -3028,8 +3026,6 @@ class _SystemCheckScreenState extends State<SystemCheckScreen> with SingleTicker
         return Permission.microphone;
       case 'phone':
         return Permission.phone;
-      case 'sms':
-        return Permission.sms;
       case 'activityRecognition':
         return Permission.activityRecognition;
       default:

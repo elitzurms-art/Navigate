@@ -2015,7 +2015,6 @@ class _ActiveViewState extends State<ActiveView> with WidgetsBindingObserver {
       Permission.locationAlways,
       Permission.microphone,
       Permission.phone,
-      Permission.sms,
       Permission.activityRecognition,
     ];
 
